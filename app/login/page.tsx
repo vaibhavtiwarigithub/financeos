@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { OWNER_EMAIL } from "@/lib/auth/owner";
 
 // Google sign-in is disabled for now (no email gate on that path) — flip
 // this back to true to re-enable once it's wired to the same restriction
@@ -22,7 +21,7 @@ const inp: React.CSSProperties = {
 
 export default function LoginPage() {
   const supabase = createClient();
-  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
+  const [mode, setMode] = useState<"signin" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -50,22 +49,29 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     setSuccess("");
-    // Kept: this endpoint SENDS EMAIL, so it must not be usable to mail an
-    // arbitrary address (or to probe which addresses exist).
-    if (email !== OWNER_EMAIL) {
-      setError("Access restricted.");
-      setLoading(false);
-      return;
-    }
+    // Goes through a server route rather than calling Supabase directly.
+    //
+    // This used to refuse any address that was not OWNER_EMAIL — which kept the
+    // endpoint from mailing strangers, but also meant an INVITED VIEWER could
+    // never reset their own password. The server route allows the owner and any
+    // account with a live grant, and answers identically in every case, so the
+    // protection is kept without the gap.
+    //
     // Recovery links use Supabase's own token format (hash fragment or
     // token_hash, not the ?code= PKCE param /auth/callback expects) — send
     // straight to /reset-password, which listens for the PASSWORD_RECOVERY
     // auth event instead of trying to exchange a code.
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    if (error) setError(error.message ?? "Could not send reset email");
-    else setSuccess("Password reset link sent — check your email.");
+    try {
+      const res = await fetch("/api/auth/password-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, redirect_to: `${window.location.origin}/reset-password` }),
+      });
+      const json = await res.json().catch(() => null);
+      setSuccess(json?.message ?? "If that address has access, a password reset link is on its way.");
+    } catch {
+      setError("Could not send reset email");
+    }
     setLoading(false);
   }
 
@@ -86,25 +92,20 @@ export default function LoginPage() {
     // request through means Supabase returns the actual reason ("Invalid login
     // credentials") instead of silence.
     //
-    // SIGNUP keeps the check: without it anyone could create an auth.users row
-    // that middleware would then have to sign out on every request.
-    if (mode === "signup" && email !== OWNER_EMAIL) {
-      setError("Access restricted.");
-      setLoading(false);
-      return;
-    }
-    if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({
-        email, password,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (error) setError(error.message ?? "Signup failed");
-      else setSuccess("Account created — check email to confirm, or sign in directly if confirmation is disabled.");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setError(error.message ?? "Sign in failed");
-      else window.location.href = "/dashboard";
-    }
+    // SELF-SIGNUP IS GONE (2026-09-14). The owner account already exists, and
+    // every other account now arrives through an owner-issued invitation from
+    // /dashboard/admin/access, where the recipient sets their own password.
+    // Leaving a signup form here offered an affordance that could only ever
+    // produce an auth.users row with no grant — which middleware signs straight
+    // back out — so it was confusing rather than useful.
+    //
+    // This removes the FORM, not a security control: a client-side check is
+    // cosmetic either way. The real boundary is that access comes from
+    // `app_user_roles`, so an account created by any means reaches nothing
+    // without a grant.
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) setError(error.message ?? "Sign in failed");
+    else window.location.href = "/dashboard";
     setLoading(false);
   }
 
@@ -127,7 +128,7 @@ export default function LoginPage() {
               Intelligence Platform
             </div>
             <h1 style={{ fontSize: "28px", fontWeight: 700, letterSpacing: "-0.02em" }}>
-              {mode === "signin" ? "Welcome back" : mode === "signup" ? "Create account" : "Reset password"}
+              {mode === "signin" ? "Welcome back" : "Reset password"}
             </h1>
           </div>
 
@@ -239,15 +240,7 @@ export default function LoginPage() {
                   ← Back to sign in
                 </button>
               ) : (
-                <>
-                  {mode === "signin" ? "Need an account? " : "Already have one? "}
-                  <button
-                    onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setSuccess(""); }}
-                    style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontSize: "12px" }}
-                  >
-                    {mode === "signin" ? "Sign up" : "Sign in"}
-                  </button>
-                </>
+                <>Access is by invitation only.</>
               )}
             </p>
           </div>
