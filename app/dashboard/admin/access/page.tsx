@@ -28,7 +28,10 @@ type AccessData = {
 export default function AccessPage() {
   const [data, setData] = useState<AccessData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -40,6 +43,31 @@ export default function AccessPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function sendInvite() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    if (!confirm(`Send a viewer invitation to ${email}?\n\nThey will receive an email to set their own password, and will be able to see the owner's Paper Portfolio and Fundamentals — read only.`)) return;
+    setInviting(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "invite", email }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json?.error ?? `Invite failed (${res.status})`); return; }
+      setError(null);
+      setNotice(
+        json.invited_new_account
+          ? `Invitation email sent to ${email}. Access starts once they set their password.`
+          : `${email} already had an account — viewer access granted, no email sent.`
+      );
+      setInviteEmail("");
+      await load();
+    } finally { setInviting(false); }
+  }
 
   async function act(userId: string, action: "revoke" | "restore") {
     setBusy(userId);
@@ -105,6 +133,42 @@ export default function AccessPage() {
             <div style={{ fontSize: "11px", color: T.muted, marginTop: "10px", lineHeight: 1.5 }}>
               {data.viewer_access.notes}
             </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Invite a viewer</div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px", lineHeight: 1.5 }}>
+              They receive an email and set their own password — no password is ever entered here.
+              Access is read-only and can be revoked below at any time.
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="friend@example.com"
+                style={{
+                  flex: "1 1 260px", background: T.bg, border: `1px solid ${T.border}`,
+                  borderRadius: "6px", color: T.text, padding: "7px 10px", fontSize: "12px",
+                }}
+              />
+              <button
+                onClick={sendInvite}
+                disabled={inviting || !inviteEmail.trim()}
+                style={{
+                  background: inviting || !inviteEmail.trim() ? T.card : T.accent,
+                  border: "none", borderRadius: "6px",
+                  color: inviting || !inviteEmail.trim() ? T.muted : "#fff",
+                  padding: "7px 16px", fontSize: "12px", fontWeight: 600,
+                  cursor: inviting || !inviteEmail.trim() ? "default" : "pointer",
+                }}
+              >
+                {inviting ? "Sending…" : "Send invitation"}
+              </button>
+            </div>
+            {notice && (
+              <div style={{ fontSize: "11px", color: T.green, marginTop: "10px" }}>{notice}</div>
+            )}
           </div>
 
           <div style={card}>

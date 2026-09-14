@@ -91,6 +91,7 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Account, trading, AI & keys, automation, data, and system controls", alertCat: "" },
+      { href: "/dashboard/admin/access",           label: "Access & Permissions", icon: "🔑", hint: "Who can sign in, what each role may view or edit, invite and revoke viewers", alertCat: "" },
     ],
   },
 ];
@@ -234,6 +235,33 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   const { timeStr, indiaTimeStr, localDate, status: mktStatus, indiaStatus } = useMarketClock();
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // A viewer may only reach a narrow page set, so showing them the full nav
+  // offers links that bounce straight back. Presentation only — middleware and
+  // each route enforce the boundary regardless of what is rendered here.
+  const [viewerPages, setViewerPages] = useState<string[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/role")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        setViewerPages(d.role === "viewer" ? (d.access?.pages ?? []) : null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const navSections = viewerPages
+    ? NAV_SECTIONS
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) =>
+            viewerPages.some((p) => item.href === p || item.href.startsWith(`${p}/`)),
+          ),
+        }))
+        .filter((section) => section.items.length > 0)
+    : NAV_SECTIONS;
   // Close the drawer automatically on navigation — otherwise it stays open
   // over the newly-loaded page.
   useEffect(() => { setMobileNavOpen(false); }, [pathname]);
@@ -592,8 +620,8 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
         {/* Sectioned nav */}
         <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>
-          {NAV_SECTIONS.map((section, si) => (
-            <div key={section.label} style={{ marginBottom: si < NAV_SECTIONS.length - 1 ? "16px" : "0" }}>
+          {navSections.map((section, si) => (
+            <div key={section.label} style={{ marginBottom: si < navSections.length - 1 ? "16px" : "0" }}>
               {/* Section label */}
               <div style={{ fontSize: "9px", fontWeight: 700, color: T.muted, letterSpacing: "0.12em", textTransform: "uppercase", padding: "0 10px", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
                 {section.label}

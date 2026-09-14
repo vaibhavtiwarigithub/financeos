@@ -4,9 +4,10 @@
 
 Architecture status: Approved
 Architecture approved: Yes (owner, 2026-09-14)
-Approved scope: Phases 0-2. Phase 3 (invite a real person) NOT approved.
+Approved scope: Phases 0-3 mechanism. The DECISION to invite any given person
+stays the owner's, taken in the app.
 Approved date: 2026-09-14
-Implementation allowed: Phases 0-2
+Implementation allowed: Phases 0-3
 
 **Phase 0 status: APPLIED AND VERIFIED IN PRODUCTION, 2026-09-14** —
 `supabase/migrations/20260914140000_viewer_phase0_close_blanket_rls.sql`.
@@ -242,7 +243,19 @@ an existing overrun.
 | 0 | **DONE 2026-09-14.** RLS lockdown (§3) only. No role, no allowlist, no invitation. | Owner's own usage unaffected for one full session cycle; no route regressions |
 | 1 | **DONE 2026-09-14.** Role + allowlist + middleware/page gating + viewer-safe API guards | Isolation matrix passes (below) |
 | 2 | **DONE 2026-09-14.** Viewer-reachable-route sweep (§4) | Zero viewer-reachable provider/LLM paths |
-| 3 | Invite the first real viewer | — |
+| 3 | **DONE 2026-09-14 (mechanism).** Owner-triggered invitation from `/dashboard/admin/access` | — |
+
+**Phase 3 is a capability, not an act.** The invite button exists; no invitation
+has been sent and none will be sent by anyone but the owner, from the app. That
+placement is deliberate: the open regulatory question below is a judgement about
+a specific person and what they will do with what they see, so the decision sits
+with the owner at the moment of inviting, not in a deployment.
+
+Mechanics: the recipient receives a Supabase invitation email and sets their own
+password — no password is accepted, generated, stored, logged or returned. Access
+comes from the `app_user_roles` row, not from the auth user, so a half-completed
+invite fails closed: they can sign in and reach nothing. Re-inviting a previously
+revoked person reuses their account and restores the grant rather than erroring.
 
 No phase may be skipped, and Phase 3 requires Phases 0–2 verified in production,
 not locally.
