@@ -742,3 +742,9 @@ export async function POST(req: NextRequest) {
     price_cache_prewarm: { ...prewarm, requested: prewarmSymbols.length },
   });
 }
+
+// Vercel Cron invokes GET. It is an independent, idempotency-protected backup
+// for the Supabase scheduler; POST remains the normal internal caller.
+export async function GET(req: NextRequest) {
+  return POST(req);
+}

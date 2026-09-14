@@ -10,7 +10,12 @@ import { timingSafeEqual } from "crypto";
 export function verifyCronSecret(req: { headers: { get(name: string): string | null } }): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false; // fail closed — never accept when unconfigured
-  const provided = req.headers.get("x-cron-secret");
+  // Supabase callers use the explicit internal header; Vercel Cron supplies
+  // the same secret as a Bearer token. Accept both so the independent scheduler
+  // can act as a recovery path without weakening the secret comparison.
+  const provided = req.headers.get("x-cron-secret")
+    ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
+    ?? null;
   if (!provided) return false;
 
   const a = Buffer.from(provided);
