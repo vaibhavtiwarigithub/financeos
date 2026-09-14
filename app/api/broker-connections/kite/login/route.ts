@@ -14,12 +14,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionRole } from "@/lib/auth/session-role";
 import { getKiteCreds, kiteLoginUrl } from "@/lib/kite";
 import { makeState, signOAuthCookie } from "@/lib/robinhood-mcp";
+import { GUEST_VERIFIER_PREFIX } from "@/lib/brokers/guest-oauth";
 
 export const dynamic = "force-dynamic";
 const STATE_COOKIE = "kite_oauth_state";
-
-/** Marks a login started by a guest, and for whom. Verified, never trusted raw. */
-export const GUEST_VERIFIER_PREFIX = "guest:";
 
 export async function GET(req: NextRequest) {
   const { role, userId } = await getSessionRole();

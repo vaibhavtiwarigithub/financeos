@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { getKiteCreds, exchangeRequestToken, storeAccessToken } from "@/lib/kite";
 import { verifyOAuthCookie } from "@/lib/robinhood-mcp";
 import { storeGuestCredential } from "@/lib/brokers/guest-credentials";
-import { GUEST_VERIFIER_PREFIX } from "@/app/api/broker-connections/kite/login/route";
+import { GUEST_VERIFIER_PREFIX } from "@/lib/brokers/guest-oauth";
 
 export const dynamic = "force-dynamic";
 const STATE_COOKIE = "kite_oauth_state";
