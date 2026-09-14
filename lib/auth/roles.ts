@@ -71,6 +71,14 @@ export const VIEWER_API_ROUTES: ReadonlyArray<{ prefix: string; methods: readonl
  */
 export const VIEWER_OWN_DATA_ROUTES: ReadonlyArray<{ prefix: string; methods: readonly string[] }> = [
   { prefix: "/api/broker-connections", methods: ["GET", "POST"] },
+  // Turning the daily risk email on or off. A write, but only to the caller's
+  // own preference row, and it calls no provider.
+  { prefix: "/api/user-risk/prefs", methods: ["GET", "POST"] },
+  // Unsubscribe. Reachable with NO session at all (the token is the authority,
+  // and an unsubscribe that demands a login is not an unsubscribe) — listed
+  // here so that a SIGNED-IN viewer clicking the same link is not 403'd by the
+  // viewer API gate.
+  { prefix: "/api/user-risk/unsubscribe", methods: ["GET", "POST"] },
 ];
 
 /** Where a viewer lands, and where they are sent when they request anything else. */

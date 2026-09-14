@@ -222,7 +222,7 @@ outside the shared cache.**
 | 0 | Schema + RLS + encryption, no UI, no job. Tables exist and are empty. | Isolation matrix passes with two seeded test users |
 | 1 | Connect/disconnect flow for the signed-in user; read-only client factory; connection status only | **DONE 2026-09-14.** A guest can connect and disconnect; no order tool is reachable |
 | 2 | Per-user snapshot + risk job; private risk page | **DONE 2026-09-14.** A guest sees only their own; owner's pages byte-identical |
-| 3 | Opt-in daily email + unsubscribe | Send audit shows exactly one mail per opted-in user |
+| 3 | Opt-in daily email + unsubscribe | **DONE 2026-09-14.** Send audit shows exactly one mail per opted-in user |
 
 Phases 2 and 3 each add scheduled work; neither may ship before the cost rule in
 §6 is verified against real usage — including the corrected form of it: the count
@@ -335,3 +335,51 @@ does add crons, unlike shared-viewer-access**),
 `docs/arch/08-risk-and-safety.md` (guest read-only boundary, order-path exclusion),
 `PROJECT_DECISIONS.md`, and `public/agent-diagrams/system-map.json` (a new
 per-user data plane is a flow change).
+
+## Addendum 2026-09-14 — Phase 3, the dial, and what a digest may contain
+
+Owner asked for Phase 3 plus three things from Seeking Alpha's Pre-market
+Portfolio Digest: the gauge dial, per-stock score detail, and score history.
+
+**Built.** The dial (`lib/risk/risk-gauge.ts`, one source of bands and needle
+position for both surfaces), a "why it reads this way" breakdown derived from the
+same stored figures the page already shows, portfolio score history, and
+per-holding detail with weight history. Phase 3 itself: opt-in daily email,
+hourly cron honouring each user's `send_hour_utc`, a database-enforced one-send-
+per-user-per-day cap, and a no-login unsubscribe.
+
+**The dial is deliberately not SA's dial.** Theirs is a RATING — Strong Sell to
+Strong Buy, green means "buy this". Ours measures how much risk a portfolio
+carries — green means "less concentrated, less leveraged to the market". Same
+shape, opposite kind of claim. The labels stay Low/Moderate/Elevated/High so the
+difference is legible without reading the docs.
+
+**Two SA sections were NOT built, and need an owner decision before they are.**
+
+1. *Ratings breakdown ("7 Strong Buy, 4 Buy, 13 Hold").* For a guest this could
+   only come from the owner's `agent_signals`. §5 of this document rules that
+   out: "the owner's book, research and signals are not included — that would
+   turn a risk report into a recommendation, which is the thing this feature
+   deliberately is not." The owner's own `/dashboard/risk` does show
+   `agent_signals` (DISPLAY ONLY), but the owner reading their own research is a
+   different act from mailing per-stock buy/sell ratings to friends and family.
+   This is the regulatory line already flagged as a gate to clear outside the
+   repo, not a UI decision.
+
+2. *Breaking news per holding, and yesterday's gainers/losers.* News needs a
+   metered provider call per guest symbol, and quotes for symbols outside the
+   owner's cached universe are not in `price_cache`. Both break §6's rule that a
+   guest path may never call a metered provider outside the shared cache. A
+   cache-only gainers/losers restricted to already-cached symbols is feasible and
+   cheap; a full one is not. Not built pending a decision on which.
+
+**Why the explanation is templated, not written by an LLM.** §6 forbids a
+guest-triggered LLM call, but the stronger reason is that an explanation which
+can drift from the number it explains is worse than none. Every line is derived
+from the stored figures.
+
+**One defect worth recording.** The email trimmed drivers to the top four by
+weight, and the "no usable price history" caveat carries the lowest weight by
+design so it never leads — so the trim dropped exactly the line that stops the
+email overclaiming. Drivers now carry `kind: "driver" | "caveat"` and callers
+trim drivers only.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { VIEWER_API_ROUTES } from "@/lib/auth/roles";
 import { expectedLatestSessionDate, marketClosedReason } from "@/lib/trading/market-calendar";
@@ -19,6 +20,21 @@ function routeFileFor(prefix: string): string {
   return resolve(ROOT, `app${prefix}/route.ts`);
 }
 
+/**
+ * Every route file reachable under a viewer prefix, not just the one AT it.
+ *
+ * `matchesPrefix` in lib/auth/roles.ts admits subpaths, so `/api/user-risk`
+ * also admits `/api/user-risk/prefs`. Sweeping only the prefix file left those
+ * subpath routes viewer-reachable but unchecked — a route added there could
+ * have called a provider and no test would have noticed.
+ */
+function routeFilesUnder(prefix: string): string[] {
+  const dir = resolve(ROOT, `app${prefix}`);
+  if (!existsSync(dir)) return [];
+  return execSync(`find ${JSON.stringify(dir)} -name route.ts`, { encoding: "utf8" })
+    .split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
 const PROVIDER_IMPORT = /from\s+"[^"]*(provider|massive|alphavantage|alpha-vantage|finnhub|yahoo|gdelt|broker|mcp|anthropic|openai)[^"]*"/i;
 
 describe("viewer-reachable route sweep", () => {
@@ -30,17 +46,27 @@ describe("viewer-reachable route sweep", () => {
 
   it("no viewer-reachable route makes an outbound call", () => {
     for (const route of VIEWER_API_ROUTES) {
-      const src = readFileSync(routeFileFor(route.prefix), "utf8");
-      expect(src.includes("https://"), `${route.prefix} contains an outbound URL`).toBe(false);
-      expect(/\bfetch\s*\(/.test(src), `${route.prefix} calls fetch()`).toBe(false);
+      for (const file of routeFilesUnder(route.prefix)) {
+        const src = readFileSync(file, "utf8");
+        expect(src.includes("https://"), `${file} contains an outbound URL`).toBe(false);
+        expect(/\bfetch\s*\(/.test(src), `${file} calls fetch()`).toBe(false);
+      }
     }
+  });
+
+  it("actually sweeps the subpath routes, not just the prefix files", () => {
+    // Guards the guard: if routeFilesUnder silently returned nothing, the test
+    // above would pass vacuously.
+    expect(routeFilesUnder("/api/user-risk").length).toBeGreaterThan(1);
   });
 
   it("no viewer-reachable route imports a provider, broker or LLM module", () => {
     for (const route of VIEWER_API_ROUTES) {
-      const src = readFileSync(routeFileFor(route.prefix), "utf8");
-      const hit = src.match(PROVIDER_IMPORT);
-      expect(hit?.[0] ?? null, `${route.prefix} imports ${hit?.[0]}`).toBeNull();
+      for (const file of routeFilesUnder(route.prefix)) {
+        const src = readFileSync(file, "utf8");
+        const hit = src.match(PROVIDER_IMPORT);
+        expect(hit?.[0] ?? null, `${file} imports ${hit?.[0]}`).toBeNull();
+      }
     }
   });
 
