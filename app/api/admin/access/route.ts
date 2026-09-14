@@ -9,6 +9,8 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { describeRoleAccess, VIEWER_PAGES } from "@/lib/auth/roles";
+import { getEmailProvider } from "@/lib/providers/email";
+import { buildInviteEmailHtml, inviteEmailSubject } from "@/lib/email/invite-email";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
 
   const action = String(body?.action ?? "");
 
-  if (action === "invite") return invite(body);
+  if (action === "invite") return invite(body, req);
 
   const userId = String(body?.user_id ?? "").trim();
   if (!userId) return NextResponse.json({ error: "user_id required" }, { status: 400 });
@@ -78,7 +80,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * invite that half-completes fails CLOSED: the person can sign in but reaches
  * nothing until the grant exists.
  */
-async function invite(body: any): Promise<NextResponse> {
+async function invite(body: any, req: NextRequest): Promise<NextResponse> {
   const email = String(body?.email ?? "").trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
     return NextResponse.json({ error: "a valid email is required" }, { status: 400 });
@@ -90,19 +92,85 @@ async function invite(body: any): Promise<NextResponse> {
   const svc = createServiceClient();
   const note = typeof body?.note === "string" ? body.note.slice(0, 200) : null;
 
-  const { data: invited, error: inviteError } = await svc.auth.admin.inviteUserByEmail(email);
+  // WHERE THE INVITED PERSON LANDS.
+  //
+  // This was `inviteUserByEmail(email)` with no options, so Supabase fell back
+  // to the project's Site URL — `http://localhost:3000`. Every invitation sent
+  // pointed at the recipient's own machine, where nothing is running, so the
+  // link was dead on arrival (observed 2026-09-14 on a real test invite:
+  // "localhost is currently unreachable / ERR_CONNECTION_FAILED").
+  //
+  // `/reset-password` is the right landing page and needs no change: it gates
+  // its form on a session being present, and a Supabase invite link establishes
+  // one from its hash tokens exactly as a recovery link does. Its heading
+  // already reads "Set new password", which is true for a first password too.
+  //
+  // NOTE FOR CONFIGURATION: Supabase validates redirectTo against the project's
+  // allowed Redirect URLs and silently falls back to the Site URL when it does
+  // not match. Passing this is therefore necessary but not sufficient — the
+  // deployed origin must also be allowlisted in Authentication → URL
+  // Configuration, or invitations will quietly point at localhost again.
+  const base = process.env.APP_BASE_URL || req.nextUrl.origin;
+  const redirectTo = `${base.replace(/\/+$/, "")}/reset-password`;
 
-  let userId: string | null = invited?.user?.id ?? null;
-  if (!userId) {
-    // Already a registered account — e.g. re-inviting someone previously
-    // revoked. Not an error: find them and grant access.
-    userId = await findUserByEmail(svc, email);
-    if (!userId) {
-      return NextResponse.json(
-        { error: `invite failed: ${inviteError?.message ?? "unknown error"}` },
-        { status: 502 },
-      );
-    }
+  // MINT the link, do not let Supabase SEND it.
+  //
+  // `inviteUserByEmail` mails Supabase's stock template: sender "Supabase Auth",
+  // body "You've been invited to create an account" with no mention of what the
+  // account is for, footer advertising Supabase. Someone being invited by a
+  // person they know, to look at that person's portfolio, gets an unbranded
+  // email from an unfamiliar sender and is asked to click a link in it. That is
+  // both bland and a bad thing to teach people to do.
+  //
+  // `generateLink` returns the same one-time action link WITHOUT sending
+  // anything, so the app delivers its own branded mail through the provider it
+  // already uses for the daily risk email.
+  const existingUserId = await findUserByEmail(svc, email);
+  const returning = Boolean(existingUserId);
+
+  const { data: linkData, error: linkError } = await svc.auth.admin.generateLink({
+    // A person who already has an account cannot be "invited" again — Supabase
+    // rejects it. A recovery link gets them back to the same set-password page,
+    // which is what restoring a revoked viewer actually needs.
+    type: returning ? "recovery" : "invite",
+    email,
+    options: { redirectTo },
+  } as any);
+
+  let userId: string | null = (linkData as any)?.user?.id ?? existingUserId ?? null;
+  const actionLink: string | null = (linkData as any)?.properties?.action_link ?? null;
+
+  if (!userId || !actionLink) {
+    return NextResponse.json(
+      { error: `invite failed: ${linkError?.message ?? "could not generate an invitation link"}` },
+      { status: 502 },
+    );
+  }
+
+  // The link is a credential: it sets a password. It is never logged and never
+  // returned to the browser — it goes only into the email to its recipient.
+  const provider = getEmailProvider();
+  if (!provider.isAvailable()) {
+    // Fail loudly rather than granting access to someone who was never told.
+    // The grant below has not happened yet, so nothing is half-done.
+    return NextResponse.json(
+      { error: "email is not configured, so the invitation could not be sent. No access was granted." },
+      { status: 503 },
+    );
+  }
+
+  try {
+    await provider.send({
+      from: process.env.EMAIL_FROM || "Kairos <noreply@kairos.app>",
+      to: email,
+      subject: inviteEmailSubject({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
+      html: buildInviteEmailHtml({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: `invitation email could not be sent: ${String(e?.message ?? e).slice(0, 200)}. No access was granted.` },
+      { status: 502 },
+    );
   }
 
   const { error: grantError } = await svc.from("app_user_roles").upsert(
@@ -124,7 +192,7 @@ async function invite(body: any): Promise<NextResponse> {
     ok: true,
     action: "invite",
     email,
-    invited_new_account: Boolean(invited?.user?.id),
+    invited_new_account: !returning,
     access: describeRoleAccess("viewer"),
   });
 }
