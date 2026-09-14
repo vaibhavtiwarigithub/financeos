@@ -22,15 +22,26 @@ export const VIEWER_PAGES = [
   "/dashboard/research",
   "/dashboard/symbol",
   "/dashboard/connections",
+  // NOT "/dashboard/risk" — that is the OWNER's Daily Per-Holding Risk
+  // dashboard over the owner's live account book. The guest page is its own
+  // path so a viewer cannot reach the owner's book.
+  "/dashboard/my-risk",
 ] as const;
 
 /**
- * SHARED-READ routes: a viewer reading the OWNER's data.
+ * NO-COST READ routes.
  *
  * Every entry must be read-only over already-persisted tables — no provider
  * call, no LLM call, no write. This is the cost guarantee for shared access:
  * the tenth viewer costs what the first did. A route here that mutates or calls
  * a provider is a defect, not a configuration choice.
+ *
+ * The axis here is COST, not data ownership. Most entries serve the owner's
+ * data, but `/api/user-risk` serves the CALLER's own private risk rows and
+ * belongs here all the same: it is GET-only over persisted tables and calls
+ * nothing, so it earns the same guarantee and the same sweep. What separates it
+ * from the own-data class below is capability — it never writes and never calls
+ * a provider — not whose rows it returns.
  *
  * Method matters: `/api/portfolio/performance-series` GET is a read, but its
  * PATCH writes the owner's saved benchmark preference, so only GET is listed.
@@ -40,6 +51,7 @@ export const VIEWER_API_ROUTES: ReadonlyArray<{ prefix: string; methods: readonl
   { prefix: "/api/research/chart-data", methods: ["GET"] },
   { prefix: "/api/research/universe", methods: ["GET"] },
   { prefix: "/api/auth/role", methods: ["GET"] },
+  { prefix: "/api/user-risk", methods: ["GET"] },
 ];
 
 /**

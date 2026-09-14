@@ -221,13 +221,41 @@ outside the shared cache.**
 |---|---|---|
 | 0 | Schema + RLS + encryption, no UI, no job. Tables exist and are empty. | Isolation matrix passes with two seeded test users |
 | 1 | Connect/disconnect flow for the signed-in user; read-only client factory; connection status only | **DONE 2026-09-14.** A guest can connect and disconnect; no order tool is reachable |
-| 2 | Per-user snapshot + risk job; private risk page | A guest sees only their own; owner's pages byte-identical |
+| 2 | Per-user snapshot + risk job; private risk page | **DONE 2026-09-14.** A guest sees only their own; owner's pages byte-identical |
 | 3 | Opt-in daily email + unsubscribe | Send audit shows exactly one mail per opted-in user |
 
 Phases 2 and 3 each add scheduled work; neither may ship before the cost rule in
 §6 is verified against real usage — including the corrected form of it: the count
 of distinct symbols guests hold that are NOT already in the owner's cached
 universe.
+
+**Phase 2 as shipped, and how the §6 cost gate was actually cleared.**
+The gate said Phase 2 must measure the set of guest symbols outside the cached
+universe before fanning out. Tracing the candle path made a stronger answer
+available than a measurement: `fetchYahooCandles` is Yahoo's **keyless** chart
+endpoint — no API key, no quota, no budget line — while `fetchUsCandles` starts
+there and then falls back through Massive → EODHD → TwelveData → Alpha Vantage,
+several already over budget. So the guest pipeline (`lib/risk/guest-risk.ts`)
+imports the unmetered fetcher and nothing else, and a held symbol Yahoo cannot
+serve is recorded UNCOVERED with its correlation reported *unknown* rather than
+escalated to a paid provider or silently treated as zero correlation. Guest
+metered-provider spend is therefore **structurally zero** rather than measured
+and hoped about, which satisfies §6's own rule ("may never call an LLM or a
+metered market-data provider outside the shared cache") more strongly than the
+measurement would have. Enforced at the imports by `tests/guest-risk-budget.test.ts`.
+What genuinely scales per guest is one broker call per user per market per day,
+against that user's own Zerodha quota, not ours.
+
+The job is `POST /api/agents/user-holding-risk?market=us|india`, cron-gated,
+scheduled 15 minutes after the owner's own job for the same market
+(`20260914190000_user_holding_risk_cron.sql`, applied and verified). It writes
+only `user_*` tables, records every uncomputable user as `skipped` with a reason,
+and runs no LLM. The page is `/dashboard/my-risk` — deliberately **not**
+`/dashboard/risk`, which is the owner's Daily Per-Holding Risk dashboard over the
+owner's live account book. (The first draft of this phase did write to that path,
+which would have replaced the owner's dashboard *and*, since the path was
+simultaneously added to `VIEWER_PAGES`, aimed the owner's book at every guest. It
+was caught before commit and is now asserted against.)
 
 **Phase 1 as shipped.** `/dashboard/connections` (viewer-reachable) plus
 `/api/broker-connections` (GET state, POST disconnect) and
