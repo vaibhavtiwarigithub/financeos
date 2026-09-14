@@ -7,6 +7,7 @@ import { EDGES } from "@/lib/edges/registry";
 import { liquidUniverse } from "@/lib/edges/universe";
 import type { Market } from "@/lib/edges/types";
 import { EDGE_EVIDENCE_QUALITY, edgeHealthKey } from "@/lib/edges/evidence";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { knownSectorForSymbol } from "@/lib/portfolio-risk";
 import crypto from "node:crypto";
@@ -167,28 +168,47 @@ export async function POST(req: NextRequest) {
             provider_report: report,
           };
         });
-        const { data: inserted, error: icError } = await svc.from("edge_ic_history")
-          .upsert(icRows, { onConflict: "run_fingerprint", ignoreDuplicates: true })
-          .select("id");
+        // Also retried: upsert on run_fingerprint with ignoreDuplicates, so a
+        // replay after a timeout cannot double-write immutable evidence.
+        const { data: inserted, error: icError } = await withSupabaseRetry<{ data: Array<{ id: string }> | null; error: { message: string } | null }>(() =>
+          svc.from("edge_ic_history")
+            .upsert(icRows, { onConflict: "run_fingerprint", ignoreDuplicates: true })
+            .select("id"),
+        );
         if (icError) throw new Error(`edge IC write failed (${market}): ${icError.message}`);
         icWritten = inserted?.length ?? 0;
       }
 
       // Advisory status is market-scoped. The catalog's global status is not an
       // evidence state and must not be overwritten by whichever market ran last.
-      for (const [edgeId, status] of Object.entries(catalogStatus)) {
+      // ONE upsert for every edge, not one per edge.
+      //
+      // This loop used to issue a separate round-trip per edge and throw on the
+      // first failure, so a single Gateway Timeout anywhere in the sequence
+      // destroyed a whole run's worth of computed evidence. That is exactly how
+      // both markets died on 2026-09-14 ("edge market status failed
+      // (us/signed_adx_14): Gateway Timeout"). Batching removes most of the
+      // exposure — one request instead of N — and the retry covers the rest.
+      // The upsert is keyed on (edge_id, market), so retrying is idempotent.
+      const statusRows = Object.entries(catalogStatus).map(([edgeId, status]) => {
         const edgeRows = rows.filter(r => r.edgeId === edgeId && r.segmentType === "market");
         const horizonStatuses = Object.fromEntries(edgeRows.map(r => [String(r.horizon), {
           status: r.statusAfter, nObs: r.nObs, ic: r.meanIC, tStat: r.tStat,
         }]));
-        const nObsMin = edgeRows.length ? Math.min(...edgeRows.map(r => r.nObs)) : 0;
-        const latestWindowEnd = edgeRows[0]?.windowEnd ?? null;
-        const { error: statusError } = await svc.from("edge_market_status").upsert({
-          edge_id: edgeId, market, status, latest_window_end: latestWindowEnd,
-          n_obs_min: nObsMin, evidence_quality: EDGE_EVIDENCE_QUALITY,
-          horizon_statuses: horizonStatuses, updated_at: new Date().toISOString(),
-        }, { onConflict: "edge_id,market" });
-        if (statusError) throw new Error(`edge market status failed (${market}/${edgeId}): ${statusError.message}`);
+        return {
+          edge_id: edgeId, market, status,
+          latest_window_end: edgeRows[0]?.windowEnd ?? null,
+          n_obs_min: edgeRows.length ? Math.min(...edgeRows.map(r => r.nObs)) : 0,
+          evidence_quality: EDGE_EVIDENCE_QUALITY,
+          horizon_statuses: horizonStatuses,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      if (statusRows.length) {
+        const { error: statusError } = await withSupabaseRetry(() =>
+          svc.from("edge_market_status").upsert(statusRows, { onConflict: "edge_id,market" }),
+        );
+        if (statusError) throw new Error(`edge market status failed (${market}): ${statusError.message}`);
       }
 
       results[market] = { symbols: symbols.length, icRowsEvaluated: rows.length, icRowsInserted: icWritten, report,
