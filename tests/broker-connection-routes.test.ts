@@ -46,10 +46,16 @@ describe("the two viewer route classes stay distinct", () => {
     expect(isViewerOwnDataRoute("/api/broker-connections-admin", "GET")).toBe(false);
   });
 
-  it("every own-data route is declared under /api/broker-connections for now", () => {
-    for (const route of VIEWER_OWN_DATA_ROUTES) {
-      expect(route.prefix.startsWith("/api/broker-connections"), route.prefix).toBe(true);
-    }
+  it("own-data routes stay a short, deliberate list", () => {
+    // The outbound-call sweep covers the no-cost class only — necessarily, since
+    // own-data routes are allowed the provider call it forbids. So this list is
+    // the containment: widening it must be a deliberate act that edits a test,
+    // never a quiet addition. Each entry writes ONLY rows keyed to the caller.
+    expect(VIEWER_OWN_DATA_ROUTES.map((r) => r.prefix)).toEqual([
+      "/api/broker-connections",
+      "/api/user-risk/prefs",
+      "/api/user-risk/unsubscribe",
+    ]);
   });
 
   it("the connections page is reachable by a viewer", () => {

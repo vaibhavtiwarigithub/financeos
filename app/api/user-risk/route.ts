@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (!run) {
-    return NextResponse.json({ market, run: null, holdings: [] });
+    return NextResponse.json({ market, run: null, holdings: [], history: [], symbolHistory: {} });
   }
 
   const { data: holdings } = await svc
@@ -44,8 +44,55 @@ export async function GET(req: NextRequest) {
     .eq("run_id", run.id)
     .order("symbol", { ascending: true });
 
+  // Score history: the last 60 completed runs for this user+market, oldest
+  // first. It is what makes a daily number mean anything — a 62 that was 40 a
+  // week ago is a different situation from a 62 that has sat there. Read from
+  // the runs already written; no new storage, and no backfill that would invent
+  // history that was never computed.
+  const { data: historyRows } = await svc
+    .from("user_holding_risk_runs")
+    .select("as_of_date, started_at, summary")
+    .eq("user_id", userId)
+    .eq("market", market)
+    .eq("status", "ok")
+    .order("started_at", { ascending: false })
+    .limit(60);
+
+  const history = (historyRows ?? [])
+    .map((r: any) => ({
+      asOfDate: r.as_of_date,
+      at: r.started_at,
+      riskScore: Number(r.summary?.riskScore ?? NaN),
+      totalValue: Number(r.summary?.totalValue ?? NaN),
+    }))
+    .filter((p: { riskScore: number }) => Number.isFinite(p.riskScore))
+    .reverse();
+
+  // Per-symbol score history, for "why this holding and how has it moved".
+  // Keyed by symbol so the page can chart one line per holding without a
+  // second round trip.
+  const { data: symbolRows } = await svc
+    .from("user_holding_risk_snapshots")
+    .select("symbol, as_of_date, metrics")
+    .eq("user_id", userId)
+    .eq("market", market)
+    .order("as_of_date", { ascending: true })
+    .limit(2000);
+
+  const symbolHistory: Record<string, Array<{ asOfDate: string | null; weightPct: number; beta: number }>> = {};
+  for (const r of symbolRows ?? []) {
+    const sym = String((r as any).symbol);
+    (symbolHistory[sym] ||= []).push({
+      asOfDate: (r as any).as_of_date,
+      weightPct: Number((r as any).metrics?.weightPct ?? 0),
+      beta: Number((r as any).metrics?.beta ?? 0),
+    });
+  }
+
   return NextResponse.json({
     market,
+    history,
+    symbolHistory,
     run: {
       status: run.status,
       skipReason: run.skip_reason,

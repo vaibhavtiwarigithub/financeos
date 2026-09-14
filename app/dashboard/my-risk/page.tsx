@@ -20,6 +20,8 @@
 //      report and advice, and it is deliberate.
 
 import React, { useCallback, useEffect, useState } from "react";
+import { RiskDial, ScoreSparkline } from "@/components/dashboard/RiskDial";
+import { explainPortfolioRisk } from "@/lib/risk/risk-gauge";
 
 const T = {
   card: "#12141F", border: "#1E2030", text: "#E2E8F0", textSub: "#9B9EA8",
@@ -38,6 +40,8 @@ type Payload = {
     summary: any;
   };
   holdings: Array<{ symbol: string; as_of_date: string | null; metrics: any }>;
+  history: Array<{ asOfDate: string | null; at: string; riskScore: number; totalValue: number }>;
+  symbolHistory: Record<string, Array<{ asOfDate: string | null; weightPct: number; beta: number }>>;
 };
 
 /** Plain-English reasons. A user should never have to read a database enum. */
@@ -54,6 +58,15 @@ export default function MyRiskPage() {
   const [market, setMarket] = useState<"india" | "us">("india");
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const loadPrefs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/user-risk/prefs", { cache: "no-store" });
+      if (res.ok) setEmailOn(Boolean((await res.json()).enabled));
+    } catch { /* the page is useful without the toggle; do not block on it */ }
+  }, []);
 
   const load = useCallback(async (m: string) => {
     try {
@@ -65,6 +78,17 @@ export default function MyRiskPage() {
   }, []);
 
   useEffect(() => { void load(market); }, [load, market]);
+  useEffect(() => { void loadPrefs(); }, [loadPrefs]);
+
+  async function toggleEmail(next: boolean) {
+    setEmailOn(next);
+    const res = await fetch("/api/user-risk/prefs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+    if (!res.ok) { setEmailOn(!next); setError("Could not save your email preference."); }
+  }
 
   const card: React.CSSProperties = {
     background: T.card, border: `1px solid ${T.border}`,
@@ -120,6 +144,26 @@ export default function MyRiskPage() {
             As of {run.asOfDate ?? "—"} · {s.holdingCount} holdings · {money(s.totalValue)} total
           </div>
 
+          <div style={{ ...card, display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap" }}>
+            <RiskDial score={Number(s.riskScore ?? 0)} />
+            <div style={{ flex: "1 1 260px", minWidth: "240px" }}>
+              <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "2px" }}>Risk over time</div>
+              {(data?.history.length ?? 0) >= 2 ? (
+                <>
+                  <ScoreSparkline points={data!.history} />
+                  <div style={{ fontSize: "11px", color: T.muted }}>
+                    {data!.history.length} readings · earliest {data!.history[0].asOfDate ?? "—"}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: "11px", color: T.muted, lineHeight: 1.6 }}>
+                  Not enough readings yet to show a trend. This builds up one point per trading day —
+                  it is not backfilled, because a history that was never computed would be invented.
+                </div>
+              )}
+            </div>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "14px" }}>
             {[
               { label: "Risk score", value: `${Math.round(s.riskScore)} · ${s.riskLabel}` },
@@ -133,6 +177,34 @@ export default function MyRiskPage() {
               </div>
             ))}
           </div>
+
+          {(() => {
+            const drivers = explainPortfolioRisk({
+              riskScore: Number(s.riskScore ?? 0),
+              portfolioBeta: Number(s.portfolioBeta ?? 0),
+              holdingCount: Number(s.holdingCount ?? 0),
+              sectorBreakdown: s.sectorBreakdown ?? [],
+              holdings: (data?.holdings ?? []).map((h) => ({
+                symbol: h.symbol,
+                weightPct: h.metrics?.weightPct,
+                beta: h.metrics?.beta,
+                sector: h.metrics?.sector,
+                correlation: h.metrics?.correlation,
+              })),
+            });
+            if (!drivers.length) return null;
+            return (
+              <div style={card}>
+                <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>Why it reads this way</div>
+                {drivers.map((d) => (
+                  <div key={d.label} style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600 }}>{d.label}</div>
+                    <div style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.5 }}>{d.detail}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {Array.isArray(s.warnings) && s.warnings.length > 0 && (
             <div style={card}>
@@ -179,9 +251,14 @@ export default function MyRiskPage() {
                   {(data?.holdings ?? []).map((h) => {
                     const m = h.metrics ?? {};
                     const corr = m.correlation;
+                    const hist = data?.symbolHistory?.[h.symbol] ?? [];
+                    const open = expanded === h.symbol;
                     return (
-                      <tr key={h.symbol}>
-                        <td style={{ padding: "7px 8px", fontWeight: 600 }}>{h.symbol}</td>
+                      <React.Fragment key={h.symbol}>
+                      <tr onClick={() => setExpanded(open ? null : h.symbol)} style={{ cursor: "pointer" }}>
+                        <td style={{ padding: "7px 8px", fontWeight: 600 }}>
+                          <span style={{ color: T.muted, marginRight: "6px" }}>{open ? "▾" : "▸"}</span>{h.symbol}
+                        </td>
                         <td style={{ padding: "7px 8px" }}>{pct(m.weightPct)}</td>
                         <td style={{ padding: "7px 8px" }}>{money(m.marketValue)}</td>
                         <td style={{ padding: "7px 8px", color: T.textSub }}>{m.sector ?? "—"}</td>
@@ -194,6 +271,41 @@ export default function MyRiskPage() {
                               : "none above threshold"}
                         </td>
                       </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={6} style={{ padding: "4px 8px 14px", color: T.textSub, lineHeight: 1.6 }}>
+                            {/* Why THIS holding contributes what it does. Derived from
+                                the same stored figures the row shows — never a second
+                                calculation that could drift from the first. */}
+                            <div>
+                              {h.symbol} is <strong>{pct(m.weightPct)}</strong> of the portfolio
+                              {m.sector ? <> in <strong>{m.sector}</strong></> : null}, with a beta of{" "}
+                              <strong>{Number(m.beta ?? 0).toFixed(2)}</strong>
+                              {Number(m.beta ?? 0) >= 1
+                                ? " — it tends to amplify market moves."
+                                : " — it tends to dampen market moves."}
+                            </div>
+                            <div style={{ marginTop: "4px" }}>
+                              Risk contribution{" "}
+                              <strong>{pct(m.riskContribution ?? (m.weightPct ?? 0) * (m.beta ?? 1))}</strong>{" "}
+                              of the portfolio total (weight × beta).
+                            </div>
+                            <div style={{ marginTop: "4px" }}>
+                              {corr == null || corr.computable === false
+                                ? "Correlation is unknown — there was not enough usable price history. That is not the same as uncorrelated, so its true clustering could be higher."
+                                : corr.peers?.length
+                                  ? `Moves closely with ${corr.peers.join(", ")} (avg correlation ${Number(corr.avgCorr ?? 0).toFixed(2)}), so together they are less diversifying than the position count suggests.`
+                                  : "No co-held position clears the correlation threshold, so it is currently diversifying against what else you hold."}
+                            </div>
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: T.muted }}>
+                              {hist.length >= 2
+                                ? `Weight has moved from ${pct(hist[0].weightPct)} (${hist[0].asOfDate ?? "—"}) to ${pct(hist[hist.length - 1].weightPct)} over ${hist.length} readings.`
+                                : "Only one reading so far — history builds one point per trading day."}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -202,6 +314,27 @@ export default function MyRiskPage() {
           )}
         </>
       )}
+
+      {/* Opt-in, and off by default: an invitation to view the app was never
+          consent to be emailed. The unsubscribe link in every email works
+          without a login, so this toggle is a convenience, not the only exit. */}
+      <div style={{ ...card, marginTop: "16px" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={Boolean(emailOn)}
+            onChange={(e) => void toggleEmail(e.target.checked)}
+            disabled={emailOn === null}
+          />
+          <span style={{ fontSize: "12px" }}>
+            <strong>Email me this daily.</strong>{" "}
+            <span style={{ color: T.muted }}>
+              One message per day covering your own holdings only. Off unless you turn it on,
+              and every email has a one-click unsubscribe.
+            </span>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }
