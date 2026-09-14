@@ -5,6 +5,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { EDGES } from "@/lib/edges/registry";
 import { computeEdges } from "@/lib/edges/compute";
 import { liquidUniverse } from "@/lib/edges/universe";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 import type { Market } from "@/lib/edges/types";
 import { edgeHealthKey, inputFingerprint, provenanceMode, universeFingerprint } from "@/lib/edges/evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -45,22 +46,36 @@ async function seedCatalog(svc: any) {
   if (error) throw new Error(`edge_catalog seed failed: ${error.message}`);
 }
 
-async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<{ symbols: string[]; source: string }> {
+async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode: string, offset: number): Promise<{ symbols: string[]; source: string; failed?: boolean }> {
   // Broad curated liquid universe (static, NON-PIT, survivorship-biased — labeled).
   // Paged by offset so it can be processed in bounded, cached slices across runs.
   if (mode === "liquid") {
     const all = liquidUniverse(market);
     return { symbols: all.slice(offset, offset + maxSymbols), source: `liquid_static[${offset}:${offset + maxSymbols}]` };
   }
+  // A FAILED universe query is not an empty universe.
+  //
+  // This function used to swallow every error into `symbols: []`, and the caller
+  // then reported "EdgeScout produced no INDIA evidence — Universe=0", a DATA
+  // finding. On 2026-09-14 the real cause was a Supabase Gateway Timeout, the
+  // same one that killed EdgeIC an hour earlier: `india_screen_cache` held 1,698
+  // rows and had been written at 10:00 UTC, well before the 11:30 run. So the
+  // alert sent the reader looking at an empty screener that was never empty.
+  // `failed` now carries that distinction out, the query is retried, and the
+  // error text reaches the alert instead of being discarded.
   try {
     if (market === "us") {
       const nowIso = new Date().toISOString();
-      const { data } = await svc.from("watchlist").select("symbol")
-        .or(`expires_at.is.null,expires_at.gt.${nowIso}`).limit(maxSymbols * 3);
+      const { data, error } = await withSupabaseRetry<{ data: any[] | null; error: { message: string } | null }>(() =>
+        svc.from("watchlist").select("symbol")
+          .or(`expires_at.is.null,expires_at.gt.${nowIso}`).limit(maxSymbols * 3));
+      if (error) return { symbols: [], source: `error:${error.message}`, failed: true };
       const syms = [...new Set((data ?? []).map((r: any) => String(r.symbol ?? "").toUpperCase().trim()).filter(Boolean))].slice(0, maxSymbols);
       return { symbols: syms as string[], source: "watchlist" };
     }
-    const { data } = await svc.from("india_screen_cache").select("symbol").not("symbol", "is", null).limit(maxSymbols * 4);
+    const { data, error } = await withSupabaseRetry<{ data: any[] | null; error: { message: string } | null }>(() =>
+      svc.from("india_screen_cache").select("symbol").not("symbol", "is", null).limit(maxSymbols * 4));
+    if (error) return { symbols: [], source: `error:${error.message}`, failed: true };
     const seen = new Set<string>();
     const syms: string[] = [];
     for (const r of (data ?? []) as any[]) {
@@ -73,7 +88,7 @@ async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode:
     }
     return { symbols: syms, source: "india_screen_cache" };
   } catch (e: any) {
-    return { symbols: [], source: `error:${e?.message ?? "universe"}` };
+    return { symbols: [], source: `error:${e?.message ?? "universe"}`, failed: true };
   }
 }
 
@@ -128,7 +143,7 @@ export async function POST(req: NextRequest) {
       const offset = universeMode === "liquid" && !hasRequestedOffset
         ? rotatingLiquidOffset(market, maxSymbols, new Date(`${runDate}T00:00:00Z`))
         : requestedOffset;
-      const { symbols, source } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
+      const { symbols, source, failed: universeFailed } = await buildUniverse(svc, market, maxSymbols, universeMode, offset);
       const universeId = `${market}:${universeMode}:${runDate}:${universeFingerprint(market, symbols)}`;
 
       if (symbols.length) {
@@ -195,10 +210,19 @@ export async function POST(req: NextRequest) {
 
       results[market] = { universeId, universeSize: symbols.length, universeSource: source, offset, signalsWritten, inputsWritten, providerReport: report };
       if (report.rows === 0) {
+        // Two very different failures used to look identical here. Say which:
+        // an infrastructure fault is a `cron` issue to retry, an genuinely empty
+        // universe is a `data` issue to investigate upstream. `source` is now in
+        // the detail either way — it was previously computed and then dropped,
+        // which is what made this take a database query to diagnose.
         await reportIssue({
-          issueKey: edgeHealthKey("scout", market), severity: "warn", category: "data",
-          title: `EdgeScout produced no ${market.toUpperCase()} evidence`,
-          detail: `Universe=${symbols.length}; resolved=${report.symbolsResolved}; unavailable=${report.unavailable.length}. Measure-only collection is stale until a clean run.`,
+          issueKey: edgeHealthKey("scout", market),
+          severity: "warn",
+          category: universeFailed ? "cron" : "data",
+          title: universeFailed
+            ? `EdgeScout ${market.toUpperCase()} could not read its universe`
+            : `EdgeScout produced no ${market.toUpperCase()} evidence`,
+          detail: `Universe=${symbols.length}; source=${source}; resolved=${report.symbolsResolved}; unavailable=${report.unavailable.length}. Measure-only collection is stale until a clean run.`,
         }, svc);
       } else {
         await resolveIssue(edgeHealthKey("scout", market), svc);
