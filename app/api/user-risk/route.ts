@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionRole } from "@/lib/auth/session-role";
 import { createServiceClient } from "@/lib/supabase/service";
+import { holdingMovers } from "@/lib/risk/holding-movers";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (!run) {
-    return NextResponse.json({ market, run: null, holdings: [], history: [], symbolHistory: {} });
+    return NextResponse.json({ market, run: null, holdings: [], history: [], symbolHistory: {}, movers: null });
   }
 
   const { data: holdings } = await svc
@@ -89,8 +90,13 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Cache-only movers among this user's own holdings. price_cache is a
+  // persisted table, so this stays inside the no-cost read contract.
+  const movers = await holdingMovers(svc, (holdings ?? []).map((h: any) => String(h.symbol)));
+
   return NextResponse.json({
     market,
+    movers,
     history,
     symbolHistory,
     run: {

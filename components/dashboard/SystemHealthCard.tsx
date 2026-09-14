@@ -29,6 +29,28 @@ const SEV_LABEL: Record<string, string> = {
   critical: "CRITICAL", error: "ERROR", warn: "WARN", warning: "WARN", info: "INFO", success: "OK",
 };
 
+
+/**
+ * How long this has been open, and whether that is the story.
+ *
+ * The card previously rendered no age at all, so an alert raised an hour ago
+ * looked exactly like one that had been open since July. That is how a real
+ * two-month Kite outage sat on this card being read as ambient noise: every
+ * warn row looked equally fresh, so none of them looked urgent. Age is now
+ * shown on every row, and anything open longer than a week is called STUCK —
+ * a persistent fault is a different thing from a new one, and it should not
+ * take reading a timestamp to tell them apart.
+ */
+function ageBadge(createdAt: string): { text: string; stuck: boolean } | null {
+  const ms = Date.now() - (Date.parse(createdAt) || 0);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.floor(ms / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  const text = days >= 1 ? `${days}d` : hours >= 1 ? `${hours}h` : `${Math.max(1, mins)}m`;
+  return { text, stuck: days >= 7 };
+}
+
 // A deep link / hint per category so the card is actionable, not just informational.
 function fixHint(a: Alert): { href?: string; label: string } {
   const cat = a.category;
@@ -147,6 +169,10 @@ export default function SystemHealthCard() {
   );
   const worst = sorted[0]?.severity;
   const nCrit = actionAlerts.filter(a => a.severity === "critical").length;
+  // Counted in the header so a long-running fault is visible without expanding
+  // anything. "3 actions required" reads as routine; "3 actions required · 1
+  // stuck >7d" does not.
+  const nStuck = actionAlerts.filter(a => ageBadge(a.created_at)?.stuck).length;
   const clean = alerts.length === 0;
   const noActionRequired = actionAlerts.length === 0;
   const visibleAlerts = showNotices ? [...sorted, ...notices] : sorted;
@@ -166,7 +192,7 @@ export default function SystemHealthCard() {
         <span style={{ fontSize: "12px", fontWeight: 600, color: clean ? T.green : headColor, marginLeft: "auto" }}>
           {clean ? "All systems normal"
             : noActionRequired ? `No action required · ${notices.length} notice${notices.length !== 1 ? "s" : ""}`
-            : `${actionAlerts.length} action${actionAlerts.length !== 1 ? "s" : ""} required${nCrit ? ` · ${nCrit} critical` : ""}${notices.length ? ` · ${notices.length} notices` : ""}`}
+            : `${actionAlerts.length} action${actionAlerts.length !== 1 ? "s" : ""} required${nCrit ? ` · ${nCrit} critical` : ""}${nStuck ? ` · ${nStuck} stuck >7d` : ""}${notices.length ? ` · ${notices.length} notices` : ""}`}
         </span>
       </div>
 
@@ -189,6 +215,24 @@ export default function SystemHealthCard() {
                     {SEV_LABEL[a.severity] ?? a.severity.toUpperCase()}
                   </span>
                   <span style={{ fontSize: "13px", color: T.text, fontWeight: 500 }}>{a.title}</span>
+                  {(() => {
+                    const age = ageBadge(a.created_at);
+                    if (!age) return null;
+                    return (
+                      <span
+                        title={`Open since ${new Date(a.created_at).toLocaleString()}`}
+                        style={{
+                          fontSize: "9px", fontWeight: 800, letterSpacing: "0.04em", flexShrink: 0,
+                          padding: age.stuck ? "2px 6px" : "0", borderRadius: "4px",
+                          color: age.stuck ? T.red : T.muted,
+                          background: age.stuck ? T.red + "22" : "transparent",
+                          border: age.stuck ? `1px solid ${T.red}55` : "none",
+                        }}
+                      >
+                        {age.stuck ? `STUCK ${age.text}` : age.text}
+                      </span>
+                    );
+                  })()}
                   {a.detail && (
                     <span style={{ fontSize: "9px", color: T.muted, marginLeft: "auto", flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
                   )}
