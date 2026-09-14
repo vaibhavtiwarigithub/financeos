@@ -18,6 +18,12 @@ invitation exists. See Decision 76.
 > gating, invitation) remain DESIGN ONLY and ship nothing until separately
 > approved per CLAUDE.md "Architecture-First Mode".
 
+Related designs: `features/per-user-broker-risk/FEATURE_ARCHITECTURE.md` (draft,
+unapproved) builds on this one — it gives a guest their own broker connection and
+private risk analytics, which is the first time a non-owner owns rows. It
+deliberately does NOT change anything here: viewers stay read-only over the
+owner's data, and the private plane lives in separate tables.
+
 Relationship to `features/multi-tenant/FEATURE_ARCHITECTURE.md`: that document
 designs full per-user tenancy (own book, own broker, own genome, per-user
 learning). It is **deferred, not cancelled**. This document is the smaller,
