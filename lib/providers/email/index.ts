@@ -25,6 +25,21 @@ export function getEmailProvider(): EmailProvider {
   return _singleton;
 }
 
+/**
+ * Whether mail can ACTUALLY be delivered right now.
+ *
+ * Prefer this over `provider.isAvailable()` anywhere the answer changes what
+ * the caller does. `isAvailable()` is env-only and synchronous; Resend resolves
+ * its key from `api_key_vault` first, so the two disagree whenever the key is
+ * stored there — which is what made the invitation route refuse to send while
+ * email was working.
+ */
+export async function emailDeliveryAvailable(): Promise<boolean> {
+  const provider = getEmailProvider() as EmailProvider & { isDeliverable?: () => Promise<boolean> };
+  if (typeof provider.isDeliverable === "function") return provider.isDeliverable();
+  return provider.isAvailable();
+}
+
 export function registerEmailProvider(name: string, factory: () => EmailProvider): void {
   _registry[name.toLowerCase()] = factory;
   _singleton = null;

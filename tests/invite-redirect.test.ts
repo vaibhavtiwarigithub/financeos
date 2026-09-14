@@ -11,6 +11,8 @@ const ACCESS = code(read("app/api/admin/access/route.ts"));
 const LOGIN = code(read("app/login/page.tsx"));
 const RESET = code(read("app/reset-password/page.tsx"));
 const TEMPLATE = read("lib/email/invite-email.ts");
+const RESEND = code(read("lib/providers/email/resend.ts"));
+const EMAIL_INDEX = code(read("lib/providers/email/index.ts"));
 
 // Observed 2026-09-14 on a real test invitation: the "Accept invitation" link
 // opened http://localhost:3000 and died with ERR_CONNECTION_FAILED. The cause
@@ -94,7 +96,7 @@ describe("a failed send never grants silent access", () => {
     const inviteFn = ACCESS.slice(ACCESS.indexOf("async function invite("));
     const beforeGrant = inviteFn.slice(0, inviteFn.indexOf('.from("app_user_roles")'));
     expect(beforeGrant.length, "slice found nothing — the assertion would be vacuous").toBeGreaterThan(200);
-    expect(beforeGrant.includes("provider.isAvailable()")).toBe(true);
+    expect(beforeGrant.includes("emailDeliveryAvailable()")).toBe(true);
     expect(beforeGrant.includes("No access was granted.")).toBe(true);
   });
 
@@ -108,5 +110,53 @@ describe("a failed send never grants silent access", () => {
     const response = ACCESS.slice(ACCESS.indexOf('return NextResponse.json({\n    ok: true,'));
     expect(response.includes("actionLink")).toBe(false);
     expect(response.includes("action_link")).toBe(false);
+  });
+});
+
+describe("availability is asked the way the send resolves it", () => {
+  // Production 2026-09-14: the route reported "email is not configured, so the
+  // invitation could not be sent" while RESEND_API_KEY had been sitting in
+  // api_key_vault since 2026-07-02. isAvailable() reads only process.env; the
+  // provider's own resolveKey() prefers the vault. A guard that asks the wrong
+  // question fails closed on a healthy system.
+  it("the invite route does not gate on the env-only check", () => {
+    const inviteFn = ACCESS.slice(ACCESS.indexOf("async function invite("));
+    expect(inviteFn.includes("emailDeliveryAvailable()")).toBe(true);
+    expect(/provider\.isAvailable\(\)/.test(inviteFn), "still gating on the env-only check").toBe(false);
+  });
+
+  it("the async check resolves the key the same way the send does", () => {
+    expect(RESEND.includes("async isDeliverable()")).toBe(true);
+    expect(RESEND.includes("return Boolean(await this.resolveKey())")).toBe(true);
+    expect(EMAIL_INDEX.includes("export async function emailDeliveryAvailable")).toBe(true);
+  });
+
+  it("falls back to the sync check for a provider without the async one", () => {
+    expect(EMAIL_INDEX.includes("return provider.isAvailable()")).toBe(true);
+  });
+});
+
+describe("a silent send failure cannot grant access", () => {
+  it("uses the checked send, because send() swallows everything", () => {
+    // `send` returns void and catches its own errors, so the previous
+    // try/catch around it could never have fired.
+    const inviteFn = ACCESS.slice(ACCESS.indexOf("async function invite("));
+    expect(inviteFn.includes("provider.sendChecked")).toBe(true);
+    expect(inviteFn.includes("if (!sent.ok)")).toBe(true);
+  });
+
+  it("sendChecked reports a missing key rather than returning quietly", () => {
+    expect(RESEND.includes("async sendChecked(")).toBe(true);
+    expect(RESEND.includes('return { ok: false, error: "no Resend API key in env or api_key_vault" }')).toBe(true);
+  });
+
+  it("does not echo the provider's response body, which can carry request detail", () => {
+    expect(RESEND.includes("Resend returned HTTP ${res.status}")).toBe(true);
+  });
+
+  it("still refuses before writing the grant", () => {
+    const inviteFn = ACCESS.slice(ACCESS.indexOf("async function invite("));
+    const beforeGrant = inviteFn.slice(0, inviteFn.indexOf('.from("app_user_roles")'));
+    expect(beforeGrant.includes("No access was granted.")).toBe(true);
   });
 });

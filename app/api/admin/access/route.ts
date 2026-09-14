@@ -9,7 +9,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { describeRoleAccess, VIEWER_PAGES } from "@/lib/auth/roles";
-import { getEmailProvider } from "@/lib/providers/email";
+import { getEmailProvider, emailDeliveryAvailable } from "@/lib/providers/email";
 import { buildInviteEmailHtml, inviteEmailSubject } from "@/lib/email/invite-email";
 
 export const dynamic = "force-dynamic";
@@ -149,26 +149,40 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
 
   // The link is a credential: it sets a password. It is never logged and never
   // returned to the browser — it goes only into the email to its recipient.
-  const provider = getEmailProvider();
-  if (!provider.isAvailable()) {
-    // Fail loudly rather than granting access to someone who was never told.
-    // The grant below has not happened yet, so nothing is half-done.
+  // Availability must be asked the way the SEND resolves it.
+  //
+  // `provider.isAvailable()` reads only `process.env.RESEND_API_KEY`, but the
+  // Resend provider resolves from `api_key_vault` FIRST — and the key has lived
+  // there since 2026-07-02. So this route reported "email is not configured" and
+  // refused to invite anyone, while mail was working the whole time. A guard
+  // that asks the wrong question fails closed on a healthy system, which is its
+  // own kind of outage.
+  if (!(await emailDeliveryAvailable())) {
     return NextResponse.json(
       { error: "email is not configured, so the invitation could not be sent. No access was granted." },
       { status: 503 },
     );
   }
 
-  try {
-    await provider.send({
-      from: process.env.EMAIL_FROM || "Kairos <noreply@kairos.app>",
-      to: email,
-      subject: inviteEmailSubject({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
-      html: buildInviteEmailHtml({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
-    });
-  } catch (e: any) {
+  // `send` never throws and silently returns when it cannot deliver, which is
+  // right for best-effort mail and useless here: the old try/catch could not
+  // have caught anything. `sendChecked` reports the outcome, so a failed send
+  // actually stops the grant.
+  const provider = getEmailProvider();
+  const message = {
+    from: process.env.EMAIL_FROM || "Kairos <noreply@kairos.app>",
+    to: email,
+    subject: inviteEmailSubject({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
+    html: buildInviteEmailHtml({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
+  };
+  const sent = provider.sendChecked
+    ? await provider.sendChecked(message)
+    : await provider.send(message).then(() => ({ ok: true as const, error: undefined }))
+        .catch((e: any) => ({ ok: false as const, error: String(e?.message ?? e) }));
+
+  if (!sent.ok) {
     return NextResponse.json(
-      { error: `invitation email could not be sent: ${String(e?.message ?? e).slice(0, 200)}. No access was granted.` },
+      { error: `invitation email could not be sent: ${String(sent.error ?? "unknown").slice(0, 200)}. No access was granted.` },
       { status: 502 },
     );
   }
