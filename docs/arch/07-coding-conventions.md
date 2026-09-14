@@ -2,6 +2,12 @@
 > Last updated: 2026-09-14
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
 
+> 2026-09-14 (Per-User Broker & Risk Phase 1): **a viewer-reachable API route belongs to exactly one of two classes**, declared in `lib/auth/roles.ts` and enforced by `tests/viewer-route-sweep.test.ts` and `tests/broker-connection-routes.test.ts`.
+> `VIEWER_API_ROUTES` — *shared reads*: GET-only, no provider call, no write. This is what keeps guest traffic from multiplying the provider budget, so the class stays GET-only rather than being softened for one exception.
+> `VIEWER_OWN_DATA_ROUTES` — *own data*: may write and may call a provider, but only for rows keyed to the caller's `auth.uid()`, taken from the session and **never** from the request body. Currently only `/api/broker-connections` (GET, POST).
+> Note the asymmetry: the outbound-call sweep runs over `VIEWER_API_ROUTES` ONLY, because an own-data route is allowed the provider call the sweep forbids. Nothing therefore stops a genuinely shared read being smuggled in as own-data, so the containment is a separate assertion that every own-data prefix sits under `/api/broker-connections` — widening that list is a deliberate act that fails a test, not a quiet edit.
+> Connecting a broker needed both a write and a provider call, so it became a second class rather than an exemption inside the first; a route that is neither is not viewer-reachable at all. Prefix matching in both helpers is exact-or-subpath, so `/dashboard/research` does not admit `/dashboard/research-journal`.
+
 Codified in `PRD.md` §2. All agents must follow; apply consistently to every file.
 
 ---

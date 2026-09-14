@@ -2,14 +2,18 @@
 
 ## Status
 
-Architecture status: Draft
-Architecture approved: No
-Approved scope: None
-Approved date: None
-Implementation allowed: No
+Architecture status: Approved
+Architecture approved: Yes (owner, 2026-09-14)
+Approved scope: Phases 0-3
+Approved date: 2026-09-14
+Implementation allowed: Yes, phase by phase
 
-> DESIGN ONLY. No code, no migration file, no migration applied, no deployment.
-> Awaiting the owner's explicit approval gate (CLAUDE.md "Architecture-First Mode").
+**Open Decision 1 (the daily Kite login) is RESOLVED: option (a).** The owner
+accepts that each India guest must log in to Zerodha every trading day, on the
+condition that staleness is shown **loudly** — on the page and in the email —
+rather than a stale number being presented as current. That obligation is
+binding on Phases 2 and 3: a risk figure computed from a token that expired is
+never rendered as if it were today's.
 
 Relationship to the other two documents:
 
@@ -174,7 +178,14 @@ One job per market iterates *connected, non-revoked* users, and for each:
    — unchanged code, different input.
 3. Write `user_holding_risk_*` rows scoped to that user.
 
-Candles come from the shared cache, so symbol overlap between users is free. A
+Candles come from the shared cache, so a symbol a guest holds that the owner's
+universe ALREADY covers is free. **Correction to an earlier claim in this
+document that market data does not scale per user at all**: a guest symbol
+OUTSIDE that universe has no cached day-row, so the first risk run for it costs a
+real provider fetch, and the day-cache only makes it free from the second reader
+onward. The honest statement is that cost scales with the number of DISTINCT new
+symbols guests introduce, not with the number of guests — which is much flatter
+than per-user, but not zero. Phase 2 must measure that set before fanning out. A
 user whose credential is missing, expired or revoked is **skipped with a recorded
 reason**, never silently, and never falls back to the owner's data.
 
@@ -209,12 +220,29 @@ outside the shared cache.**
 | Phase | Content | Gate to next |
 |---|---|---|
 | 0 | Schema + RLS + encryption, no UI, no job. Tables exist and are empty. | Isolation matrix passes with two seeded test users |
-| 1 | Connect/disconnect flow for the signed-in user; read-only client factory; connection status only | A guest can connect and disconnect; no order tool is reachable |
+| 1 | Connect/disconnect flow for the signed-in user; read-only client factory; connection status only | **DONE 2026-09-14.** A guest can connect and disconnect; no order tool is reachable |
 | 2 | Per-user snapshot + risk job; private risk page | A guest sees only their own; owner's pages byte-identical |
 | 3 | Opt-in daily email + unsubscribe | Send audit shows exactly one mail per opted-in user |
 
 Phases 2 and 3 each add scheduled work; neither may ship before the cost rule in
-§6 is verified against real usage.
+§6 is verified against real usage — including the corrected form of it: the count
+of distinct symbols guests hold that are NOT already in the owner's cached
+universe.
+
+**Phase 1 as shipped.** `/dashboard/connections` (viewer-reachable) plus
+`/api/broker-connections` (GET state, POST disconnect) and
+`/api/broker-connections/kite/login`. Zerodha registers one redirect URL per app,
+so guests reuse `/api/kite/callback`; which account a token belongs to is decided
+from the HMAC-signed state cookie (`guest:<userId>`), never from the session,
+because a session can be absent on a redirect and falling back to the owner path
+would let a guest's token overwrite the owner's vault entry. The guest branch
+never touches `api_key_vault`, `storeAccessToken`, `broker_accounts` or
+`strategy_config`. Staleness is rendered as a full-width amber banner reading
+"Your figures are out of date." with a Reconnect action — the owner's stated
+condition for accepting the daily login. Robinhood is declared unsupported and
+shown as "Coming soon" rather than offering a button that fails. No job runs and
+no risk figure is computed yet; connecting today stores a credential and nothing
+else consumes it.
 
 ## Acceptance Tests
 
