@@ -2,16 +2,21 @@
 
 ## Status
 
-Architecture status: Draft
-Architecture approved: No
-Approved scope: None
-Approved date: None
-Implementation allowed: No
+Architecture status: Approved
+Architecture approved: Yes (owner, 2026-09-14)
+Approved scope: Phase 0 only (RLS lockdown). Phases 1-3 NOT approved.
+Approved date: 2026-09-14
+Implementation allowed: Phase 0 only
 
-> DESIGN ONLY. No code, no migration file, no migration applied, no deployment.
-> This document is a proposal awaiting the owner's explicit approval gate
-> (CLAUDE.md "Architecture-First Mode"). Nothing here ships until the owner says
-> "Approved / Proceed / Implement this".
+**Phase 0 status: APPLIED AND VERIFIED IN PRODUCTION, 2026-09-14** —
+`supabase/migrations/20260914140000_viewer_phase0_close_blanket_rls.sql`.
+34 blanket-authenticated policies replaced by owner-pinned reads; post-state
+0 open, 91 owner-pinned, RLS on 213/213 tables. No viewer role, allowlist, or
+invitation exists. See Decision 76.
+
+> Phase 0 is approved and applied. Phases 1-3 (role model, allowlist, route
+> gating, invitation) remain DESIGN ONLY and ship nothing until separately
+> approved per CLAUDE.md "Architecture-First Mode".
 
 Relationship to `features/multi-tenant/FEATURE_ARCHITECTURE.md`: that document
 designs full per-user tenancy (own book, own broker, own genome, per-user
@@ -228,7 +233,7 @@ an existing overrun.
 
 | Phase | Content | Gate to next |
 |---|---|---|
-| 0 | RLS lockdown (§3) only. No role, no allowlist, no invitation. | Owner's own usage unaffected for one full session cycle; no route regressions |
+| 0 | **DONE 2026-09-14.** RLS lockdown (§3) only. No role, no allowlist, no invitation. | Owner's own usage unaffected for one full session cycle; no route regressions |
 | 1 | Role + allowlist + middleware/page gating + viewer-safe API guards | Isolation matrix passes (below) |
 | 2 | Viewer-reachable-route sweep (§4) | Zero viewer-reachable provider/LLM paths |
 | 3 | Invite the first real viewer | — |
