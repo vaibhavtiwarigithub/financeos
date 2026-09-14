@@ -312,8 +312,13 @@ async function buildScorecards(svc: any) {
   // fire on weekends and holidays.
   const latestBookSession = new Map<string, string | null>();
   for (const market of MARKETS) {
+    // Use the most recent portfolio observation, not merely the latest EOD
+    // observation. PaperTrader may write an intraday NAV after PositionMonitor
+    // has written EOD. The chart includes that row, so using EOD here caused
+    // the primary benchmark collector to think it was already current and
+    // silently leave the displayed comparison one session behind.
     const { data } = await svc.from("paper_performance")
-      .select("date").eq("market", market).eq("snapshot_type", "eod")
+      .select("date").eq("market", market)
       .order("date", { ascending: false }).limit(1).maybeSingle();
     latestBookSession.set(market, data?.date ? String(data.date).slice(0, 10) : null);
   }

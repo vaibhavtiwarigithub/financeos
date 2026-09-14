@@ -89,6 +89,14 @@ describe("W5: benchmark levels come from session-dated bars, not quotes", () => 
     expect(scorecard).not.toContain("if (benchmark.is_primary) return;");
   });
 
+  it("uses the newest displayed book session, including an intraday NAV, when testing benchmark freshness", () => {
+    // The portfolio chart includes intraday rows. Filtering this query to EOD
+    // lets a later intraday portfolio row outrun the benchmark while the
+    // collector incorrectly considers the primary comparator current.
+    expect(scorecard).toMatch(/from\("paper_performance"\)\s*\.select\("date"\)\s*\.eq\("market", market\)\s*\.order\("date", \{ ascending: false \}\)/);
+    expect(scorecard).not.toMatch(/\.eq\("market", market\)\.eq\("snapshot_type", "eod"\)/);
+  });
+
   it("displayed coverage cannot exceed 100%", () => {
     expect(scorecard).toMatch(/Math\.min\(100, r\.coverage_pct\)/);
   });
