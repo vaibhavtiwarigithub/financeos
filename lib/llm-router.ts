@@ -14,7 +14,9 @@ export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" |
 // callLLM/runAgentLoop resolve a tier alias to its concrete model, so a caller
 // (or an agent_config row) may store either a concrete id OR a tier name.
 export const TIER_MODELS: Record<string, string> = {
-  "fast":         "deepseek-v4-flash",
+  // Verified against this account's live GET /models response on 2026-09-14.
+  // It exposes `deepseek-flash` (not `deepseek-v4-flash`) plus V4 Pro.
+  "fast":         "deepseek-flash",
   "reasoning":    "deepseek-v4-pro",
   "claude-fast":  "claude-haiku-4-5-20251001",
   "claude-smart": "claude-sonnet-4-6",
@@ -23,7 +25,10 @@ export const TIER_MODELS: Record<string, string> = {
 // Legacy aliases remain accepted by DeepSeek only until 2026-07-24 15:59 UTC.
 // Resolve them before every call so hardcoded fallbacks cannot cross that cliff.
 const LEGACY_ALIASES: Record<string, string> = {
-  "deepseek-chat":     "deepseek-v4-flash",
+  // Keep persisted/hard-coded historical names executable while settings rows
+  // migrate to the currently advertised concrete fast model.
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-chat":     "deepseek-flash",
   "deepseek-reasoner": "deepseek-v4-pro",
 }
 
@@ -36,25 +41,26 @@ function resolveModel(model: string): string {
 // "latest" — and is loudly, persistently flagged via the System Health funnel so
 // a human reviews the swap. Keeps the flow from hard-breaking on a rename.
 const SAME_TIER_FALLBACK: Record<string, string> = {
-  "deepseek-v4-flash":         "deepseek-v4-pro",
-  "deepseek-v4-pro":           "deepseek-v4-flash",
-  "deepseek-chat":             "deepseek-v4-pro",
-  "deepseek-reasoner":         "deepseek-v4-flash",
+  "deepseek-flash":            "deepseek-v4-pro",
+  "deepseek-v4-flash":         "deepseek-flash",
+  "deepseek-v4-pro":           "deepseek-flash",
+  "deepseek-chat":             "deepseek-flash",
+  "deepseek-reasoner":         "deepseek-flash",
   "claude-sonnet-4-6":         "claude-haiku-4-5-20251001",
   "claude-haiku-4-5-20251001": "claude-sonnet-4-6",
   "claude-opus-4-8":           "claude-sonnet-4-6",
   // Gemini / Grok fall back to the DeepSeek reasoner (always-configured tier)
   // rather than hard-failing if their key is missing or the model is renamed.
-  "gemini-2.5-flash":          "deepseek-v4-flash",
+  "gemini-2.5-flash":          "deepseek-flash",
   "gemini-2.5-pro":            "deepseek-v4-pro",
   "grok-4":                    "deepseek-v4-pro",
-  "grok-4-fast":               "deepseek-v4-flash",
+  "grok-4-fast":               "deepseek-flash",
   "gpt-4o":                    "deepseek-v4-pro",
   "gpt-4.1":                   "deepseek-v4-pro",
-  "gpt-4o-mini":               "deepseek-v4-flash",
-  "gpt-4.1-mini":              "deepseek-v4-flash",
+  "gpt-4o-mini":               "deepseek-flash",
+  "gpt-4.1-mini":              "deepseek-flash",
   "glm-4.6":                   "deepseek-v4-pro",
-  "glm-4.5-air":               "deepseek-v4-flash",
+  "glm-4.5-air":               "deepseek-flash",
 }
 
 // Does this error mean "the model doesn't exist / is deprecated" (vs a transient
@@ -257,23 +263,8 @@ export function deepSeekPeakMultiplier(at: Date = new Date()): 1 | 2 {
   return (h >= 1 && h < 4) || (h >= 6 && h < 10) ? 2 : 1
 }
 
-/** V4 Pro is retired on this date; DeepSeek reroutes its traffic and rebills it. */
-const V4_PRO_RETIREMENT = Date.UTC(2026, 8, 14) // 2026-09-14
-
 function applyDeepSeekPeak(model: string, rate: [number, number]): [number, number] {
-  if (!model.startsWith("deepseek-v4")) return rate
-  // After retirement DeepSeek routes deepseek-v4-pro to the V4.1 Flash pool and
-  // bills at V4.1 Flash prices, so the Pro rate below becomes an OVERstatement.
-  // V4.1 Flash has no API model id yet, so the rate is not guessed here — the
-  // owner is told to re-verify instead of the ledger silently drifting again.
-  if (model === "deepseek-v4-pro" && Date.now() >= V4_PRO_RETIREMENT) {
-    reportIssue({
-      issueKey: "deepseek-v4-pro-retired",
-      severity: "warn", category: "models",
-      title: "deepseek-v4-pro is retired — its logged cost is now an overstatement",
-      detail: "DeepSeek retired V4 Pro on 2026-09-14 and routes its requests to the V4.1 Flash pool, billed at V4.1 Flash prices. Calls still succeed, but PRICING still holds the old Pro rate, so llm_call_log now OVERstates cost. Verify the V4.1 Flash rate and model id at api-docs.deepseek.com, then update PRICING and TIER_MODELS['reasoning'] in lib/llm-router.ts. Note isReasoningModel() derives from TIER_MODELS, so the 16000-token floor follows whatever is set there.",
-    }).catch(() => {})
-  }
+  if (!model.startsWith("deepseek")) return rate
   const m = deepSeekPeakMultiplier()
   return m === 1 ? rate : [rate[0] * m, rate[1] * m]
 }

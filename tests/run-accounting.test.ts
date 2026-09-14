@@ -72,6 +72,18 @@ describe("run accounting — within-run reconciliation", () => {
     expect(v.findings).toEqual([]);
   });
 
+  it("reconciles a score-exit safety hold as an intentional no-action", () => {
+    // PositionMonitor still evaluates/marks this position; it deliberately
+    // refuses the score exit until the score is fresh or confirmed twice.
+    const v = evaluateRunAccounting(acct({
+      job: "position-monitor:india", market: "india",
+      eligible: 15, succeeded: 14, expectedSkip: 1,
+      skipReasons: { score_exit_safety_hold: 1 },
+    }));
+    expect(v.reconciles).toBe(true);
+    expect(v.healthy).toBe(true);
+  });
+
   it("does not call a mixed expected-skip and unavailable run fully blocked", () => {
     const v = evaluateRunAccounting(acct({
       job: "paper_trader",
