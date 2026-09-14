@@ -20,6 +20,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { getEmailProvider } from "@/lib/providers/email";
 import { buildRiskEmailHtml, riskEmailSubject } from "@/lib/email/guest-risk-email";
+import { holdingMovers } from "@/lib/risk/holding-movers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -129,6 +130,10 @@ export async function POST(req: NextRequest) {
       correlation: r.metrics?.correlation ?? null,
     }));
 
+    // Cache-only: reads price_cache for symbols this user already holds, and
+    // never triggers a fetch for one that is missing.
+    const movers = await holdingMovers(svc, holdingsForEmail.map((h: { symbol: string }) => h.symbol));
+
     const emailInput = {
       asOfDate: run.as_of_date ?? null,
       market: run.market as "us" | "india",
@@ -140,6 +145,11 @@ export async function POST(req: NextRequest) {
       holdingCount: Number(s.holdingCount ?? 0),
       sectorBreakdown: s.sectorBreakdown ?? [],
       holdings: holdingsForEmail,
+      movers: {
+        gainers: movers.gainers.map((g) => ({ symbol: g.symbol, changePct: g.changePct })),
+        losers: movers.losers.map((g) => ({ symbol: g.symbol, changePct: g.changePct })),
+        uncovered: movers.uncovered,
+      },
       previousScore: prior?.summary ? Number((prior.summary as any).riskScore ?? NaN) : null,
       staleNote: null,
       appBaseUrl: base,

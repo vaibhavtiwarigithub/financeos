@@ -36,6 +36,12 @@ export type RiskEmailInput = {
   previousScore?: number | null;
   /** Stated, never hidden: figures computed from a stale broker session. */
   staleNote?: string | null;
+  /** Cache-only movers among the recipient's own holdings. Partial by design. */
+  movers?: {
+    gainers: Array<{ symbol: string; changePct: number }>;
+    losers: Array<{ symbol: string; changePct: number }>;
+    uncovered: string[];
+  } | null;
   appBaseUrl: string;
   unsubscribeToken: string;
 };
@@ -90,6 +96,41 @@ function movementLine(score: number, previous: number | null | undefined): strin
   return `<span style="color:${up ? "#B45309" : "#15803D"};font-weight:600;">`
     + `${up ? "▲" : "▼"} ${Math.abs(delta).toFixed(0)} points ${up ? "riskier" : "less risky"} than last time`
     + `</span> <span style="color:#6B7280;">(was ${Math.round(clampScore(previous))})</span>`;
+}
+
+
+/**
+ * Yesterday's movers among the recipient's own holdings, from cache only.
+ *
+ * When some holdings have no cached pair the block SAYS the list is partial.
+ * A leaderboard that silently dropped the worst loser because it happened to be
+ * uncached would be worse than no leaderboard at all.
+ */
+function moversHtml(input: RiskEmailInput): string {
+  const m = input.movers;
+  if (!m || (!m.gainers.length && !m.losers.length)) return "";
+  const pct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(2)}%`;
+  const col = (title: string, rows: Array<{ symbol: string; changePct: number }>, color: string) => `
+    <td width="50%" valign="top" style="padding-right:8px;">
+      <div style="font:600 11px Arial,sans-serif;color:#6B7280;margin-bottom:4px;">${esc(title)}</div>
+      ${rows.length
+        ? rows.map((r) => `<div style="font:400 13px Arial,sans-serif;color:#111;padding:3px 0;">
+             ${esc(r.symbol)} <span style="color:${color};font-weight:600;float:right;">${pct(r.changePct)}</span>
+           </div>`).join("")
+        : `<div style="font:400 12px Arial,sans-serif;color:#9CA3AF;">None</div>`}
+    </td>`;
+
+  return `
+    <tr><td style="padding:18px 24px 0;">
+      <div style="font:700 13px Arial,sans-serif;color:#111;margin-bottom:6px;">Your holdings' last session</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+        ${col("Top gainers", m.gainers, "#15803D")}
+        ${col("Top losers", m.losers, "#B91C1C")}
+      </tr></table>
+      ${m.uncovered.length ? `<div style="font:400 11px/1.5 Arial,sans-serif;color:#9CA3AF;margin-top:6px;">
+        Partial list — no cached prices for ${esc(m.uncovered.join(", "))}, so they are not ranked here.
+      </div>` : ""}
+    </td></tr>`;
 }
 
 export function buildRiskEmailHtml(input: RiskEmailInput): string {
@@ -171,6 +212,8 @@ export function buildRiskEmailHtml(input: RiskEmailInput): string {
       <div style="font:700 13px Arial,sans-serif;color:#111;margin-bottom:4px;">Why it reads this way</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${driverRows}</table>
     </td></tr>` : ""}
+
+    ${moversHtml(input)}
 
     <tr><td style="padding:18px 24px 4px;">
       <a href="${esc(appUrl)}" style="display:inline-block;background:#4F46E5;color:#FFFFFF;text-decoration:none;font:600 13px Arial,sans-serif;padding:10px 18px;border-radius:6px;">See the full breakdown</a>

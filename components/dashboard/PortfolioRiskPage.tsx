@@ -1,5 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { RiskDial } from "@/components/dashboard/RiskDial";
+import { explainPortfolioRisk } from "@/lib/risk/risk-gauge";
 import PageHeader from "./PageHeader";
 import RhReconnectBanner from "@/components/dashboard/RhReconnectBanner";
 import { useMarket } from "@/lib/market-context";
@@ -1101,6 +1103,35 @@ export default function PortfolioRiskPage() {
             <div style={{ fontSize: "9px", color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700, marginBottom: "12px" }}>
               Combined Across All Accounts
             </div>
+            {/* The same dial the per-user risk page and the daily email use — one
+                helper decides the band and needle, so the three surfaces cannot
+                disagree about what a score means. It reads THIS page's own
+                `risk` object (the owner's live accounts); no guest data is
+                involved, and no number here is recomputed. */}
+            <div style={{ display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap", marginBottom: "16px" }}>
+              <RiskDial score={risk.riskScore} size={200} />
+              <div style={{ flex: "1 1 280px", minWidth: "260px" }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: T.text, marginBottom: "6px" }}>Why it reads this way</div>
+                {explainPortfolioRisk({
+                  riskScore: risk.riskScore,
+                  portfolioBeta: risk.betaComingSoon ? undefined : risk.portfolioBeta,
+                  holdingCount: risk.holdingCount,
+                  sectorBreakdown: (risk.sectorBreakdown ?? []).map((sb: any) => ({
+                    sector: sb.sector, pct: sb.pct ?? sb.weightPct,
+                  })),
+                  holdings: (risk.holdings ?? []).map((h: any) => ({
+                    symbol: h.symbol, weightPct: h.weightPct, beta: h.beta, sector: h.sector,
+                    correlation: h.correlation ?? null,
+                  })),
+                }).slice(0, 4).map((d) => (
+                  <div key={d.label} style={{ marginBottom: "7px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: T.text }}>{d.label}</div>
+                    <div style={{ fontSize: "11px", color: T.sub, lineHeight: 1.5 }}>{d.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "20px" }}>
               <StatCard label="Invested Value" value={fmtMoney(risk.totalValue, mktOf(cur), 0)} sub={`${risk.holdingCount} positions · cash excluded`} />
               <StatCard
