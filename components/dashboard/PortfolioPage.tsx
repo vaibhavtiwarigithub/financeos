@@ -698,7 +698,20 @@ function TradeExitPlanCell({ trade, plan, market }: { trade: any; plan: PaperExi
 }
 
 /** Rich position card — replaces plain table row */
-function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india" }) {
+/**
+ * Company name under a ticker. `symbol_profiles` coverage is partial, so a
+ * missing name renders nothing at all — never a blank line or a guessed name.
+ */
+function SymbolName({ name, style }: { name?: string | null; style?: React.CSSProperties }) {
+  if (!name || !name.trim()) return null;
+  return (
+    <div style={{ fontSize: "11px", fontWeight: 400, color: T.muted, marginTop: "2px", ...style }}>
+      {name.trim()}
+    </div>
+  );
+}
+
+function PositionCard({ p, plan, onChart, cur = "$", market = "us", name }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
@@ -744,6 +757,7 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
           </span>
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
+        <SymbolName name={name} style={{ marginTop: 0 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
           <span>{fmtMoney(p.avg_cost, market === "india" ? "india" : "us")}</span>
           <span style={{ color: T.muted }}>→</span>
@@ -785,10 +799,10 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
 
 export interface TradeRecord { wins: number; losses: number; breakeven: number; closed: number }
 
-export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
+export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, symbolNames, exitPlans, internationalAllocationPolicy }: {
   dataMarket: "us" | "india";
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
+  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; symbolNames?: Record<string, string>; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
@@ -927,7 +941,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
@@ -964,6 +978,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
                           <span title="Manually seeded demo data — not a real agent sizing/scoring decision" style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#3B0000", color: T.red, letterSpacing: "0.04em", cursor: "help" }}>SEEDED</span>
                         )}
                       </div>
+                      <SymbolName name={symbolNames?.[t.symbol]} />
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: t.order_side === "buy" ? T.greenBg : T.redBg, color: t.order_side === "buy" ? T.green : T.red }}>

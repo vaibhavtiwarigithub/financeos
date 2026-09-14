@@ -19,6 +19,7 @@ import {
   selectDisplayBenchmark,
   type DisplayBenchmark,
 } from "@/lib/analytics/benchmark-display";
+import { expectedLatestSessionDate, marketClosedReason } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -96,7 +97,16 @@ export async function GET(req: NextRequest) {
     portfolio,
     levels,
   );
-  const freshness = benchmarkFreshness(portfolio, levels);
+  // Absolute freshness needs the exchange calendar: a series ending Friday is
+  // correct all weekend and through a Monday holiday. Without this the chart
+  // cannot tell "market closed" from "collector died".
+  const expectedSession = expectedLatestSessionDate(market);
+  const freshness = benchmarkFreshness(portfolio, levels, {
+    expectedSessionDate: expectedSession.date,
+    calendarSupported: expectedSession.calendarSupported,
+    closedReason: marketClosedReason(expectedSession.todayKind),
+    todayLocalYmd: expectedSession.todayLocalYmd,
+  });
 
   return NextResponse.json({
     market,

@@ -26,11 +26,30 @@ interface BenchmarkOption {
   provider_symbol: string | null;
   is_primary: boolean;
 }
+interface PipelineFreshness {
+  state: "current" | "behind" | "unknown";
+  expectedSessionDate: string | null;
+  portfolioBehind: boolean;
+  benchmarkBehind: boolean;
+  closedReason: string | null;
+  todayLocalYmd: string | null;
+}
 interface BenchmarkFreshness {
   status: "ok" | "stale" | "unavailable";
   latestPortfolioDate: string | null;
   latestBenchmarkDate: string | null;
   missingPortfolioSessions: number;
+  pipeline?: PipelineFreshness;
+}
+
+/** "2026-09-11" → "Fri 11 Sep 2026". Parsed as UTC so no timezone shifts the day. */
+function formatSessionDate(ymd: string | null): string | null {
+  if (!ymd) return null;
+  const parsed = new Date(`${ymd}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("en-GB", {
+    timeZone: "UTC", weekday: "short", day: "numeric", month: "short", year: "numeric",
+  });
 }
 
 const DAY = 86_400_000;
@@ -173,12 +192,36 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     </div>
   );
 
+  const pipeline = freshness?.pipeline;
+  const pipelineBehind = pipeline?.state === "behind";
+  // The chart's own last plotted session — the date the owner is actually looking at.
+  const asOf = formatSessionDate(freshness?.latestPortfolioDate ?? null);
+  const behindLabel = pipeline?.portfolioBehind && pipeline?.benchmarkBehind
+    ? "portfolio and benchmark are"
+    : pipeline?.portfolioBehind
+      ? "portfolio is"
+      : "benchmark is";
+  // Today adds no point when the exchange is shut; say so instead of leaving a silent flat end.
+  const closedNote = pipeline?.closedReason ? ` · ${pipeline.closedReason} today, no new close` : "";
+
   const header = (
     <div style={{ marginBottom: "14px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
         <div>
           <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Portfolio vs {benchLabel}</div>
           <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Cumulative % return, rebased to each window · selection is your saved default</div>
+          {/*
+            Always state the as-of session. Silence on a correct chart is what
+            makes a closed market indistinguishable from a dead collector.
+          */}
+          {asOf && (
+            <div style={{ fontSize: "11px", color: pipelineBehind ? T.yellow : T.muted, marginTop: "5px" }}>
+              As of {asOf}
+              {pipelineBehind
+                ? ` · ${behindLabel} behind the last close${freshness?.pipeline?.expectedSessionDate ? ` (${formatSessionDate(freshness.pipeline.expectedSessionDate)})` : ""}`
+                : closedNote}
+            </div>
+          )}
           {freshness?.status === "stale" && (
             <div style={{ fontSize: "11px", color: T.yellow, marginTop: "5px" }}>
               {benchLabel} is stale: through {freshness.latestBenchmarkDate}; portfolio is through {freshness.latestPortfolioDate} ({freshness.missingPortfolioSessions} market session{freshness.missingPortfolioSessions === 1 ? "" : "s"} missing). Comparison is intentionally truncated.

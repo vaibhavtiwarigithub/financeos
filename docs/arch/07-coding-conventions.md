@@ -1,5 +1,5 @@
 # Kairos — Coding Conventions
-> Last updated: 2026-07-17
+> Last updated: 2026-09-14
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
 
 Codified in `PRD.md` §2. All agents must follow; apply consistently to every file.
@@ -169,3 +169,52 @@ lib/
 6. **Never commit secrets.** No API keys, no tokens, no service role keys in code.
 7. **Never modify `AGENTS.md` or `PRD.md` without Architect role + Vaibhav approval.**
 8. **Never call agent endpoints from other agent endpoints.** Table-mediated coordination only.
+
+
+---
+
+## Display freshness: never leave "correct" silent (2026-09-14)
+
+A time series that ends on the last market close is **correct**, not stale. A
+chart that shows this without saying so is indistinguishable from a dead
+collector, and gets repeatedly reported as a bug.
+
+**Convention:** any view of a daily market series states its as-of session
+unconditionally — in the healthy case too, not only on a warning.
+
+Two layers, and they answer different questions:
+
+| Layer | Question | Source |
+|---|---|---|
+| **Relative** (`BenchmarkFreshness.status`) | Does the comparator keep up with the book's own sessions? | the two ledgers |
+| **Absolute** (`BenchmarkFreshness.pipeline`) | Are the ledgers level with the exchange calendar? | `expectedLatestSessionDate` |
+
+The relative layer alone is structurally blind to the failure owners actually
+notice: when **both** ledgers stall together, `missingPortfolioSessions` is 0
+and it reports `"ok"`. Only the calendar can separate "market closed" from
+"pipeline stopped".
+
+- `expectedLatestSessionDate(market, now)` (`lib/trading/market-calendar.ts`)
+  returns the latest session whose close should already be recorded. Today
+  counts **only after that market's regular close** (16:00 ET / 15:30 IST).
+  It walks back over weekends and holidays, abstains on special sessions, and
+  returns `calendarSupported: false` for a year outside the static calendars.
+- `pipelineFreshness` (`lib/analytics/benchmark-display.ts`) is pure — the
+  caller supplies the calendar facts, so the analytics module does no clock or
+  timezone work and stays trivially testable.
+- **Fail open, never loud:** without a supported calendar the state is
+  `"unknown"`. Never assert staleness the calendar cannot prove — a false
+  stale banner is worse than no banner.
+
+Distinct from `lastCompletedMarketSession`, which always starts from yesterday
+and therefore cannot say whether today's close is due. That function is
+unchanged; it serves closed-day research labelling.
+
+## Symbol display: ticker plus company name (2026-09-14)
+
+`paper_positions` and `paper_trades` carry **no** name column; `symbol_profiles.company_name`
+(keyed `symbol` + `market`) is the only source. Coverage is partial — as of
+2026-09-14, US 36/38 and India 34/59 of displayed symbols — so every consumer
+renders the bare ticker when no name exists, never a blank line or a guess.
+Names are resolved server-side for the symbols actually on screen and passed
+down as a `symbol → name` map, rather than fetched per row.
