@@ -6,6 +6,8 @@ import {
   isMarketHoliday,
   isMarketWeekend,
   lastCompletedMarketSession,
+  expectedLatestSessionDate,
+  marketClosedReason,
 } from "@/lib/trading/market-calendar";
 
 // Fixed UTC instants → market-local via IANA tz. July = EDT (UTC-4), IST = UTC+5:30.
@@ -106,5 +108,60 @@ describe("market-calendar: closed-day research sessions", () => {
   it("evaluates weekends in each market's local timezone", () => {
     expect(isMarketWeekend("us", new Date("2026-07-18T03:30:00Z"))).toBe(false); // Fri 23:30 ET
     expect(isMarketWeekend("india", new Date("2026-07-18T03:30:00Z"))).toBe(true); // Sat 09:00 IST
+  });
+});
+
+
+// Reproduces the 2026-09-14 report: the chart ended 09-11 and looked "stuck",
+// but Fri 09-11 was the last close — 09-12/13 weekend, 09-14 an NSE holiday.
+describe("market-calendar: expectedLatestSessionDate", () => {
+  it("India: a Monday holiday still expects Friday's close, not Monday's", () => {
+    const at = expectedLatestSessionDate("india", new Date("2026-09-14T12:48:00Z"));
+    expect(at).toMatchObject({ date: "2026-09-11", todayKind: "holiday", calendarSupported: true });
+    expect(marketClosedReason(at.todayKind)).toBe("market holiday");
+  });
+
+  it("US: before the close, today is not yet expected", () => {
+    // Mon 2026-09-14 08:48 ET — market has not even opened.
+    expect(expectedLatestSessionDate("us", new Date("2026-09-14T12:48:00Z")).date).toBe("2026-09-11");
+  });
+
+  it("US: after the close, today IS expected", () => {
+    // Mon 2026-09-14 16:30 ET.
+    expect(expectedLatestSessionDate("us", new Date("2026-09-14T20:30:00Z")).date).toBe("2026-09-14");
+  });
+
+  it("US: exactly at 16:00 ET counts as closed", () => {
+    expect(expectedLatestSessionDate("us", new Date("2026-09-14T20:00:00Z")).date).toBe("2026-09-14");
+  });
+
+  it("India: mid-session does not expect today's close yet", () => {
+    // Thu 2026-09-10 13:00 IST, inside the NSE session.
+    const at = expectedLatestSessionDate("india", new Date("2026-09-10T07:30:00Z"));
+    expect(at).toMatchObject({ date: "2026-09-09", todayKind: "trading_day" });
+    expect(marketClosedReason(at.todayKind)).toBeNull();
+  });
+
+  it("skips back over a weekend from a Monday pre-open", () => {
+    const at = expectedLatestSessionDate("us", new Date("2026-09-13T18:00:00Z")); // Sun
+    expect(at).toMatchObject({ date: "2026-09-11", todayKind: "weekend" });
+    expect(marketClosedReason(at.todayKind)).toBe("weekend");
+  });
+
+  it("US: skips Labor Day when walking back", () => {
+    // Tue 2026-09-08 09:00 ET — Mon 09-07 is a US holiday, so Fri 09-04 is expected.
+    expect(expectedLatestSessionDate("us", new Date("2026-09-08T13:00:00Z")).date).toBe("2026-09-04");
+  });
+
+  it("refuses to assert a session for a year it holds no calendar for", () => {
+    const at = expectedLatestSessionDate("us", new Date("2031-06-10T20:30:00Z"));
+    expect(at).toMatchObject({ date: null, calendarSupported: false, todayKind: "unsupported_year" });
+  });
+
+  it("abstains on a special session rather than expecting a close", () => {
+    // Sun 2026-11-08 Diwali Muhurat trading — neither a full closure nor a regular session.
+    const at = expectedLatestSessionDate("india", new Date("2026-11-08T08:00:00Z"));
+    expect(at.todayKind).toBe("special_session");
+    expect(at.date).toBe("2026-11-06"); // the preceding Friday
   });
 });

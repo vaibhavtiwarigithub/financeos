@@ -2,11 +2,27 @@
 
 ## Status
 
-Architecture status: Draft
+Architecture status: Draft — DEFERRED (2026-09-14)
 Architecture approved: No
 Approved scope: None
 Approved date: None
 Implementation allowed: No
+
+> **DEFERRED, not cancelled (2026-09-14).** The owner chose a much smaller
+> nearer-term path: read-only viewer access, designed in
+> `features/shared-viewer-access/FEATURE_ARCHITECTURE.md`. That document is the
+> only one proposed for implementation. This one remains the design of record for
+> full per-user tenancy (own book, own broker, own genome, per-user learning) if
+> and when that is wanted; the viewer feature does not preclude it.
+>
+> Two premises here were re-verified against production on 2026-09-14 and are
+> **stale in detail**, though the framing holds. Correct current figures: 213
+> public tables all have RLS enabled but only 21 carry any owner column; 72
+> tables are pinned to the owner's email, ~10 are `auth.uid()`-scoped, and **34
+> are reachable by any authenticated user** — 7 of those writable. Also note that
+> dashboard pages read through `createServiceClient()` (266 files), which
+> bypasses RLS entirely, so RLS is defence-in-depth here and never the delivery
+> path. Re-derive these numbers before reviving this design.
 
 > DESIGN ONLY. No code, no migration file, no migration applied, no deployment.
 > This document is a proposal awaiting the owner's explicit approval gate

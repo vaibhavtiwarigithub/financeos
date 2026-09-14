@@ -1,35 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolveSymbolPair } from "@/lib/markets/price-cache-sessions";
 
 export const dynamic = "force-dynamic";
 
-async function fetchQuote(symbol: string, apiKey: string | undefined) {
-  // 1. Try Massive API prev-day bar
-  if (apiKey) {
-    try {
-      const res = await fetch(
-        `https://api.massive.com/v2/aggs/ticker/${symbol}/prev?adjusted=true&apiKey=${apiKey}`,
-        { headers: { Accept: "application/json" }, next: { revalidate: 300 } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const r = data.results?.[0];
-        if (r) {
-          return {
-            symbol, price: r.c,
-            open: r.o, high: r.h, low: r.l, volume: r.v,
-            change: r.c - r.o,
-            changePct: ((r.c - r.o) / r.o) * 100,
-            source: "massive",
-          };
-        }
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  // 2. Fallback: last price from price_cache
+// CACHE-ONLY. This route used to call the provider's previous-day aggregate per
+// symbol behind a 5-minute fetch cache, falling back to `price_cache` only on
+// failure. That was backwards: the value served IS a daily close, so the
+// provider was being polled up to ~288 times a day for a number that moves once.
+//
+// `kairos-price-cache-fill` already writes every symbol this route is asked for
+// (its universe covers the regime, sector and leveraged lists) in ONE grouped
+// provider call per session. So the cache is now the only source, and the daily
+// fill is the only thing that talks to a provider. WatchlistPanel's own comment
+// already claimed "hits price_cache, no AI" — this makes that true.
+//
+// A symbol absent from the cache returns null rather than triggering a fetch:
+// the fill has a freshness contract and `kairos-stale-check` alerts on it, so a
+// gap is a monitored failure, not something to paper over per request.
+async function fetchQuote(symbol: string) {
   const svc = createServiceClient();
   const { data } = await svc
     .from("price_cache")
@@ -38,22 +27,26 @@ async function fetchQuote(symbol: string, apiKey: string | undefined) {
     .order("date", { ascending: false })
     .limit(2);
 
-  if (data && data.length > 0) {
-    const cur = data[0];
-    const prev = data[1];
-    const price = Number(cur.close);
-    const prevClose = prev ? Number(prev.close) : Number(cur.open);
-    return {
-      symbol, price,
-      open: Number(cur.open), high: Number(cur.high), low: Number(cur.low),
-      volume: Number(cur.volume),
-      change: price - prevClose,
-      changePct: ((price - prevClose) / prevClose) * 100,
-      source: "cache",
-    };
-  }
+  const rows = (data ?? []) as Array<Record<string, any>>;
+  const pair = resolveSymbolPair(rows.map((r) => ({ symbol, date: String(r.date), close: r.close })));
+  if (!pair) return null;
 
-  return null;
+  const cur = rows.find((r) => String(r.date).slice(0, 10) === pair.date) ?? rows[0];
+  // No prior session cached yet: fall back to the session's own open so the
+  // change is at least a real intraday move rather than a fabricated zero.
+  const prevClose = pair.priorClose ?? Number(cur.open);
+  if (!Number.isFinite(prevClose) || prevClose <= 0) return null;
+
+  return {
+    symbol,
+    price: pair.close,
+    open: Number(cur.open), high: Number(cur.high), low: Number(cur.low),
+    volume: Number(cur.volume),
+    change: pair.close - prevClose,
+    changePct: ((pair.close - prevClose) / prevClose) * 100,
+    source: "cache",
+    sessionDate: pair.date,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -68,11 +61,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "symbols required (comma-separated, max 20)" }, { status: 400 });
   }
 
-  const apiKey = process.env.MASSIVE_API_KEY;
-
-  const results = await Promise.allSettled(
-    symbols.map(symbol => fetchQuote(symbol, apiKey))
-  );
+  const results = await Promise.allSettled(symbols.map((symbol) => fetchQuote(symbol)));
 
   const quotes: Record<string, { price: number; change: number; changePct: number } | null> = {};
   for (let i = 0; i < symbols.length; i++) {

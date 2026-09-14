@@ -3,7 +3,7 @@
 // all_runs: every signal_score_history row — full audit log of every research decision
 import { NextRequest, NextResponse } from "next/server";
 import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth";
-import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { latestExecutionEvent, liveDecisionEvents, paperTradeEvents } from "@/lib/research/trade-timeline";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -52,8 +52,13 @@ async function queryScoreHistory(sb: ReturnType<typeof createServiceClient>): Pr
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  // Viewer-safe for SCORES and PAPER trades only. This route also reads
+  // `broker_orders` — the owner's REAL money orders (side, qty, fill price,
+  // status) — which must never reach a viewer, so that query is skipped by role
+  // below rather than filtered after the fact.
+  const { gate, role } = await requireViewerOrOwner(req);
   if (gate) return gate;
+  const isOwner = role === "owner";
 
   const mode = req.nextUrl.searchParams.get("mode") ?? "latest";
   // requireOwner authenticated the caller above. Use the service client for
@@ -108,10 +113,12 @@ export async function GET(req: NextRequest) {
       .or("tainted.is.null,tainted.is.false")
       .order("executed_at", { ascending: false })
       .limit(1000),
-    sb.from("broker_orders")
-      .select("id,symbol,market,side,qty,status,created_at,submitted_at,closed_at,avg_fill_price,filled_qty,error")
-      .order("created_at", { ascending: false })
-      .limit(1000),
+    isOwner
+      ? sb.from("broker_orders")
+          .select("id,symbol,market,side,qty,status,created_at,submitted_at,closed_at,avg_fill_price,filled_qty,error")
+          .order("created_at", { ascending: false })
+          .limit(1000)
+      : Promise.resolve({ data: [], error: null } as any),
   ]);
   if (tradesRes.error || liveOrdersRes.error) {
     return NextResponse.json({ error: tradesRes.error?.message ?? liveOrdersRes.error?.message }, { status: 500 });

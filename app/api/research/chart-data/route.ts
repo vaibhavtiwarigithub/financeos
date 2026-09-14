@@ -3,7 +3,7 @@
 // Score indicators → signal_score_history. Fundamental indicators → fundamental_facts.
 // Price → price_cache. Trade markers → paper_trades (buy entries + sell exits).
 import { NextRequest, NextResponse } from "next/server";
-import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ const PRICE_INDICATOR = "price";
 const FUNDAMENTAL_KEYS = new Set(["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS"]);
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  const { gate } = await requireViewerOrOwner(req);
   if (gate) return gate;
 
   const sp = req.nextUrl.searchParams;

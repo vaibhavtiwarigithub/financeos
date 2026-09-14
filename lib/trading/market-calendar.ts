@@ -209,3 +209,87 @@ export async function isMarketOpenLive(market: string, now: Date = new Date()): 
   if (status === "closed") return { open: false, reason: "AV MARKET_STATUS=closed (possible unscheduled closure)" };
   return { open: true, reason: "session open; live status unavailable (broker-rejection + quote-freshness backstop)" };
 }
+
+// ── Absolute session expectation (display freshness) ─────────────────────────
+// `lastCompletedMarketSession` always starts from YESTERDAY, so it cannot say
+// whether TODAY's close is already due. Display freshness needs that: a chart
+// ending on Friday is correct all weekend and through a Monday holiday, and
+// only becomes stale once a session has closed without being recorded.
+//
+// A ledger that has stopped is otherwise invisible, because the existing
+// benchmark-vs-portfolio check is purely RELATIVE — when both sides stall
+// together it still reports "ok".
+
+const SESSION_CLOSE_MINUTES: Record<"us" | "india", number> = {
+  us: 16 * 60,          // 16:00 America/New_York
+  india: 15 * 60 + 30,  // 15:30 Asia/Kolkata
+};
+
+/** Walk-back bound: no real calendar has this many consecutive closed days. */
+const MAX_CLOSED_DAY_WALKBACK = 15;
+
+export type ExpectedSession = {
+  /** Latest session whose close should already be recorded, or null if unknown. */
+  date: string | null;
+  /** False when a year outside the static calendars was reached — never assert staleness then. */
+  calendarSupported: boolean;
+  todayLocalYmd: string;
+  todayKind: MarketDayKind;
+};
+
+function marketLocalMinutes(market: string, now: Date): number {
+  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "0";
+  return (Number.parseInt(get("hour"), 10) % 24) * 60 + Number.parseInt(get("minute"), 10);
+}
+
+/**
+ * The most recent session whose close a daily collector should already have
+ * written. Today counts only once today's regular session has actually closed.
+ *
+ * A special session (e.g. Muhurat trading) is deliberately NOT treated as an
+ * expected session — it is neither a full closure nor a regular session, the
+ * same abstention `getClosedDayCatchupEligibility` already makes.
+ */
+export function expectedLatestSessionDate(market: string, now: Date = new Date()): ExpectedSession {
+  const key = marketKey(market);
+  const today = getMarketDayStatus(key, now);
+  const base: Pick<ExpectedSession, "todayLocalYmd" | "todayKind"> = {
+    todayLocalYmd: today.localYmd,
+    todayKind: today.kind,
+  };
+  if (!today.calendarSupported) return { ...base, date: null, calendarSupported: false };
+
+  if (today.kind === "trading_day" && marketLocalMinutes(key, now) >= SESSION_CLOSE_MINUTES[key]) {
+    return { ...base, date: today.localYmd, calendarSupported: true };
+  }
+
+  const cursor = new Date(`${today.localYmd}T12:00:00Z`);
+  for (let step = 0; step < MAX_CLOSED_DAY_WALKBACK; step += 1) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    const ymd = cursor.toISOString().slice(0, 10);
+    // A year we hold no calendar for cannot prove a day is (or is not) a session.
+    if (!MARKET_HOLIDAYS[key][ymd.slice(0, 4)]) {
+      return { ...base, date: null, calendarSupported: false };
+    }
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6 && !isMarketHoliday(key, ymd)) {
+      return { ...base, date: ymd, calendarSupported: true };
+    }
+  }
+  return { ...base, date: null, calendarSupported: false };
+}
+
+/** Plain-language reason today produces no new close, or null on a trading day. */
+export function marketClosedReason(kind: MarketDayKind): string | null {
+  switch (kind) {
+    case "weekend": return "weekend";
+    case "holiday": return "market holiday";
+    case "special_session": return "special session";
+    case "unsupported_year": return "calendar unavailable";
+    default: return null;
+  }
+}

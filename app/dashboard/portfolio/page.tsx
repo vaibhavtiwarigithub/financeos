@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import PortfolioPage from "@/components/dashboard/PortfolioPage";
 import { loadPaperExitPlans } from "@/lib/trading/load-paper-exit-plans";
 import { loadInternationalAllocationPolicy } from "@/lib/allocation/international-policy";
+import { getSessionRole } from "@/lib/auth/session-role";
 
 export const revalidate = 30;
 
@@ -60,6 +61,27 @@ export default async function Page() {
     supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "breakeven"),
   ]);
 
+  // Company names for the symbols actually on screen. `paper_positions` and
+  // `paper_trades` carry no name column, so `symbol_profiles` is the only
+  // source; coverage is partial (India especially), and every consumer must
+  // fall back to the bare symbol rather than render a blank or a guess.
+  const displayedSymbols = Array.from(new Set([
+    ...(positions ?? []).map((row: any) => String(row.symbol)),
+    ...(trades ?? []).map((row: any) => String(row.symbol)),
+  ]));
+  const { data: profileRows } = displayedSymbols.length
+    ? await supabase.from("symbol_profiles").select("symbol, company_name").eq("market", market).in("symbol", displayedSymbols)
+    : { data: [] as Array<{ symbol: string; company_name: string | null }> };
+  const symbolNames = Object.fromEntries(
+    (profileRows ?? [])
+      .filter((row: any) => row.company_name && String(row.company_name).trim())
+      .map((row: any) => [String(row.symbol), String(row.company_name).trim()]),
+  );
+
+  // Viewers see the owner's book read-only: every write control is hidden here
+  // AND refused server-side by the routes behind it.
+  const { role } = await getSessionRole();
+
   const [exitPlans, internationalAllocationPolicy] = await Promise.all([
     loadPaperExitPlans(supabase, positions ?? []),
     loadInternationalAllocationPolicy(supabase),
@@ -82,6 +104,8 @@ export default async function Page() {
       }}
       strategy={strategyArr?.[0] ?? null}
       tradeQueue={tradeQueueArr ?? []}
+      symbolNames={symbolNames}
+      viewerMode={role === "viewer"}
       exitPlans={exitPlans}
       internationalAllocationPolicy={internationalAllocationPolicy}
     />

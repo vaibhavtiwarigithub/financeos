@@ -1672,3 +1672,45 @@ execution-faithful review and explicit owner approval.
 through an explicit legacy source mapping; unknown sources fail closed. A table
 trigger independently guarantees that full, partial, and residual closed paper
 lots retain their verified high-water value.
+
+
+## Decision 76: Read-Only Viewer Access, Not Multi-Tenancy; RLS Must Stand Alone (2026-09-14)
+
+**Status:** Approved (architecture + Phase 0 implementation). Phases 1-3 remain unapproved.
+
+**Decision.** Friends & family get a **read-only viewer** window onto the owner's
+paper portfolio and research view. They sign in with their own email and own no
+data: no book, no broker connection, no agent, no writes. Full per-user tenancy
+(own book, own broker, own genome, per-user learning) is **deferred, not
+cancelled** — `features/multi-tenant/FEATURE_ARCHITECTURE.md` stays as its design
+of record. The live design is `features/shared-viewer-access/FEATURE_ARCHITECTURE.md`.
+
+**Why this shape.** It is roughly a quarter of the engineering of full tenancy and
+it removes the hardest parts (per-user genomes and learning loops). Critically it
+holds provider cost flat: **no per-user crons**, so the 96 active jobs stay
+singular and the tenth viewer costs what the first did. The cost risk is not
+viewer count but a single viewer-reachable route that triggers a provider call —
+which is why the viewer-reachable-route sweep is a launch gate, not a nicety.
+
+**The finding that forced Phase 0.** Dashboard pages render through
+`createServiceClient()` (266 files) and `service_role` has `rolbypassrls=true`, so
+RLS is never the delivery path. But the anon key ships to the browser, so RLS is
+the *only* thing between a session and the raw database. 34 tables were readable
+by any authenticated user and 7 writable, including the paper book and
+`signal_weights`. The single-email gate was carrying all of the isolation. Adding
+any second identity would have spent that margin invisibly.
+
+**Consequences.**
+- Viewers are granted **no direct table access, ever**. All viewer data arrives
+  server-rendered through role-checked pages. If a viewer can reach a table
+  directly, that is a design error, not a feature.
+- Writes stay service-role-only on the seven formerly-writable tables.
+- A standing rule is recorded in `docs/arch/08-risk-and-safety.md`: before any new
+  identity is admitted, re-verify that no table grants blanket `authenticated`
+  access.
+
+**Open, and deliberately not settled here:** whether sharing research (as opposed
+to paper performance alone) with people who may trade their own money on it
+creates a regulatory exposure — India/SEBI research-analyst rules are the sharper
+question. This is flagged as a gate to clear outside the repository; it is not
+adjudicated by this decision and it gates Phase 3, not Phase 0.

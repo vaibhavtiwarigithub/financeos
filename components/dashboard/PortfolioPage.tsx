@@ -698,7 +698,20 @@ function TradeExitPlanCell({ trade, plan, market }: { trade: any; plan: PaperExi
 }
 
 /** Rich position card — replaces plain table row */
-function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india" }) {
+/**
+ * Company name under a ticker. `symbol_profiles` coverage is partial, so a
+ * missing name renders nothing at all — never a blank line or a guessed name.
+ */
+function SymbolName({ name, style }: { name?: string | null; style?: React.CSSProperties }) {
+  if (!name || !name.trim()) return null;
+  return (
+    <div style={{ fontSize: "11px", fontWeight: 400, color: T.muted, marginTop: "2px", ...style }}>
+      {name.trim()}
+    </div>
+  );
+}
+
+function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewerMode = false }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null; viewerMode?: boolean }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
@@ -744,6 +757,7 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
           </span>
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
+        <SymbolName name={name} style={{ marginTop: 0 }} />
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
           <span>{fmtMoney(p.avg_cost, market === "india" ? "india" : "us")}</span>
           <span style={{ color: T.muted }}>→</span>
@@ -770,13 +784,15 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
           </span>
         </div>
         <div style={{ fontSize: "12px", color: T.muted }}>{fmtMoney(posValue, market === "india" ? "india" : "us", 0)} value</div>
-        <button
-          onClick={handleClose}
-          disabled={closing}
-          style={{ marginTop: "4px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.textSub, padding: "4px 10px", fontSize: "11px", cursor: "pointer" }}
-        >
-          {closing ? "Closing..." : "Close Position"}
-        </button>
+        {!viewerMode && (
+          <button
+            onClick={handleClose}
+            disabled={closing}
+            style={{ marginTop: "4px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "6px", color: T.textSub, padding: "4px 10px", fontSize: "11px", cursor: "pointer" }}
+          >
+            {closing ? "Closing..." : "Close Position"}
+          </button>
+        )}
         {closeMsg && <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{closeMsg}</div>}
       </div>
     </div>
@@ -785,10 +801,10 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us" }: { p: any; 
 
 export interface TradeRecord { wins: number; losses: number; breakeven: number; closed: number }
 
-export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, exitPlans, internationalAllocationPolicy }: {
+export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, symbolNames, viewerMode = false, exitPlans, internationalAllocationPolicy }: {
   dataMarket: "us" | "india";
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
+  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; symbolNames?: Record<string, string>; viewerMode?: boolean; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
@@ -863,6 +879,17 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
             blended: each renders in its own currency. */}
       </div>
 
+      {viewerMode && (
+        <div style={{
+          background: "#1A1530", border: `1px solid ${T.accent}`, borderRadius: "10px",
+          padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.textSub, lineHeight: 1.5,
+        }}>
+          <strong style={{ color: T.accent }}>This is the owner&apos;s paper portfolio.</strong>{" "}
+          A simulated book belonging to the account owner — not your account, not your returns, and
+          not investment advice. Your access is read-only.
+        </div>
+      )}
+
       {/* Rich header: gauge cluster + key numbers + sparkline */}
       <PortfolioHeader
         nav={nav}
@@ -912,9 +939,9 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
         <button onClick={() => setTab("opportunity" as any)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === ("opportunity" as any) ? T.accent : T.card, color: tab === ("opportunity" as any) ? "#fff" : T.muted }}>
           Opportunity Cost
         </button>
-        <button onClick={() => setTab("tradequeue")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "tradequeue" ? T.accent : T.card, color: tab === "tradequeue" ? "#fff" : T.muted }}>
+        {!viewerMode && <button onClick={() => setTab("tradequeue")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "tradequeue" ? T.accent : T.card, color: tab === "tradequeue" ? "#fff" : T.muted }}>
           Trade Queue {tradeQueue.length > 0 ? `(${tradeQueue.length})` : ""}
-        </button>
+        </button>}
       </div>
 
       {/* Positions tab — rich cards */}
@@ -927,7 +954,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} viewerMode={viewerMode} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
@@ -964,6 +991,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
                           <span title="Manually seeded demo data — not a real agent sizing/scoring decision" style={{ fontSize: "10px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: "#3B0000", color: T.red, letterSpacing: "0.04em", cursor: "help" }}>SEEDED</span>
                         )}
                       </div>
+                      <SymbolName name={symbolNames?.[t.symbol]} />
                     </td>
                     <td style={{ padding: "10px 12px 10px 0" }}>
                       <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "4px", background: t.order_side === "buy" ? T.greenBg : T.redBg, color: t.order_side === "buy" ? T.green : T.red }}>
@@ -1060,7 +1088,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
 
       {/* Trade Queue tab — Robinhood-US only. Under the India view there is no
           equivalent order queue, so show a small note rather than US rows. */}
-      {tab === "tradequeue" && (
+      {tab === "tradequeue" && !viewerMode && (
         activeMarket === "india" ? (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "32px", textAlign: "center", color: T.muted, fontSize: "13px" }}>
             Trade Queue is US only — Robinhood order routing isn&apos;t available for the India (₹) pool.

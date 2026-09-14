@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   mergePortfolioBenchmarkSeries,
@@ -19,6 +20,7 @@ import {
   selectDisplayBenchmark,
   type DisplayBenchmark,
 } from "@/lib/analytics/benchmark-display";
+import { expectedLatestSessionDate, marketClosedReason } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +35,9 @@ function isMarket(value: unknown): value is Market {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  // Viewer-safe: read-only over already-persisted tables. PATCH below stays
+  // owner-only because it writes the owner's saved benchmark preference.
+  const { gate } = await requireViewerOrOwner(req);
   if (gate) return gate;
 
   const marketParam = req.nextUrl.searchParams.get("market");
@@ -96,7 +100,16 @@ export async function GET(req: NextRequest) {
     portfolio,
     levels,
   );
-  const freshness = benchmarkFreshness(portfolio, levels);
+  // Absolute freshness needs the exchange calendar: a series ending Friday is
+  // correct all weekend and through a Monday holiday. Without this the chart
+  // cannot tell "market closed" from "collector died".
+  const expectedSession = expectedLatestSessionDate(market);
+  const freshness = benchmarkFreshness(portfolio, levels, {
+    expectedSessionDate: expectedSession.date,
+    calendarSupported: expectedSession.calendarSupported,
+    closedReason: marketClosedReason(expectedSession.todayKind),
+    todayLocalYmd: expectedSession.todayLocalYmd,
+  });
 
   return NextResponse.json({
     market,
