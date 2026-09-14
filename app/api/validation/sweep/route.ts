@@ -5,6 +5,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { loadValidationAutomationPolicy, runAutomatedValidation } from "@/lib/validation/automation";
 import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -32,9 +33,15 @@ export async function POST(req: NextRequest) {
         results[market].push({ skipped: "automation_disabled" });
         continue;
       }
-      const { data, error } = await svc.from("strategy_versions")
-        .select("id").eq("market", market).eq("state", STRATEGY_STATE.CHALLENGER)
-        .is("validation_experiment_id", null).order("created_at", { ascending: true }).limit(5);
+      // Retried: a read, so repeating it is free, and a transient failure here
+      // is recorded as a per-market "failure(s)" alert that then sits until the
+      // NEXT scheduled run — which for this job is a week away (45 21 * * 5,
+      // Fridays only). That is what happened on 2026-09-11 ("us: Gateway
+      // Timeout"): one hiccup, then seven days of a stale-looking alert.
+      const { data, error } = await withSupabaseRetry<{ data: Array<{ id: number }> | null; error: { message: string } | null }>(() =>
+        svc.from("strategy_versions")
+          .select("id").eq("market", market).eq("state", STRATEGY_STATE.CHALLENGER)
+          .is("validation_experiment_id", null).order("created_at", { ascending: true }).limit(5));
       if (error) {
         results[market].push({ error: error.message });
         continue;
