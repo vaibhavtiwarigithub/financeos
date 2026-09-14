@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { expectedLatestSessionDate } from "@/lib/trading/market-calendar";
 import {
   buildQuote,
   etCalendarDate,
@@ -217,9 +219,65 @@ function degradedOverview(degraded: string): MarketOverview {
 let cache: { data: MarketOverview; ts: number } | null = null;
 const MEM_CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Durable per-session cache.
+ *
+ * The in-memory cache below is per serverless instance and 5 minutes wide, so a
+ * page that renders daily values could still resolve the provider many times a
+ * day across warm instances. These values are immutable once a session
+ * publishes, so once stored they are served for the rest of that session with
+ * no provider contact at all.
+ *
+ * Keyed by RESOLVED session date and compared against the market calendar, so a
+ * stored payload cannot outlive the session it describes: when a newer session
+ * should already have closed, the route re-resolves instead of serving the old
+ * one.
+ */
+async function readSnapshot(): Promise<MarketOverview | null> {
+  const expected = expectedLatestSessionDate("us");
+  try {
+    const svc = createServiceClient();
+    const { data } = await svc
+      .from("market_overview_snapshots")
+      .select("session_date, payload")
+      .eq("market", "us")
+      .order("session_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data?.payload) return null;
+    // Without a supported calendar we cannot prove the snapshot is current, so
+    // fall through and re-resolve rather than serve something unprovable.
+    if (!expected.calendarSupported || !expected.date) return null;
+    return String(data.session_date).slice(0, 10) >= expected.date
+      ? (data.payload as MarketOverview)
+      : null;
+  } catch {
+    return null; // cache problems must never take the page down
+  }
+}
+
+async function writeSnapshot(overview: MarketOverview): Promise<void> {
+  if (!overview.sessionDate || overview.degraded) return; // never store a degraded payload
+  try {
+    const svc = createServiceClient();
+    await svc.from("market_overview_snapshots").upsert(
+      { market: "us", session_date: overview.sessionDate, payload: overview, fetched_at: new Date().toISOString() },
+      { onConflict: "market,session_date" },
+    );
+  } catch {
+    // A failed write only costs the next request a re-resolve.
+  }
+}
+
 export async function GET() {
   if (cache && Date.now() - cache.ts < MEM_CACHE_TTL_MS) {
     return NextResponse.json(cache.data);
+  }
+
+  const snapshot = await readSnapshot();
+  if (snapshot) {
+    cache = { data: snapshot, ts: Date.now() };
+    return NextResponse.json(snapshot);
   }
 
   const apiKey = process.env.MASSIVE_API_KEY;
@@ -264,5 +322,6 @@ export async function GET() {
   };
 
   cache = { data: overview, ts: Date.now() };
+  await writeSnapshot(overview);
   return NextResponse.json(overview);
 }
