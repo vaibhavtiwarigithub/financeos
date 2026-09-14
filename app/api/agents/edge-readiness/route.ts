@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { evaluateEdgeReadiness, type EdgeReadinessInput, type EdgeReadinessStage } from "@/lib/edges/readiness";
 import type { Market } from "@/lib/edges/types";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -200,9 +201,17 @@ export async function POST(req: NextRequest) {
       };
     });
     if (projectionRows.length) {
-      const { error } = await svc.from("edge_readiness_status").upsert(projectionRows, {
-        onConflict: "edge_id,market,horizon",
-      });
+      // Retried: this write is the last step of a daily run that has already done
+      // all its computation, and losing it to a transient gateway hiccup throws
+      // that work away and files a "monitor failed" alert that sits until the
+      // next day. That is exactly what happened on 2026-09-14 03:20
+      // ("edge readiness status write failed: Gateway Timeout"). The upsert is
+      // keyed on (edge_id, market, horizon), so repeating it is idempotent.
+      const { error } = await withSupabaseRetry(() =>
+        svc.from("edge_readiness_status").upsert(projectionRows, {
+          onConflict: "edge_id,market,horizon",
+        }),
+      );
       if (error) throw new Error(`edge readiness status write failed: ${error.message}`);
     }
 

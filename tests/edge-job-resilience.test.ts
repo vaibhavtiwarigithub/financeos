@@ -10,6 +10,8 @@ const code = (src: string) =>
 
 const IC = code(read("app/api/agents/edge-ic/route.ts"));
 const SCOUT = code(read("app/api/agents/edge-scout/route.ts"));
+const READINESS = code(read("app/api/agents/edge-readiness/route.ts"));
+const SWEEP = code(read("app/api/validation/sweep/route.ts"));
 
 // Both edge jobs died on 2026-09-14 to the same cause, confirmed from production:
 //   EdgeIC:    "edge market status failed (us/signed_adx_14): Gateway Timeout"
@@ -113,5 +115,37 @@ describe("EdgeScout tells a broken query apart from an empty universe", () => {
 
   it("retries the universe read before concluding anything", () => {
     expect(SCOUT.includes("withSupabaseRetry")).toBe(true);
+  });
+});
+
+describe("every job that died to a Gateway Timeout now retries it", () => {
+  // All four open failures on 2026-09-14 had the same cause, which is why the
+  // predicate and backoff live in one shared module rather than four copies:
+  //   EdgeIC          "edge market status failed (us/signed_adx_14): Gateway Timeout"
+  //   EdgeScout       "Universe=0"  (same timeout, swallowed)
+  //   Edge readiness  "edge readiness status write failed: Gateway Timeout"
+  //   Validation sweep "us: Gateway Timeout"
+  it("all four import the one shared helper", () => {
+    for (const [name, src] of Object.entries({ IC, SCOUT, READINESS, SWEEP })) {
+      expect(src.includes("withSupabaseRetry"), `${name} does not retry`).toBe(true);
+      expect(src.includes('from "@/lib/supabase/transient"'), `${name} uses its own copy`).toBe(true);
+    }
+  });
+
+  it("the readiness write it retries is the keyed, idempotent one", () => {
+    expect(READINESS.includes('onConflict: "edge_id,market,horizon"')).toBe(true);
+  });
+
+  it("the sweep retries a read, which is free to repeat", () => {
+    expect(SWEEP.includes('svc.from("strategy_versions")')).toBe(true);
+    // The sweep runs WEEKLY (45 21 * * 5), so one unretried hiccup leaves a
+    // failure alert standing for seven days until the next Friday.
+    expect(SWEEP.includes("resolveIssue(HEALTH_KEY)")).toBe(true);
+  });
+
+  it("nobody re-inlines a transient predicate instead of sharing this one", () => {
+    for (const [name, src] of Object.entries({ IC, SCOUT, READINESS, SWEEP })) {
+      expect(/retryIf:\s*\(message\)\s*=>/.test(src), `${name} inlines its own predicate`).toBe(false);
+    }
   });
 });
