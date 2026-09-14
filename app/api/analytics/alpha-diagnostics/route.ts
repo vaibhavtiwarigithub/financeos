@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import {
   runA0DataTruth, runA1Funnel, runA3Payoff,
   type NavRow, type FunnelRow, type ClosedLot,
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
     market,
     dataCutoff,
     objective: "net_excess_return_vs_primary_benchmark",
-    benchmark: market === "india" ? "^NSEI" : "VOO",
+    benchmark: benchmarkSymbolFor(market, "research"),
     tests: ["A0", "A1", "A2", "A2_ALL_SCORED", "A3", "A4", "A5", "A6", "A7", "A8", "A9"],
     minReviewDates: MIN_REVIEW_DATES,
     // The code that computes the result is PART OF the plan. Without this a

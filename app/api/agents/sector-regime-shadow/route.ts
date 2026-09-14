@@ -9,6 +9,7 @@ import {
 } from "@/lib/learning/sector-regime";
 import { quantileDiagnostics } from "@/lib/learning/factor-quantiles";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -41,7 +42,7 @@ const SECTOR_ETF: Record<string, string> = {
   "Materials": "XLB",
 };
 
-const BENCHMARK = "SPY";
+const BENCHMARK = benchmarkSymbolFor("us", "risk");
 /** Trailing window for relative strength, in sessions. */
 const RS_LOOKBACK = 20;
 

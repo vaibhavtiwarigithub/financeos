@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { runInternationalAllocationReplay } from "@/lib/allocation/international-replay";
 import { createServiceClient } from "@/lib/supabase/service";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -27,7 +28,7 @@ export async function POST() {
   if (!policy || policy.market !== "us") return NextResponse.json({ error: "International allocation policy unavailable" }, { status: 409 });
 
   const [vooResponse, vxusResponse] = await Promise.all([
-    supabase.from("price_cache").select("date, close").eq("symbol", "VOO").order("date", { ascending: true }).range(0, 3_000),
+    supabase.from("price_cache").select("date, close").eq("symbol", benchmarkSymbolFor("us", "allocation")).order("date", { ascending: true }).range(0, 3_000),
     supabase.from("price_cache").select("date, close").eq("symbol", "VXUS").order("date", { ascending: true }).range(0, 3_000),
   ]);
   if (vooResponse.error || vxusResponse.error) {
@@ -40,7 +41,7 @@ export async function POST() {
   const configuration = {
     market: "us",
     currency: "USD",
-    baseline: "VOO",
+    baseline: benchmarkSymbolFor("us", "allocation"),
     test_sleeve: { voo_pct: 100 - TEST_WEIGHT_PCT, vxus_pct: TEST_WEIGHT_PCT },
     rebalance: "monthly_first_matched_session_close",
     one_way_cost_bps: ONE_WAY_COST_BPS,

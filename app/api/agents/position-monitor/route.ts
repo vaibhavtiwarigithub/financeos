@@ -459,6 +459,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   const updated: string[] = [];
   const staleScoresHeld: string[] = [];
   const stalledPositions: string[] = [];
+  // Accounting is per position, not per symbol. Quotes are fetched by symbol,
+  // but an invalid value must account for every affected lot as unavailable;
+  // otherwise a position can disappear from the run-accounting equation.
+  const unpricedPositionIds = new Set<string>();
 
   // Closing a position = deleting the paper_positions row (it only tracks
   // currently-held qty, no closed/open flag) + marking the matching open
@@ -567,7 +571,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       staleScoresHeld.push(`${pos.symbol} (flag cleared: ${scoreFresh ? "latest score no longer below exit threshold" : "score stale/unavailable"})`);
     }
 
-    if (!currentPrice) continue;
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      unpricedPositionIds.add(String(pos.id));
+      continue;
+    }
 
     // NO TIME STOP. Removed 2026-09-10 by owner decision, superseding Decision 65.
     //
@@ -1145,7 +1152,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         ? (navWriteFailed
             ? `NAV/performance write FAILED: ${navWriteErrors.join("; ")}`
             : `NAV did not reconcile after write for: ${reconcileFailures.join(", ")}`).slice(0, 500)
-        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, unpriced ${unpricedByMarket.us.length + unpricedByMarket.india.length}, stale scores held ${staleScoresHeld.length}. Mark ledger ${markLedgerStatus}${markLedgerDetail ? ` (${markLedgerDetail})` : ""}.`,
+        : `Checked ${positions.length}, closed ${closed.length}, updated ${updated.length}, unpriced ${unpricedPositionIds.size}, stale scores held ${staleScoresHeld.length}. Mark ledger ${markLedgerStatus}${markLedgerDetail ? ` (${markLedgerDetail})` : ""}.`,
       started_at: startedAt,
       completed_at: new Date().toISOString(),
       workload_metrics: runAccountingEnvelope({
@@ -1155,7 +1162,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         succeeded: closed.length + updated.length,
         expectedSkip: 0,
         deferred: 0,
-        unavailable: unpricedByMarket.us.length + unpricedByMarket.india.length,
+        unavailable: unpricedPositionIds.size,
         // Positions whose evaluation threw (e.g. a denied exit). Isolated above
         // so the run continues, but they ARE failed units: the W6 contract fires
         // a critical on any failed unit regardless of how many succeeded, which

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { fetchYahooCandles } from "@/lib/india-data";
 import { computeLabel } from "@/lib/learning/label-math";
@@ -166,7 +167,10 @@ type Ctx = {
 
 /** Label one observation at one horizon. Returns true when a label was written. */
 async function labelOne(ctx: Ctx, obs: any, horizonDays: number): Promise<boolean> {
-  const market = String(obs.market ?? "us");
+  // The table is constrained to these two markets. Treat an invalid legacy row
+  // as US only after this explicit narrowing; registry callers must never get
+  // an arbitrary string.
+  const market: "us" | "india" = obs.market === "india" ? "india" : "us";
   const symbol = String(obs.symbol ?? "?");
   try {
     const decisionDate = String(obs.ts).slice(0, 10);
@@ -182,10 +186,10 @@ async function labelOne(ctx: Ctx, obs: any, horizonDays: number): Promise<boolea
     const entryPrice = obs.price_at_decision ?? window.entry.close ?? null;
     if (entryPrice == null) { ctx.skips.add("no_entry_price", market, symbol); return false; }
 
-    // Benchmark: SPY for us, ^NSEI for india, same window.
+    // Market-local research benchmark over the same window.
     let benchmarkReturn: number | null = null;
     try {
-      const benchSymbol = market === "india" ? "^NSEI" : "SPY";
+      const benchSymbol = benchmarkSymbolFor(market, "research");
       const benchCandles = await ctx.resolver.resolve(market, benchSymbol, decisionDate, horizonDays, since);
       const benchWindow = forwardWindow(benchCandles, decisionDate, horizonDays);
       if (benchWindow) {

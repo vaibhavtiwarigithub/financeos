@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { fetchYahooCandles } from "@/lib/india-data";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { CandleResolver, forwardWindow, type LabelCandle } from "@/lib/learning/label-window";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isPaperScoreFresh } from "@/lib/trading/paper-exit-policy";
@@ -307,7 +308,7 @@ export async function matureTimeReviewOutcomes(
         });
         if (!outcome) { skipped++; continue; }
 
-        const benchmarkSymbol = reviewMarket === "india" ? "^NSEI" : "SPY";
+        const benchmarkSymbol = benchmarkSymbolFor(reviewMarket, "research");
         const benchmarkCandles = await resolver.resolve(reviewMarket, benchmarkSymbol, reviewSession, extensionDays, sinceDate);
         const benchmarkPct = benchmarkReturn(benchmarkCandles, reviewSession, outcome.candidateExitSession);
         const { error: insertError } = await svc.from("time_review_exit_outcomes").insert({

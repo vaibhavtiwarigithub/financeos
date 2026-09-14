@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import type { Mkt } from "@/lib/format-money";
+import { benchmarkFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -13,10 +14,9 @@ export const maxDuration = 60;
 // a 10000 baseline reads as +9,889% nonsense.
 const SEED: Record<Mkt, number> = { us: 10_000, india: 1_000_000 };
 
-// Per-market benchmark. US = SPY (from price_cache, the long-standing source for
-// this panel); India = NIFTY 50, read from the bench_return_pct series that the
-// paper-trade cron records into paper_performance (^NSEI is not in price_cache).
-const BENCH_LABEL: Record<Mkt, string> = { us: "SPY", india: "NIFTY 50" };
+// Per-market portfolio benchmark. Its identity comes from the registry, not a
+// route-local ticker. India reads the recorded NIFTY return series.
+const BENCH_LABEL: Record<Mkt, string> = { us: benchmarkFor("us", "portfolio").label, india: benchmarkFor("india", "portfolio").label };
 
 export async function GET(req: NextRequest) {
   const gate = await requireOwner();
@@ -81,21 +81,22 @@ export async function GET(req: NextRequest) {
         .order("date", { ascending: true });
       history = (navHistory ?? []) as any[];
 
-      // SPY price_cache over the same date range as the nav history
+      // The declared portfolio benchmark over the same date range as NAV.
       if (history.length >= 2) {
         const firstDate = history[0].date;
         const lastDate = history[history.length - 1].date;
-        const { data: spyRows } = await svc
+        const portfolioBenchmark = benchmarkFor("us", "portfolio");
+        const { data: benchmarkRows } = await svc
           .from("price_cache")
           .select("date, close")
-          .eq("symbol", "SPY")
+          .eq("symbol", portfolioBenchmark.symbol)
           .gte("date", firstDate)
           .lte("date", lastDate)
           .order("date", { ascending: true });
-        const spy = (spyRows ?? []) as any[];
-        if (spy.length >= 2) {
-          const firstClose = Number(spy[0].close);
-          const lastClose = Number(spy[spy.length - 1].close);
+        const benchmark = (benchmarkRows ?? []) as any[];
+        if (benchmark.length >= 2) {
+          const firstClose = Number(benchmark[0].close);
+          const lastClose = Number(benchmark[benchmark.length - 1].close);
           benchReturn = firstClose > 0 ? ((lastClose / firstClose) - 1) * 100 : 0;
         }
       }

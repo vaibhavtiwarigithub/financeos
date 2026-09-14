@@ -1,5 +1,6 @@
 import { isEtfSymbol } from "@/lib/asset-classification";
 import { isLeveragedInverseEtf } from "@/lib/trading/symbol-policy";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const INSTRUMENT_TAXONOMY_VERSION = "instrument-taxonomy.v1";
 
@@ -106,7 +107,7 @@ export function classifyInstrumentPolicy(input: {
     if (fund) return policy("india", symbol, "india_etf", fund.exposure, fund.benchmark, "curated", "curated");
     if (/reit|real estate investment trust/.test(industry)) return policy("india", symbol, "reit", "india_reit", null, "sector_derived", "derived");
     if (/bank|financial services/.test(sector) || /bank/.test(industry)) return policy("india", symbol, "bank", "india_banks", "^NSEBANK", "sector_derived", "derived");
-    return policy("india", symbol, "operating_company", "india_equity", "^NSEI", "legacy_derived", "derived");
+    return policy("india", symbol, "operating_company", "india_equity", benchmarkSymbolFor("india", "research"), "legacy_derived", "derived");
   }
 
   if (isLeveragedInverseEtf(symbol)) return policy("us", symbol, "leveraged_or_inverse_etf", `leveraged:${symbol}`, null, "curated", "curated");
@@ -115,14 +116,14 @@ export function classifyInstrumentPolicy(input: {
   if (GOLD_MINERS_FUNDS.has(symbol)) return policy("us", symbol, "gold_miners_fund", "gold_miners", "GDX", "curated", "curated");
   if (METAL_PRODUCERS.has(symbol)) return policy("us", symbol, "metal_producer_equity", "gold_miners", "GDX", "curated", "curated");
   if (ROYALTY_STREAMERS.has(symbol)) return policy("us", symbol, "royalty_streaming_equity", "gold_royalty_streaming", "GDX", "curated", "curated");
-  if (BROAD_EQUITY_ETFS.has(symbol)) return policy("us", symbol, "broad_equity_etf", "us_broad_equity", "SPY", "curated", "curated");
-  if (SECTOR_ETFS.has(symbol)) return policy("us", symbol, "sector_etf", `us_sector:${symbol}`, "SPY", "curated", "curated");
+  if (BROAD_EQUITY_ETFS.has(symbol)) return policy("us", symbol, "broad_equity_etf", "us_broad_equity", benchmarkSymbolFor("us", "research"), "curated", "curated");
+  if (SECTOR_ETFS.has(symbol)) return policy("us", symbol, "sector_etf", `us_sector:${symbol}`, benchmarkSymbolFor("us", "research"), "curated", "curated");
   if (FIXED_INCOME_ETFS.has(symbol)) return policy("us", symbol, "fixed_income_etf", `us_rates:${symbol}`, "AGG", "curated", "curated");
-  if (isEtfSymbol(symbol)) return policy("us", symbol, "thematic_etf", `us_fund:${symbol}`, "SPY", "legacy_derived", "derived");
-  if (input.isAdr) return policy("us", symbol, "adr", "us_adr_equity", "SPY", "curated", "curated");
+  if (isEtfSymbol(symbol)) return policy("us", symbol, "thematic_etf", `us_fund:${symbol}`, benchmarkSymbolFor("us", "research"), "legacy_derived", "derived");
+  if (input.isAdr) return policy("us", symbol, "adr", "us_adr_equity", benchmarkSymbolFor("us", "research"), "curated", "curated");
   if (/reit|real estate investment trust/.test(industry)) return policy("us", symbol, "reit", "us_reit", "XLRE", "sector_derived", "derived");
   if (/bank/.test(industry)) return policy("us", symbol, "bank", "us_banks", "KBE", "sector_derived", "derived");
-  return policy("us", symbol, "operating_company", "us_equity", "SPY", "legacy_derived", "derived");
+  return policy("us", symbol, "operating_company", "us_equity", benchmarkSymbolFor("us", "research"), "legacy_derived", "derived");
 }
 
 export function isFundFamily(family: InstrumentFamily): boolean {

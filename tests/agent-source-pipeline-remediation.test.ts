@@ -26,6 +26,8 @@ describe("agent source pipeline remediation", () => {
     expect(route).toContain('fetchYahooQuotes(unresolvedUs, "us")');
     expect(route).toContain("!q.stale");
     expect(route).toContain("position-monitor-price-unavailable:");
+    expect(route).toContain("const unpricedPositionIds = new Set<string>()");
+    expect(route).toContain("unavailable: unpricedPositionIds.size");
     expect(route).toContain("p_exit_price: exitFillPrice");
     expect(route).not.toContain("/v2/aggs/ticker/${sym}/prev");
   });

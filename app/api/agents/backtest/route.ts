@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { fetchYahooCandles } from "@/lib/india-data";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
     const priceMap: Record<string, { date: string; close: number }[]> = {};
     // Benchmark daily closes by date: SPY for US, NIFTY (^NSEI) for India.
     const benchPrices: Record<string, number> = {};
-    const benchSymbol = market === "india" ? "^NSEI" : "SPY";
+    const benchSymbol = benchmarkSymbolFor(market, "research");
 
     if (market === "india") {
       // India: source `.NS` candles from free Yahoo (price_cache is US-only).
@@ -151,7 +152,7 @@ export async function POST(req: NextRequest) {
       symbols.forEach((sym, i) => {
         priceMap[sym] = candleArrays[i].map(c => ({ date: c.date, close: c.close }));
       });
-      const nifty = await fetchYahooCandles("^NSEI", "2y");
+      const nifty = await fetchYahooCandles(benchmarkSymbolFor("india", "research"), "2y");
       for (const c of nifty) benchPrices[c.date] = c.close;
     } else {
       // US: price_cache candles (unchanged path).
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
       const { data: spyCandles } = await supabase
         .from("price_cache")
         .select("date, close")
-        .eq("symbol", "SPY")
+        .eq("symbol", benchmarkSymbolFor("us", "research"))
         .order("date", { ascending: true });
       for (const c of spyCandles ?? []) benchPrices[c.date] = parseFloat(c.close);
     }

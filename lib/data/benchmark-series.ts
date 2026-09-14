@@ -18,6 +18,7 @@
 
 import { fetchYahooCandles } from "@/lib/india-data";
 import { assessSeries } from "@/lib/data/price-cache-freshness";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export interface BenchmarkBar {
   date: string; // YYYY-MM-DD
@@ -50,8 +51,8 @@ const MIN_BENCHMARK_BARS = 30;
 
 /** The benchmark each market's beta is measured against. Never cross-market. */
 export const BENCHMARK_BY_MARKET: Record<string, string> = {
-  us: "SPY",
-  india: "^NSEI",
+  us: benchmarkSymbolFor("us", "research"),
+  india: benchmarkSymbolFor("india", "research"),
 };
 
 export function benchmarkFor(market: string): string | null {

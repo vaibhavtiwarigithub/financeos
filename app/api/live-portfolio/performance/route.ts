@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ const PERIOD_DAYS: Record<string, number> = {
   "All": 1825,
 };
 
-const BENCH_SYMBOL = "VOO"; // US live accounts benchmark (same index the paper US chart uses)
+const BENCH_SYMBOL = benchmarkSymbolFor("us", "live");
 
 interface MassiveResult { t: number; o: number; h: number; l: number; c: number; v: number; }
 
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
   const period = new URL(req.url).searchParams.get("period") ?? "1M";
   const marketParam = new URL(req.url).searchParams.get("market");
   const market: "us" | "india" = marketParam === "india" ? "india" : "us";
-  const benchSymbol = market === "india" ? "NIFTY 50" : BENCH_SYMBOL;
+  const benchSymbol = market === "india" ? benchmarkSymbolFor("india", "live") : BENCH_SYMBOL;
   const massiveKey = process.env.MASSIVE_API_KEY ?? "";
   const accountIds = new URL(req.url).searchParams.get("accounts")?.split(",").filter(Boolean);
   const svc = createServiceClient();

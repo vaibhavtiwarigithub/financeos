@@ -25,6 +25,7 @@ import { compileSpec, type Bar } from "@/lib/strategy-replay/compile";
 import { markNavSeries, type DailyMark, type HoldingsAt } from "@/lib/strategy-replay/nav-marker";
 import { specFingerprint, validateSpec, type RuleSpec } from "@/lib/strategy-replay/rule-spec";
 import { alwaysInControl, neverTradesControl } from "@/lib/strategy-replay/negative-control";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -47,7 +48,7 @@ function trendRule(): RuleSpec {
     label: "200-session trend on VOO",
     role: "exposure_overlay",
     market: "us",
-    universe: ["VOO"],
+    universe: [benchmarkSymbolFor("us", "strategy_replay")],
     horizonSessions: 20,
     // The signal reads the close, so it cannot trade that same close.
     execution: "next_open",
@@ -208,7 +209,7 @@ async function run(req: NextRequest, persist: boolean) {
   let bench: Map<string, number>;
   try {
     bars = await loadBars(svc, real.universe);
-    bench = await loadBenchmark(svc, "VOO");
+    bench = await loadBenchmark(svc, benchmarkSymbolFor("us", "strategy_replay"));
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "bar load failed" }, { status: 500 });
   }

@@ -25,6 +25,7 @@ import { fetchMassiveCandles, fetchUsCandles, fetchYahooCandles, newestBarIsStal
 import { fetchUpstoxIndexCandles } from "@/lib/data/upstox";
 import { fetchYahooQuotes } from "@/lib/india-data";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export type BenchmarkMarket = "us" | "india";
 
@@ -48,7 +49,7 @@ export type BenchmarkObservationResult =
 
 /** VOO tracks the S&P 500 for the US book; ^NSEI is the NIFTY 50 for India. */
 export function benchmarkSymbol(market: BenchmarkMarket): string {
-  return market === "india" ? "^NSEI" : "VOO";
+  return benchmarkSymbolFor(market, "portfolio");
 }
 
 /**

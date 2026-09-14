@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { computeFillPrice, getQuote } from "@/lib/data/quotes";
 import { createServiceClient } from "@/lib/supabase/service";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import {
   buildHedgeMarketSnapshot,
   cooldownState,
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
       .select("danger_score,week_of,regime").order("week_of", { ascending: false }).limit(1).maybeSingle();
     const macroAge = macro?.week_of ? Date.now() - new Date(`${macro.week_of}T23:59:59Z`).getTime() : Infinity;
     const [spy, qqq] = await Promise.all([
-      fetchUsCandles("SPY", async () => [], 50),
+      fetchUsCandles(benchmarkSymbolFor("us", "risk"), async () => [], 50),
       fetchUsCandles("QQQ", async () => [], 21),
     ]);
     const snapshot = buildHedgeMarketSnapshot(spy.candles, qqq.candles, Number(macro?.danger_score), now);

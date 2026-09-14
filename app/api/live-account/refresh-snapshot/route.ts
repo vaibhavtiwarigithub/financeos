@@ -7,6 +7,7 @@ import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
 import { getKiteHoldings, getKiteMargins, getKiteProfile } from "@/lib/kite";
 import { fetchIndiaQuote } from "@/lib/india-data";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -88,7 +89,7 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
       let vooClose: number | null = null;
       const massiveKey = process.env.MASSIVE_API_KEY;
       if (massiveKey) {
-        const r = await fetch(`https://api.massive.com/v2/aggs/ticker/VOO/prev?adjusted=true&apiKey=${massiveKey}`);
+        const r = await fetch(`https://api.massive.com/v2/aggs/ticker/${benchmarkSymbolFor("us", "live")}/prev?adjusted=true&apiKey=${massiveKey}`);
         if (r.ok) { const d = await r.json(); vooClose = d?.results?.[0]?.c ?? null; }
       }
       const perfRows = valid
@@ -221,7 +222,7 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
   const massiveKey = process.env.MASSIVE_API_KEY;
   if (massiveKey) {
     try {
-      const r = await fetch(`https://api.massive.com/v2/aggs/ticker/VOO/prev?adjusted=true&apiKey=${massiveKey}`);
+      const r = await fetch(`https://api.massive.com/v2/aggs/ticker/${benchmarkSymbolFor("us", "live")}/prev?adjusted=true&apiKey=${massiveKey}`);
       if (r.ok) { const d = await r.json(); vooClose = d?.results?.[0]?.c ?? null; }
     } catch { /* bench optional */ }
   }
@@ -312,7 +313,7 @@ async function refreshKite(): Promise<{ ok: boolean; equity?: number; positions?
     // chart just skips the benchmark line for that point).
     let niftyClose: number | null = null;
     try {
-      const q = await fetchIndiaQuote("^NSEI");
+      const q = await fetchIndiaQuote(benchmarkSymbolFor("india", "live"));
       const px = (q as any)?.price ?? (q as any)?.close ?? null;
       niftyClose = typeof px === "number" && px > 0 ? px : null;
     } catch { /* bench optional */ }

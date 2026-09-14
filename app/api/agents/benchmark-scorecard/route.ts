@@ -5,7 +5,7 @@ import { fetchMassiveCandles } from "@/lib/data/candles";
 import { fetchYahooCandles } from "@/lib/data/yahoo-candles";
 import type { Candle } from "@/lib/data/technicals";
 import { verifyCronSecret } from "@/lib/auth/cron";
-import { reportIssue } from "@/lib/system-health";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { pickFreshestProvider, newestBarDate } from "@/lib/data/benchmark-ingest";
 import {
   BENCHMARK_HORIZONS,
@@ -14,6 +14,7 @@ import {
   type BenchmarkConfig,
   type LevelPoint,
 } from "@/lib/analytics/benchmark-alpha";
+import { primaryBenchmarkContractErrors } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -37,7 +38,20 @@ async function loadBenchmarks(svc: any): Promise<BenchmarkConfig[]> {
     .eq("enabled", true)
     .order("market", { ascending: true });
   if (error) throw new Error(`benchmarks read failed: ${error.message}`);
-  return (data ?? []) as BenchmarkConfig[];
+  const benchmarks = (data ?? []) as BenchmarkConfig[];
+  const contractErrors = primaryBenchmarkContractErrors(benchmarks);
+  if (contractErrors.length) {
+    await reportIssue({
+      issueKey: "benchmark-registry-primary-drift",
+      severity: "critical",
+      category: "data",
+      title: "Benchmark primary configuration disagrees with the versioned registry",
+      detail: `${contractErrors.join("; ")}. Scorecard materialization is refused so a benchmark label can never be paired with another instrument's price series.`,
+    }, svc);
+    throw new Error(`benchmark registry contract failed: ${contractErrors.join("; ")}`);
+  }
+  await resolveIssue("benchmark-registry-primary-drift", svc);
+  return benchmarks;
 }
 
 async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
@@ -174,6 +188,7 @@ async function upsertProviderObservations(
     }, svc).catch(() => {});
     return;
   }
+  await resolveIssue(`benchmark-ingest-empty:${benchmark.id}`, svc);
 
   // Freshest wins; ties keep the preferred provider (first attempt).
   const best = pickFreshestProvider(attempts)!;
@@ -205,6 +220,7 @@ async function upsertProviderObservations(
       }, svc).catch(() => {});
       return;
     }
+    await resolveIssue(`benchmark-ingest-write:${benchmark.id}`, svc);
   }
 
   // Still behind the book after taking the freshest provider: say so, because
@@ -218,6 +234,8 @@ async function upsertProviderObservations(
       title: `${benchmark.label} benchmark is stale (${newest} vs book ${expectedSession})`,
       detail: `Freshest of ${usable.map((a) => `${a.provider}=${newestBarDate(a.candles) ?? "none"}`).join(", ")} for ${symbol}. Comparisons against this benchmark are truncated to ${newest}; the portfolio's own return is unaffected.`,
     }, svc).catch(() => {});
+  } else {
+    await resolveIssue(`benchmark-stale:${benchmark.id}`, svc);
   }
 }
 

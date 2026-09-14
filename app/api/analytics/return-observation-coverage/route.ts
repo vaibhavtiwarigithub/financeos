@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { DAILY_RETURNS_TABLE, MIN_BETA_OVERLAP, TABLE } from "@/lib/data/return-observations";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -84,7 +85,7 @@ export async function GET(req: Request) {
 
     // Per market — NEVER cross-summed. Each market's pool stands alone.
     const markets: Record<string, any> = {};
-    for (const market of ["us", "india"]) {
+    for (const market of ["us", "india"] as const) {
       const mine = rows.filter((r) => r.market === market);
 
       // Latest observation per symbol (rows are as_of-ascending, so last wins).
@@ -138,7 +139,7 @@ export async function GET(req: Request) {
       }
 
       markets[market] = {
-        benchmark: market === "india" ? "^NSEI" : "SPY",
+        benchmark: benchmarkSymbolFor(market, "research"),
         symbols_observed: latest.size,
         observations: mine.length,
         sessions_captured: byDay.size,

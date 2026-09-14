@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { FRED_SERIES, fredSeriesDated } from "@/lib/data/fred-macro";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
@@ -171,7 +172,8 @@ export async function POST(req: NextRequest) {
   if (returnsError) return NextResponse.json({ error: returnsError.message }, { status: 500 });
 
   const returnsBySymbol = frozenReturnsBySymbol((returnRows ?? []) as ReturnRow[]);
-  const spy = returnsBySymbol.get("SPY") ?? [];
+  const benchmarkSymbol = benchmarkSymbolFor("us", "research");
+  const spy = returnsBySymbol.get(benchmarkSymbol) ?? [];
   const impacts: Record<string, unknown>[] = [];
   for (const event of decided) {
     for (const horizon of [1, 5]) {
@@ -195,7 +197,7 @@ export async function POST(req: NextRequest) {
         impacts.push({
           event_id: event.id,
           symbol,
-          benchmark_symbol: "SPY",
+          benchmark_symbol: benchmarkSymbol,
           horizon_sessions: horizon,
           first_session_date: window[0].sessionDate,
           last_session_date: window[window.length - 1].sessionDate,
