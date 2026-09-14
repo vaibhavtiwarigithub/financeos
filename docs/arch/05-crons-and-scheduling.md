@@ -45,6 +45,8 @@
 > Previously: 2026-07-15 (Codex audit: added the missing daily `kairos-earnings-pit-capture` at 02:10 UTC; moved `kairos-india-markets-fill-retry` from a colliding 10:45 slot to 10:35 UTC. India primary remains 10:15; symbol-profile backfill remains 11:40.)
 > Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
 
+> 2026-09-14: **`kairos-user-holding-risk-india`** `15 11 * * 1-5` and **`kairos-user-holding-risk-us`** `45 21 * * 1-5`, `POST /api/agents/user-holding-risk?market=<market>` (`20260914190000_user_holding_risk_cron.sql`, **applied and verified in production**). Per-guest risk analytics (features/per-user-broker-risk §4). Each runs 15 minutes after the owner's `kairos-holding-risk-<market>` job for the same market — the offset is deliberate, since both share the Yahoo candle source and the owner's book is the one that must not wait. Fans out per CONNECTED guest, but cannot consume provider budget: the guest path imports only the keyless Yahoo endpoint and no LLM (see `lib/risk/guest-risk.ts`). What does scale per guest is one broker call per user per market per day, against that user's own Zerodha quota. With no guest connected — the state at time of scheduling — each run is a single indexed SELECT returning zero rows. Advisory-only, read-only, writes only `user_*` tables.
+
 **Adding a cron:**
 - Cloud: add to `vercel.json` (hit deployed URL)
 - Local: add to `scripts/run-agents.ps1` (Windows Task Scheduler; PC must be on)
