@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   mergePortfolioBenchmarkSeries,
+  benchmarkFreshness,
   selectDisplayBenchmark,
   type DisplayBenchmark,
 } from "@/lib/analytics/benchmark-display";
@@ -29,5 +30,17 @@ describe("portfolio benchmark display selection", () => {
       { date: "2026-08-20", nav: 100, bench_nav: null },
       { date: "2026-08-21", nav: 101, bench_nav: 200 },
     ]);
+  });
+
+  it("reports a comparator that has rows but is behind the paper book as stale", () => {
+    expect(benchmarkFreshness(
+      [{ date: "2026-09-10", nav: 100 }, { date: "2026-09-11", nav: 101 }],
+      [{ date: "2026-09-10", close: 200 }],
+    )).toEqual({
+      status: "stale",
+      latestPortfolioDate: "2026-09-11",
+      latestBenchmarkDate: "2026-09-10",
+      missingPortfolioSessions: 1,
+    });
   });
 });

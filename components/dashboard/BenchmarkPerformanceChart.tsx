@@ -9,7 +9,7 @@ import {
 // Shared dark palette — matches PortfolioPage / BenchmarkChart T tokens.
 const T = {
   card: "#1A1D27", border: "#252836", text: "#ECEDEF", textSub: "#9B9EA8",
-  muted: "#6B7280", accent: "#6366F1", green: "#34D399", red: "#F87171",
+  muted: "#6B7280", accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
   greenBg: "#052E16", redBg: "#3B0000", surface: "#13151C",
 };
 const COLORS = { portfolio: "#6366F1", bench: "#9B9EA8" };
@@ -25,6 +25,12 @@ interface BenchmarkOption {
   symbol: string | null;
   provider_symbol: string | null;
   is_primary: boolean;
+}
+interface BenchmarkFreshness {
+  status: "ok" | "stale" | "unavailable";
+  latestPortfolioDate: string | null;
+  latestBenchmarkDate: string | null;
+  missingPortfolioSessions: number;
 }
 
 const DAY = 86_400_000;
@@ -69,6 +75,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
   const [series, setSeries] = useState<SeriesRow[]>([]);
   const [benchmarks, setBenchmarks] = useState<BenchmarkOption[]>([]);
   const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkOption | null>(null);
+  const [freshness, setFreshness] = useState<BenchmarkFreshness | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingDefault, setSavingDefault] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -89,6 +96,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       setSeries(Array.isArray(data?.series) ? data.series : []);
       setBenchmarks(Array.isArray(data?.benchmarks) ? data.benchmarks : []);
       setSelectedBenchmark(data?.selected_benchmark ?? null);
+      setFreshness(data?.benchmark_freshness ?? null);
     } catch (e: any) {
       if (seq !== requestSeq.current) return;
       setErr(e?.message ?? "Failed to load performance history.");
@@ -171,6 +179,14 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
         <div>
           <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Portfolio vs {benchLabel}</div>
           <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Cumulative % return, rebased to each window · selection is your saved default</div>
+          {freshness?.status === "stale" && (
+            <div style={{ fontSize: "11px", color: T.yellow, marginTop: "5px" }}>
+              {benchLabel} is stale: through {freshness.latestBenchmarkDate}; portfolio is through {freshness.latestPortfolioDate} ({freshness.missingPortfolioSessions} market session{freshness.missingPortfolioSessions === 1 ? "" : "s"} missing). Comparison is intentionally truncated.
+            </div>
+          )}
+          {freshness?.status === "unavailable" && (
+            <div style={{ fontSize: "11px", color: T.red, marginTop: "5px" }}>No usable {benchLabel} benchmark level is available yet.</div>
+          )}
         </div>
         {toggle}
       </div>

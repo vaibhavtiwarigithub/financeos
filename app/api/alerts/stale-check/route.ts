@@ -45,6 +45,8 @@ const EXPECTED_JOBS: ExpectedJob[] = [
     recoveryCmd: 'POST /api/agents/position-monitor?market=us' },
   { agentType: "label_maturation", label: "Label maturation", expectedHour: 22, graceHours: 2,
     recoveryCmd: 'POST /api/agents/label-maturation' },
+  { agentType: "benchmark_scorecard", label: "Benchmark scorecard", expectedHour: 22, graceHours: 2,
+    recoveryCmd: 'POST /api/agents/benchmark-scorecard' },
   { agentType: "learner", label: "LearnerAgent (US weekly)", expectedHour: 21, graceHours: 2, fridayOnly: true,
     recoveryCmd: 'POST /api/agents/learner with {"market":"us"}' },
   { agentType: "validation_sweep", label: "Validation sweep (weekly)", expectedHour: 21, graceHours: 2, fridayOnly: true,

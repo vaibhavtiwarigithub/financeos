@@ -83,6 +83,12 @@ describe("W5: benchmark levels come from session-dated bars, not quotes", () => 
     expect(scorecard).toMatch(/session_mismatch/);
   });
 
+  it("falls back to a session-dated provider bar when the primary book mark is absent", () => {
+    expect(scorecard).toContain('if (benchmark.is_primary && expectedSession)');
+    expect(scorecard).toContain('.eq("date", expectedSession)');
+    expect(scorecard).not.toContain("if (benchmark.is_primary) return;");
+  });
+
   it("displayed coverage cannot exceed 100%", () => {
     expect(scorecard).toMatch(/Math\.min\(100, r\.coverage_pct\)/);
   });

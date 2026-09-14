@@ -9,6 +9,42 @@ export type DisplayBenchmark = {
 export type PortfolioLevel = { date: string; nav: number | null };
 export type BenchmarkLevel = { date: string; close: number | null };
 
+export type BenchmarkFreshness = {
+  status: "ok" | "stale" | "unavailable";
+  latestPortfolioDate: string | null;
+  latestBenchmarkDate: string | null;
+  missingPortfolioSessions: number;
+};
+
+/**
+ * A comparator with old rows is not a healthy comparator.  Count the actual
+ * paper-book sessions after its last usable level; this is market-calendar
+ * safe because it uses the portfolio's recorded sessions, not calendar days.
+ */
+export function benchmarkFreshness(
+  portfolio: PortfolioLevel[],
+  benchmark: BenchmarkLevel[],
+): BenchmarkFreshness {
+  const portfolioDates = portfolio
+    .filter((row) => row.nav != null && Number.isFinite(Number(row.nav)))
+    .map((row) => row.date.slice(0, 10))
+    .sort();
+  const benchmarkDates = benchmark
+    .filter((row) => row.close != null && Number.isFinite(Number(row.close)))
+    .map((row) => row.date.slice(0, 10))
+    .sort();
+  const latestPortfolioDate = portfolioDates.at(-1) ?? null;
+  const latestBenchmarkDate = benchmarkDates.at(-1) ?? null;
+  if (!latestBenchmarkDate) return { status: "unavailable", latestPortfolioDate, latestBenchmarkDate: null, missingPortfolioSessions: portfolioDates.length };
+  const missingPortfolioSessions = portfolioDates.filter((date) => date > latestBenchmarkDate).length;
+  return {
+    status: missingPortfolioSessions ? "stale" : "ok",
+    latestPortfolioDate,
+    latestBenchmarkDate,
+    missingPortfolioSessions,
+  };
+}
+
 /**
  * A display preference never changes `benchmarks.is_primary`. Requested values
  * win for the current request, then the owner's saved preference, then the

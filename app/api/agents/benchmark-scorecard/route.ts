@@ -152,7 +152,23 @@ async function upsertProviderObservations(
   benchmark: BenchmarkConfig,
   expectedSession: string | null,
 ) {
-  if (benchmark.is_primary) return;
+  // A primary normally comes from the paper-performance mark. That mark can
+  // be absent (as it was for US VOO on 2026-09-11) while the NAV is written.
+  // Do not leave the display comparator frozen: accept a provider's own
+  // session-dated bar only when the primary ledger has no usable bar for the
+  // book's latest session. Secondary comparators always use this path.
+  if (benchmark.is_primary && expectedSession) {
+    const { data: current, error } = await svc.from("benchmark_price_observations")
+      .select("date")
+      .eq("benchmark_id", benchmark.id)
+      .eq("source_status", "ok")
+      .eq("date", expectedSession)
+      .limit(1);
+    if (!error && current?.length) {
+      await resolveIssue(`benchmark-stale:${benchmark.id}`, svc);
+      return;
+    }
+  }
   const symbol = benchmark.provider_symbol ?? benchmark.symbol;
   if (!symbol) return;
 
@@ -403,18 +419,31 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await requireOwnerOrCron(req);
   if (gate) return gate;
+  const startedAt = new Date().toISOString();
+  const svc = createServiceClient();
   try {
-    const svc = createServiceClient();
     const rows = await buildScorecards(svc);
-    return NextResponse.json({
+    const payload = {
       ok: true,
       rows_written: rows.length,
       statuses: rows.reduce((acc: Record<string, number>, row: any) => {
         acc[row.status] = (acc[row.status] ?? 0) + 1;
         return acc;
       }, {}),
-    });
+    };
+    await svc.from("agent_runs").insert({
+      agent_type: "benchmark_scorecard", market: "us", status: "done", symbols: [],
+      trigger_source: verifyCronSecret(req) ? "scheduled" : "manual",
+      result_summary: JSON.stringify(payload), started_at: startedAt, completed_at: new Date().toISOString(),
+    } as any);
+    return NextResponse.json(payload);
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "benchmark_scorecard_failed" }, { status: 500 });
+    const error = e?.message ?? "benchmark_scorecard_failed";
+    await svc.from("agent_runs").insert({
+      agent_type: "benchmark_scorecard", market: "us", status: "error", symbols: [],
+      trigger_source: verifyCronSecret(req) ? "scheduled" : "manual",
+      result_summary: `Benchmark scorecard failed: ${error}`.slice(0, 500), started_at: startedAt, completed_at: new Date().toISOString(),
+    } as any).then(() => undefined, () => undefined);
+    return NextResponse.json({ ok: false, error }, { status: 500 });
   }
 }

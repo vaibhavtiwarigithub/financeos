@@ -15,6 +15,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   mergePortfolioBenchmarkSeries,
+  benchmarkFreshness,
   selectDisplayBenchmark,
   type DisplayBenchmark,
 } from "@/lib/analytics/benchmark-display";
@@ -90,17 +91,20 @@ export async function GET(req: NextRequest) {
       close: row.bench_nav == null ? null : Number(row.bench_nav),
     }));
   }
+  const portfolio = (portfolioRows ?? []).map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) }));
   const series = mergePortfolioBenchmarkSeries(
-    (portfolioRows ?? []).map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) })),
+    portfolio,
     levels,
   );
+  const freshness = benchmarkFreshness(portfolio, levels);
 
   return NextResponse.json({
     market,
     benchmarks,
     selected_benchmark: selected,
     series,
-    benchmark_status: levels.length ? "ok" : "unavailable",
+    benchmark_status: freshness.status,
+    benchmark_freshness: freshness,
   });
 }
 
