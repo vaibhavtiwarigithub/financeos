@@ -305,13 +305,25 @@ export function extractParsed(claudeRaw: string): any {
 // Health alert and throws: no holdings visibility => no research run at all.
 export async function fetchHoldings(supabase: any): Promise<string[]> {
   try {
-    const [live, paper] = await Promise.all([
-      supabase.from("live_account_snapshots")
-        .select("account_id, broker, positions_json, captured_at")
-        .order("captured_at", { ascending: false }).limit(100),
-      supabase.from("paper_positions")
-        .select("symbol, qty").eq("market", "us").eq("position_role", "alpha"),
-    ]);
+    // A single transient PostgREST 504 previously aborted the whole research
+    // pass although the same two reads succeeded seconds later. Retry only
+    // transport-style failures; permission/schema failures still fail closed.
+    let live: any;
+    let paper: any;
+    let readError = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      [live, paper] = await Promise.all([
+        supabase.from("live_account_snapshots")
+          .select("account_id, broker, positions_json, captured_at")
+          .order("captured_at", { ascending: false }).limit(100),
+        supabase.from("paper_positions")
+          .select("symbol, qty").eq("market", "us").eq("position_role", "alpha"),
+      ]);
+      readError = String(live?.error?.message ?? paper?.error?.message ?? "");
+      if (!live?.error && !paper?.error) break;
+      if (attempt === 2 || !/(gateway|timeout|network|fetch failed|5\d\d)/i.test(readError)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
     // PostgREST reports failure in `error`, not by throwing — an unchecked
     // `.data ?? []` here was itself a silent path to "no holdings".
     if (live.error) throw new Error(`live_account_snapshots read failed: ${live.error.message ?? live.error}`);
