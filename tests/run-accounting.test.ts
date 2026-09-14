@@ -140,6 +140,7 @@ describe("run accounting — envelope round trip", () => {
 
 const priceCache = FRESHNESS_CONTRACTS.find((c) => c.id === "price-cache-us-symbols")!;
 const labels = FRESHNESS_CONTRACTS.find((c) => c.id === "observation-labels-maturation")!;
+const usBenchmarks = FRESHNESS_CONTRACTS.find((c) => c.id === "benchmark-observations-us")!;
 const NOW = new Date("2026-08-13T22:00:00Z");
 
 describe("freshness contracts — cross-run watermark advance", () => {
@@ -216,6 +217,21 @@ describe("freshness contracts — cross-run watermark advance", () => {
 
   it("the US price contract monitors the active universe, not retired cache symbols", () => {
     expect(priceCache.scopeUniverse).toBe("active_us_price_symbols");
+  });
+
+  it("a single stale enabled benchmark breaches the chart-data contract", () => {
+    // All enabled comparators must advance. A table-wide max date is useless:
+    // it was precisely how a current QQQ/XLK/XLF series concealed stale VOO.
+    const r = evaluateFreshness(usBenchmarks, [
+      { scope: "voo", watermark: "2026-08-12" },
+      { scope: "qqq", watermark: "2026-08-13" },
+      { scope: "xlk", watermark: "2026-08-13" },
+      { scope: "xlf", watermark: "2026-08-13" },
+    ], NOW);
+    expect(usBenchmarks.scopeUniverse).toBe("enabled_benchmarks");
+    expect(r.breached).toBe(true);
+    expect(r.kind).toBe("coverage");
+    expect(r.staleScopes).toEqual(["voo"]);
   });
 });
 

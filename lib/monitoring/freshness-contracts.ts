@@ -26,7 +26,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /** Bump when a contract is added, removed, or its thresholds change. */
-export const FRESHNESS_REGISTRY_VERSION = 1;
+export const FRESHNESS_REGISTRY_VERSION = 2;
 
 export interface FreshnessContract {
   /** Stable id — forms the alert issue_key. Never reuse for a different table. */
@@ -43,7 +43,7 @@ export interface FreshnessContract {
   scopeColumn?: string;
   /** Restrict a historical cache to scopes that can currently affect money or
    * evaluation paths. Without this, retired symbols remain permanent alerts. */
-  scopeUniverse?: "active_us_price_symbols";
+  scopeUniverse?: "active_us_price_symbols" | "enabled_benchmarks";
   /** Column to filter by market, when the table carries one. */
   marketColumn?: string;
   /** How long the watermark may sit still before it is a defect. */
@@ -100,6 +100,42 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     impact: "Frozen bars feed paper fills, position marks, NAV, sizing volatility and benchmark series. "
       + "In Aug 2026 this produced 15 fills off quotes as-of Jul 22, up to 19.6% off the real price.",
     recovery: "Re-run the price prewarm for the traded universe and confirm the per-symbol watermark advances, not just max(date).",
+  },
+  {
+    // A completed scorecard handler is not proof that every comparator moved.
+    // On 2026-09-11 it inspected the previous EOD book row and left VOO frozen
+    // while the portfolio chart contained a newer intraday NAV. Monitor the
+    // ledger per enabled benchmark, so a missing series stays visible.
+    id: "benchmark-observations-us",
+    version: 1,
+    table: "benchmark_price_observations",
+    market: "us",
+    watermarkColumn: "date",
+    watermarkType: "date",
+    scopeColumn: "benchmark_id",
+    scopeUniverse: "enabled_benchmarks",
+    graceHours: WEEKEND_SAFE_HOURS,
+    sessionAware: true,
+    minCoverage: 1,
+    lookbackDays: 60,
+    impact: "A stale benchmark truncates or misstates portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
+    recovery: "POST /api/agents/benchmark-scorecard, then confirm every enabled US benchmark has a session-dated observation for the latest completed US session.",
+  },
+  {
+    id: "benchmark-observations-india",
+    version: 1,
+    table: "benchmark_price_observations",
+    market: "india",
+    watermarkColumn: "date",
+    watermarkType: "date",
+    scopeColumn: "benchmark_id",
+    scopeUniverse: "enabled_benchmarks",
+    graceHours: WEEKEND_SAFE_HOURS,
+    sessionAware: true,
+    minCoverage: 1,
+    lookbackDays: 60,
+    impact: "A stale benchmark truncates or misstates India portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
+    recovery: "POST /api/agents/benchmark-scorecard, then confirm every enabled India benchmark has a session-dated observation for the latest completed India session.",
   },
   {
     id: "observation-labels-maturation",
@@ -308,6 +344,23 @@ export async function checkFreshnessContracts(
           ...(decisions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
           ...(positions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
         ].filter(Boolean));
+      } else if (contract.scopeUniverse === "enabled_benchmarks") {
+        // The observation table is keyed by benchmark UUID and does not carry
+        // a market. Build the required population from enabled configuration,
+        // never from observation rows: an entirely missing benchmark must be
+        // in the denominator and fail the contract.
+        const { data: enabledBenchmarks, error: benchmarkError } = await svc
+          .from("benchmarks")
+          .select("id")
+          .eq("market", contract.market)
+          .eq("enabled", true)
+          .limit(100);
+        if (benchmarkError) {
+          throw new Error(`enabled benchmark scope unavailable: ${benchmarkError.message}`);
+        }
+        requiredScopes = new Set((enabledBenchmarks ?? [])
+          .map((row: any) => String(row.id ?? ""))
+          .filter(Boolean));
       }
 
       let query = svc.from(contract.table)
