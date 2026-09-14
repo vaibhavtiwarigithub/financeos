@@ -37,10 +37,34 @@ const PER_SYMBOL_TIMEOUT_MS = (() => {
   return Number.isFinite(v) ? Math.min(60_000, Math.max(10_000, v)) : 30_000;
 })();
 
+/**
+ * Thrown when a symbol exceeds its per-symbol budget.
+ *
+ * Tagged as its own class because a TIMEOUT IS NOT A FAILURE. The comment above
+ * says this deadline "turns one hung symbol into a deferred symbol, not a dead
+ * run", but the catch below used to record it as `results[i].error`, which made
+ * it count as `failed` in run accounting and escalated the whole run to
+ * CRITICAL "run state partial". Meanwhile a symbol the budget never REACHED was
+ * counted `deferred` and passed quietly — so a symbol that got 29 seconds was
+ * treated as catastrophic while one that got zero seconds was treated as fine.
+ * Both are capacity outcomes. Production, 2026-09-14: eligible=103 succeeded=64
+ * deferred=37 failed=2, and the two "failures" were IAU and EPI timing out; the
+ * failing set varies run to run (TGT, MRK, SMCI, RBLX, ARM, GDX, …), which is
+ * what a latency ceiling looks like rather than a broken symbol.
+ */
+class SymbolTimeoutError extends Error {
+  readonly symbol: string;
+  constructor(symbol: string, ms: number) {
+    super(`processSymbol timed out after ${ms}ms: ${symbol}`);
+    this.name = "SymbolTimeoutError";
+    this.symbol = symbol;
+  }
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`processSymbol timed out after ${ms}ms: ${label}`)), ms);
+    timer = setTimeout(() => reject(new SymbolTimeoutError(label, ms)), ms);
   });
   return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
 }
@@ -307,6 +331,11 @@ export async function POST(req: NextRequest) {
     : 105_000;
   const processingDeadline = routeStartedAt + BUDGET_MS;
   const results: any[] = new Array(entries.length);
+  // Symbols that started but exceeded the per-symbol budget. Deferred, not
+  // failed — but tracked so deferring them does not make them INVISIBLE, which
+  // would be its own defect: a symbol that times out every single run would
+  // otherwise rotate quietly forever and never be scored.
+  const timedOutSymbols: string[] = [];
   const holdingIndexes = entries.map((entry, i) => entry.isHeld ? i : -1).filter(i => i >= 0);
   // Discovery sources (screener/basket) are promoted to the front of the candidate
   // queue so worker-0 (the candidate-preferring worker) scores new names before
@@ -351,7 +380,15 @@ export async function POST(req: NextRequest) {
           entry.symbol,
         );
       } catch (e) {
-        results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
+        if (e instanceof SymbolTimeoutError) {
+          // Leave results[i] UNSET so the deferred path below picks it up and
+          // re-queues the symbol to the front of the next run, exactly as it
+          // does for a symbol the budget never reached. Recording an error here
+          // is what turned a slow symbol into a critical run.
+          timedOutSymbols.push(entry.symbol);
+        } else {
+          results[i] = { symbol: entry.symbol, error: e instanceof Error ? e.message : String(e) };
+        }
       }
     }
   }
@@ -623,6 +660,7 @@ export async function POST(req: NextRequest) {
         holding_processed: holdingProcessed,
         candidate_processed: candidateProcessed,
         deferred: deferred.length,
+        timed_out_symbols: timedOutSymbols,
         failed_symbols: failedDetails,
         ...accounting,
       },
@@ -646,6 +684,28 @@ export async function POST(req: NextRequest) {
     }, supabase);
   } else {
     await resolveIssue(failureIssueKey, supabase);
+  }
+
+  // Timeouts get their OWN signal, separate from failures.
+  //
+  // They are deferred (re-queued to the front of the next run) rather than
+  // failed, so they no longer escalate the run to critical — but silence would
+  // be the wrong trade. This says plainly that the per-symbol budget is the
+  // binding constraint, and names the symbols, so a name that times out every
+  // run is visible rather than rotating quietly forever.
+  const timeoutIssueKey = `research-symbol-timeouts:${runTag}`;
+  if (timedOutSymbols.length > 0) {
+    await reportIssue({
+      issueKey: timeoutIssueKey,
+      severity: "warn",
+      category: "cron",
+      title: `Research: ${timedOutSymbols.length} symbol${timedOutSymbols.length > 1 ? "s" : ""} exceeded the ${PER_SYMBOL_TIMEOUT_MS}ms budget`,
+      detail: `${timedOutSymbols.slice(0, 20).join(", ")}. Deferred to the front of the next run, not failed — the run itself is healthy. `
+        + `Raise RESEARCH_SYMBOL_TIMEOUT_MS (capped at 60000) if the same names keep appearing.`,
+      autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+    }, supabase);
+  } else {
+    await resolveIssue(timeoutIssueKey, supabase);
   }
 
   // W3: refresh price_cache for researched symbols + benchmark ETFs.

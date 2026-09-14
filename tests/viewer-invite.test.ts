@@ -33,10 +33,28 @@ describe("viewer invitation — access control", () => {
 
 describe("viewer invitation — never handles a password", () => {
   it("the route neither accepts nor returns a password", () => {
-    // The recipient sets their own via Supabase's invite flow. Anything that
-    // looks like password handling here is a defect, not a convenience.
-    expect(/password/i.test(ROUTE.replace(/^\s*(\/\/|\*).*$/gm, "")), "route mentions a password outside comments").toBe(false);
-    expect(ROUTE.includes("inviteUserByEmail"), "route no longer uses the invite flow").toBe(true);
+    // The recipient sets their own. Anything that looks like password handling
+    // here is a defect, not a convenience.
+    //
+    // The route legitimately names the PATH `/reset-password` — that is where an
+    // invited person lands to choose their first password, and passing it as
+    // redirectTo is what stopped invitations pointing at localhost. A route name
+    // is not password handling, so it is excluded by exact literal before the
+    // check; every other mention of "password" still fails this test.
+    const body = ROUTE
+      .replace(/^\s*(\/\/|\*).*$/gm, "")
+      .split("/reset-password").join("/<landing-route>");
+    expect(/password/i.test(body), "route mentions a password outside comments").toBe(false);
+  });
+
+  it("mints the invitation link rather than letting Supabase mail it", () => {
+    // Was `inviteUserByEmail`, which sends Supabase's unbranded stock template
+    // from "Supabase Auth". generateLink returns the same one-time link without
+    // sending, so the app delivers its own branded mail.
+    const body = ROUTE.replace(/^\s*(\/\/|\*).*$/gm, "");
+    expect(body.includes("generateLink("), "route no longer mints an invite link").toBe(true);
+    // Comments explain why it was replaced; the CODE must not call it.
+    expect(body.includes("inviteUserByEmail"), "back to Supabase's own mailer").toBe(false);
   });
 
   it("the invite form collects only an email", () => {
