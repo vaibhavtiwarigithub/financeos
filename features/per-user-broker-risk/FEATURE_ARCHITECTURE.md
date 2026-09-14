@@ -2,14 +2,18 @@
 
 ## Status
 
-Architecture status: Draft
-Architecture approved: No
-Approved scope: None
-Approved date: None
-Implementation allowed: No
+Architecture status: Approved
+Architecture approved: Yes (owner, 2026-09-14)
+Approved scope: Phases 0-3
+Approved date: 2026-09-14
+Implementation allowed: Yes, phase by phase
 
-> DESIGN ONLY. No code, no migration file, no migration applied, no deployment.
-> Awaiting the owner's explicit approval gate (CLAUDE.md "Architecture-First Mode").
+**Open Decision 1 (the daily Kite login) is RESOLVED: option (a).** The owner
+accepts that each India guest must log in to Zerodha every trading day, on the
+condition that staleness is shown **loudly** — on the page and in the email —
+rather than a stale number being presented as current. That obligation is
+binding on Phases 2 and 3: a risk figure computed from a token that expired is
+never rendered as if it were today's.
 
 Relationship to the other two documents:
 

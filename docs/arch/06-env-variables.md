@@ -1,5 +1,6 @@
 # Kairos — Environment Variables
-> Last updated: 2026-09-08
+> 2026-09-14: **`BROKER_CREDENTIAL_KEY`** (server-only, required before any guest broker connection can be stored). The AES-256-GCM key material for `lib/security/credential-cipher.ts`, which encrypts per-user broker credentials in `user_broker_credentials`. Must be at least 32 characters — the module REFUSES to encrypt with a shorter or missing secret rather than accepting a weak key, so a guest connection simply cannot be created until it is set. Keep it out of the database: the point of envelope encryption here is that a database read alone is not enough to use someone's brokerage account, which fails if the key lives beside the ciphertext. Rotating it invalidates every stored credential (each guest must reconnect); the stored `v1.` envelope prefix exists so a future rotation scheme can tell versions apart.
+> Last updated: 2026-09-14 (previously 2026-09-08)
 > Update this file when: a new env var is added, an existing var is removed, a var moves to/from the vault, or default values change.
 
 All secrets live in `.env.local` (gitignored) + Vercel environment variables for production.
