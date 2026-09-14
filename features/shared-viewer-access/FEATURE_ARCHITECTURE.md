@@ -308,14 +308,36 @@ and no fan-out, and that absence is the cost guarantee.
 | `/dashboard/research` (Fundamentals) | **included** | `/api/research/{chart-data,universe}` are pure DB reads — zero outbound calls |
 | `/dashboard/symbol/[symbol]` | **included** | Reads `agent_signals` + `paper_trades` only; without it every symbol link on the portfolio page 403s |
 | `/dashboard` (Home) | excluded | Reads `live_account_snapshots` — owner's real broker data |
-| `/dashboard/markets` | excluded | `/api/markets/quotes` and `/api/markets/overview` call Massive on every load (~5 req/min provider ceiling) |
-| `/dashboard/calendar` | excluded | `/api/calendar/earnings` calls Alpha Vantage, which is already over its budget |
+| `/dashboard/markets` | excluded **for now** | Calls Massive. NOT per load — corrected 2026-09-14, see below |
+| `/dashboard/calendar` | **safe to include** | `/api/calendar/earnings` already has a 24h DB TTL — corrected 2026-09-14, see below |
 | `/dashboard/scanner` | excluded | Screener endpoints call providers |
 | everything else | excluded | Owner-private: live portfolio, risk, agents, learning, admin, vault, settings, trading |
 
-Markets and Calendar are **not** a configuration flip. Including them requires a
-cache-only read path that never calls a provider on page load; that is separate
-work, not a list edit.
+### Correction (2026-09-14): these endpoints are already cached
+
+An earlier revision of this document claimed Markets and Calendar "call a
+provider on every page load". That was **wrong**, and it is recorded here rather
+than quietly edited away because it changed an exclusion decision.
+
+| Endpoint | Actual caching |
+|---|---|
+| `/api/calendar/earnings` | **24h DB TTL** against `earnings_calendar.fetched_at` — already once a day |
+| `/api/markets/overview` | `export const revalidate = 300`, a 5-minute in-memory cache, `next: { revalidate: 3600 }` on the grouped fetch, and an immutable per-date session cache |
+| `/api/markets/quotes` | `next: { revalidate: 300 }` per symbol |
+
+So Calendar meets the once-a-day bar today and may be included. Markets stays
+excluded for a different and better reason: it serves **daily data on a
+five-minute refresh cycle**. `/api/markets/quotes` calls Massive's `/prev`
+endpoint — the previous day's close — and `/api/markets/overview` uses grouped
+*daily* bars whose closes its own comment calls immutable. Up to ~288 refresh
+windows a day for values that change once.
+
+The fix is to match cadence to the data, which India already does
+(`kairos-india-markets-fill` warms `india_market_snapshot` at 10:15 UTC and the
+page reads the table). US has no equivalent and computes on demand. Giving US
+the same treatment removes provider calls from the page load entirely, which
+also makes Markets viewer-safe. That is separate, approval-gated work — a new
+cron plus a snapshot table plus a route rewrite, not a list edit.
 
 ### Two owner-private leaks found and closed while building
 
