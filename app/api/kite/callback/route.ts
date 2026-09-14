@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getKiteCreds, exchangeRequestToken, storeAccessToken } from "@/lib/kite";
 import { verifyOAuthCookie } from "@/lib/robinhood-mcp";
+import { storeGuestCredential } from "@/lib/brokers/guest-credentials";
+import { GUEST_VERIFIER_PREFIX } from "@/app/api/broker-connections/kite/login/route";
 
 export const dynamic = "force-dynamic";
 const STATE_COOKIE = "kite_oauth_state";
@@ -40,9 +42,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard/settings?kite=missing_key", base));
   }
 
+  // WHOSE login was this?
+  //
+  // Zerodha registers one redirect URL per app, so guests share this callback.
+  // The answer comes from the SIGNED state cookie, not from the session: a
+  // session can be absent on a redirect, and falling back to the owner path
+  // would let a guest's token overwrite the owner's vault entry. The cookie is
+  // HMAC-signed and compared in constant time, so a guest cannot forge the
+  // owner path and the owner's own flow is unchanged (its verifier is empty).
+  const guestUserId = verified.verifier?.startsWith(GUEST_VERIFIER_PREFIX)
+    ? verified.verifier.slice(GUEST_VERIFIER_PREFIX.length)
+    : null;
+
   const result = await exchangeRequestToken(apiKey, apiSecret, requestToken);
   if (!result.ok) {
-    return NextResponse.redirect(new URL(`/dashboard/settings?kite=exchange_failed`, base));
+    const failPath = guestUserId ? "/dashboard/connections?kite=exchange_failed" : "/dashboard/settings?kite=exchange_failed";
+    return NextResponse.redirect(new URL(failPath, base));
+  }
+
+  if (guestUserId) {
+    // Guest path: encrypted, per-user, read-only. Never touches api_key_vault,
+    // broker_accounts or strategy_config — a guest connection must not seed the
+    // owner's trading account or allowlist.
+    const stored = await storeGuestCredential({
+      userId: guestUserId,
+      broker: "kite",
+      token: result.accessToken,
+    });
+    const res = NextResponse.redirect(
+      new URL(stored.ok ? "/dashboard/connections?kite=connected" : "/dashboard/connections?kite=store_failed", base),
+    );
+    res.cookies.delete(STATE_COOKIE);
+    return res;
   }
 
   await storeAccessToken(svc, result.accessToken);

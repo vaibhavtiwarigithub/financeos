@@ -21,12 +21,16 @@ export const VIEWER_PAGES = [
   "/dashboard/portfolio",
   "/dashboard/research",
   "/dashboard/symbol",
+  "/dashboard/connections",
 ] as const;
 
 /**
- * API routes a viewer may call. Every entry must be read-only over
- * already-persisted tables — no provider call, no LLM call, no write. A route
- * that is viewer-reachable and mutates is a defect, not a configuration choice.
+ * SHARED-READ routes: a viewer reading the OWNER's data.
+ *
+ * Every entry must be read-only over already-persisted tables — no provider
+ * call, no LLM call, no write. This is the cost guarantee for shared access:
+ * the tenth viewer costs what the first did. A route here that mutates or calls
+ * a provider is a defect, not a configuration choice.
  *
  * Method matters: `/api/portfolio/performance-series` GET is a read, but its
  * PATCH writes the owner's saved benchmark preference, so only GET is listed.
@@ -36,6 +40,25 @@ export const VIEWER_API_ROUTES: ReadonlyArray<{ prefix: string; methods: readonl
   { prefix: "/api/research/chart-data", methods: ["GET"] },
   { prefix: "/api/research/universe", methods: ["GET"] },
   { prefix: "/api/auth/role", methods: ["GET"] },
+];
+
+/**
+ * OWN-DATA routes: a viewer acting on rows that are THEIRS.
+ *
+ * A separate class because connecting a broker genuinely needs to write, and to
+ * call a provider — on the caller's own account, with the caller's own
+ * credential. Collapsing these into the list above would have quietly weakened
+ * the shared-read guarantee into "GET-only-ish", so the two are kept apart and
+ * asserted separately.
+ *
+ * The contract for anything listed here:
+ *   - writes ONLY rows keyed to the calling user
+ *   - any provider call is to that user's OWN broker, on their behalf
+ *   - never reads or writes the owner's data, and never a shared table
+ *   - never an order path: the guest client has no order capability at all
+ */
+export const VIEWER_OWN_DATA_ROUTES: ReadonlyArray<{ prefix: string; methods: readonly string[] }> = [
+  { prefix: "/api/broker-connections", methods: ["GET", "POST"] },
 ];
 
 /** Where a viewer lands, and where they are sent when they request anything else. */
@@ -49,11 +72,25 @@ export function isViewerPage(pathname: string): boolean {
   return VIEWER_PAGES.some((page) => matchesPrefix(pathname, page));
 }
 
-export function isViewerApiRoute(pathname: string, method: string): boolean {
+/** A shared-read route: the owner's data, GET-only, no provider call. */
+export function isViewerSharedReadRoute(pathname: string, method: string): boolean {
   const upper = method.toUpperCase();
   return VIEWER_API_ROUTES.some(
     (route) => matchesPrefix(pathname, route.prefix) && route.methods.includes(upper),
   );
+}
+
+/** An own-data route: the caller's own rows and their own broker. */
+export function isViewerOwnDataRoute(pathname: string, method: string): boolean {
+  const upper = method.toUpperCase();
+  return VIEWER_OWN_DATA_ROUTES.some(
+    (route) => matchesPrefix(pathname, route.prefix) && route.methods.includes(upper),
+  );
+}
+
+/** Anything a viewer may call at all. */
+export function isViewerApiRoute(pathname: string, method: string): boolean {
+  return isViewerSharedReadRoute(pathname, method) || isViewerOwnDataRoute(pathname, method);
 }
 
 /** Owner identity is the email AND a confirmed email, matching requireOwner(). */
