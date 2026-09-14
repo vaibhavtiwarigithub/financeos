@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import PortfolioPage from "@/components/dashboard/PortfolioPage";
 import { loadPaperExitPlans } from "@/lib/trading/load-paper-exit-plans";
 import { loadInternationalAllocationPolicy } from "@/lib/allocation/international-policy";
+import { getSessionRole } from "@/lib/auth/session-role";
 
 export const revalidate = 30;
 
@@ -77,6 +78,10 @@ export default async function Page() {
       .map((row: any) => [String(row.symbol), String(row.company_name).trim()]),
   );
 
+  // Viewers see the owner's book read-only: every write control is hidden here
+  // AND refused server-side by the routes behind it.
+  const { role } = await getSessionRole();
+
   const [exitPlans, internationalAllocationPolicy] = await Promise.all([
     loadPaperExitPlans(supabase, positions ?? []),
     loadInternationalAllocationPolicy(supabase),
@@ -100,6 +105,7 @@ export default async function Page() {
       strategy={strategyArr?.[0] ?? null}
       tradeQueue={tradeQueueArr ?? []}
       symbolNames={symbolNames}
+      viewerMode={role === "viewer"}
       exitPlans={exitPlans}
       internationalAllocationPolicy={internationalAllocationPolicy}
     />

@@ -218,3 +218,30 @@ unchanged; it serves closed-day research labelling.
 renders the bare ticker when no name exists, never a blank line or a guess.
 Names are resolved server-side for the symbols actually on screen and passed
 down as a `symbol → name` map, rather than fetched per row.
+
+
+## Authorization: never read a role from a user-writable row (2026-09-14)
+
+A role used for authorization must come from a table the user cannot write.
+`profiles.role` is not such a table — its RLS is `FOR ALL USING (auth.uid() = id)`,
+so the row's own subject can change it. Read roles from `app_user_roles`
+(service-role write only) via `lib/auth/session-role.ts`.
+
+Boundaries are declared once, in `lib/auth/roles.ts`, and enforced twice:
+`middleware.ts` at the edge and the route's own guard. A route appearing in the UI
+can therefore never silently widen a viewer's reach — it must also be added to
+`VIEWER_API_ROUTES`, which is method-scoped (GET-only today, so a shared route's
+PATCH stays owner-only).
+
+Two rules that are easy to get wrong:
+
+- **Prefix matching must be exact-or-subpath.** `pathname.startsWith("/dashboard/research")`
+  also admits `/dashboard/research-journal`, a different page. Use
+  `path === prefix || path.startsWith(prefix + "/")`.
+- **Hiding a control is not an access control.** `/api/auth/role` exists so client
+  components can hide owner-only buttons; every owner action is still refused
+  server-side regardless of what the UI renders.
+
+**Any route reachable by a non-owner must be a pure read over already-persisted
+tables** — no provider call, no LLM call, no write. This is the cost guarantee for
+shared access, and `tests/viewer-route-sweep.test.ts` enforces it.

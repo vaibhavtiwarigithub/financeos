@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
+import { isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
 
 /** Paths that require a signed-in owner to VIEW. */
 function isProtectedPage(pathname: string): boolean {
@@ -52,15 +53,45 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Personal tool, single owner. This is the real access gate — the
-  // client-side email checks in app/login/page.tsx are cosmetic only (a
-  // bypassed/direct Supabase Auth call, or a Google OAuth sign-in, would
-  // skip them entirely). Any authenticated session that isn't the owner is
-  // rejected here, regardless of how the session was created.
-  if (user && user.email !== OWNER_EMAIL) {
-    await supabase.auth.signOut();
-    if (request.nextUrl.pathname !== "/login") {
-      return NextResponse.redirect(new URL("/login?error=restricted", request.url));
+  // This is the real access gate — the client-side email checks in
+  // app/login/page.tsx are cosmetic only (a bypassed/direct Supabase Auth call,
+  // or a Google OAuth sign-in, would skip them entirely). Any authenticated
+  // session that is neither the owner nor an active viewer is rejected here,
+  // regardless of how the session was created.
+  //
+  // A viewer's grant lives in `app_user_roles`, which only service-role can
+  // write. It is deliberately NOT read from `profiles.role`: that table lets a
+  // user update their own row, so trusting it would let a guest self-promote.
+  // The table starts empty, so until a grant is created this behaves exactly as
+  // the previous owner-only gate did.
+  const isOwner = user?.email === OWNER_EMAIL;
+  let isViewer = false;
+  if (user && !isOwner) {
+    const { data: grant } = await supabase
+      .from("app_user_roles")
+      .select("revoked_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    isViewer = Boolean(grant && !grant.revoked_at);
+    if (!isViewer) {
+      await supabase.auth.signOut();
+      if (request.nextUrl.pathname !== "/login") {
+        return NextResponse.redirect(new URL("/login?error=restricted", request.url));
+      }
+    }
+  }
+
+  // Viewers are confined to an explicit page set and an explicit API set.
+  // Defence in depth: each viewer-safe API route re-checks this itself, so a
+  // middleware matcher change cannot silently widen a viewer's reach.
+  if (isViewer) {
+    const { pathname } = request.nextUrl;
+    if (pathname.startsWith("/api/")) {
+      if (!isViewerApiRoute(pathname, request.method)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    } else if (isProtectedPage(pathname) && !isViewerPage(pathname)) {
+      return NextResponse.redirect(new URL(VIEWER_HOME, request.url));
     }
   }
 
@@ -70,22 +101,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Protect admin routes
+  // Protect admin routes. Gate on OWNER identity, not `profiles.role`: that
+  // column is user-writable (RLS `FOR ALL USING (auth.uid() = id)`), so reading
+  // it here was a self-promotion path to /admin the moment a second account
+  // existed. A DB trigger now blocks the write as well; this is the second lock.
   if (request.nextUrl.pathname.startsWith("/admin")) {
     if (!user) return NextResponse.redirect(new URL("/login", request.url));
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-    if (!profile || !["admin", "superadmin"].includes(profile.role)) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
+    if (!isOwner) return NextResponse.redirect(new URL(VIEWER_HOME, request.url));
   }
 
   // Redirect logged-in users away from login page
   if (user && request.nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(new URL(isViewer ? VIEWER_HOME : "/dashboard", request.url));
   }
 
   return supabaseResponse;

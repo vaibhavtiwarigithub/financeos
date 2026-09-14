@@ -4,9 +4,9 @@
 
 Architecture status: Approved
 Architecture approved: Yes (owner, 2026-09-14)
-Approved scope: Phase 0 only (RLS lockdown). Phases 1-3 NOT approved.
+Approved scope: Phases 0-2. Phase 3 (invite a real person) NOT approved.
 Approved date: 2026-09-14
-Implementation allowed: Phase 0 only
+Implementation allowed: Phases 0-2
 
 **Phase 0 status: APPLIED AND VERIFIED IN PRODUCTION, 2026-09-14** —
 `supabase/migrations/20260914140000_viewer_phase0_close_blanket_rls.sql`.
@@ -234,8 +234,8 @@ an existing overrun.
 | Phase | Content | Gate to next |
 |---|---|---|
 | 0 | **DONE 2026-09-14.** RLS lockdown (§3) only. No role, no allowlist, no invitation. | Owner's own usage unaffected for one full session cycle; no route regressions |
-| 1 | Role + allowlist + middleware/page gating + viewer-safe API guards | Isolation matrix passes (below) |
-| 2 | Viewer-reachable-route sweep (§4) | Zero viewer-reachable provider/LLM paths |
+| 1 | **DONE 2026-09-14.** Role + allowlist + middleware/page gating + viewer-safe API guards | Isolation matrix passes (below) |
+| 2 | **DONE 2026-09-14.** Viewer-reachable-route sweep (§4) | Zero viewer-reachable provider/LLM paths |
 | 3 | Invite the first real viewer | — |
 
 No phase may be skipped, and Phase 3 requires Phases 0–2 verified in production,
@@ -288,3 +288,62 @@ If approved and implemented, the SAME change must update:
 and `PROJECT_DECISIONS.md` (a decision record for the two-role model).
 `05-crons-and-scheduling.md` is explicitly NOT updated: this feature adds no cron
 and no fan-out, and that absence is the cost guarantee.
+
+
+---
+
+## Phase 1-2 as built (2026-09-14)
+
+### Viewer page set, and why the rest are excluded
+
+| Page | Verdict | Reason |
+|---|---|---|
+| `/dashboard/portfolio` | **included** | Server-rendered from the database only |
+| `/dashboard/research` (Fundamentals) | **included** | `/api/research/{chart-data,universe}` are pure DB reads — zero outbound calls |
+| `/dashboard/symbol/[symbol]` | **included** | Reads `agent_signals` + `paper_trades` only; without it every symbol link on the portfolio page 403s |
+| `/dashboard` (Home) | excluded | Reads `live_account_snapshots` — owner's real broker data |
+| `/dashboard/markets` | excluded | `/api/markets/quotes` and `/api/markets/overview` call Massive on every load (~5 req/min provider ceiling) |
+| `/dashboard/calendar` | excluded | `/api/calendar/earnings` calls Alpha Vantage, which is already over its budget |
+| `/dashboard/scanner` | excluded | Screener endpoints call providers |
+| everything else | excluded | Owner-private: live portfolio, risk, agents, learning, admin, vault, settings, trading |
+
+Markets and Calendar are **not** a configuration flip. Including them requires a
+cache-only read path that never calls a provider on page load; that is separate
+work, not a list edit.
+
+### Two owner-private leaks found and closed while building
+
+1. **`/api/research/universe` returned `broker_orders`** — the owner's real money
+   orders (side, qty, fill price, status), merged into the Fundamentals page. The
+   query is now skipped by role rather than filtered after the fact, so a viewer's
+   response is built without ever reading the table.
+2. **`profiles.role` was self-writable.** Its RLS is `FOR ALL USING (auth.uid() = id)`
+   with no `WITH CHECK`, and `middleware.ts` gated `/admin` on
+   `profiles.role in ('admin','superadmin')` — a self-promotion path to `/admin`
+   the moment a second account existed. Now: a DB trigger rejects any client-side
+   change to `role`, and `/admin` gates on owner identity instead.
+
+### Authority and revocation
+
+- A viewer's role comes only from `app_user_roles` (service-role write only), never
+  from `profiles`.
+- Revocation sets `revoked_at`; the row is kept so grant history survives.
+  Middleware re-reads the grant on **every** request, so revocation stops the
+  session at the edge and at every viewer-safe route — not merely in navigation.
+- `app_user_roles` has two read policies: owner reads all, and a viewer reads only
+  their own row (`user_id = auth.uid()`). Without the self-read, middleware — which
+  runs on the caller's session, not service-role — resolves no grant and signs the
+  viewer straight back out.
+
+### Owner-facing controls
+
+`/dashboard/admin/access` (owner-only) lists every grant, what each role may view
+and edit, and provides revoke/restore. Backed by `/api/admin/access`.
+
+### Phase 2 enforcement
+
+`tests/viewer-route-sweep.test.ts` fails the build if any viewer-reachable route
+gains an outbound call or a provider/broker/LLM import. It also asserts the
+calendar and analytics helpers on the viewer read path stay **synchronous** — a
+synchronous function cannot await a network call, which proves the path cannot
+reach `fetchMarketStatuses` inside `market-calendar.ts`.
