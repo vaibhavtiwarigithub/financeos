@@ -44,10 +44,14 @@ describe("viewer page boundary", () => {
   });
 
   it("does not let a prefix match leak a different page", () => {
-    // The bug this guards: "/dashboard/research" must NOT admit the separate
-    // "/dashboard/research-journal" page.
-    expect(isViewerPage("/dashboard/research-journal")).toBe(false);
+    // The bug this guards: "/dashboard/research" must NOT admit a separate page
+    // that merely starts with the same letters. "/dashboard/research-journal" is
+    // now allowlisted in its own right (2026-09-15), so lookalikes that are NOT
+    // allowlisted carry the check.
+    expect(isViewerPage("/dashboard/research-evil")).toBe(false);
+    expect(isViewerPage("/dashboard/researcher")).toBe(false);
     expect(isViewerPage("/dashboard/portfolio-admin")).toBe(false);
+    expect(isViewerPage("/dashboard/calendar-admin")).toBe(false);
   });
 
   it("keeps owner-private pages out", () => {

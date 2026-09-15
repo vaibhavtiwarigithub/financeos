@@ -552,3 +552,34 @@ A verified sending domain plus `EMAIL_FROM` is the owner's decision.
 type restrictions, open-redirect guard, and source guards on both pages and the
 route) and `tests/access-email-notices.test.ts` (id recorded for all four email
 kinds, webhook update order, RLS with no policy, page never overclaims).
+
+## Phase 3 page set (2026-09-15, owner-approved)
+
+Owner asked to open Earnings Calendar, Research → Daily Funnel, Score Tracker and
+Markets to viewers, and reported that a viewer clicking a symbol saw "Failed to
+load CORDSCABLE.NS: Forbidden". Audit and outcome:
+
+| Surface | Verdict | Why / how |
+|---|---|---|
+| Deep Dive `/dashboard/research/[symbol]` | **fixed** | The page was viewer-reachable but its four routes were owner-only, so every symbol link 403'd. `price` and `scores` are now viewer-or-owner; `trades` gives a viewer paper trades only (live proposals and broker orders are not read); `price` gives a viewer stored `price_cache` candles only (the owner's path still backfills from providers); fundamentals come from the new stored-only `/api/research/fundamentals/cached` (`fundamental_facts`), because the parent calls Finnhub / FMP / Alpha Vantage. India symbols have no stored candles, so a viewer's India chart is empty rather than fetched. |
+| `/dashboard/symbol/[symbol]` | **viewer redirected to Deep Dive** | Nearly every panel calls a provider or the LLM (live quote, sentiment, options chain, peers, AI deep dive, mentor chat). |
+| Earnings Calendar | **included (US)** | New `/api/calendar/earnings/cached` reads `earnings_calendar` only; the parent refreshes from Alpha Vantage. Refresh is owner-only. India is fetched live from NSE / Yahoo and never stored, so a viewer sees an owner-only note for India. |
+| Research → Daily Funnel | **included** | `/api/agents/research-journal` (exact match) is viewer-or-owner and skips the owner's live snapshot, live fills and trade-proposal lineage for a viewer. "Load current news" (`/context`, Alpha Vantage per click) is hidden and not allowlisted. |
+| Research → Score Tracker | **included** | `charts/score-history` and `scores/point-detail` are viewer-or-owner. The panel skips `/api/watchlist`, `/api/live-portfolio` and `/api/strategies/versions` for a viewer. |
+| Research → Evolution, Decision Review, Pipeline Health, New Listings | **excluded** | Learning internals and owner-only routes; hidden for viewers. |
+| Markets | **excluded** | Massive / Finnhub / SEC calls, an insider panel that reads the owner's live holdings, and an LLM "refresh macro read". Needs the US snapshot table described above first. |
+
+`VIEWER_API_ROUTES` entries can now be `exact`, so allowing a route never admits
+its children (`research-journal/context` and `/evolution` stay owner-only).
+`lib/auth/use-role.ts` gives pages the role for PRESENTATION only; every route
+enforces access itself.
+
+Known gap, not changed here: `/api/research/chart-data` (Fundamentals chart,
+viewer-allowed since Phase 1) calls `fetchPriceHistory`, which can backfill from
+a provider when `price_cache` is short. The route sweep checks route files, not
+the libraries they import, so it did not catch this.
+
+Acceptance: `tests/viewer-research-pages.test.ts` (allowlist boundaries, live-book
+exclusion in the funnel / trades / price routes, and that viewer pages fire no
+owner-only or provider request) and `tests/viewer-route-sweep.test.ts` (now honors
+`exact`).

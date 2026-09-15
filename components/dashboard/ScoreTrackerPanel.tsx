@@ -35,6 +35,8 @@ const LINE_COLORS = [
 const STORAGE_KEY = "kairos-score-tracker-symbols";
 const FILTERS_KEY = "kairos-score-tracker-filters";
 
+import { useRole } from "@/lib/auth/use-role";
+
 // ── Score Tracker filters (additive, read-only — no scoring/money impact) ─────
 // Each field maps 1:1 to a real signal_score_history column that the
 // score-history API now understands. "all"/"" means "don't constrain".
@@ -381,6 +383,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
   const [matchingSymbols, setMatchingSymbols] = useState<string[]>([]);
   const [matchingLoading, setMatchingLoading] = useState(false);
 
+  // Viewers see stored scores only: the watchlist, live-portfolio and
+  // strategy-version routes are owner-only (live broker book, writes, providers).
+  const role = useRole();
+
   // Rich "why" evidence for the currently-selected point (fetched on click).
   const [pointDetail, setPointDetail] = useState<PointDetailResp | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -389,6 +395,8 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
 
   // ── Hydrate selection from localStorage + fetch candidate symbols ──────────
   useEffect(() => {
+    if (role === undefined) return;
+    const isOwner = role === "owner";
     let cancelled = false;
     let saved: string[] = [];
     try {
@@ -416,8 +424,10 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
         // so 128 researched symbols could not be selected at all.
         const [sRes, wRes, pRes] = await Promise.all([
           fetch(`/api/charts/score-history?list=symbols&market=${market}`).then(r => r.json()).catch(() => ({})),
-          fetch(`/api/watchlist?market=${market}`).then(r => r.json()).catch(() => ({})),
-          market === "us"
+          isOwner
+            ? fetch(`/api/watchlist?market=${market}`).then(r => r.json()).catch(() => ({}))
+            : Promise.resolve({}),
+          isOwner && market === "us"
             ? fetch("/api/live-portfolio").then(r => r.json()).catch(() => ({}))
             : Promise.resolve({}),
         ]);
@@ -448,12 +458,12 @@ export default function ScoreTrackerPanel({ embedded }: { embedded?: boolean }) 
     // Weight-change context — scoped to the selected market, since these versions
     // annotate this market's score history. Unscoped, an India promotion drew a
     // weight-change marker on a US chart. This effect already re-runs on `market`.
-    fetch(`/api/strategies/versions?market=${market}`)
+    if (isOwner) fetch(`/api/strategies/versions?market=${market}`)
       .then(r => r.json())
       .then(d => { if (!cancelled) setVersions(d.versions ?? []); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [market]);
+  }, [market, role]);
 
   // ── Persist selection ──────────────────────────────────────────────────────
   useEffect(() => {

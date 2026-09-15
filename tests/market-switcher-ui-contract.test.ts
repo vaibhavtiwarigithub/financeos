@@ -31,11 +31,15 @@ describe("market-switcher UI contracts", () => {
     for (const path of [
       "app/api/agents/performance/route.ts",
       "app/api/strategies/versions/route.ts",
-      "app/api/charts/score-history/route.ts",
     ]) {
       const route = source(path);
       expect(route).toContain("await requireOwner()");
       expect(route).toContain("if (gate) return gate");
     }
+    // Score history backs the viewer-visible Score Tracker (2026-09-15): still
+    // gated in the handler, but for owner OR an allowlisted viewer.
+    const scoreHistory = source("app/api/charts/score-history/route.ts");
+    expect(scoreHistory).toContain("await requireViewerOrOwner(req)");
+    expect(scoreHistory).toContain("if (gate) return gate");
   });
 });

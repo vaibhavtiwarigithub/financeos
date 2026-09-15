@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +51,8 @@ function dateBoundary(raw: string, endOfDay: boolean): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  // Score Tracker is viewer-visible: stored score history only, no provider call.
+  const { gate } = await requireViewerOrOwner(req);
   if (gate) return gate;
   const p = req.nextUrl.searchParams;
   // Accept ?symbol=X (single) or ?symbols=X,Y,Z (multi, for the Score Tracker).

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +60,8 @@ async function loadPacket(svc: any, id: string | null): Promise<PacketDetail | n
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  // Score Tracker drill-down is viewer-visible: stored research packets only.
+  const { gate } = await requireViewerOrOwner(req);
   if (gate) return gate;
   const packetId = req.nextUrl.searchParams.get("packet_id");
   const priorId = req.nextUrl.searchParams.get("prior_packet_id");

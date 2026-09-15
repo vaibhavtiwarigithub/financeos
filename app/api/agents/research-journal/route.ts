@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { classifyJournalAsset } from "@/lib/asset-classification";
 import { resolveJournalTerminal } from "@/lib/research/journal-terminal";
@@ -13,6 +12,8 @@ import {
 } from "@/lib/trading/live-position-ledger";
 import { JOURNAL_ALL_DATES_LIMIT, normalizeJournalSymbol } from "@/lib/research/journal-controls";
 import { discoveryProvenanceItems, discoverySelectionReason } from "@/lib/research/discovery-provenance";
+import { externalLinks } from "@/lib/research/external-links";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 
 export const dynamic = "force-dynamic";
 
@@ -27,21 +28,6 @@ function finiteOrNull(value: unknown): number | null {
 function assetLabel(type: string): string {
   return type === "etf" ? "ETF / fund" : type === "metal_fund" ? "Commodity / metal fund"
     : type === "india_company" ? "India-listed company" : "US-listed company";
-}
-
-function externalLinks(symbol: string, market: "us" | "india", assetType: string) {
-  const upper = symbol.trim().toUpperCase();
-  const base = upper.replace(/\.(NS|BO)$/, "");
-  const links = market === "india" ? [
-    { label: "TradingView", url: `https://www.tradingview.com/symbols/NSE-${encodeURIComponent(base)}/` },
-    { label: "Yahoo Finance", url: `https://finance.yahoo.com/quote/${encodeURIComponent(upper)}` },
-    { label: "NSE", url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(base)}` },
-  ] : [
-    { label: "TradingView", url: `https://www.tradingview.com/symbols/${encodeURIComponent(upper)}/` },
-    { label: "Yahoo Finance", url: `https://finance.yahoo.com/quote/${encodeURIComponent(upper)}` },
-    { label: assetType === "etf" || assetType === "metal_fund" ? "SEC / fund filings" : "SEC company filings", url: `https://www.sec.gov/edgar/search/#/q=${encodeURIComponent(upper)}` },
-  ];
-  return links;
 }
 
 function technicalTranslation(evidence: Record<string, any>): string[] {
@@ -96,9 +82,13 @@ function decisionReason(obs: any, rationale: string | null): string {
 }
 
 export async function GET(req: NextRequest) {
-  const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Viewers see the funnel (Research → Daily Funnel). What they must never see
+  // is the owner's LIVE broker book: the snapshot positions and live fills
+  // joined below. Those reads are skipped entirely for a viewer, not filtered
+  // out of a response that was built with them.
+  const { gate, role } = await requireViewerOrOwner(req);
+  if (gate) return gate;
+  const includeLive = role === "owner";
 
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") === "all" ? "all" : "date";
@@ -241,7 +231,7 @@ export async function GET(req: NextRequest) {
 
     const config = configResult.data as any;
     const activeAccount = market === "india" ? config?.active_account_india : config?.active_account_us;
-    if (activeAccount) {
+    if (activeAccount && includeLive) {
       const { data: snapshot, error: snapshotError } = await svc.from("live_account_snapshots")
         .select("account_id,broker,positions_json,captured_at")
         .eq("account_id", activeAccount).order("captured_at", { ascending: false }).limit(1).maybeSingle();

@@ -540,6 +540,8 @@ function ChatTab({ symbol }: { symbol: string }) {
   );
 }
 
+import { useRole } from "@/lib/auth/use-role";
+
 export default function SymbolDetailPage({
   symbol, market, signals, trades,
 }: {
@@ -547,6 +549,13 @@ export default function SymbolDetailPage({
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("chart");
+  // Nearly every panel here calls a provider or the LLM (live quote, sentiment,
+  // options chain, peers, AI deep dive, mentor chat). A viewer is sent to the
+  // Deep Dive page instead, which reads stored data only.
+  const role = useRole();
+  useEffect(() => {
+    if (role === "viewer") router.replace(`/dashboard/research/${encodeURIComponent(symbol)}`);
+  }, [role, router, symbol]);
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: "8px 16px", borderRadius: "8px", fontSize: "12px", fontWeight: 600,
@@ -554,6 +563,11 @@ export default function SymbolDetailPage({
     background: active ? T.accent + "20" : "transparent",
     color: active ? T.accent : T.muted,
   });
+
+  // Do not mount the provider-backed panels until the role is known.
+  if (role !== "owner") {
+    return <div style={{ padding: "24px", color: T.muted, fontSize: "13px" }}>Loading {symbol}…</div>;
+  }
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "clamp(12px, 4vw, 24px) clamp(12px, 4vw, 28px)", display: "flex", flexDirection: "column", gap: "20px" }}>

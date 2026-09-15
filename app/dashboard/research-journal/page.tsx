@@ -6,6 +6,14 @@ import ScoreTrackerPanel from "@/components/dashboard/ScoreTrackerPanel";
 import DecisionReviewPanel from "@/components/dashboard/DecisionReviewPanel";
 import PipelineHealthTab from "@/components/dashboard/PipelineHealthTab";
 import NewListingsPanel from "@/components/dashboard/NewListingsPanel";
+import { useRole } from "@/lib/auth/use-role";
+
+type JournalTab = "funnel" | "evolution" | "scores" | "review" | "pipeline" | "listings";
+const ALL_TABS: readonly JournalTab[] = ["funnel", "evolution", "scores", "review", "pipeline", "listings"];
+// Viewers get the Daily Funnel and Score Tracker only. Evolution exposes the
+// learning internals, and Decision Review / Pipeline Health / New Listings read
+// owner-only routes.
+const VIEWER_TABS: readonly JournalTab[] = ["funnel", "scores"];
 import { useMarket, type Market } from "@/lib/market-context";
 import { useSearchParams } from "next/navigation";
 
@@ -163,6 +171,11 @@ export default function ResearchJournalPage() {
 
   const { market, setMarket } = useMarket();
   const [marketSynced, setMarketSynced] = useState(false);
+  const role = useRole();
+  const tabs = role === "owner" ? ALL_TABS : VIEWER_TABS;
+  // Until the role is known, and for a viewer, never render an owner-only tab
+  // (that would fire its owner-only requests).
+  const visibleTab: JournalTab = tabs.includes(tab) ? tab : "funnel";
 
   // Converge on the deep-linked market, then stop.
   //
@@ -200,17 +213,17 @@ export default function ResearchJournalPage() {
       />
       <div style={{ padding: "0 28px 32px" }}>
         <div style={{ display: "flex", gap: "8px", marginBottom: "20px", flexWrap: "wrap" }}>
-          {(["funnel", "evolution", "scores", "review", "pipeline", "listings"] as const).map(t => (
+          {tabs.map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: "8px 18px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
-              background: tab === t ? T.accentBg : T.surface, border: `1px solid ${tab === t ? T.accent : T.border}`,
-              color: tab === t ? T.accent : T.textSub,
+              background: visibleTab === t ? T.accentBg : T.surface, border: `1px solid ${visibleTab === t ? T.accent : T.border}`,
+              color: visibleTab === t ? T.accent : T.textSub,
             }}>
               {t === "funnel" ? "Daily Funnel" : t === "evolution" ? "Evolution" : t === "scores" ? "Score Tracker" : t === "review" ? "Decision Review" : t === "pipeline" ? "Pipeline Health" : "New Listings"}
             </button>
           ))}
         </div>
-        {tab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : tab === "evolution" ? <EvolutionTab /> : tab === "scores" ? <ScoreTrackerPanel embedded /> : tab === "review" ? <DecisionReviewPanel /> : tab === "pipeline" ? <PipelineHealthTab /> : <NewListingsPanel />}
+        {visibleTab === "funnel" ? <ResearchFunnel focusSymbol={focusSymbol} /> : visibleTab === "evolution" ? <EvolutionTab /> : visibleTab === "scores" ? <ScoreTrackerPanel embedded /> : visibleTab === "review" ? <DecisionReviewPanel /> : visibleTab === "pipeline" ? <PipelineHealthTab /> : <NewListingsPanel />}
       </div>
     </div>
   );

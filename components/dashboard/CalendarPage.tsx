@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRole } from "@/lib/auth/use-role";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket, CURRENCY } from "@/lib/market-context";
 
@@ -92,7 +93,12 @@ export default function CalendarPage() {
   const { market } = useMarket();
   const isIndia = market === "india";
   const cur = CURRENCY[market] ?? "$";
-  const earningsEndpoint = isIndia ? "/api/calendar/earnings-india" : "/api/calendar/earnings";
+  // Viewers read only the stored US calendar: the live routes call Alpha
+  // Vantage (US) and NSE / Yahoo (India). India has no stored copy yet.
+  const role = useRole();
+  const earningsEndpoint: string | null = role === undefined ? null
+    : role === "owner" ? (isIndia ? "/api/calendar/earnings-india" : "/api/calendar/earnings")
+    : isIndia ? null : "/api/calendar/earnings/cached";
 
   const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +109,13 @@ export default function CalendarPage() {
   const [tab, setTab] = useState<"earnings" | "econ">("earnings");
 
   async function loadEarnings() {
+    if (!earningsEndpoint) {
+      if (role !== undefined) {
+        setEarnings([]); setSource("");
+        setNote("India earnings dates are fetched live from NSE and Yahoo, so they are available to the owner only for now.");
+      }
+      return;
+    }
     try {
       const res = await fetch(earningsEndpoint);
       if (res.ok) {
@@ -124,9 +137,10 @@ export default function CalendarPage() {
     });
     return () => clearTimeout(slowTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [earningsEndpoint]);
+  }, [earningsEndpoint, role]);
 
   async function refresh() {
+    if (role !== "owner" || !earningsEndpoint) return;
     setRefreshing(true);
     await fetch(earningsEndpoint + "?bust=" + Date.now());
     await loadEarnings();
@@ -164,7 +178,7 @@ export default function CalendarPage() {
             ? (source === "nse_calendar" ? "via NSE results calendar (market-wide)" : source ? "via Yahoo Finance (per-symbol)" : "")
             : (source ? `via Robinhood ${source === "fallback" ? "(fallback)" : source === "cache" ? "(cached)" : "(live)"}` : "")}
         </div>
-        <button onClick={refresh} disabled={refreshing} style={{
+        <button onClick={refresh} disabled={refreshing || role !== "owner"} title={role === "owner" ? undefined : "Refreshing the calendar is available to the owner only"} style={{
           padding: "6px 14px", borderRadius: "6px", border: `1px solid ${T.border}`, background: "transparent",
           color: T.muted, fontSize: "12px", cursor: "pointer", opacity: refreshing ? 0.5 : 1,
         }}>

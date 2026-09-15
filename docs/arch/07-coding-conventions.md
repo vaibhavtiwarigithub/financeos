@@ -2,6 +2,12 @@
 > Last updated: 2026-09-15
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
 
+> 2026-09-15 (viewer Phase 3): **a route a viewer page needs gets a viewer-safe path, never a relaxed owner path.**
+> - `VIEWER_API_ROUTES` entries may set `exact: true`; use it whenever a route's children are not viewer-safe (`/api/agents/research-journal` is exact because `/context` calls Alpha Vantage and `/evolution` exposes learning internals). `tests/viewer-route-sweep.test.ts` sweeps only the exact file for such entries.
+> - A route that serves both roles resolves `role` with `requireViewerOrOwner(req)` and **skips** owner-only reads for a viewer (live snapshots, broker orders, trade proposals) rather than filtering them out of a response built with them.
+> - When the owner's route can call a provider (fundamentals, earnings calendar), add a stored-only sibling such as `/api/research/fundamentals/cached` for viewers instead of allowlisting the parent. A viewer never triggers a backfill.
+> - Client pages call `useRole()` (`lib/auth/use-role.ts`) to decide which requests to make and which buttons to show, waiting until the role is known before firing owner-only requests. This is presentation only; the route is the boundary.
+
 > 2026-09-15: **An email-link page acts only on the account the link proves — never on a session the browser already has.** Production defect: `/reset-password` showed its form whenever `getSession()` returned anything, and the admin-minted invite link carried hash tokens that the PKCE browser client from `@supabase/ssr` ignores. Opening a viewer's invite while signed in as the owner therefore changed the OWNER's password, and the viewer's account never got one. The pattern now, in `lib/auth/email-link.ts`:
 > - Servers mail the app's own URL built with `buildEmailLink(base, path, generateLink().properties)` from Supabase's `hashed_token`, never `properties.action_link`. Set-password links go to `/reset-password`; sign-in links go to `/auth/confirm?next=…` (`safeNextPath`, same-origin only).
 > - Pages call `establishEmailLinkSession(supabase, parseEmailLink(search, hash), ALLOWED_TYPES)`, which verifies the token (`verifyOtp`), a PKCE `code`, or Supabase's hash tokens (`setSession`, for Supabase-sent Forgot-password mail) and thereby replaces any existing session. `SET_PASSWORD_LINK_TYPES` = invite, recovery; `SIGN_IN_LINK_TYPES` = magiclink. No link means an error, not a fallback to the current session.

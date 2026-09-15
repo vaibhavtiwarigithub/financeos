@@ -14,13 +14,14 @@
 // symbol, trade or no trade. This route reads it and nothing else.
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { requireOwner } from "@/lib/auth/require-owner";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { toScorePoints } from "@/lib/research/score-history";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const gate = await requireOwner();
+  // Deep Dive is viewer-visible; this reads stored agent_signals only.
+  const { gate } = await requireViewerOrOwner(req);
   if (gate) return gate;
 
   const symbol = req.nextUrl.searchParams.get("symbol")?.toUpperCase();

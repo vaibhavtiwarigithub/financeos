@@ -42,7 +42,12 @@ function routeFilesUnder(prefix: string): string[] {
   return files;
 }
 
-const PROVIDER_IMPORT = /from\s+"[^"]*(provider|massive|alphavantage|alpha-vantage|finnhub|yahoo|gdelt|broker|mcp|anthropic|openai)[^"]*"/i;
+/** An exact route admits only its own file; its children are not viewer-reachable. */
+function viewerFilesFor(route: { prefix: string; exact?: boolean }): string[] {
+  return route.exact ? [routeFileFor(route.prefix)] : routeFilesUnder(route.prefix);
+}
+
+const PROVIDER_IMPORT =/from\s+"[^"]*(provider|massive|alphavantage|alpha-vantage|finnhub|yahoo|gdelt|broker|mcp|anthropic|openai)[^"]*"/i;
 
 describe("viewer-reachable route sweep", () => {
   it("every declared viewer route actually exists", () => {
@@ -53,7 +58,7 @@ describe("viewer-reachable route sweep", () => {
 
   it("no viewer-reachable route makes an outbound call", () => {
     for (const route of VIEWER_API_ROUTES) {
-      for (const file of routeFilesUnder(route.prefix)) {
+      for (const file of viewerFilesFor(route)) {
         const src = readFileSync(file, "utf8");
         expect(src.includes("https://"), `${file} contains an outbound URL`).toBe(false);
         expect(/\bfetch\s*\(/.test(src), `${file} calls fetch()`).toBe(false);
@@ -69,7 +74,7 @@ describe("viewer-reachable route sweep", () => {
 
   it("no viewer-reachable route imports a provider, broker or LLM module", () => {
     for (const route of VIEWER_API_ROUTES) {
-      for (const file of routeFilesUnder(route.prefix)) {
+      for (const file of viewerFilesFor(route)) {
         const src = readFileSync(file, "utf8");
         const hit = src.match(PROVIDER_IMPORT);
         expect(hit?.[0] ?? null, `${file} imports ${hit?.[0]}`).toBeNull();

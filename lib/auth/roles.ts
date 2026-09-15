@@ -26,6 +26,12 @@ export const VIEWER_PAGES = [
   // dashboard over the owner's live account book. The guest page is its own
   // path so a viewer cannot reach the owner's book.
   "/dashboard/my-risk",
+  // Research → Daily Funnel and Score Tracker tabs only (the page hides the
+  // other tabs for viewers). NOT "/dashboard/markets": nearly every panel there
+  // calls a provider, one reads the owner's live holdings, and "refresh macro
+  // read" calls the LLM (2026-09-15 audit).
+  "/dashboard/research-journal",
+  "/dashboard/calendar",
 ] as const;
 
 /**
@@ -46,13 +52,44 @@ export const VIEWER_PAGES = [
  * Method matters: `/api/portfolio/performance-series` GET is a read, but its
  * PATCH writes the owner's saved benchmark preference, so only GET is listed.
  */
-export const VIEWER_API_ROUTES: ReadonlyArray<{ prefix: string; methods: readonly string[] }> = [
+export type ViewerRoute = {
+  prefix: string;
+  methods: readonly string[];
+  /**
+   * Match this path only, not its subpaths. For a route whose CHILDREN are not
+   * viewer-safe — `/api/agents/research-journal/context` calls Alpha Vantage and
+   * `/evolution` exposes the learning internals — so admitting the prefix would
+   * quietly admit them too.
+   */
+  exact?: boolean;
+};
+
+export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   { prefix: "/api/portfolio/performance-series", methods: ["GET"] },
   { prefix: "/api/research/chart-data", methods: ["GET"] },
   { prefix: "/api/research/universe", methods: ["GET"] },
   { prefix: "/api/auth/role", methods: ["GET"] },
   { prefix: "/api/user-risk", methods: ["GET"] },
+  // Research → Daily Funnel. The route strips the owner's live broker snapshot
+  // and live fills for a viewer.
+  { prefix: "/api/agents/research-journal", methods: ["GET"], exact: true },
+  // Score Tracker.
+  { prefix: "/api/charts/score-history", methods: ["GET"] },
+  { prefix: "/api/scores/point-detail", methods: ["GET"] },
+  // Deep Dive (/dashboard/research/[symbol]). Price and trades are role-aware:
+  // stored candles only, paper trades only. Fundamentals is the stored-only
+  // sibling; the parent `/api/research/fundamentals` calls providers.
+  { prefix: "/api/research/price", methods: ["GET"] },
+  { prefix: "/api/research/scores", methods: ["GET"] },
+  { prefix: "/api/research/trades", methods: ["GET"] },
+  { prefix: "/api/research/fundamentals/cached", methods: ["GET"], exact: true },
+  // Earnings Calendar (US). The parent route refreshes from Alpha Vantage.
+  { prefix: "/api/calendar/earnings/cached", methods: ["GET"], exact: true },
 ];
+
+function matchesRoute(pathname: string, route: ViewerRoute): boolean {
+  return route.exact ? pathname === route.prefix : matchesPrefix(pathname, route.prefix);
+}
 
 /**
  * OWN-DATA routes: a viewer acting on rows that are THEIRS.
@@ -96,7 +133,7 @@ export function isViewerPage(pathname: string): boolean {
 export function isViewerSharedReadRoute(pathname: string, method: string): boolean {
   const upper = method.toUpperCase();
   return VIEWER_API_ROUTES.some(
-    (route) => matchesPrefix(pathname, route.prefix) && route.methods.includes(upper),
+    (route) => matchesRoute(pathname, route) && route.methods.includes(upper),
   );
 }
 

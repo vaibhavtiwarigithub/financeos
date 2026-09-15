@@ -92,6 +92,8 @@ function computeMACD(closes: number[]) {
 type Window = "6M" | "1Y" | "5Y" | "All";
 const WINDOW_DAYS: Record<Window, number> = { "6M": 180, "1Y": 365, "5Y": 1825, "All": 9999 };
 
+import { useRole } from "@/lib/auth/use-role";
+
 function filterByWindow(candles: Candle[], window: Window): Candle[] {
   const days = WINDOW_DAYS[window];
   if (days >= 9999) return candles;
@@ -141,6 +143,8 @@ export default function DeepDivePage() {
   const symbol = (typeof params.symbol === "string" ? params.symbol : "").toUpperCase();
   const market = /\.(NS|BO)$/i.test(symbol) ? "india" : "us";
   const currency = market === "india" ? "₹" : "$";
+  // Viewers read stored fundamentals; the owner's route may call providers.
+  const role = useRole();
 
   const [window, setWindow] = useState<Window>("1Y");
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
@@ -162,14 +166,16 @@ export default function DeepDivePage() {
 
   // Fetch primary symbol data
   useEffect(() => {
-    if (!symbol) return;
+    if (!symbol || role === undefined) return;
     setLoading(true);
     setError(null);
     const days = WINDOW_DAYS["All"]; // fetch max, filter client-side
     Promise.all([
       fetch(`/api/research/price?symbol=${symbol}&days=${days}`).then(r => r.json()),
       fetch(`/api/research/trades?symbol=${symbol}&market=${market}`).then(r => r.json()),
-      fetch(`/api/research/fundamentals?symbol=${symbol}`).then(r => r.json()),
+      fetch(role === "owner"
+        ? `/api/research/fundamentals?symbol=${symbol}`
+        : `/api/research/fundamentals/cached?symbol=${symbol}&market=${market}`).then(r => r.json()),
       fetch(`/api/research/scores?symbol=${symbol}&market=${market}&days=${days}`).then(r => r.json()),
     ])
       .then(([priceData, tradeData, fundData, scoreData]) => {
@@ -184,7 +190,7 @@ export default function DeepDivePage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [symbol, market]);
+  }, [symbol, market, role]);
 
   // Fetch compare symbol data
   useEffect(() => {

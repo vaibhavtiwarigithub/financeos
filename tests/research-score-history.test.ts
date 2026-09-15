@@ -112,8 +112,10 @@ describe("the scores route reads the right table", () => {
     expect(ROUTE.includes("paper_trades"), "still bound to trades").toBe(false);
   });
 
-  it("is owner-gated like every other research route", () => {
-    expect(ROUTE.includes("requireOwner()")).toBe(true);
+  it("is gated in the handler — owner or an allowlisted viewer (Deep Dive)", () => {
+    // Opened to viewers 2026-09-15: it reads stored agent_signals only.
+    expect(ROUTE.includes("requireViewerOrOwner(req)")).toBe(true);
+    expect(ROUTE.includes("if (gate) return gate")).toBe(true);
   });
 
   it("scopes by symbol AND market, so India and US never mix", () => {

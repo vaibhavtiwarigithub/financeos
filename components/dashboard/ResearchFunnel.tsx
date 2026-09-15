@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMarket } from "@/lib/market-context";
+import { useRole } from "@/lib/auth/use-role";
 import { featureAuditForInstrument } from "@/lib/feature-packs/catalog";
 
 const T = {
@@ -78,6 +79,8 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
   const [symbolDraft, setSymbolDraft] = useState("");
   const [symbolFilter, setSymbolFilter] = useState("");
   const { market } = useMarket();
+  // "Load current news" calls Alpha Vantage per click, so it is owner-only.
+  const role = useRole();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -309,13 +312,13 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                   <div>
                     <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase" }}>Current news context · separate from this decision</div>
-                    <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>Loaded only when requested to protect free-provider limits.</div>
+                    <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>{role === "owner" ? "Loaded only when requested to protect free-provider limits." : "Current news is available to the owner only."}</div>
                   </div>
                   <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                     <a href={`/dashboard/research/${s.symbol}`} style={{ background: "transparent", border: `1px solid ${T.accent}55`, color: T.accent, borderRadius: "7px", padding: "6px 10px", fontSize: "11px", textDecoration: "none", whiteSpace: "nowrap" }}>Deep Dive ↗</a>
-                    <button type="button" onClick={() => loadCurrentContext(s.symbol)} disabled={contextLoading.has(s.symbol)} style={{ background: T.ink, border: `1px solid ${T.blue}55`, color: contextLoading.has(s.symbol) ? T.muted : T.blue, borderRadius: "7px", padding: "6px 10px", cursor: contextLoading.has(s.symbol) ? "default" : "pointer", fontSize: "11px" }}>
+                    {role === "owner" && <button type="button" onClick={() => loadCurrentContext(s.symbol)} disabled={contextLoading.has(s.symbol)} style={{ background: T.ink, border: `1px solid ${T.blue}55`, color: contextLoading.has(s.symbol) ? T.muted : T.blue, borderRadius: "7px", padding: "6px 10px", cursor: contextLoading.has(s.symbol) ? "default" : "pointer", fontSize: "11px" }}>
                       {contextLoading.has(s.symbol) ? "Loading…" : contexts[s.symbol] ? "Refresh current news" : "Load current news"}
-                    </button>
+                    </button>}
                   </div>
                 </div>
                 {contexts[s.symbol] && <div style={{ marginTop: "10px", borderTop: `1px solid ${T.border}`, paddingTop: "9px" }}>
