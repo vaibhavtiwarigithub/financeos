@@ -22,5 +22,19 @@ export interface EmailProvider {
    * must not proceed on a silent failure — an invitation, for instance, where
    * granting access to someone who was never emailed is worse than an error.
    */
-  sendChecked?(msg: EmailMessage): Promise<{ ok: boolean; error?: string }>;
+  sendChecked?(msg: EmailMessage): Promise<SendResult>;
+}
+
+export interface SendResult {
+  ok: boolean;
+  error?: string;
+  /**
+   * The provider's own id for the accepted message, when it returns one.
+   *
+   * ACCEPTANCE IS NOT DELIVERY. A provider returns 200 once it has taken the
+   * message, and a dead mailbox bounces asynchronously minutes later. The id is
+   * the only handle that ties that later webhook back to this exact send, so
+   * anything that must know whether its mail actually ARRIVED has to keep it.
+   */
+  id?: string;
 }
