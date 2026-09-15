@@ -45,8 +45,23 @@ export class ResendEmailProvider implements EmailProvider {
         body: JSON.stringify({ from: msg.from, to: msg.to, subject: msg.subject, html: msg.html }),
       });
       if (!res.ok) {
-        // Never echo the body verbatim — it can carry request details.
-        return { ok: false, error: `Resend returned HTTP ${res.status}` };
+        // Surface Resend's OWN message, not the whole body.
+        //
+        // This returned a bare "HTTP 403" at first, which is true and useless:
+        // 403 from Resend almost always means the FROM domain is not verified,
+        // or that the shared `onboarding@resend.dev` sender is being used to
+        // mail someone other than the account owner. Neither is guessable from
+        // the status code, and the owner was left staring at a number. The
+        // `message` field describes the request, not the credential, so it is
+        // safe to pass on; the rest of the body still is not.
+        let detail = "";
+        try {
+          const body: any = await res.json();
+          const msg = typeof body?.message === "string" ? body.message
+            : typeof body?.error?.message === "string" ? body.error.message : "";
+          if (msg) detail = ` — ${msg.slice(0, 220)}`;
+        } catch { /* a non-JSON body tells us nothing; the status still does */ }
+        return { ok: false, error: `Resend returned HTTP ${res.status}${detail}` };
       }
       return { ok: true };
     } catch (e: any) {

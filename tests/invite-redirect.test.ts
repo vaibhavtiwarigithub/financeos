@@ -150,13 +150,44 @@ describe("a silent send failure cannot grant access", () => {
     expect(RESEND.includes('return { ok: false, error: "no Resend API key in env or api_key_vault" }')).toBe(true);
   });
 
-  it("does not echo the provider's response body, which can carry request detail", () => {
-    expect(RESEND.includes("Resend returned HTTP ${res.status}")).toBe(true);
+  it("surfaces Resend's own message, so a 403 is diagnosable", () => {
+    // A bare "HTTP 403" is true and useless: it almost always means the FROM
+    // domain is unverified, or the shared sender is mailing someone other than
+    // the account owner. Neither is guessable from the status code.
+    expect(RESEND.includes("Resend returned HTTP ${res.status}${detail}")).toBe(true);
+    expect(RESEND.includes("body?.message")).toBe(true);
+  });
+
+  it("passes on the message only, never the whole body", () => {
+    expect(/return \{ ok: false, error: `Resend returned HTTP \$\{res\.status\}\$\{detail\}` \}/.test(RESEND)).toBe(true);
+    expect(RESEND.includes("JSON.stringify(body)"), "echoes the entire response body").toBe(false);
   });
 
   it("still refuses before writing the grant", () => {
     const inviteFn = ACCESS.slice(ACCESS.indexOf("async function invite("));
     const beforeGrant = inviteFn.slice(0, inviteFn.indexOf('.from("app_user_roles")'));
     expect(beforeGrant.includes("No access was granted.")).toBe(true);
+  });
+});
+
+describe("the from-address is one Resend will actually accept", () => {
+  const RISK_EMAIL = code(read("app/api/agents/user-risk-email/route.ts"));
+  const NEWSLETTER = read("supabase/functions/newsletter-daily/index.ts");
+
+  it("defaults to the sender the working senders already use", () => {
+    // Production 2026-09-14: "Resend returned HTTP 403". The default was
+    // `noreply@kairos.app` — a domain nobody has verified in Resend — while the
+    // newsletter and briefing, which do deliver, use onboarding@resend.dev.
+    expect(NEWSLETTER.includes("Kairos <onboarding@resend.dev>")).toBe(true);
+    for (const [name, src] of Object.entries({ ACCESS, RISK_EMAIL })) {
+      expect(src.includes('"Kairos <onboarding@resend.dev>"'), `${name} uses a different default`).toBe(true);
+      expect(src.includes("noreply@kairos.app"), `${name} still defaults to an unverified domain`).toBe(false);
+    }
+  });
+
+  it("still lets EMAIL_FROM override, which is what a verified domain needs", () => {
+    for (const src of [ACCESS, RISK_EMAIL]) {
+      expect(src.includes("process.env.EMAIL_FROM ||")).toBe(true);
+    }
   });
 });

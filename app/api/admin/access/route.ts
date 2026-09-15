@@ -170,7 +170,14 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
   // actually stops the grant.
   const provider = getEmailProvider();
   const message = {
-    from: process.env.EMAIL_FROM || "Kairos <noreply@kairos.app>",
+    // Default to the sender the rest of this codebase actually sends with
+    // (the daily newsletter and the briefing both use it). The previous default
+    // was `noreply@kairos.app`, a domain nobody has verified in Resend, which
+    // is why this returned 403. NOTE: `onboarding@resend.dev` is Resend's
+    // shared testing sender and may only mail the Resend ACCOUNT OWNER's own
+    // address — inviting anyone else needs a verified domain and EMAIL_FROM set
+    // to an address on it.
+    from: process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>",
     to: email,
     subject: inviteEmailSubject({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),
     html: buildInviteEmailHtml({ actionLink, inviterEmail: OWNER_EMAIL, note, returning }),

@@ -51,7 +51,9 @@ export async function POST(req: NextRequest) {
   }
 
   const provider = getEmailProvider();
-  const from = process.env.EMAIL_FROM || "Kairos <noreply@kairos.app>";
+  // Same default as the newsletter and briefing, which do deliver. An
+  // unverified domain (the old `kairos.app` default) makes Resend answer 403.
+  const from = process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>";
   const results: Array<{ userId: string; status: string; reason?: string }> = [];
   let sent = 0;
 
