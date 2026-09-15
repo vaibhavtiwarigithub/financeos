@@ -1,6 +1,6 @@
 # Work Log
 
-| Benchmark collector reliability + viewer lifecycle hardening | Codex / GPT-5 | in_progress | 2026-09-15 | Owner-approved repair: market-local benchmark completion/retry/run accounting/freshness alert semantics; separate US/India run records; non-failure health notices; viewer resend/revoke/delete controls with branded delivery and owner-boundary audit. |
+| Benchmark collector reliability + viewer lifecycle hardening | Codex / GPT-5 | completed | 2026-09-15 | Shipped in ab1781b2/434c7bab/0f743a7b: market-local benchmark completion/retry/run accounting/freshness alert semantics; separate US/India run records; non-failure health notices; viewer resend/revoke/delete controls with branded delivery and owner-boundary audit. |
 
 | Paper Portfolio position purchase timestamp | Codex / GPT-5 | completed locally | 2026-09-15 | Each open position card now shows the authoritative `paper_positions.opened_at` as `Bought <date> · <time> ET/IST`; missing/invalid legacy timestamps fail visibly. Production read verified all 20 current open positions (10 US, 10 India) have `opened_at`. Three formatter tests and TypeScript pass. UI/read-only only; no schema or trading behavior change. |
 
