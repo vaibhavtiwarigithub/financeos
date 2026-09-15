@@ -110,7 +110,7 @@ Be specific, warm but honest, and concrete. Tie the ONE lesson to BOTH the curre
   ];
 
   // User-selectable in Settings → AI Models (agent_name="mentor").
-  const coachModel = await getConfiguredModel(svc, "mentor", "deepseek-reasoner");
+  const coachModel = await getConfiguredModel(svc, "mentor", "deepseek-flash");
   try {
     const loop = await runAgentLoop({
       model: coachModel,

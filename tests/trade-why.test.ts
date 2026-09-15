@@ -73,6 +73,14 @@ describe("explainTradeWhy — production reason shapes", () => {
     expect(a.headline).not.toMatch(RAW_CODE);
   });
 
+  it("corrects legacy missing-thesis wording from the paired deterministic score", () => {
+    const w = explainTradeWhy({ market: "us", now,
+      events: [ev("research", "rejected", "Abstained: thesis response was missing a parseable direction", "2026-09-15T15:08:00Z")],
+      observation: { ts: "2026-09-15T15:08:00Z", analyst_score: 50, score_threshold: 60, direction: "neutral", entry_eligible: false },
+    });
+    expect(w.headline).toBe("No trade 09-15: score 50 is below the threshold 60.");
+  });
+
   it("unknown trading reason falls back to a readable sentence, never a raw code", () => {
     const w = explainTradeWhy({ market: "us", now, events: [ev("execution", "rejected", "rpc_fill_denied:some_new_guard", "2026-09-15T15:00:00Z")] });
     expect(w.headline).toBe("Not bought 09-15: a paper-trading safety check stopped the order.");

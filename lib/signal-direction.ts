@@ -28,6 +28,55 @@ export interface DirectionGateResult {
   note: string;
 }
 
+export interface DeterministicNarrativeInput {
+  analystScore: number;
+  scoreThreshold: number | null | undefined;
+  direction: "long" | "neutral" | "short" | string;
+  isHeld: boolean;
+  includedDimsCount: number;
+  entryEligible: boolean;
+  breakdownVetoed?: boolean;
+  earningsRepricingPending?: boolean;
+  scores: Record<string, number | null | undefined>;
+}
+
+// This is explanation only. It intentionally derives its wording from the same
+// persisted numeric evidence and gates that make the decision; an LLM outage
+// can never turn a transparent reason into a fabricated thesis.
+export function buildDeterministicNarrative(input: DeterministicNarrativeInput): string {
+  const threshold = input.scoreThreshold ?? 60;
+  const labels: Record<string, string> = {
+    fundamental: "fundamentals", technical: "technicals", sentiment: "sentiment",
+    macro: "macro", insider: "insider activity",
+  };
+  const dimensions = Object.entries(input.scores)
+    .filter(([, score]) => Number.isFinite(score))
+    .map(([key, score]) => ({ label: labels[key] ?? key, score: Number(score) }))
+    .sort((a, b) => b.score - a.score);
+  const strongest = dimensions.slice(0, 2).map(d => `${d.label} ${d.score}`).join(" and ");
+  const weakest = dimensions.length ? dimensions[dimensions.length - 1] : null;
+  const evidence = strongest
+    ? ` Strongest recorded evidence: ${strongest}.${weakest && weakest.score < 50 ? ` Main constraint: ${weakest.label} ${weakest.score}.` : ""}`
+    : " No usable score dimensions were recorded.";
+
+  if (input.isHeld && input.direction === "short") {
+    return `Exit review: composite score ${input.analystScore}/100 fell below the ${threshold} holding threshold.${evidence}`;
+  }
+  if (input.earningsRepricingPending) {
+    return `No entry: a post-earnings daily candle is required before the ${input.analystScore}/100 score can be acted on.${evidence}`;
+  }
+  if (input.breakdownVetoed) {
+    return `No entry: a breakdown-risk veto blocks a new position despite composite score ${input.analystScore}/100.${evidence}`;
+  }
+  if (input.includedDimsCount < 2) {
+    return `No entry: only ${input.includedDimsCount}/5 usable score dimensions were available; new positions require at least two.${evidence}`;
+  }
+  if (input.entryEligible) {
+    return `Eligible for downstream risk and portfolio checks: composite score ${input.analystScore}/100 cleared the ${threshold} entry threshold.${evidence}`;
+  }
+  return `No entry: composite score ${input.analystScore}/100 is below the ${threshold} entry threshold.${evidence}`;
+}
+
 export function resolveSignalDirection(input: DirectionGateInput): DirectionGateResult {
   const threshold = input.scoreThreshold ?? 60;
   const llmParseFailed = !input.llmDirection;
@@ -46,7 +95,7 @@ export function resolveSignalDirection(input: DirectionGateInput): DirectionGate
   }
   const direction = input.analystScore >= threshold ? "long" : "neutral";
   const note = llmParseFailed
-    ? " [no thesis narrative — direction from deterministic gate]"
+    ? " [deterministic decision; LLM thesis unavailable]"
     : (input.llmDirection && input.llmDirection !== direction
         ? ` [llm=${input.llmDirection} overridden by gate → ${direction}]`
         : "");

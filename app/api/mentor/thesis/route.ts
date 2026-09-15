@@ -100,7 +100,7 @@ Keep it under 300 words. Plain English, no bullet points.`;
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
     const res = await callLLM({
       task: "thesis", prompt, agentLabel: "mentor-thesis",
-      model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-reasoner"),
+      model: await getConfiguredModel(supabase, "mentor-thesis", "deepseek-flash"),
       maxTokens: REASONING_MIN_TOKENS,
     });
     const thesis = res.text;

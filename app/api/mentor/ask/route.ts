@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   if (!question?.trim()) return new Response(JSON.stringify({ error: "question required" }), { status: 400 });
 
   const svc = createServiceClient();
-  const model = await getConfiguredModel(svc, "mentor-ask", "deepseek-chat");
+  const model = await getConfiguredModel(svc, "mentor-ask", "deepseek-flash");
 
   async function toolExecutor(call: ToolCall): Promise<string> {
     try {

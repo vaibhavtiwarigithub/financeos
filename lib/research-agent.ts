@@ -15,7 +15,7 @@ import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type Sco
 import { observationsFromLegacyMask, runDegradationGuard, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
 import { persistObservedResearchEvidence } from "@/lib/evidence/observed-cache";
 import type { Market } from "@/lib/evidence/contracts";
-import { resolveSignalDirection } from "@/lib/signal-direction";
+import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
@@ -1883,7 +1883,7 @@ export async function processSymbol(
   const llmResult = isHeld
     ? deterministicHoldingThesis
     : await Promise.race([
-      getConfiguredModel(supabase, "research", "deepseek-reasoner")
+      getConfiguredModel(supabase, "research", "deepseek-flash")
         .then(model => callLLM({
           task: "screen",
           model,
@@ -2008,6 +2008,23 @@ export async function processSymbol(
     && !breakdownVetoed
     && signalDirection === "long"
     && analystScore >= (scoreThreshold ?? 60);
+  const deterministicNarrative = buildDeterministicNarrative({
+    analystScore,
+    scoreThreshold,
+    direction: signalDirection,
+    isHeld,
+    includedDimsCount: includedDims.length,
+    entryEligible,
+    breakdownVetoed,
+    earningsRepricingPending: earningsRepricing.pending,
+    scores: {
+      fundamental: scores.fundamental_score,
+      technical: scores.technical_score,
+      sentiment: scores.sentiment_score,
+      macro: scores.macro_score,
+      insider: scores.insider_score,
+    },
+  });
   const researchHorizonDays = resolveHorizonDays(
     tradingMandate,
     (champion as any)?.genome?.horizon_days ?? null,
@@ -2036,7 +2053,7 @@ export async function processSymbol(
       sentiment_score:   scores.sentiment_score,
       macro_score:       scores.macro_score,
       insider_score:     scores.insider_score,
-      summary:    thesis.summary   ?? `Analyst score: ${analystScore}. Direction: ${signalDirection}.`,
+      summary:    thesis.summary   ?? deterministicNarrative,
       key_risks:  thesis.key_risks ?? [],
       catalysts:  thesis.catalysts ?? [],
       is_held_position: isHeld,
@@ -2089,7 +2106,7 @@ export async function processSymbol(
     staged_at: sessionValidated ? null : new Date().toISOString(),
     source,
     is_holding: isHeld,
-    rationale: (thesis.summary ?? `Score: ${analystScore}/100`) + directionNote,
+    rationale: (thesis.summary ?? deterministicNarrative) + directionNote,
     stop_loss_pct: stopLossPct,
     take_profit_pct: targetPct,
     signal_breakdown: { trade_plan: tradePlan, earnings_repricing: earningsRepricing },
@@ -2289,7 +2306,7 @@ export async function processSymbol(
 
   const { error: scoreHistErr } = await supabase.from("signal_score_history").insert({
     ...baseScoreRow,
-    rationale: thesis.summary ?? `Analyst score ${analystScore}, direction ${signalDirection}.`,
+    rationale: thesis.summary ?? deterministicNarrative,
     research_packet_id: packet?.id ?? null,
     used_champion_weights: usingChampion,
     market, // Phase 4: per-market score trajectory
@@ -2501,9 +2518,7 @@ export async function processSymbol(
               ? `Rejected: breakdown veto — ${(((scores.evidence?.technical as any)?.breakdown_veto as any)?.reasons ?? []).join("; ") || "confirmed technical breakdown"}`
               : thinEvidence
               ? `Abstained: thin evidence (${includedDims.length}/5 usable dimensions)`
-              : llmParseFailed
-                ? "Abstained: thesis response was missing a parseable direction"
-                : analystScore < (scoreThreshold ?? 60)
+              : analystScore < (scoreThreshold ?? 60)
                   ? `Rejected: score ${analystScore} < threshold ${scoreThreshold ?? 60}`
                   : `Abstained: score passed but direction was ${signalDirection}; score alone cannot authorize entry`,
           detail: {

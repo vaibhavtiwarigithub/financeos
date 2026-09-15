@@ -13,7 +13,7 @@ const T = {
   text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280", accent: "#6366F1", green: "#34D399",
 };
 
-type AgentCfg = { agent_name: string; model: string; max_tokens?: number; temperature?: number; enabled: boolean; notes?: string };
+type AgentCfg = { agent_name: string; model: string; effective_model?: string; max_tokens?: number; temperature?: number; enabled: boolean; notes?: string };
 type ProviderKey = { provider: string; label: string; source: string; last4: string | null };
 
 export default function LLMConfigPanel() {
@@ -79,7 +79,7 @@ export default function LLMConfigPanel() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "16px" }}>
           <div>
             <div style={{ fontWeight: 600, fontSize: "14px", color: T.text }}>Agent / Flow → LLM</div>
-            <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>Pick the model for each flow — no code deploy. Reasoner/best for research, trade, judgment; fast/cheap for chat + screening.</div>
+            <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>The active provider model is shown under each flow. V4.1 Flash is the default; changes take effect on the next run without a deploy.</div>
           </div>
           {configToast && <span style={{ fontSize: "12px", color: T.green }}>{configToast}</span>}
         </div>
@@ -92,6 +92,7 @@ export default function LLMConfigPanel() {
                 <div key={cfg.agent_name} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", display: "grid", gridTemplateColumns: "150px 1fr 80px 80px 100px", gap: "12px", alignItems: "center" }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: "13px", color: T.text }}>{cfg.agent_name}</div>
+                    <div style={{ fontSize: "11px", color: cfg.effective_model === "deepseek-flash" ? T.green : T.muted, marginTop: "2px" }}>Using: {cfg.effective_model ?? cfg.model}</div>
                     {cfg.notes && <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{cfg.notes}</div>}
                   </div>
                   <select
@@ -101,8 +102,8 @@ export default function LLMConfigPanel() {
                     style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "12px", padding: "5px 8px", outline: "none", cursor: "pointer" }}
                   >
                     <optgroup label="DeepSeek">
-                      <option value="deepseek-chat">deepseek-chat (V3 — cheap)</option>
-                      <option value="deepseek-reasoner">deepseek-reasoner (R1 — thinking, slower)</option>
+                      <option value="deepseek-flash">deepseek-flash (V4.1 Flash — current default)</option>
+                      <option value="deepseek-v4-pro">deepseek-v4-pro (thinking, higher cost)</option>
                     </optgroup>
                     <optgroup label="Groq (Free)">
                       <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>

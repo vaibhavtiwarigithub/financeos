@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSignalDirection } from "@/lib/signal-direction";
+import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signal-direction";
 
 // Invariant under test: NO LLM output can set an executable direction.
 // The LLM's direction opinion may only ever appear in the human-readable note.
@@ -52,7 +52,7 @@ describe("resolveSignalDirection — deterministic gate", () => {
   it("failed thesis parse does not suppress a valid entry (narrative-only failure)", () => {
     const r = resolveSignalDirection({ ...base, llmDirection: undefined });
     expect(r.direction).toBe("long");
-    expect(r.note).toContain("no thesis narrative");
+    expect(r.note).toContain("deterministic decision");
   });
 
   it("defaults threshold to 60 when mandate threshold is null", () => {
@@ -65,5 +65,13 @@ describe("resolveSignalDirection — deterministic gate", () => {
     const a = resolveSignalDirection({ ...base });
     const b = resolveSignalDirection({ ...base });
     expect(a).toEqual(b);
+  });
+
+  it("explains a neutral ETF decision from the same deterministic evidence", () => {
+    expect(buildDeterministicNarrative({
+      analystScore: 50, scoreThreshold: 60, direction: "neutral", isHeld: false,
+      includedDimsCount: 4, entryEligible: false,
+      scores: { fundamental: 55, technical: 19, sentiment: 70, macro: 73, insider: 50 },
+    })).toBe("No entry: composite score 50/100 is below the 60 entry threshold. Strongest recorded evidence: macro 73 and sentiment 70. Main constraint: technicals 19.");
   });
 });

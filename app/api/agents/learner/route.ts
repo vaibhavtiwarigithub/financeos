@@ -191,7 +191,7 @@ export async function POST(req: NextRequest) {
     // run instead of degrading. Only the prod DB row (deepseek-reasoner) kept Opus
     // out of the tool loop. Match the row's own family so config-missing behaves
     // like config-present.
-    const agentModel = (agentCfg as any)?.model ?? "deepseek-reasoner";
+    const agentModel = (agentCfg as any)?.model ?? "deepseek-flash";
     const agentEnabled = (agentCfg as any)?.enabled ?? true;
     const today = new Date().toISOString().slice(0, 10);
 

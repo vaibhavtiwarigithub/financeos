@@ -4,7 +4,7 @@ import { deepSeekThinkingConfig, TIER_MODELS } from "@/lib/llm-router";
 describe("DeepSeek V4 cutover", () => {
   it("routes tiers to concrete non-retiring model IDs", () => {
     expect(TIER_MODELS.fast).toBe("deepseek-flash");
-    expect(TIER_MODELS.reasoning).toBe("deepseek-v4-pro");
+    expect(TIER_MODELS.reasoning).toBe("deepseek-flash");
   });
 
   it("keeps the cheap Flash tier explicitly non-thinking", () => {

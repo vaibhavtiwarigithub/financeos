@@ -141,9 +141,9 @@ export async function POST(req: NextRequest) {
   const prompt = buildMacroReadPrompt({ market: "us", chosen, book, priorsText });
 
   let content = "";
-  let model = "deepseek-v4-pro";
+  let model = "deepseek-flash";
   try {
-    model = await getConfiguredModel(svc, "macro-read", "deepseek-v4-pro");
+    model = await getConfiguredModel(svc, "macro-read", "deepseek-flash");
     const res = await callLLM({
       task: "summarize",
       prompt,

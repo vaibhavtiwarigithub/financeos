@@ -124,12 +124,13 @@ describe("mentor evaluate budget and failure visibility", () => {
 // in production, so the floor lives in the router.
 
 describe("reasoning models get a budget they can actually use", () => {
-  it("identifies the reasoning tier from TIER_MODELS, not a hardcoded id", () => {
-    // A renamed reasoning tier must carry here automatically; a stale hardcoded
-    // id would silently stop flooring the very model that needs it.
+  it("floors only the explicit owner-selectable Pro model", () => {
+    // The global reasoning tier now resolves to Flash. A floor on that alias
+    // would silently turn every task back into a 16k-token expensive call.
     expect(router).toContain("export function isReasoningModel(");
     const fn = router.match(/export function isReasoningModel[\s\S]*?\n}/)?.[0] ?? "";
-    expect(fn).toContain('TIER_MODELS["reasoning"]');
+    expect(fn).toContain('model === "deepseek-v4-pro"');
+    expect(fn).not.toContain('TIER_MODELS["reasoning"]');
   });
 
   it("floors the budget BEFORE dispatch, not after a failure", () => {

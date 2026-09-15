@@ -191,10 +191,10 @@ export async function POST(req: NextRequest) {
 
   let raw: string;
   let tokenUsage = { input: 0, output: 0 };
-  let usedModel = "deepseek-reasoner";
+  let usedModel = "deepseek-flash";
   try {
     // Production LLM path (was execClaude → PowerShell, which ENOENTs on Vercel).
-    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-reasoner"), symbol, maxTokens: MENTOR_EVALUATE_MAX_TOKENS });
+    const res = await callLLM({ task: "evaluate", prompt, agentLabel: "mentor-evaluate", model: await getConfiguredModel(cfgSvc, "mentor-evaluate", "deepseek-flash"), symbol, maxTokens: MENTOR_EVALUATE_MAX_TOKENS });
     raw = res.text;
     usedModel = res.model;
     tokenUsage = { input: res.tokensIn, output: res.tokensOut };

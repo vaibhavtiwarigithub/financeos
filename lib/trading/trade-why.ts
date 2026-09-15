@@ -220,13 +220,32 @@ export function explainTradeWhy(input: {
   const trading = sorted.filter((e) => TRADING.has(e.stage));
   const research = sorted.filter((e) => e.stage === "research");
 
+  // Old records said the optional LLM thesis had no parseable direction. That
+  // was never a money-path rule: deterministic score direction was already
+  // present in the paired observation. Normalize the display from that
+  // immutable evidence so an owner sees the actual decision reason.
+  const normaliseResearchReason = (event: StageEventRow) => {
+    const parsed = researchSentence(String(event.reason ?? ""));
+    const observation = input.observation;
+    if (!/^Abstained: thesis response was missing a parseable direction/.test(String(event.reason ?? "")) || !observation) return parsed;
+    const score = observation.analyst_score == null ? NaN : Number(observation.analyst_score);
+    const threshold = observation.score_threshold == null ? NaN : Number(observation.score_threshold);
+    if (Number.isFinite(score) && Number.isFinite(threshold) && score < threshold) {
+      return { passed: false, text: `score ${score} is below the threshold ${threshold}.` };
+    }
+    if (observation.direction && observation.direction !== "long") {
+      return { passed: false, text: `the direction was ${observation.direction}; only a long direction can open a trade.` };
+    }
+    return parsed;
+  };
+
   let decision: TradeWhy | null = null;
 
   const top = trading[0];
   if (top) {
     const chain = sorted.filter((e) => (top.signal_id ? e.signal_id === top.signal_id : e === top));
     const res = research.find((e) => top.signal_id && e.signal_id === top.signal_id);
-    const rs = res ? researchSentence(String(res.reason ?? "")) : null;
+    const rs = res ? normaliseResearchReason(res) : null;
     const fill = chain.find((e) => e.stage === "execution" && e.outcome === "filled");
     if (fill) {
       const bullets: string[] = [];
@@ -254,7 +273,7 @@ export function explainTradeWhy(input: {
 
   const r = research[0];
   if (r && (!top || (r.signal_id !== top.signal_id && r.created_at > top.created_at))) {
-    const rs = researchSentence(String(r.reason ?? ""));
+    const rs = normaliseResearchReason(r);
     decision = rs.passed
       ? finish("no_trade", "Eligible", `${rs.text}, but the paper trader has not acted on this signal.`, r.created_at,
           ["A signal that is not traded on its market day expires.", "Other gates (open positions, sector, cash) run only when the paper trader picks it up."], now)

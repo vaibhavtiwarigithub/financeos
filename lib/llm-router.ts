@@ -17,7 +17,9 @@ export const TIER_MODELS: Record<string, string> = {
   // Verified against this account's live GET /models response on 2026-09-14.
   // It exposes `deepseek-flash` (not `deepseek-v4-flash`) plus V4 Pro.
   "fast":         "deepseek-flash",
-  "reasoning":    "deepseek-v4-pro",
+  // V4.1 Flash is the approved default for every Kairos task. Keep this alias
+  // for historical configurations, but never let it silently select V4 Pro.
+  "reasoning":    "deepseek-flash",
   "claude-fast":  "claude-haiku-4-5-20251001",
   "claude-smart": "claude-sonnet-4-6",
 }
@@ -29,10 +31,10 @@ const LEGACY_ALIASES: Record<string, string> = {
   // migrate to the currently advertised concrete fast model.
   "deepseek-v4-flash": "deepseek-flash",
   "deepseek-chat":     "deepseek-flash",
-  "deepseek-reasoner": "deepseek-v4-pro",
+  "deepseek-reasoner": "deepseek-flash",
 }
 
-function resolveModel(model: string): string {
+export function resolveModel(model: string): string {
   return TIER_MODELS[model] ?? LEGACY_ALIASES[model] ?? model
 }
 
@@ -41,7 +43,6 @@ function resolveModel(model: string): string {
 // "latest" — and is loudly, persistently flagged via the System Health funnel so
 // a human reviews the swap. Keeps the flow from hard-breaking on a rename.
 const SAME_TIER_FALLBACK: Record<string, string> = {
-  "deepseek-flash":            "deepseek-v4-pro",
   "deepseek-v4-flash":         "deepseek-flash",
   "deepseek-v4-pro":           "deepseek-flash",
   "deepseek-chat":             "deepseek-flash",
@@ -52,14 +53,14 @@ const SAME_TIER_FALLBACK: Record<string, string> = {
   // Gemini / Grok fall back to the DeepSeek reasoner (always-configured tier)
   // rather than hard-failing if their key is missing or the model is renamed.
   "gemini-2.5-flash":          "deepseek-flash",
-  "gemini-2.5-pro":            "deepseek-v4-pro",
-  "grok-4":                    "deepseek-v4-pro",
+  "gemini-2.5-pro":            "deepseek-flash",
+  "grok-4":                    "deepseek-flash",
   "grok-4-fast":               "deepseek-flash",
-  "gpt-4o":                    "deepseek-v4-pro",
-  "gpt-4.1":                   "deepseek-v4-pro",
+  "gpt-4o":                    "deepseek-flash",
+  "gpt-4.1":                   "deepseek-flash",
   "gpt-4o-mini":               "deepseek-flash",
   "gpt-4.1-mini":              "deepseek-flash",
-  "glm-4.6":                   "deepseek-v4-pro",
+  "glm-4.6":                   "deepseek-flash",
   "glm-4.5-air":               "deepseek-flash",
 }
 
@@ -105,7 +106,9 @@ export const REASONING_MIN_TOKENS = 16000
  * carries here automatically instead of leaving a stale hardcoded id.
  */
 export function isReasoningModel(model: string): boolean {
-  return model === TIER_MODELS["reasoning"] || model === "deepseek-reasoner"
+  // The tier label now resolves to Flash. Only an explicit V4 Pro choice in
+  // Settings enables the expensive reasoning budget floor.
+  return model === "deepseek-v4-pro" || model === "deepseek-reasoner"
 }
 
 /**
@@ -182,14 +185,13 @@ export interface LLMResult {
 // Routing table — DEFAULTS ONLY. Per-flow model comes from the agent_config
 // table (Settings → Agents → LLM Config) via getConfiguredModel and is passed as
 // opts.model, which overrides this. These defaults are the fallback when a caller
-// does NOT pass a model. Policy: default OFF Claude — hard-reasoning tasks use the
-// DeepSeek V4 Pro is the thinking tier; cheap tasks use V4 Flash non-thinking. Claude
-// is opt-in per flow from Settings, never a silent default.
+// does NOT pass a model. Policy: default OFF Claude — every task resolves to
+// DeepSeek V4.1 Flash unless the owner deliberately changes that flow in Settings.
 const MODEL_ROUTING: Record<LLMTask, string> = {
-  research:  "reasoning",
-  trade:     "reasoning",
-  evaluate:  "reasoning",
-  thesis:    "reasoning",
+  research:  "fast",
+  trade:     "fast",
+  evaluate:  "fast",
+  thesis:    "fast",
   optimize:  "fast",
   screen:    "fast",
   chat:      "fast",
@@ -205,8 +207,8 @@ const PRICING: Record<string, [number, number]> = {
   // Legacy keys stay for historical llm_call_log rows.
   "deepseek-chat":             [0.07,   0.28],
   "deepseek-reasoner":         [0.55,   2.19],
-  // DeepSeek V4 — OFF-PEAK cache-miss input / output, per api-docs.deepseek.com
-  // pricing table, verified 2026-09-09. Peak rates are exactly 2x these and are
+  // DeepSeek V4.1 Flash / V4 Pro — OFF-PEAK cache-miss input / output, per
+  // api-docs.deepseek.com pricing table, verified 2026-09-15. Peak rates are exactly 2x these and are
   // applied by deepSeekPeakMultiplier below, NOT baked in here.
   //
   // THE DEFECT THIS FIXES. These were [0.14, 0.28] (flash) and [0.435, 0.87]
@@ -216,7 +218,8 @@ const PRICING: Record<string, [number, number]> = {
   // billed $5.65. Repricing the SAME logged tokens at these rates yields $3.00
   // all-off-peak to $6.00 all-peak, bracketing the real bill. The tokens were
   // never missing; the constants were wrong.
-  "deepseek-v4-flash":         [0.22,   0.66],
+  "deepseek-flash":            [0.15,   0.60],
+  "deepseek-v4-flash":         [0.15,   0.60],
   "deepseek-v4-pro":           [0.66,   1.98],
   "deepseek-v4-flash-vision-exp": [0.22, 0.66],
   "gemini-2.5-flash":          [0.075,  0.30],
@@ -421,7 +424,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
       } else if (isAuthMissing(err) && !model.startsWith("deepseek")) {
         // Anthropic API key missing from env — fall back to DeepSeek so the run
         // doesn't hard-fail. Raises a persistent alert so the key gets re-added.
-        const deepseekFb = SAME_TIER_FALLBACK[model] ?? "deepseek-v4-flash"
+        const deepseekFb = SAME_TIER_FALLBACK[model] ?? "deepseek-flash"
         await reportIssue({
           issueKey: `provider-key-missing:${model}`,
           severity: "critical", category: "models",
@@ -817,7 +820,7 @@ export async function runAgentLoop(opts: {
   // Do not accidentally send another provider's model id to DeepSeek's API.
   if (!model.startsWith("claude") && !model.startsWith("deepseek")) {
     const requested = model
-    model = SAME_TIER_FALLBACK[requested] ?? "deepseek-v4-flash"
+    model = SAME_TIER_FALLBACK[requested] ?? "deepseek-flash"
     await reportIssue({
       issueKey: `tool-loop-provider-fallback:${requested}`,
       severity: "warn", category: "models",
@@ -855,7 +858,7 @@ export async function runAgentLoop(opts: {
     } catch (err) {
       if (!model.startsWith("claude") || !isAuthMissing(err)) throw err
       const requested = model
-      model = "deepseek-v4-flash"
+      model = "deepseek-flash"
       await reportIssue({
         issueKey: `provider-key-missing:${requested}`,
         severity: "critical", category: "models",

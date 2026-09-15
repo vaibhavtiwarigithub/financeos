@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { isConfigurableModel } from "@/lib/llm-model-catalog";
+import { resolveModel } from "@/lib/llm-router";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +13,9 @@ export async function GET() {
   const svc = createServiceClient();
   const { data, error } = await svc.from("agent_config").select("*").order("agent_name");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ configs: data ?? [] });
+  return NextResponse.json({
+    configs: (data ?? []).map((config: any) => ({ ...config, effective_model: resolveModel(config.model) })),
+  });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -22,6 +26,9 @@ export async function PATCH(req: NextRequest) {
   const { agent_name, model, enabled, max_tokens, temperature, notes } = body;
 
   if (!agent_name) return NextResponse.json({ error: "agent_name required" }, { status: 400 });
+  if (model !== undefined && !isConfigurableModel(model)) {
+    return NextResponse.json({ error: "Unsupported model selection" }, { status: 400 });
+  }
 
   const svc = createServiceClient();
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
