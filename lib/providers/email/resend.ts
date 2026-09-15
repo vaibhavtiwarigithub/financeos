@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
-import type { EmailProvider, EmailMessage } from "./types";
+import type { EmailProvider, EmailMessage, SendResult } from "./types";
 
 export class ResendEmailProvider implements EmailProvider {
   readonly name = "resend";
@@ -35,7 +35,7 @@ export class ResendEmailProvider implements EmailProvider {
     return Boolean(await this.resolveKey());
   }
 
-  async sendChecked(msg: EmailMessage): Promise<{ ok: boolean; error?: string }> {
+  async sendChecked(msg: EmailMessage): Promise<SendResult> {
     const key = await this.resolveKey();
     if (!key) return { ok: false, error: "no Resend API key in env or api_key_vault" };
     try {
@@ -63,7 +63,14 @@ export class ResendEmailProvider implements EmailProvider {
         } catch { /* a non-JSON body tells us nothing; the status still does */ }
         return { ok: false, error: `Resend returned HTTP ${res.status}${detail}` };
       }
-      return { ok: true };
+      // Keep Resend's message id. It is what a later bounce webhook carries, and
+      // without it a bounce can only be matched by guessing at the recipient.
+      let id: string | undefined;
+      try {
+        const body: any = await res.json();
+        if (typeof body?.id === "string") id = body.id;
+      } catch { /* an id we cannot read just means a bounce matches by address */ }
+      return { ok: true, id };
     } catch (e: any) {
       return { ok: false, error: String(e?.message ?? e).slice(0, 200) };
     }

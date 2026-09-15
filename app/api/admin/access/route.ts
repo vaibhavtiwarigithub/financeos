@@ -11,6 +11,7 @@ import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { describeRoleAccess, VIEWER_PAGES } from "@/lib/auth/roles";
 import { getEmailProvider, emailDeliveryAvailable } from "@/lib/providers/email";
 import { buildInviteEmailHtml, inviteEmailSubject } from "@/lib/email/invite-email";
+import { grantStatus, deliveryProblemText } from "@/lib/auth/grant-status";
 
 export const dynamic = "force-dynamic";
 
@@ -21,16 +22,69 @@ export async function GET() {
   const svc = createServiceClient();
   const { data, error } = await svc
     .from("app_user_roles")
-    .select("user_id, email, role, granted_at, granted_by, revoked_at, revoked_by, note")
+    .select(
+      "user_id, email, role, granted_at, granted_by, revoked_at, revoked_by, note, " +
+      "invite_sent_at, undeliverable_at, undeliverable_kind, undeliverable_note",
+    )
     .order("granted_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // WHY THIS EXTRA LOOKUP.
+  //
+  // A grant row proves the owner INVITED someone. It does not prove they ever
+  // accepted, and this page used to render every un-revoked grant as a green
+  // "Active" — so an invitation to a mistyped address, which nobody received
+  // and nobody can act on, looked exactly like a person with access.
+  //
+  // Acceptance is `auth.users.confirmed_at`. It is READ here and deliberately
+  // not mirrored into `app_user_roles`: Supabase owns that fact, and a copy
+  // would go stale the moment someone accepts.
+  const confirmedAt = await confirmedAtByUserId(svc);
 
   return NextResponse.json({
     owner: { email: OWNER_EMAIL, access: describeRoleAccess("owner") },
     viewer_access: describeRoleAccess("viewer"),
     viewer_pages: VIEWER_PAGES,
-    grants: (data ?? []).map((g: any) => ({ ...g, active: !g.revoked_at })),
+    grants: (data ?? []).map((g: any) => {
+      const status = grantStatus({
+        revoked_at: g.revoked_at,
+        confirmed_at: confirmedAt.get(g.user_id) ?? null,
+        undeliverable_at: g.undeliverable_at,
+        undeliverable_kind: g.undeliverable_kind,
+        undeliverable_note: g.undeliverable_note,
+      });
+      return {
+        ...g,
+        // `active` is kept, unchanged, so nothing reading the old shape breaks.
+        // It answers "not revoked" — which is NOT the same as "has access", and
+        // treating it as the latter is the bug this change fixes.
+        active: !g.revoked_at,
+        status: status.state,
+        accepted: status.accepted,
+        can_sign_in: status.canSignIn,
+        status_label: status.label,
+        status_tone: status.tone,
+        delivery_problem: deliveryProblemText(status.deliveryProblem),
+      };
+    }),
   });
+}
+
+/**
+ * user_id -> confirmed_at for every auth user, via the bounded admin listing.
+ *
+ * One pass for the whole page rather than a lookup per grant: the guest list is
+ * a handful of people and the listing is paged anyway.
+ */
+async function confirmedAtByUserId(svc: any): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 200 });
+    if (error || !data?.users?.length) return out;
+    for (const u of data.users) out.set(u.id, (u as any).confirmed_at ?? (u as any).email_confirmed_at ?? null);
+    if (data.users.length < 200) return out;
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
@@ -184,8 +238,9 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
   };
   const sent = provider.sendChecked
     ? await provider.sendChecked(message)
-    : await provider.send(message).then(() => ({ ok: true as const, error: undefined }))
-        .catch((e: any) => ({ ok: false as const, error: String(e?.message ?? e) }));
+    : await provider.send(message)
+        .then(() => ({ ok: true as const, error: undefined, id: undefined as string | undefined }))
+        .catch((e: any) => ({ ok: false as const, error: String(e?.message ?? e), id: undefined }));
 
   if (!sent.ok) {
     return NextResponse.json(
@@ -194,6 +249,15 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // Record WHICH message this was, so a bounce arriving minutes later at
+  // /api/webhooks/resend can be matched to this exact grant instead of guessed
+  // at by recipient address. Acceptance is never written here — that is
+  // `auth.users.confirmed_at`, and it belongs to Supabase.
+  //
+  // Clearing `undeliverable_*` is the point of re-inviting a bounced address:
+  // the owner fixed the typo or the mailbox came back, and a fresh send must
+  // not inherit the old red warning. A delivery webhook clears it too; either
+  // can arrive first.
   const { error: grantError } = await svc.from("app_user_roles").upsert(
     {
       user_id: userId,
@@ -204,6 +268,11 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
       revoked_at: null,
       revoked_by: null,
       note,
+      invite_email_id: sent.id ?? null,
+      invite_sent_at: new Date().toISOString(),
+      undeliverable_at: null,
+      undeliverable_kind: null,
+      undeliverable_note: null,
     },
     { onConflict: "user_id" },
   );
@@ -214,6 +283,11 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
     action: "invite",
     email,
     invited_new_account: !returning,
+    // The email has been ACCEPTED by the provider, which is not the same as
+    // delivered and nowhere near accepted by the recipient. The caller must not
+    // report this as "they now have access".
+    email_accepted_by_provider: true,
+    awaiting_acceptance: true,
     access: describeRoleAccess("viewer"),
   });
 }

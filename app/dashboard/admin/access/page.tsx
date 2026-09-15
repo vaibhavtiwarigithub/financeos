@@ -16,8 +16,23 @@ type Grant = {
   user_id: string; email: string; role: string;
   granted_at: string; granted_by: string;
   revoked_at: string | null; revoked_by: string | null;
-  note: string | null; active: boolean;
+  note: string | null;
+  /** "not revoked" — NOT "has access". Kept for the revoke/restore button only. */
+  active: boolean;
+  status: "active" | "pending" | "revoked";
+  accepted: boolean;
+  can_sign_in: boolean;
+  status_label: string;
+  status_tone: "good" | "warn" | "bad" | "muted";
+  delivery_problem: string | null;
 };
+// The page's whole job is answering "who can see my book?", so a grant that
+// nobody has accepted must not look like one that someone is using. Colour
+// carries that distinction before the text is read.
+const TONE: Record<Grant["status_tone"], string> = {
+  good: T.green, warn: T.amber, bad: T.red, muted: T.muted,
+};
+
 type AccessData = {
   owner: { email: string; access: { pages: string[]; canEdit: boolean; notes: string } };
   viewer_access: { pages: string[]; canEdit: boolean; notes: string };
@@ -59,10 +74,19 @@ export default function AccessPage() {
       const json = await res.json();
       if (!res.ok) { setError(json?.error ?? `Invite failed (${res.status})`); return; }
       setError(null);
+      // BOTH branches send mail. This used to claim "no email sent" for a
+      // returning address, which was simply untrue — the route mints a recovery
+      // link and mails it, which is exactly how a revoked person is restored.
+      //
+      // And neither branch means they have access yet: the provider has ACCEPTED
+      // the message, which is not delivery, and they still have to open it. If
+      // the address is dead the bounce lands in the table below within a few
+      // minutes. Saying "access granted" here is what made a typo invisible.
       setNotice(
-        json.invited_new_account
-          ? `Invitation email sent to ${email}. Access starts once they set their password.`
-          : `${email} already had an account — viewer access granted, no email sent.`
+        (json.invited_new_account
+          ? `Invitation sent to ${email}.`
+          : `${email} already had an account — a sign-in link was emailed to them.`)
+        + " They appear below as awaiting acceptance until they open it; if the address is dead, the row turns red within a few minutes."
       );
       setInviteEmail("");
       await load();
@@ -173,7 +197,12 @@ export default function AccessPage() {
 
           <div style={card}>
             <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>
-              Granted accounts ({data.grants.filter((g) => g.active).length} active of {data.grants.length})
+              Granted accounts ({data.grants.filter((g) => g.can_sign_in).length} with access
+              {data.grants.some((g) => g.status === "pending") &&
+                `, ${data.grants.filter((g) => g.status === "pending").length} awaiting acceptance`}
+              {data.grants.some((g) => g.delivery_problem) &&
+                `, ${data.grants.filter((g) => g.delivery_problem).length} undeliverable`}
+              , {data.grants.length} total)
             </div>
             {data.grants.length === 0 ? (
               <div style={{ fontSize: "12px", color: T.muted }}>
@@ -195,8 +224,18 @@ export default function AccessPage() {
                     <tr key={g.user_id} style={{ borderTop: `1px solid ${T.border}` }}>
                       <td style={{ padding: "8px 10px 8px 0" }}>{g.email}</td>
                       <td style={{ padding: "8px 10px 8px 0" }}>{g.role}</td>
-                      <td style={{ padding: "8px 10px 8px 0", color: g.active ? T.green : T.muted, fontWeight: 600 }}>
-                        {g.active ? "Active" : `Revoked ${g.revoked_at?.slice(0, 10)}`}
+                      <td style={{ padding: "8px 10px 8px 0", color: TONE[g.status_tone], fontWeight: 600 }}>
+                        {g.status_label}
+                        {g.delivery_problem && (
+                          <div style={{ fontSize: "11px", fontWeight: 400, color: T.red, marginTop: "3px", maxWidth: "260px", lineHeight: 1.4 }}>
+                            {g.delivery_problem}
+                          </div>
+                        )}
+                        {g.status === "pending" && !g.delivery_problem && (
+                          <div style={{ fontSize: "11px", fontWeight: 400, color: T.muted, marginTop: "3px" }}>
+                            They cannot sign in until they open the invitation.
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: "8px 10px 8px 0", color: T.muted }}>{g.granted_at?.slice(0, 10)}</td>
                       <td style={{ padding: "8px 0", textAlign: "right" }}>
