@@ -195,3 +195,23 @@ export function rotatingOffset(total: number, pageSize: number, epochDay: number
 }
 
 export const epochDay = (now = Date.now()) => Math.floor(now / 86_400_000);
+
+/**
+ * Research scores one symbol up to three times a session, and every evaluation
+ * already keeps only the LAST observation per market/symbol/session. Labelling
+ * the earlier rows spent the per-horizon budget on data nothing reads: ~210
+ * decisions/day against 200 labels/horizon/night left h10 unlabelled from
+ * 2026-08-25. Returns the ids a later same-day row supersedes.
+ */
+export function supersededObservationIds(
+  rows: readonly { id: number | string; market: string; symbol: string; ts: string }[],
+): Set<string> {
+  const latest = new Map<string, { id: string; ts: string }>();
+  for (const row of rows) {
+    const key = `${row.market}:${row.symbol}:${String(row.ts).slice(0, 10)}`;
+    const current = latest.get(key);
+    if (!current || String(row.ts) > current.ts) latest.set(key, { id: String(row.id), ts: String(row.ts) });
+  }
+  const keep = new Set([...latest.values()].map((v) => v.id));
+  return new Set(rows.map((row) => String(row.id)).filter((id) => !keep.has(id)));
+}

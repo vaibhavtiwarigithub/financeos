@@ -6,8 +6,30 @@ import {
   hasForwardCoverage,
   mergeCandles,
   rotatingOffset,
+  supersededObservationIds,
   type LabelCandle,
 } from "@/lib/learning/label-window";
+
+describe("supersededObservationIds — label the last decision per symbol-session", () => {
+  it("drops earlier same-day runs and keeps the latest", () => {
+    const rows = [
+      { id: 1, market: "us", symbol: "OXY", ts: "2026-09-15T13:00:10.000000+00:00" },
+      { id: 2, market: "us", symbol: "OXY", ts: "2026-09-15T18:00:10.000000+00:00" },
+      { id: 3, market: "us", symbol: "OXY", ts: "2026-09-15T15:06:30.000000+00:00" },
+    ];
+    expect([...supersededObservationIds(rows)].sort()).toEqual(["1", "3"]);
+  });
+
+  it("never merges different days, symbols or markets", () => {
+    const rows = [
+      { id: 1, market: "us", symbol: "OXY", ts: "2026-09-14T18:00:00+00:00" },
+      { id: 2, market: "us", symbol: "OXY", ts: "2026-09-15T13:00:00+00:00" },
+      { id: 3, market: "us", symbol: "CVX", ts: "2026-09-15T13:00:00+00:00" },
+      { id: 4, market: "india", symbol: "OXY", ts: "2026-09-15T04:00:00+00:00" },
+    ];
+    expect(supersededObservationIds(rows).size).toBe(0);
+  });
+});
 
 /** Sequential trading-day bars from `start`, weekends skipped for realism. */
 function bars(start: string, n: number, price = 100): LabelCandle[] {

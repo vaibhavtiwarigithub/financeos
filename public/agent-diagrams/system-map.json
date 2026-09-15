@@ -1818,6 +1818,13 @@
       "nodeId": "RESEARCH,HEALTH",
       "label": "Oil exposure evidence and FRED staleness alerts on the research path (measure-only)",
       "reason": "Owner asked whether the app researches oil and gold correctly. It did not: metal price features measured ~100 cached rows while labelled 20 bars, FRED inputs froze for nine days without an alert, and no scorer saw crude at all. ResearchAgent now records corrected v2 metal features, a curated oil exposure pack (FRED WTI/Brent, settled USO) per market, and raises System Health when a FRED input is stale. The new edge is ResearchAgent → HEALTH for data freshness only; no score, eligibility, paper, live, exit or broker consumer reads the evidence. The shared provider-cache carry-forward root cause is tracked separately."
+    },
+    {
+      "date": "2026-09-15",
+      "event": "modify",
+      "nodeId": "LEARNER",
+      "label": "Label maturation labels the last decision per symbol-session with per-market budgets",
+      "reason": "Research writes ~210 decisions/day (one symbol up to three runs a session) against 200 labels per horizon per night shared by US and India, so h10 labels stopped at 2026-08-24 in the US and India h10 was nearly empty, starving the learner and every family/oil evaluation. Earlier same-session duplicates are now skipped (evaluations already dedupe to the last one), US and India each get the full budget, and the run stops at a 240s deadline. The observation_labels contract the learner reads is unchanged; existing labels are not rewritten."
     }
   ]
 }

@@ -18,6 +18,7 @@ import {
   epochDay,
   forwardWindow,
   rotatingOffset,
+  supersededObservationIds,
 } from "@/lib/learning/label-window";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,8 @@ const SUCCESS_BUDGET = 200;
 /** Observations we are willing to EXAMINE per horizon per run. Decoupled from
  *  SUCCESS_BUDGET: skipped rows must not consume the label budget. */
 const SCAN_CAP = 2000;
+/** Stop starting new work with ~60s of maxDuration left, so the run records itself. */
+const RUN_DEADLINE_MS = 240_000;
 
 // Approximate trading days as calendar days × 7/5, +1 buffer for weekends/holidays.
 function maturityCutoff(horizonDays: number): string {
@@ -132,11 +135,23 @@ async function pendingPage(
     .in("observation_id", observations.map((row: any) => row.id));
   if (labelError) return { rows: [], scanned: observations.length, exhausted: true };
 
+  // A later same-day row can sit on the next page or past the cutoff, so read
+  // this page's symbol-days directly. If this read is truncated, a missed sibling
+  // only means an earlier duplicate gets labelled — the old behaviour, never a loss.
+  const days = observations.map((row: any) => String(row.ts).slice(0, 10)).sort();
+  const dayAfterLast = new Date(Date.parse(`${days.at(-1)}T00:00:00Z`) + 86_400_000).toISOString();
+  const { data: siblings } = await svc.from("decision_observations")
+    .select("id, ts, market, symbol")
+    .in("symbol", [...new Set(observations.map((row: any) => row.symbol))])
+    .gte("ts", `${days[0]}T00:00:00Z`)
+    .lt("ts", dayAfterLast);
+  const superseded = supersededObservationIds([...observations, ...(siblings ?? [])]);
+
   const current = new Set((labels ?? [])
     .filter((label: any) => label.atr_policy_version === ATR_EXIT_POLICY_VERSION)
     .map((label: any) => label.observation_id));
   return {
-    rows: observations.filter((row: any) => !current.has(row.id)),
+    rows: observations.filter((row: any) => !current.has(row.id) && !superseded.has(String(row.id))),
     scanned: observations.length,
     exhausted: observations.length < PAGE_SIZE,
   };
@@ -246,11 +261,12 @@ async function runPass(
   successBudget: number,
   scanCap: number,
   seen: Set<string>,
+  deadline: number,
 ): Promise<{ produced: number; scanned: number }> {
   let produced = 0, scanned = 0;
   const BATCH = 8;
 
-  for (let offset = startOffset; scanned < scanCap && produced < successBudget; offset += PAGE_SIZE) {
+  for (let offset = startOffset; scanned < scanCap && produced < successBudget && Date.now() < deadline; offset += PAGE_SIZE) {
     const page = await pendingPage(ctx.svc, horizonDays, cutoff, marketScope, offset);
     scanned += page.scanned;
 
@@ -263,7 +279,7 @@ async function runPass(
         String(a.ts).localeCompare(String(b.ts)));
     for (const row of fresh) seen.add(`${row.id}:${horizonDays}`);
 
-    for (let i = 0; i < fresh.length && produced < successBudget; i += BATCH) {
+    for (let i = 0; i < fresh.length && produced < successBudget && Date.now() < deadline; i += BATCH) {
       const batch = fresh.slice(i, i + BATCH);
       const results = await Promise.allSettled(batch.map((obs: any) => labelOne(ctx, obs, horizonDays)));
       produced += results.filter((r) => r.status === "fulfilled" && r.value).length;
@@ -279,23 +295,30 @@ async function runMaturation(marketScope: "us" | "india" | null) {
   const svc = createServiceClient();
   const ctx: Ctx = { svc, resolver: makeResolver(svc), skips: new SkipLedger(), atrLabeled: 0, atrUnavailable: 0 };
   let matured = 0, scanned = 0;
+  const deadline = Date.now() + RUN_DEADLINE_MS;
+  // Separate budgets per market: US writes ~3x India's decisions, and one shared
+  // oldest-first budget let it crowd India's h10 labels out almost entirely.
+  const markets: ("us" | "india")[] = marketScope ? [marketScope] : ["us", "india"];
 
   for (const horizonDays of HORIZONS) {
-    const cutoff = maturityCutoff(horizonDays);
-    const total = await eligibleTotal(svc, cutoff, marketScope);
-    const seen = new Set<string>();
+    for (const market of markets) {
+      const cutoff = maturityCutoff(horizonDays);
+      const total = await eligibleTotal(svc, cutoff, market);
+      const seen = new Set<string>();
 
-    // Half the capacity to the oldest eligible work, half to a rotating cursor.
-    const half = Math.floor(SUCCESS_BUDGET / 2);
-    const oldest = await runPass(ctx, horizonDays, cutoff, marketScope, 0, half, Math.floor(SCAN_CAP / 2), seen);
-    const rotated = await runPass(
-      ctx, horizonDays, cutoff, marketScope,
-      rotatingOffset(total, PAGE_SIZE, epochDay()),
-      SUCCESS_BUDGET - oldest.produced, SCAN_CAP - oldest.scanned, seen,
-    );
-    matured += oldest.produced + rotated.produced;
-    scanned += oldest.scanned + rotated.scanned;
+      // Half the capacity to the oldest eligible work, half to a rotating cursor.
+      const half = Math.floor(SUCCESS_BUDGET / 2);
+      const oldest = await runPass(ctx, horizonDays, cutoff, market, 0, half, Math.floor(SCAN_CAP / 2), seen, deadline);
+      const rotated = await runPass(
+        ctx, horizonDays, cutoff, market,
+        rotatingOffset(total, PAGE_SIZE, epochDay()),
+        SUCCESS_BUDGET - oldest.produced, SCAN_CAP - oldest.scanned, seen, deadline,
+      );
+      matured += oldest.produced + rotated.produced;
+      scanned += oldest.scanned + rotated.scanned;
+    }
   }
+  const deadlineHit = Date.now() >= deadline;
 
   return {
     matured,
@@ -310,6 +333,7 @@ async function runMaturation(marketScope: "us" | "india" | null) {
     // A fully-drained backlog yields matured=0 AND skipped=0, which stays healthy;
     // rejecting work while producing nothing does not.
     zeroOutputWithPending: matured === 0 && ctx.skips.total > 0,
+    deadlineHit,
     market: marketScope ?? "all",
   };
 }
@@ -364,7 +388,7 @@ export async function POST(req: NextRequest) {
         // A zero-output run over a non-empty backlog must not read as "done".
         status: result.zeroOutputWithPending ? "error" : "done",
         trigger_source: isCron ? "scheduled" : "manual",
-        result_summary: `Matured ${result.matured}, skipped ${result.skipped} (${reasons}), scanned ${result.scanned}, ATR ${result.atrLabeled}/${result.matured} (${result.market}).`,
+        result_summary: `Matured ${result.matured}, skipped ${result.skipped} (${reasons}), scanned ${result.scanned}, ATR ${result.atrLabeled}/${result.matured} (${result.market})${result.deadlineHit ? ", stopped at run deadline with work left" : ""}.`,
         workload_metrics: accounting,
         completed_at: new Date().toISOString(),
       } as any);

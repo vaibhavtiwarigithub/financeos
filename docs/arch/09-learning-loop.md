@@ -644,6 +644,27 @@ high-watermark advances past 2026-07-22 requires production access and has not
 been done. Until it is, `observation_labels` coverage beyond 2026-07-22 is
 unproven and the US-vs-India scoring comparison stays in question.
 
+**2026-09-15 — capacity, not coverage.** Production showed a second, structural
+backlog: research writes ~160 US and ~50 India decisions a day (one symbol up to
+three runs a session) against `SUCCESS_BUDGET` 200 labels per horizon per night
+shared by both markets. US h10 labels stopped at decisions from 2026-08-24 and
+India h10 was almost entirely unlabelled; recent runs matured 200-782 labels with
+only `no_candles` skips, so budget exhaustion, not candles, was the cause.
+Owner-approved fix in `app/api/agents/label-maturation/route.ts`:
+
+- **Label the last observation per market/symbol/session only**
+  (`supersededObservationIds` in `lib/learning/label-window.ts`). Every evaluation
+  already deduplicates to that row, so the earlier runs were budget spent on data
+  nothing reads. The page loader reads same-day siblings directly, because a later
+  run can sit on the next page or past the maturity cutoff.
+- **Separate budgets per market.** A cron call without `market` now runs US and
+  India each with the full per-horizon budget instead of sharing one.
+- **Run deadline** at 240s of the 300s `maxDuration`; a run that stops with work
+  left says so in `agent_runs.result_summary`.
+
+Existing labels are not rewritten; earlier same-session duplicates that already
+have labels keep them. No schedule, schema, score or trading change.
+
 ### ATR exit-policy evidence (measure-only)
 
 Nightly label maturation also records point-in-time entry ATR, ATR-normalized
