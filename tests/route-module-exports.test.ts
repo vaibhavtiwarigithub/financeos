@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { execSync } from "node:child_process";
 
 // A Next.js `route.ts` may export ONLY HTTP method handlers and a fixed set of
 // segment-config fields. Any other export fails `next build` with
@@ -21,8 +20,17 @@ const CONFIG = [
 ];
 const ALLOWED = new Set([...METHODS, ...CONFIG]);
 
-const routeFiles = execSync("find app -name route.ts", { cwd: ROOT, encoding: "utf8" })
-  .split("\n").map((l) => l.trim()).filter(Boolean);
+function findRouteFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) files.push(...findRouteFiles(full));
+    else if (entry.isFile() && entry.name === "route.ts") files.push(full);
+  }
+  return files;
+}
+
+const routeFiles = findRouteFiles(resolve(ROOT, "app"));
 
 describe("route modules export only what Next.js allows", () => {
   it("finds the route files at all — an empty sweep would pass vacuously", () => {
@@ -32,7 +40,7 @@ describe("route modules export only what Next.js allows", () => {
   it("exports nothing Next.js would reject at build time", () => {
     const offenders: string[] = [];
     for (const file of routeFiles) {
-      const src = readFileSync(resolve(ROOT, file), "utf8");
+      const src = readFileSync(file, "utf8");
       for (const m of src.matchAll(/^export\s+(?:async\s+)?(?:const|function|let|var|class)\s+(\w+)/gm)) {
         if (!ALLOWED.has(m[1])) offenders.push(`${file}: ${m[1]}`);
       }

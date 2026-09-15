@@ -7,7 +7,8 @@ describe("System Health taxonomy", () => {
   it("counts actions separately from collapsed informational notices", () => {
     const card = read("components/dashboard/SystemHealthCard.tsx");
     expect(card).toContain('alert.severity !== "info"');
-    expect(card).toContain("No action required");
+    expect(card).toContain("No system failure");
+    expect(card).toContain("ownerActions");
     expect(card).toContain("operational notice");
     expect(card).toContain("showNotices");
   });

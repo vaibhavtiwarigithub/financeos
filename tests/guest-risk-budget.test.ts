@@ -76,9 +76,11 @@ describe("the job stays inside the guest data plane", () => {
   });
 
   it("never returns holdings or figures in the scheduler response", () => {
-    const start = JOB.lastIndexOf("return NextResponse.json({\n    ok: true");
+    const start = JOB.lastIndexOf("return NextResponse.json({ ok: true");
     expect(start, "final response not found — the assertion below would be vacuous").toBeGreaterThan(0);
-    const response = JOB.slice(start, JOB.indexOf("\n  });", start));
+    const end = JOB.indexOf("});", start);
+    expect(end, "final response closing delimiter not found").toBeGreaterThan(start);
+    const response = JOB.slice(start, end + 3);
     expect(response.includes("holdings")).toBe(false);
     expect(response.includes("summary")).toBe(false);
   });
