@@ -70,18 +70,26 @@ function nextUtcMidnight(): string {
 // for the throttle/over-budget fallback (7d) and — when a caller passes
 // opts.maxAgeDays — as a FRESH hit that skips the real call entirely, so
 // slow-moving data (fundamentals) isn't re-fetched every single day.
-async function lastCached(svc: any, cacheKey: string, maxDays = MAX_STALE_CACHE_DAYS): Promise<any | null> {
+async function lastCachedRow(svc: any, cacheKey: string, maxDays = MAX_STALE_CACHE_DAYS): Promise<{ payload: any; cache_date: string; fetched_at: string | null } | null> {
   const { data: last } = await svc
     .from("av_cache")
-    .select("payload, cache_date")
+    .select("payload, cache_date, fetched_at")
     .eq("cache_key", cacheKey)
     .order("cache_date", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!last?.payload) return null;
-  const ageDays = (Date.now() - new Date(last.cache_date).getTime()) / 86400000;
+  // Age from the real provider fetch, not the slot date. A carried-forward copy
+  // keeps its original fetched_at, so the stale bound expires. Aging by
+  // cache_date let each day's carried copy renew the next: production FRED
+  // DFII10 served one observation for nine consecutive days.
+  const ageDays = (Date.now() - new Date(last.fetched_at ?? last.cache_date).getTime()) / 86400000;
   if (ageDays > maxDays) return null;
-  return last.payload;
+  return last;
+}
+
+async function lastCached(svc: any, cacheKey: string, maxDays = MAX_STALE_CACHE_DAYS): Promise<any | null> {
+  return (await lastCachedRow(svc, cacheKey, maxDays))?.payload ?? null;
 }
 
 export interface ProviderFetchOpts {
@@ -201,10 +209,15 @@ export async function providerCachedFetch(
 
   // 3. Spend one real call.
   let json: any = null;
+  let failure = "";
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: opts.headers });
     if (res.ok) json = await res.json();
-  } catch { json = null; }
+    else failure = `HTTP ${res.status}`;
+  } catch (e) {
+    json = null;
+    failure = e instanceof Error ? `${e.name}: ${e.message}` : "fetch error";
+  }
 
   // 4. Throttled/failed → last-known cached payload (<=7d) so inputs stay complete.
   // CARRY-FORWARD: persist that payload into TODAY's slot so the next same-day call
@@ -214,22 +227,26 @@ export async function providerCachedFetch(
   // handful of real keys into ~200 "calls". Only writes when we actually have a
   // prior payload; a brand-new symbol with no history still just returns null.
   if (!json || isThrottled(json)) {
-    const carried = await lastCached(svc, cacheKey, maxStaleAgeDays);
+    // Never log the URL: several providers carry their API key in the query string.
+    console.warn(`[provider-fetch] ${provider} ${cacheKey}: ${failure || "throttled or empty response"}; serving cache fallback`);
+    const carried = await lastCachedRow(svc, cacheKey, maxStaleAgeDays);
     // Do not rewrite a slow-moving payload into today's slot: doing so resets
     // cache_date and can make stale facts look perpetually fresh across outages.
-    // Today-only callers retain carry-forward to suppress same-day retry storms.
-    if (carried != null && maxAgeDays === 0) {
+    // Today-only callers retain carry-forward to suppress same-day retry storms,
+    // but the copy keeps its ORIGINAL fetched_at so its age keeps counting.
+    if (carried && maxAgeDays === 0) {
       await svc.from("av_cache").upsert(
-        { cache_key: cacheKey, cache_date: todayStr, payload: carried },
+        { cache_key: cacheKey, cache_date: todayStr, payload: carried.payload, fetched_at: carried.fetched_at ?? carried.cache_date },
         { onConflict: "cache_key,cache_date" },
       ).then(() => {}, () => {});
     }
-    return carried;
+    return carried?.payload ?? null;
   }
 
-  // 5. Store today's payload (best-effort) and return it.
+  // 5. Store today's payload (best-effort) and return it. fetched_at is set
+  // explicitly: an upsert over an existing row would otherwise keep the old one.
   await svc.from("av_cache").upsert(
-    { cache_key: cacheKey, cache_date: todayStr, payload: json },
+    { cache_key: cacheKey, cache_date: todayStr, payload: json, fetched_at: new Date().toISOString() },
     { onConflict: "cache_key,cache_date" },
   ).then(() => {}, () => {});
   return json;

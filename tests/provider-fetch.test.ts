@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   todayPayload: null as any,
   stalePayload: null as any,
   staleDate: "2026-07-10",
+  staleSlotDate: null as string | null,
   budgetCount: 1 as number | null,
   budgetError: null as any,
   report: vi.fn(),
@@ -23,7 +24,7 @@ function serviceMock() {
         limit: () => chain,
         maybeSingle: async () => {
           if (filters.cache_date) return { data: h.todayPayload ? { payload: h.todayPayload } : null };
-          return { data: h.stalePayload ? { payload: h.stalePayload, cache_date: h.staleDate } : null };
+          return { data: h.stalePayload ? { payload: h.stalePayload, cache_date: h.staleSlotDate ?? h.staleDate, fetched_at: h.staleDate } : null };
         },
         upsert: (row: any) => {
           h.upserts.push(row);
@@ -45,7 +46,7 @@ import { providerCachedFetch, providerConfig } from "@/lib/data/provider-fetch";
 
 describe("providerCachedFetch free-tier and degradation contract", () => {
   beforeEach(() => {
-    h.todayPayload = null; h.stalePayload = null; h.staleDate = new Date().toISOString();
+    h.todayPayload = null; h.stalePayload = null; h.staleDate = new Date().toISOString(); h.staleSlotDate = null;
     h.budgetCount = 1; h.budgetError = null; h.report.mockReset(); h.resolve.mockReset(); h.upserts = [];
     vi.stubGlobal("fetch", vi.fn());
   });
@@ -97,6 +98,25 @@ describe("providerCachedFetch free-tier and degradation contract", () => {
       maxAgeDays: 1,
       maxStaleAgeDays: 1,
     })).toEqual({ recent: true });
+    expect(h.upserts).toEqual([]);
+  });
+
+  it("carries a today-only fallback forward with its original fetch time", async () => {
+    h.stalePayload = { observations: ["2026-08-31"] };
+    h.staleDate = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    vi.mocked(fetch).mockResolvedValue(new Response("", { status: 500 }));
+    expect(await providerCachedFetch("fred", "FRED:DFII10:21", "https://example.test")).toEqual({ observations: ["2026-08-31"] });
+    expect(h.upserts).toHaveLength(1);
+    expect(h.upserts[0].fetched_at).toBe(h.staleDate);
+  });
+
+  it("stops serving a carried copy once the original fetch is past the stale bound", async () => {
+    // Yesterday's slot, but the data inside it was really fetched 8 days ago.
+    h.stalePayload = { observations: ["2026-08-31"] };
+    h.staleSlotDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    h.staleDate = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    expect(await providerCachedFetch("fred", "FRED:DFII10:21", "https://example.test")).toBeNull();
     expect(h.upserts).toEqual([]);
   });
 
