@@ -184,6 +184,8 @@ const ALL_COLS: ColDef[] = [
   // ── Trade column ─────────────────────────────────────────────────────────
   { key: "last_trade_side", label: "Trade", csvLabel: "Last Trade Side", width: 60,
     tooltip: "Last paper trade executed for this symbol: BUY (entry) or SELL (exit). Shows score at time of trade in parentheses." },
+  { key: "trade_why", label: "Why", csvLabel: "Why (paper trader decision)", width: 220,
+    tooltip: "What the paper trading pipeline last decided for this symbol and why (bought, not bought, no trade, sold), from recorded pipeline decisions. Measurement of paper trading only; live orders are out of scope. Click a cell for details." },
 
   // ── Screener bucket (derived) ─────────────────────────────────────────────
   { key: "bucket", label: "Style", csvLabel: "Screener Bucket", width: 72, derived: true,
@@ -273,6 +275,7 @@ const COL_BY_KEY = Object.fromEntries(ALL_COLS.map(c => [c.key, c]));
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface LastTrade { side: "buy" | "sell"; date: string; analyst_score: number | null; venue?: "paper" | "live"; status?: string }
+interface TradeWhy { outcome: "bought" | "sold" | "not_bought" | "no_trade" | "unknown"; headline: string; bullets: string[]; at: string | null }
 
 interface SymbolRow {
   symbol: string; market: string; analyst_score: number | null;
@@ -281,6 +284,7 @@ interface SymbolRow {
   direction: string; last_researched_at: string;
   fundamentals: Record<string, string> | null;
   last_trade: LastTrade | null;
+  trade_why?: TradeWhy | null;
   fundamental_breakdown: Record<string, unknown> | null;
   technical_breakdown: Record<string, unknown> | null;
   sentiment_breakdown: Record<string, unknown> | null;
@@ -561,6 +565,11 @@ function getCell(row: SymbolRow, col: ColDef): string | number | boolean | null 
     const lt = row.last_trade;
     return lt ? `${lt.venue ?? "paper"}.${lt.side}.${lt.date}` : null;
   }
+  // Sort groups by outcome, then newest decision first within the group.
+  if (col.key === "trade_why") {
+    const w = row.trade_why;
+    return w ? `${w.outcome}.${w.at ?? ""}` : null;
+  }
   // Breakdown fields
   if (col.breakdownSource) {
     const src = col.breakdownSource === "fundamental" ? row.fundamental_breakdown
@@ -601,6 +610,9 @@ export default function FundamentalsPage() {
     new Set(ALL_COLS.filter(c => c.defaultHidden).map(c => c.key))
   );
   const [showColPicker, setShowColPicker] = useState(false);
+  // Why cells expanded to show their bullets (keyed symbol:market).
+  const [expandedWhy, setExpandedWhy] = useState<Set<string>>(new Set());
+  const toggleWhy = (k: string) => setExpandedWhy(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const dragFrom = useRef<number | null>(null);
 
   // Domain tab presets — auto-set visible columns per domain
@@ -747,7 +759,7 @@ export default function FundamentalsPage() {
   const visibleCols = colOrder
     .filter(k => {
       if (hiddenSet.has(k)) return false;
-      if (viewMode === "all_runs" && k === "last_trade_side") return false;
+      if (viewMode === "all_runs" && (k === "last_trade_side" || k === "trade_why")) return false;
       return true;
     })
     .map(k => COL_BY_KEY[k]).filter(Boolean);
@@ -798,6 +810,7 @@ export default function FundamentalsPage() {
         else if (c.key === "symbol")       v = r.symbol;
         else if (c.key === "market")       v = r.market;
         else if (c.key === "direction")    v = r.direction ?? "";
+        else if (c.key === "trade_why")    v = r.trade_why ? [r.trade_why.headline, ...r.trade_why.bullets].join(" | ") : "";
         else if (c.score)                  v = String((r as any)[c.key] ?? "");
         else {
           const raw = getCell(r, c);
@@ -832,6 +845,7 @@ export default function FundamentalsPage() {
     const blob = [
       r.symbol, r.market, r.direction,
       fmtDate(r.last_researched_at),
+      r.trade_why?.headline ?? "",
       f.Name, f.Sector,
       String(r.analyst_score), String(r.fundamental_score), String(r.technical_score),
       String(r.sentiment_score), String(r.macro_score), String(r.insider_score),
@@ -1230,7 +1244,7 @@ export default function FundamentalsPage() {
               </div>
               {/* Group by domain */}
               {[
-                { label: "Core", keys: ["run_date","symbol","Name","Sector","Industry","market","direction","last_trade_side","price_at_research"] },
+                { label: "Core", keys: ["run_date","symbol","Name","Sector","Industry","market","direction","last_trade_side","trade_why","price_at_research"] },
                 { label: "Scores", keys: ["analyst_score","fundamental_score","technical_score","sentiment_score","macro_score"] },
                 { label: "Fundamental", keys: ["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"] },
                 { label: "Technical", keys: ["rsi14","ema20_x_ema50","ema50_x_ema200","macd_hist","adx14","rs_vs_bench","breakdown_veto"] },
@@ -1368,7 +1382,7 @@ export default function FundamentalsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = inChart ? `${T.accent}0D` : "transparent"; }}
                 >
                   {visibleCols.map(col => {
-                    const isLeft = ["symbol","Name","Sector","Industry","run_date","sent_source","macro_regime","macro_week_of"].includes(col.key);
+                    const isLeft = ["symbol","Name","Sector","Industry","run_date","sent_source","macro_regime","macro_week_of","trade_why"].includes(col.key);
                     let content: React.ReactNode;
 
                     if (col.key === "run_date") {
@@ -1407,6 +1421,28 @@ export default function FundamentalsPage() {
                             <span style={{ color: T.muted, fontWeight: 400 }}>{venue}.</span>
                             {lt.side.toUpperCase()} {fmtDate(lt.date).slice(5)}
                           </span>
+                        );
+                      }
+                    } else if (col.key === "trade_why") {
+                      const w = row.trade_why;
+                      const rowKey = `${row.symbol}:${row.market}`;
+                      if (!w) { content = <span title="The paper trader's decision history could not be loaded" style={{ color: T.muted }}>—</span>; }
+                      else {
+                        const open = expandedWhy.has(rowKey);
+                        const color = w.outcome === "bought" ? T.green : w.outcome === "sold" ? T.red : w.outcome === "not_bought" ? T.yellow : T.muted;
+                        content = (
+                          <div role="button" tabIndex={0} aria-expanded={open}
+                            onClick={() => toggleWhy(rowKey)}
+                            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleWhy(rowKey); } }}
+                            title={`Paper trading decision\n${w.headline}${w.bullets.length ? "\n• " + w.bullets.join("\n• ") : ""}`}
+                            style={{ cursor: "pointer", fontSize: 11, color, maxWidth: open ? 320 : 220, whiteSpace: open ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {w.headline}
+                            {open && w.bullets.length > 0 && (
+                              <ul style={{ margin: "4px 0 0", paddingLeft: 14, color: T.text, fontSize: 10, lineHeight: 1.5 }}>
+                                {w.bullets.map((b, i) => <li key={i}>{b}</li>)}
+                              </ul>
+                            )}
+                          </div>
                         );
                       }
                     } else if (col.derived && col.key === "bucket") {

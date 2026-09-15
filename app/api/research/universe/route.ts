@@ -6,8 +6,110 @@ import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { latestExecutionEvent, liveDecisionEvents, paperTradeEvents } from "@/lib/research/trade-timeline";
 import { createServiceClient } from "@/lib/supabase/service";
+import { explainTradeWhy, TRADING_STAGES, type ObservationRow, type StageEventRow } from "@/lib/trading/trade-why";
 
 export const dynamic = "force-dynamic";
+
+// ── "Why" column read bounds ─────────────────────────────────────────────────
+// Latest-per-symbol is reduced in code (no RPC/migration). Every read is limited
+// to the symbols in this response, chunked, newest-first, and stops as soon as
+// every market+symbol key has a row.
+// ponytail: caps below; if they start binding (tables grow ~5k research rows a
+// month), replace the scans with a distinct-on RPC.
+const WHY_SYMBOL_CHUNK = 200;  // keeps .in() URLs well under PostgREST limits
+const WHY_SCAN_CAP = 5000;     // rows per source per chunk
+const WHY_OBS_KEY_CAP = 400;   // per-key decision_observations lookups (index: symbol, ts desc)
+const WHY_OBS_CONCURRENCY = 10;
+
+type Sb = ReturnType<typeof createServiceClient>;
+
+async function scanNewestFirst(
+  page: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: { message: string } | null }>,
+  done: (rows: any[]) => boolean,
+): Promise<any[]> {
+  const rows: any[] = [];
+  for (let from = 0; from < WHY_SCAN_CAP; from += PAGE) {
+    const { data, error } = await page(from, Math.min(from + PAGE, WHY_SCAN_CAP) - 1);
+    if (error) throw new Error(error.message);
+    if (!data?.length) break;
+    rows.push(...data);
+    if (data.length < PAGE || done(rows)) break;
+  }
+  return rows;
+}
+
+const chunks = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+const whyKey = (r: { symbol: string; market?: string | null }) => `${r.symbol}:${r.market ?? "us"}`;
+
+/** Per market+symbol key: every stage event of its newest trading chain, its newest research event, and (only when neither exists) its newest decision_observations row. */
+async function loadWhyInputs(sb: Sb, keys: string[]) {
+  const keySet = new Set(keys);
+  const events = new Map<string, Map<number, StageEventRow>>();
+  const addEvent = (r: any) => {
+    const k = whyKey(r);
+    if (!keySet.has(k)) return; // .in("symbol") spans both markets; never cross-match US and India
+    const m = events.get(k) ?? new Map<number, StageEventRow>();
+    m.set(r.id, r);
+    events.set(k, m);
+  };
+  const newestSignal = new Map<string, string>();
+  const bySymbol = [...new Set(keys.map((k) => k.slice(0, k.lastIndexOf(":"))))];
+
+  for (const chunk of chunks(bySymbol, WHY_SYMBOL_CHUNK)) {
+    const chunkKeys = keys.filter((k) => chunk.includes(k.slice(0, k.lastIndexOf(":"))));
+    const allFound = (rows: any[]) => { const seen = new Set(rows.map(whyKey)); return chunkKeys.every((k) => seen.has(k)); };
+    const [tradingRows, researchRows] = await Promise.all([
+      scanNewestFirst((from, to) => sb.from("pipeline_stage_events")
+        .select("symbol,market,signal_id,created_at")
+        .in("stage", [...TRADING_STAGES]).in("symbol", chunk)
+        .order("created_at", { ascending: false }).range(from, to), allFound),
+      scanNewestFirst((from, to) => sb.from("pipeline_stage_events")
+        .select("id,signal_id,symbol,market,stage,outcome,reason,created_at")
+        .eq("stage", "research").in("symbol", chunk)
+        .order("created_at", { ascending: false }).range(from, to), allFound),
+    ]);
+    for (const r of tradingRows) {
+      const k = whyKey(r);
+      if (keySet.has(k) && !newestSignal.has(k) && r.signal_id) newestSignal.set(k, r.signal_id);
+    }
+    const researched = new Set<string>();
+    for (const r of researchRows) {
+      const k = whyKey(r);
+      if (!researched.has(k)) { researched.add(k); addEvent(r); }
+    }
+  }
+
+  // Full chain (all trading stages + its research event) for each newest trading signal.
+  // 100 signals x ~6 stage rows stays under one 1000-row PostgREST page.
+  for (const ids of chunks([...new Set(newestSignal.values())], 100)) {
+    const { data, error } = await sb.from("pipeline_stage_events")
+      .select("id,signal_id,symbol,market,stage,outcome,reason,detail,created_at")
+      .in("signal_id", ids).in("stage", [...TRADING_STAGES, "research"]).limit(PAGE);
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) addEvent(r);
+  }
+
+  const observations = new Map<string, ObservationRow>();
+  const needObs = keys.filter((k) => !events.has(k)).slice(0, WHY_OBS_KEY_CAP);
+  for (const group of chunks(needObs, WHY_OBS_CONCURRENCY)) {
+    await Promise.all(group.map(async (k) => {
+      const symbol = k.slice(0, k.lastIndexOf(":"));
+      const market = k.slice(k.lastIndexOf(":") + 1);
+      let q = sb.from("decision_observations")
+        .select("ts,analyst_score,direction,entry_eligible,score_threshold")
+        .eq("symbol", symbol);
+      q = market === "us" ? q.or("market.eq.us,market.is.null") : q.eq("market", market);
+      const { data, error } = await q.order("ts", { ascending: false }).limit(1);
+      if (error) throw new Error(error.message);
+      if (data?.[0]) observations.set(k, data[0] as ObservationRow);
+    }));
+  }
+
+  return {
+    eventsFor: (k: string) => [...(events.get(k)?.values() ?? [])],
+    observationFor: (k: string) => observations.get(k) ?? null,
+  };
+}
 
 // Full select including breakdown cols (added by migrations after 2026-08-10).
 // If those columns don't exist yet the query will error; we fall back to the
@@ -167,6 +269,12 @@ export async function GET(req: NextRequest) {
     eventsBySymbol.set(key, events);
   }
   const tradeMap = new Map<string, TradeInfo>();
+  // Why column explains the PAPER trader only; live orders are out of scope.
+  const paperTradeMap = new Map<string, { side: "buy" | "sell"; date: string; reason: string | null }>();
+  for (const [key, events] of eventsBySymbol) {
+    const paper = latestExecutionEvent(events.filter((e) => e.venue === "paper").sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
+    if (paper) paperTradeMap.set(key, { side: paper.side, date: paper.occurred_at, reason: paper.reason });
+  }
   for (const [key, events] of eventsBySymbol) {
     const latest = latestExecutionEvent(events.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)));
     if (latest) tradeMap.set(key, {
@@ -177,6 +285,12 @@ export async function GET(req: NextRequest) {
       status: latest.status,
     });
   }
+
+  // Fail-soft: the Why column is an explanation, not the page. A read error
+  // leaves trade_why null ("could not load") rather than 500ing the table.
+  let why: Awaited<ReturnType<typeof loadWhyInputs>> | null = null;
+  try { why = await loadWhyInputs(sb, latest.map(whyKey)); }
+  catch (e: any) { console.error("[research/universe] trade_why read failed:", e?.message ?? e); }
 
   const out = latest.map((r: any) => ({
     symbol: r.symbol,
@@ -191,6 +305,12 @@ export async function GET(req: NextRequest) {
     last_researched_at: r.created_at,
     fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
     last_trade: tradeMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,
+    trade_why: why ? explainTradeWhy({
+      market: r.market ?? "us",
+      events: why.eventsFor(whyKey(r)),
+      observation: why.observationFor(whyKey(r)),
+      lastTrade: paperTradeMap.get(whyKey(r)) ?? null,
+    }) : null,
     fundamental_breakdown: breakdownWithStatus(r.fundamental_breakdown, "fundamental", r.market ?? "us"),
     technical_breakdown: breakdownWithStatus(r.technical_breakdown, "technical", r.market ?? "us"),
     sentiment_breakdown: breakdownWithStatus(r.sentiment_breakdown, "sentiment", r.market ?? "us"),

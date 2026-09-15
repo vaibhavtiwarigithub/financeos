@@ -475,7 +475,11 @@ export async function POST(req: NextRequest) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
       const currency = market === "india" ? "INR" : "USD";
       const portfolio = poolByMarket.get(market);
-      if (!portfolio) { skipped.push({ symbol: signal.symbol, reason: `no_pool_for_${market}` }); continue; }
+      if (!portfolio) {
+        skipped.push({ symbol: signal.symbol, reason: `no_pool_for_${market}` });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: `no_pool_for_${market}` });
+        continue;
+      }
 
       const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
       const marketNameCap = mandateByMarket.get(market)?.max_open_positions ?? 10;
@@ -487,6 +491,7 @@ export async function POST(req: NextRequest) {
           .update({ status: "superseded" }).eq("id", signal.id).eq("status", "pending");
         if (supersedeError) {
           skipped.push({ symbol: signal.symbol, reason: `open_position_signal_supersession_failed: ${supersedeError.message}` });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "existing_position_gate", outcome: "rejected", reason: "open_alpha_position_exists", detail: { supersession_error: supersedeError.message } });
           continue;
         }
         skipped.push({ symbol: signal.symbol, reason: "open_alpha_position_exists" });
@@ -527,6 +532,7 @@ export async function POST(req: NextRequest) {
       if (candSector && (sectorCount[candSector] ?? 0) >= maxPerSector) {
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: `sector_cap (${candSector} already at ${maxPerSector})` });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sector_gate", outcome: "rejected", reason: "sector_cap", detail: { sector: candSector, max: maxPerSector, current: sectorCount[candSector] ?? 0 } });
         continue;
       }
 
@@ -554,6 +560,7 @@ export async function POST(req: NextRequest) {
       if (!pf.ok) {
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: pf.reason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "pricing", outcome: "rejected", reason: String(pf.reason) });
         continue;
       }
       const { price, fillPrice, source, retrievedAt, bid, ask, spread } = pf;
@@ -595,6 +602,7 @@ export async function POST(req: NextRequest) {
       if (!boundPlan) {
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "invalid_fill_trade_plan" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "trade_plan", outcome: "rejected", reason: "invalid_fill_trade_plan" });
         continue;
       }
       const { priceTarget, stopLoss } = boundPlan;
@@ -932,6 +940,7 @@ export async function POST(req: NextRequest) {
         if (rpcErr && !rpcMissing) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `rpc_fill_failed: ${rpcErr.message}` });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "rpc_fill_failed", detail: { error: rpcErr.message } });
           continue;
         }
         if (!rpcErr) {
@@ -964,6 +973,7 @@ export async function POST(req: NextRequest) {
         // instead. The fallback below remains available for local/dev/preview.
         await revertClaim(signal.id);
         skipped.push({ symbol: signal.symbol, reason: "execute_paper_fill_rpc_missing_in_production" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "execute_paper_fill_rpc_missing_in_production" });
         console.error("[paper-trade] execute_paper_fill RPC missing in production — refusing legacy fallback fill for", signal.symbol);
         continue;
       }
@@ -987,6 +997,7 @@ export async function POST(req: NextRequest) {
         if (evRes.error) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `order_event_failed: ${evRes.error.message}` });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "order_event_failed", detail: { error: evRes.error.message } });
           continue;
         }
         const orderEvent = evRes.data;
@@ -1011,6 +1022,7 @@ export async function POST(req: NextRequest) {
         if (trRes.error) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `trade_insert_failed: ${trRes.error.message}` });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "trade_insert_failed", detail: { error: trRes.error.message } });
           continue;
         }
 
