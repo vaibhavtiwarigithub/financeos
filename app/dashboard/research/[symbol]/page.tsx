@@ -7,6 +7,7 @@ import {
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
   ReferenceArea, Scatter, ScatterChart
 } from "recharts";
+import { SCORE_DIMENSIONS, type ScoreDimensionKey, type ScorePoint } from "@/lib/research/score-history";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,11 @@ export default function DeepDivePage() {
 
   const [candles, setCandles] = useState<Candle[]>([]);
   const [tradeEvents, setTradeEvents] = useState<DecisionTradeEvent[]>([]);
+  // Score history is independent of trades: a symbol researched 56 times with
+  // zero trades still has 56 points here. That is the whole reason this exists.
+  const [scorePoints, setScorePoints] = useState<ScorePoint[]>([]);
+  const [scoreRuns, setScoreRuns] = useState(0);
+  const [hiddenDims, setHiddenDims] = useState<Set<ScoreDimensionKey>>(new Set());
   const [overview, setOverview] = useState<Overview>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,13 +170,17 @@ export default function DeepDivePage() {
       fetch(`/api/research/price?symbol=${symbol}&days=${days}`).then(r => r.json()),
       fetch(`/api/research/trades?symbol=${symbol}&market=${market}`).then(r => r.json()),
       fetch(`/api/research/fundamentals?symbol=${symbol}`).then(r => r.json()),
+      fetch(`/api/research/scores?symbol=${symbol}&market=${market}&days=${days}`).then(r => r.json()),
     ])
-      .then(([priceData, tradeData, fundData]) => {
+      .then(([priceData, tradeData, fundData, scoreData]) => {
         if (priceData.error) throw new Error(priceData.error);
         setCandles(priceData.candles ?? []);
         if (tradeData.error) throw new Error(tradeData.error);
         setTradeEvents(tradeData.events ?? []);
         setOverview(fundData.overview ?? {});
+        // A score failure must not blank the price chart — the tab reports it.
+        setScorePoints(scoreData?.error ? [] : (scoreData?.points ?? []));
+        setScoreRuns(scoreData?.error ? 0 : (scoreData?.runs ?? 0));
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
@@ -191,6 +201,48 @@ export default function DeepDivePage() {
   }, [compareSymbols]);
 
   const windowed = useMemo(() => filterByWindow(candles, window), [candles, window]);
+
+  // Price and scores on one time axis.
+  //
+  // Scores exist only on days a research run happened, so those series are null
+  // on every other day and the lines BREAK there (connectNulls is left off
+  // deliberately). Joining the dots across a three-week gap would draw a smooth
+  // trend the agent never observed.
+  const scoreChartData = useMemo(() => {
+    const priceByDate = new Map(windowed.map(c => [c.date, c.close]));
+    const scoreByDate = new Map(scorePoints.map(p => [p.date, p]));
+    const first = windowed[0]?.date;
+    const dates = new Set<string>(priceByDate.keys());
+    // Keep score days inside the window even if that day has no candle (a
+    // research run on a holiday would otherwise vanish from the chart).
+    for (const d of scoreByDate.keys()) if (!first || d >= first) dates.add(d);
+    return [...dates].sort().map(date => {
+      const p = scoreByDate.get(date);
+      return {
+        date,
+        price: priceByDate.get(date) ?? null,
+        analyst: p?.analyst ?? null,
+        fundamental: p?.fundamental ?? null,
+        technical: p?.technical ?? null,
+        sentiment: p?.sentiment ?? null,
+        macro: p?.macro ?? null,
+        insider: p?.insider ?? null,
+        direction: p?.direction ?? null,
+        conviction: p?.conviction ?? null,
+        runs: p?.runs ?? 0,
+      };
+    });
+  }, [windowed, scorePoints]);
+
+  const latestScore = scorePoints.length ? scorePoints[scorePoints.length - 1] : null;
+
+  const toggleDim = useCallback((key: ScoreDimensionKey) => {
+    setHiddenDims(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // Compute indicators on windowed candles
   const chartData = useMemo(() => {
@@ -551,62 +603,135 @@ export default function DeepDivePage() {
       {/* ── Score History Tab ── */}
       {activeTab === "scores" && (
         <div className="flex flex-col gap-4">
-          {tradeEvents.filter(t => t.scores && t.analyst_score != null).length === 0 ? (
+          {scorePoints.length === 0 ? (
+            // This used to say "no scored paper trades found", which was true and
+            // misleading: it made a heavily-researched symbol look unexamined
+            // just because it never triggered a trade. Say what is actually
+            // missing.
             <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">
-              No scored paper trades found for {symbol}.<br />
-              <span className="text-xs mt-1 block">Scores are recorded at each research run that triggers a trade signal.</span>
+              No research runs recorded for {symbol} in this window.<br />
+              <span className="text-xs mt-1 block">
+                Scores are written at every research run, whether or not it triggers a trade.
+                Try a longer window, or wait for the next run.
+              </span>
             </div>
           ) : (
             <>
-              {/* Score history chart */}
               <div className="rounded-lg border bg-card p-4">
-                <h2 className="text-sm font-semibold mb-3 text-muted-foreground">Score at Entry — History</h2>
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={tradeEvents.filter(t => t.scores && t.analyst_score != null).slice().reverse().map(t => ({
-                    date: t.occurred_at?.split("T")[0],
-                    "Analyst (weighted)": t.analyst_score,
-                    Fundamental: t.scores?.fundamental,
-                    Technical: t.scores?.technical,
-                    Sentiment: t.scores?.sentiment,
-                    Macro: t.scores?.macro,
-                  }))}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+                  <h2 className="text-sm font-semibold text-muted-foreground">Score History vs Price</h2>
+                  <span className="text-xs text-muted-foreground">
+                    {scoreRuns} research {scoreRuns === 1 ? "run" : "runs"} · {scorePoints.length}{" "}
+                    {scorePoints.length === 1 ? "day" : "days"} scored
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground mb-3">
+                  Price on the left axis, scores 0–100 on the right. Lines break where no research
+                  run happened — the gaps are real, not smoothed over.
+                </div>
+
+                {/* Dimension toggles */}
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {SCORE_DIMENSIONS.map(d => {
+                    const on = !hiddenDims.has(d.key);
+                    return (
+                      <button
+                        key={d.key}
+                        onClick={() => toggleDim(d.key)}
+                        className="text-xs rounded-full border px-3 py-1 transition-opacity"
+                        style={{
+                          borderColor: d.color,
+                          color: on ? "#fff" : d.color,
+                          background: on ? d.color : "transparent",
+                          opacity: on ? 1 : 0.6,
+                        }}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={scoreChartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.4} />
-                    <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                    <Tooltip />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={40} />
+                    <YAxis
+                      yAxisId="price" orientation="left" tick={{ fontSize: 10 }}
+                      domain={["auto", "auto"]}
+                      tickFormatter={(v: number) => `${currency}${Math.round(v)}`}
+                    />
+                    <YAxis
+                      yAxisId="score" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }}
+                    />
+                    <Tooltip
+                      contentStyle={{ fontSize: 11 }}
+                      formatter={(value: any, name: string) =>
+                        name === "Price" ? [`${currency}${Number(value).toFixed(2)}`, name] : [value, name]
+                      }
+                    />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <ReferenceLine y={50} stroke="var(--border)" strokeDasharray="3 3" />
-                    <Line type="monotone" dataKey="Analyst (weighted)" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="Fundamental" stroke="#6366f1" strokeWidth={1} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="Technical" stroke="#f59e0b" strokeWidth={1} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="Sentiment" stroke="#10b981" strokeWidth={1} dot={{ r: 2 }} />
-                    <Line type="monotone" dataKey="Macro" stroke="#8b5cf6" strokeWidth={1} dot={{ r: 2 }} />
-                  </LineChart>
+                    <ReferenceLine yAxisId="score" y={50} stroke="var(--border)" strokeDasharray="3 3" />
+
+                    {/* Executions, where any exist. Markers over the series, not a
+                        replacement for them — a traded symbol keeps both. */}
+                    {tradeMarkers.map((m, i) => (
+                      <ReferenceLine
+                        key={`${m.date ?? "na"}-${i}`} yAxisId="score" x={m.date}
+                        stroke={m.side === "buy" ? "#10b981" : "#ef4444"}
+                        strokeOpacity={0.5} strokeDasharray="2 2"
+                      />
+                    ))}
+
+                    <Line
+                      yAxisId="price" type="monotone" dataKey="price" name="Price"
+                      stroke="var(--muted-foreground)" strokeWidth={1.5} dot={false} connectNulls
+                    />
+                    {SCORE_DIMENSIONS.filter(d => !hiddenDims.has(d.key)).map(d => (
+                      <Line
+                        key={d.key} yAxisId="score" type="monotone" dataKey={d.key} name={d.label}
+                        stroke={d.color} strokeWidth={d.emphasis ? 2.5 : 1.25}
+                        dot={{ r: d.emphasis ? 3 : 2 }}
+                        // connectNulls stays OFF: a gap means "not researched".
+                        connectNulls={false}
+                      />
+                    ))}
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Current score breakdown (from most recent trade) */}
-              {(() => {
-                const latest = tradeEvents.find(t => t.scores && t.analyst_score != null);
-                if (!latest) return null;
-                return (
-                  <div className="rounded-lg border bg-card p-4">
-                    <h2 className="text-sm font-semibold mb-3 text-muted-foreground">
-                      Most Recent Score Breakdown — {latest.occurred_at?.split("T")[0]}
-                    </h2>
-                    <ScoreBar label={`Analyst Score (weighted total)`} value={latest.analyst_score} color="#ef4444" />
-                    <div className="mt-3 border-t pt-3 space-y-1">
-                      <ScoreBar label="Fundamental" value={latest.scores?.fundamental ?? null} color="#6366f1" />
-                      <ScoreBar label="Technical" value={latest.scores?.technical ?? null} color="#f59e0b" />
-                      <ScoreBar label="Sentiment" value={latest.scores?.sentiment ?? null} color="#10b981" />
-                      <ScoreBar label="Macro" value={latest.scores?.macro ?? null} color="#8b5cf6" />
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-3">
-                      Scores are recorded at paper trade entry. Per-indicator breakdown (P/E contribution, RSI contribution, etc.) requires research-agent re-run for live detail.
-                    </div>
+              {/* Latest breakdown */}
+              {latestScore && (
+                <div className="rounded-lg border bg-card p-4">
+                  <h2 className="text-sm font-semibold mb-3 text-muted-foreground">
+                    Latest Score Breakdown — {latestScore.date}
+                    {latestScore.runs > 1 && (
+                      <span className="ml-2 text-xs font-normal">
+                        (last of {latestScore.runs} runs that day)
+                      </span>
+                    )}
+                  </h2>
+                  <ScoreBar label="Analyst Score (weighted total)" value={latestScore.analyst} color="#ef4444" />
+                  <div className="mt-3 border-t pt-3 space-y-1">
+                    {SCORE_DIMENSIONS.filter(d => d.key !== "analyst").map(d => (
+                      <ScoreBar
+                        key={d.key} label={d.label}
+                        value={latestScore[d.key] as number | null} color={d.color}
+                      />
+                    ))}
                   </div>
-                );
-              })()}
+                  <div className="text-xs text-muted-foreground mt-3">
+                    {latestScore.direction && <>Direction: <span className="font-mono">{latestScore.direction}</span> · </>}
+                    {latestScore.conviction != null && <>Conviction: <span className="font-mono">{latestScore.conviction}</span> · </>}
+                    Source: <span className="font-mono">{latestScore.score_source ?? "unknown"}</span>
+                    {latestScore.scoring_version && <> ({latestScore.scoring_version})</>}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2">
+                    Per-indicator attribution (which P/E or RSI reading moved a dimension) is not
+                    recorded on the signal row, so it is not shown here rather than guessed at.
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
