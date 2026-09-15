@@ -468,6 +468,7 @@ export async function GET(req: NextRequest) {
           : `${assetLabel(assetType)}; business description was not stored with this historical decision.`,
       },
       instrument_family_evidence: obs.features?.instrument_family_evidence ?? null,
+      oil_exposure_evidence: obs.features?.oil_exposure_evidence ?? null,
       history: {
         state: discoveryState, observations_in_window: history.length,
         first_seen: earliest?.ts ?? obs.ts, capped: historyCapped,

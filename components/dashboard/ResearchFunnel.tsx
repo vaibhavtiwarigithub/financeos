@@ -64,6 +64,14 @@ function MiniMetric({ label, value, color }: { label: string; value: string; col
  * component reads the market from context and must keep doing so, or the URL and
  * the header's market switcher would disagree about which book is on screen.
  */
+const OIL_FEATURE_LABELS: Record<string, string> = {
+  wti_change_20obs_pct: "WTI crude · 20 trading days",
+  brent_change_20obs_pct: "Brent crude · 20 trading days",
+  brent_change_5obs_pct: "Brent crude · 5 trading days",
+  uso_return_20bars_pct: "USO oil fund · 20 days",
+  uso_return_5bars_pct: "USO oil fund · 5 days",
+};
+
 export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string | null } = {}) {
   const [date, setDate] = useState(today());
   const [scope, setScope] = useState<"date" | "all">("date");
@@ -349,6 +357,20 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                   {Object.entries(s.instrument_family_evidence.features ?? {}).map(([name, raw]: [string, any]) => <div key={name} style={{ border: `1px solid ${T.border}`, borderRadius: "7px", padding: "8px" }}>
                     <div style={{ color: T.muted, fontSize: "9px", textTransform: "uppercase" }}>{name.replaceAll("_", " ")}</div>
                     <div style={{ color: raw?.status === "ok" ? T.text : T.amber, fontSize: "13px", fontWeight: 700, marginTop: "3px" }}>{raw?.value ?? "Unavailable"} · {raw?.status ?? "missing"}</div>
+                    <div style={{ color: T.muted, fontSize: "9px", marginTop: "2px" }}>{raw?.source ?? "source unavailable"} · as of {formatDate(raw?.asOf)}</div>
+                  </div>)}
+                </div>
+              </section>}
+
+              {s.oil_exposure_evidence && <section style={{ background: T.surface, border: `1px solid ${T.amber}55`, borderRadius: "9px", padding: "12px", marginBottom: "14px" }}>
+                <div style={{ color: T.amber, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "6px" }}>Oil exposure · measurement only</div>
+                <div style={{ color: T.textSub, fontSize: "11px", lineHeight: 1.5, marginBottom: "8px" }}>
+                  {s.symbol} is tagged {String(s.oil_exposure_evidence.exposure_class ?? "unknown").replaceAll("_", " ")}. Crude moves were recorded next to this decision so we can test later whether they predict its outcome. They earned zero points and could not authorize this decision.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "7px" }}>
+                  {Object.entries(s.oil_exposure_evidence.features ?? {}).map(([name, raw]: [string, any]) => <div key={name} style={{ border: `1px solid ${T.border}`, borderRadius: "7px", padding: "8px" }}>
+                    <div style={{ color: T.muted, fontSize: "9px", textTransform: "uppercase" }}>{OIL_FEATURE_LABELS[name] ?? name.replaceAll("_", " ")}</div>
+                    <div style={{ color: raw?.status === "ok" ? T.text : T.amber, fontSize: "13px", fontWeight: 700, marginTop: "3px" }}>{raw?.value == null ? "Unavailable" : `${raw.value > 0 ? "+" : ""}${Number(raw.value).toFixed(2)}%`} · {raw?.status ?? "missing"}</div>
                     <div style={{ color: T.muted, fontSize: "9px", marginTop: "2px" }}>{raw?.source ?? "source unavailable"} · as of {formatDate(raw?.asOf)}</div>
                   </div>)}
                 </div>

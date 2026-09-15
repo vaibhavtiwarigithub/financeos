@@ -206,6 +206,8 @@ Features: FRED `DCOILWTICO` and `DCOILBRENTEU` 20-observation % change, Brent
 — no sector-name heuristic. No expected sign is stored (see §11.3). Deviation from
 `features/exogenous-risk-evidence` P2: FRED republishes EIA spot prices under the
 existing key, so no new provider; the PPAC Indian Basket stays deferred.
+The Research Journal funnel shows the pack as an "Oil exposure · measurement only"
+panel next to the family-evidence panel (display only).
 
 ### 11.3 Frozen counterfactual — does the oil-sign hypothesis hold?
 
