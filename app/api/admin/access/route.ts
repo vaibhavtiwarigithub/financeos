@@ -18,6 +18,7 @@ import {
   buildAccessResendEmailHtml,
 } from "@/lib/email/access-lifecycle-email";
 import { grantStatus, deliveryProblemText } from "@/lib/auth/grant-status";
+import { buildEmailLink } from "@/lib/auth/email-link";
 
 export const dynamic = "force-dynamic";
 
@@ -47,10 +48,20 @@ export async function GET() {
   // would go stale the moment someone accepts.
   const confirmedAt = await confirmedAtByUserId(svc);
 
+  // Recent access emails and what happened to each, including notices to
+  // accounts that no longer exist. Display only; a read failure hides the list.
+  const { data: noticeRows, error: noticeError } = await svc
+    .from("access_email_notices")
+    .select("email_id, recipient, kind, sent_at, status, status_at, status_note")
+    .order("sent_at", { ascending: false })
+    .limit(20);
+  if (noticeError) console.warn(`[admin/access] notice log unavailable: ${noticeError.message}`);
+
   return NextResponse.json({
     owner: { email: OWNER_EMAIL, access: describeRoleAccess("owner") },
     viewer_access: describeRoleAccess("viewer"),
     viewer_pages: VIEWER_PAGES,
+    notices: noticeError ? [] : (noticeRows ?? []),
     grants: (data ?? []).map((g: any) => {
       const status = grantStatus({
         revoked_at: g.revoked_at,
@@ -139,6 +150,7 @@ export async function POST(req: NextRequest) {
     kind: "revoked",
     recipientEmail: String((data as any).email),
   });
+  if (delivery.ok) await recordNotice(svc, delivery.id, String((data as any).email), "revoked");
   return NextResponse.json({
     ok: true,
     action,
@@ -181,10 +193,11 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
   // link was dead on arrival (observed 2026-09-14 on a real test invite:
   // "localhost is currently unreachable / ERR_CONNECTION_FAILED").
   //
-  // `/reset-password` is the right landing page and needs no change: it gates
-  // its form on a session being present, and a Supabase invite link establishes
-  // one from its hash tokens exactly as a recovery link does. Its heading
-  // already reads "Set new password", which is true for a first password too.
+  // `/reset-password` is the landing page. The mailed link is the APP's own URL
+  // carrying Supabase's hashed token, and the page verifies it itself. It used
+  // to be Supabase's `action_link`, whose hash tokens the PKCE browser client
+  // ignores: a page that trusted "any session" then changed the password of
+  // whoever was already signed in — the owner (production, 2026-09-15).
   //
   // NOTE FOR CONFIGURATION: Supabase validates redirectTo against the project's
   // allowed Redirect URLs and silently falls back to the Site URL when it does
@@ -219,7 +232,7 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
   } as any);
 
   let userId: string | null = (linkData as any)?.user?.id ?? existingUserId ?? null;
-  const actionLink: string | null = (linkData as any)?.properties?.action_link ?? null;
+  const actionLink: string | null = buildEmailLink(base, "/reset-password", (linkData as any)?.properties);
 
   if (!userId || !actionLink) {
     return NextResponse.json(
@@ -304,6 +317,7 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
     { onConflict: "user_id" },
   );
   if (grantError) return NextResponse.json({ error: grantError.message }, { status: 500 });
+  await recordNotice(svc, sent.id, email, "invite");
 
   return NextResponse.json({
     ok: true,
@@ -338,7 +352,9 @@ async function resendAccess(body: any, req: NextRequest): Promise<NextResponse> 
   const { data: linkData, error: linkError } = await svc.auth.admin.generateLink({
     type: "magiclink", email: (grant as any).email, options: { redirectTo },
   } as any);
-  const actionLink = (linkData as any)?.properties?.action_link;
+  // Lands on /auth/confirm, which signs in as THIS viewer even if the browser
+  // holds another session, then continues to the portfolio.
+  const actionLink = buildEmailLink(base, "/auth/confirm", (linkData as any)?.properties, "/dashboard/portfolio");
   if (!actionLink) return NextResponse.json({ error: `could not generate sign-in link: ${linkError?.message ?? "unknown"}` }, { status: 502 });
 
   const provider = getEmailProvider();
@@ -351,10 +367,30 @@ async function resendAccess(body: any, req: NextRequest): Promise<NextResponse> 
     })
     : { ok: false, error: "configured email provider cannot confirm delivery" };
   if (!sent.ok) return NextResponse.json({ error: `access email could not be sent: ${String(sent.error ?? "unknown").slice(0, 200)}` }, { status: 502 });
+  await recordNotice(svc, (sent as { id?: string }).id, String((grant as any).email), "resend");
   return NextResponse.json({ ok: true, action: "resend", email: (grant as any).email, email_sent: true });
 }
 
-async function sendLifecycleNotice(input: { kind: "revoked" | "deleted"; recipientEmail: string }): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Log an access email Resend accepted, keyed by its message id, so the webhook
+ * can later record delivered / bounced / reported-as-spam. Accepted is not
+ * delivered: a deletion notice was accepted and landed in spam (2026-09-15).
+ * A separate table because deleting an account cascades its grant row away.
+ * Never blocks or fails the access action it describes.
+ */
+async function recordNotice(
+  svc: any,
+  emailId: string | undefined,
+  recipient: string,
+  kind: "invite" | "resend" | "revoked" | "deleted",
+): Promise<void> {
+  if (!emailId) return;
+  const { error } = await svc.from("access_email_notices")
+    .insert({ email_id: emailId, recipient: recipient.toLowerCase(), kind });
+  if (error) console.warn(`[admin/access] could not record ${kind} email ${emailId}: ${error.message}`);
+}
+
+async function sendLifecycleNotice(input: { kind: "revoked" | "deleted"; recipientEmail: string }): Promise<{ ok: boolean; error?: string; id?: string }> {
   if (!(await emailDeliveryAvailable())) return { ok: false, error: "email is not configured" };
   const provider = getEmailProvider();
   if (!provider.sendChecked) return { ok: false, error: "configured email provider cannot confirm delivery" };
@@ -386,6 +422,7 @@ async function deleteViewerAccount(svc: any, userId: string, body: any): Promise
     return NextResponse.json({ error: `account was revoked but could not be deleted: ${deleteError.message}` }, { status: 502 });
   }
   const delivery = await sendLifecycleNotice({ kind: "deleted", recipientEmail: email });
+  if (delivery.ok) await recordNotice(svc, delivery.id, email, "deleted");
   return NextResponse.json({ ok: true, action: "delete", email, email_sent: delivery.ok, email_error: delivery.ok ? undefined : delivery.error });
 }
 

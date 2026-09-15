@@ -488,3 +488,67 @@ active, a post-acceptance bounce removing access, a dev bypass on the missing
 secret, dropped replay tolerance, an always-true signature compare, the webhook
 gaining insert/upsert or touching `revoked_at`, parsing before verifying, and
 the page reverting to counting un-revoked rows.
+
+## Email links and delivery truth (2026-09-15, owner-approved "fix only the login issues")
+
+### Defect 1 — an invite link changed the owner's password
+
+Observed in production: the owner opened a viewer's invitation in a browser
+still signed in as the owner, chose a password, and it was written to the
+OWNER's account ("New password should be different from the old password" on a
+retry confirmed it). The viewer's account never received a password, so it
+could not sign in.
+
+Cause, two parts together:
+
+1. The route mailed Supabase's `action_link`, which returns tokens in the URL
+   hash. The PKCE browser client from `@supabase/ssr` does not read hash tokens,
+   so opening the link never replaced the owner's session.
+2. `/reset-password` showed its form whenever `getSession()` returned any
+   session and then called `updateUser({ password })` on it.
+
+Fix (`lib/auth/email-link.ts`, `app/reset-password/page.tsx`,
+`app/auth/confirm/page.tsx`, `app/api/admin/access/route.ts`):
+
+- Invitation and recovery emails link to `/reset-password?token_hash=…&type=…`,
+  built from `generateLink().properties.hashed_token`. The owner's "Resend
+  email" sign-in link goes to `/auth/confirm?token_hash=…&type=magiclink&next=/dashboard/portfolio`.
+- Both pages verify the link themselves (`verifyOtp`; also a PKCE `code`, and
+  Supabase's hash tokens via `setSession` so the login page's Supabase-sent
+  "Forgot password" mail keeps working). Verifying replaces whatever session
+  the browser had. No link, an expired link, or a link of the wrong type is an
+  error; an existing session is never a fallback.
+- `/reset-password` shows "for <email>", strips the token from the address bar,
+  and re-checks `getUser().id` against the link's account immediately before
+  `updateUser`.
+- A sign-in link cannot set a password and a recovery link cannot be used as a
+  plain sign-in link.
+
+Residual: opening a viewer's link in the owner's browser now signs that browser
+in as the viewer (the correct account), which signs the owner out there.
+
+### Defect 2 — "the notice email sent" when it was only accepted
+
+A deletion notice was accepted by Resend and landed in the recipient's spam
+folder while the page said it was sent. The message id was discarded, and the
+grant row that could have held a status is cascade-deleted with the account.
+
+Fix: `access_email_notices` (migration `20260915220000`, applied and verified in
+production). The route records every accepted invitation, sign-in link, revoke
+and delete notice by Resend message id; the webhook updates its status by id
+before looking for a grant (update only, never insert). The access page words
+the result as "accepted for delivery" and lists recent access emails with
+status: accepted, delivered to their mail server, bounced, reported as spam by
+recipient. It states plainly that a spam-folder placement is invisible and
+shows as delivered.
+
+Not fixable in code: mail from Resend's shared `onboarding@resend.dev` sender
+is often filtered to spam and may only be sent to the Resend account owner.
+A verified sending domain plus `EMAIL_FROM` is the owner's decision.
+
+### Acceptance tests
+
+`tests/email-link-session.test.ts` (link parsing, session establishment,
+type restrictions, open-redirect guard, and source guards on both pages and the
+route) and `tests/access-email-notices.test.ts` (id recorded for all four email
+kinds, webhook update order, RLS with no policy, page never overclaims).

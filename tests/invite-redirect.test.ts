@@ -33,9 +33,11 @@ describe("an invitation points at the deployed app, not localhost", () => {
 
   it("lands on the page that can actually set a password", () => {
     expect(ACCESS.includes("/reset-password`")).toBe(true);
-    // That page gates on a session rather than on a specific event type, which
-    // is why an invite link works there without a change.
-    expect(RESET.includes("if (data.session) setReady(true)")).toBe(true);
+    // The page verifies the link's own token. It used to gate on "any session",
+    // which changed the signed-in owner's password (2026-09-15); that check is
+    // now the thing that must never come back.
+    expect(RESET.includes("establishEmailLinkSession(")).toBe(true);
+    expect(RESET.includes("if (data.session) setReady(true)"), "reset page trusts a leftover session").toBe(false);
   });
 
   it("does not double-slash when APP_BASE_URL has a trailing slash", () => {

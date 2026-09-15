@@ -65,6 +65,21 @@ export async function POST(req: NextRequest) {
 
   const svc = createServiceClient();
 
+  // Every access email (invitation, sign-in link, revoke and delete notices) is
+  // logged by message id in access_email_notices — including notices to accounts
+  // that were deleted and so have no grant row below. Update only: a row exists
+  // only if the app itself sent that message.
+  if (emailId) {
+    const { error: noticeError } = await svc.from("access_email_notices").update({
+      status: type === "email.delivered" ? "delivered" : type === "email.complained" ? "complained" : "bounced",
+      status_at: new Date().toISOString(),
+      status_note: type === "email.delivered"
+        ? null
+        : String(data?.bounce?.message ?? data?.bounce?.subType ?? data?.reason ?? "").slice(0, 200) || null,
+    }).eq("email_id", emailId);
+    if (noticeError) console.warn(`[webhooks/resend] notice status not recorded: ${noticeError.message}`);
+  }
+
   // Match by Resend's message id first — that ties the event to the exact send.
   // Address matching is the fallback, and it is the reason a bounce on ANY mail
   // we send a guest (the daily risk email too, not just the invitation) marks

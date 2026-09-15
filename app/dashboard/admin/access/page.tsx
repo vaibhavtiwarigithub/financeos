@@ -33,11 +33,32 @@ const TONE: Record<Grant["status_tone"], string> = {
   good: T.green, warn: T.amber, bad: T.red, muted: T.muted,
 };
 
+type Notice = {
+  email_id: string; recipient: string;
+  kind: "invite" | "resend" | "revoked" | "deleted";
+  sent_at: string;
+  status: "accepted" | "delivered" | "bounced" | "complained";
+  status_at: string | null; status_note: string | null;
+};
+
 type AccessData = {
   owner: { email: string; access: { pages: string[]; canEdit: boolean; notes: string } };
   viewer_access: { pages: string[]; canEdit: boolean; notes: string };
   viewer_pages: string[];
   grants: Grant[];
+  notices?: Notice[];
+};
+
+const NOTICE_KIND: Record<Notice["kind"], string> = {
+  invite: "Invitation", resend: "Sign-in link", revoked: "Access revoked notice", deleted: "Account deleted notice",
+};
+// "Delivered" is what the recipient's mail server reported. It can still be in
+// a spam folder: no provider can see that, so the label must not overclaim.
+const NOTICE_STATUS: Record<Notice["status"], { label: string; color: string }> = {
+  accepted: { label: "Accepted — no delivery report yet", color: T.amber },
+  delivered: { label: "Delivered to their mail server", color: T.green },
+  bounced: { label: "Bounced — not delivered", color: T.red },
+  complained: { label: "Reported as spam by recipient", color: T.red },
 };
 
 export default function AccessPage() {
@@ -108,7 +129,7 @@ export default function AccessPage() {
         if (!res.ok) setError(json?.error ?? `delete failed (${res.status})`);
         else {
           setError(null);
-          setNotice(json.email_sent ? `${g.email}'s access was revoked, their account deleted, and the notice email sent.` : `${g.email}'s account was deleted, but the notification email could not be delivered: ${json.email_error ?? "unknown error"}`);
+          setNotice(json.email_sent ? `${g.email}'s access was revoked and their account deleted. The notice email was accepted for delivery — whether it arrived shows under "Recent access emails" below.` : `${g.email}'s account was deleted, but the notification email could not be sent: ${json.email_error ?? "unknown error"}`);
           await load();
         }
       } finally { setBusy(null); }
@@ -125,8 +146,8 @@ export default function AccessPage() {
       if (!res.ok) setError(json?.error ?? `${action} failed (${res.status})`);
       else {
         setError(null);
-        if (action === "revoke") setNotice(json.email_sent ? `${g.email}'s access was revoked and the notice email was sent.` : `${g.email}'s access was revoked, but the notification email could not be delivered: ${json.email_error ?? "unknown error"}`);
-        if (action === "resend") setNotice(`Access email sent to ${g.email}.`);
+        if (action === "revoke") setNotice(json.email_sent ? `${g.email}'s access was revoked. The notice email was accepted for delivery — whether it arrived shows under "Recent access emails" below.` : `${g.email}'s access was revoked, but the notification email could not be sent: ${json.email_error ?? "unknown error"}`);
+        if (action === "resend") setNotice(`Sign-in email accepted for delivery to ${g.email}. Whether it arrived shows under "Recent access emails" below.`);
         await load();
       }
     } finally { setBusy(null); }
@@ -275,6 +296,44 @@ export default function AccessPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          <div style={card}>
+            <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Recent access emails</div>
+            <div style={{ fontSize: "11px", color: T.muted, marginBottom: "10px", lineHeight: 1.5 }}>
+              What happened after each invitation, sign-in link and notice was accepted for sending. &quot;Delivered&quot; means
+              the recipient&apos;s mail server took it — it can still land in a spam folder, which no email provider can see.
+              &quot;Reported as spam&quot; means the recipient clicked Report spam.
+            </div>
+            {!data.notices?.length ? (
+              <div style={{ fontSize: "12px", color: T.muted }}>No access emails recorded yet.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", minWidth: "480px", fontSize: "12px", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: T.muted, textAlign: "left" }}>
+                      <th style={{ padding: "6px 10px 6px 0" }}>Sent</th>
+                      <th style={{ padding: "6px 10px 6px 0" }}>To</th>
+                      <th style={{ padding: "6px 10px 6px 0" }}>Email</th>
+                      <th style={{ padding: "6px 0" }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.notices.map((n) => (
+                      <tr key={n.email_id} style={{ borderTop: `1px solid ${T.border}` }}>
+                        <td style={{ padding: "8px 10px 8px 0", color: T.muted, whiteSpace: "nowrap" }}>{new Date(n.sent_at).toLocaleString()}</td>
+                        <td style={{ padding: "8px 10px 8px 0" }}>{n.recipient}</td>
+                        <td style={{ padding: "8px 10px 8px 0" }}>{NOTICE_KIND[n.kind] ?? n.kind}</td>
+                        <td style={{ padding: "8px 0", color: NOTICE_STATUS[n.status]?.color ?? T.muted, fontWeight: 600 }}>
+                          {NOTICE_STATUS[n.status]?.label ?? n.status}
+                          {n.status_note && <div style={{ fontSize: "11px", fontWeight: 400, color: T.muted, marginTop: "3px" }}>{n.status_note}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </>

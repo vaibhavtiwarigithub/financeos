@@ -1,6 +1,12 @@
 # Kairos — Coding Conventions
-> Last updated: 2026-09-14
+> Last updated: 2026-09-15
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
+
+> 2026-09-15: **An email-link page acts only on the account the link proves — never on a session the browser already has.** Production defect: `/reset-password` showed its form whenever `getSession()` returned anything, and the admin-minted invite link carried hash tokens that the PKCE browser client from `@supabase/ssr` ignores. Opening a viewer's invite while signed in as the owner therefore changed the OWNER's password, and the viewer's account never got one. The pattern now, in `lib/auth/email-link.ts`:
+> - Servers mail the app's own URL built with `buildEmailLink(base, path, generateLink().properties)` from Supabase's `hashed_token`, never `properties.action_link`. Set-password links go to `/reset-password`; sign-in links go to `/auth/confirm?next=…` (`safeNextPath`, same-origin only).
+> - Pages call `establishEmailLinkSession(supabase, parseEmailLink(search, hash), ALLOWED_TYPES)`, which verifies the token (`verifyOtp`), a PKCE `code`, or Supabase's hash tokens (`setSession`, for Supabase-sent Forgot-password mail) and thereby replaces any existing session. `SET_PASSWORD_LINK_TYPES` = invite, recovery; `SIGN_IN_LINK_TYPES` = magiclink. No link means an error, not a fallback to the current session.
+> - The token is stripped from the address bar immediately, the effect runs once (a one-time token must not be spent twice), and a password change re-checks `getUser().id` against the link's account right before `updateUser`. The page shows which email it is changing.
+> Guarded by `tests/email-link-session.test.ts`, which fails if a page reads `getSession(` to decide or the route mails `action_link` again.
 
 > 2026-09-14 (Per-User Broker & Risk Phase 1): **a viewer-reachable API route belongs to exactly one of two classes**, declared in `lib/auth/roles.ts` and enforced by `tests/viewer-route-sweep.test.ts` and `tests/broker-connection-routes.test.ts`.
 > `VIEWER_API_ROUTES` — *shared reads*: GET-only, no provider call, no write. This is what keeps guest traffic from multiplying the provider budget, so the class stays GET-only rather than being softened for one exception.
