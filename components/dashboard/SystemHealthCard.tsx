@@ -51,6 +51,14 @@ function ageBadge(createdAt: string): { text: string; stuck: boolean } | null {
   return { text, stuck: days >= 7 };
 }
 
+// A broken internal process belongs in the health failure count. A credential
+// that only its human owner can reconnect does not: it needs attention, but it
+// is not evidence that the automated system is malfunctioning. Keep it visible
+// in its own section instead of training the failure badge to mean two things.
+function isOwnerAction(a: Alert): boolean {
+  return a.category === "broker" || /\b(reconnect|owner action|manual login)\b/i.test(`${a.title} ${a.detail ?? ""}`);
+}
+
 // A deep link / hint per category so the card is actionable, not just informational.
 function fixHint(a: Alert): { href?: string; label: string } {
   const cat = a.category;
@@ -161,8 +169,9 @@ export default function SystemHealthCard() {
     );
   }
 
-  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success");
-  const notices = alerts.filter(alert => alert.severity === "info" || alert.severity === "success");
+  const ownerActions = alerts.filter(isOwnerAction);
+  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success" && !isOwnerAction(alert));
+  const notices = alerts.filter(alert => (alert.severity === "info" || alert.severity === "success") && !isOwnerAction(alert));
   const sorted = [...actionAlerts].sort(
     (a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)
       || (a.created_at < b.created_at ? 1 : -1),
@@ -173,7 +182,7 @@ export default function SystemHealthCard() {
   // anything. "3 actions required" reads as routine; "3 actions required · 1
   // stuck >7d" does not.
   const nStuck = actionAlerts.filter(a => ageBadge(a.created_at)?.stuck).length;
-  const clean = alerts.length === 0;
+  const clean = actionAlerts.length === 0 && ownerActions.length === 0 && notices.length === 0;
   const noActionRequired = actionAlerts.length === 0;
   const visibleAlerts = showNotices ? [...sorted, ...notices] : sorted;
 
@@ -191,13 +200,17 @@ export default function SystemHealthCard() {
         </span>
         <span style={{ fontSize: "12px", fontWeight: 600, color: clean ? T.green : headColor, marginLeft: "auto" }}>
           {clean ? "All systems normal"
-            : noActionRequired ? `No action required · ${notices.length} notice${notices.length !== 1 ? "s" : ""}`
-            : `${actionAlerts.length} action${actionAlerts.length !== 1 ? "s" : ""} required${nCrit ? ` · ${nCrit} critical` : ""}${nStuck ? ` · ${nStuck} stuck >7d` : ""}${notices.length ? ` · ${notices.length} notices` : ""}`}
+            : noActionRequired ? `No system failure · ${ownerActions.length ? `${ownerActions.length} owner action${ownerActions.length !== 1 ? "s" : ""}` : ""}${ownerActions.length && notices.length ? " · " : ""}${notices.length ? `${notices.length} notice${notices.length !== 1 ? "s" : ""}` : ""}`
+            : `${actionAlerts.length} system action${actionAlerts.length !== 1 ? "s" : ""} required${nCrit ? ` · ${nCrit} critical` : ""}${nStuck ? ` · ${nStuck} stuck >7d` : ""}${ownerActions.length ? ` · ${ownerActions.length} owner action${ownerActions.length !== 1 ? "s" : ""}` : ""}${notices.length ? ` · ${notices.length} notices` : ""}`}
         </span>
       </div>
 
       {!clean && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {ownerActions.length > 0 && <div style={{ border: `1px solid ${T.yellow}55`, borderRadius: "7px", padding: "8px 10px", background: `${T.yellow}0D` }}>
+            <div style={{ fontSize: "10px", fontWeight: 800, color: T.yellow, letterSpacing: "0.08em", marginBottom: "5px" }}>OWNER ACTION</div>
+            {ownerActions.map((a) => <div key={a.id} style={{ fontSize: "12px", color: T.textSub, lineHeight: 1.45 }}>{a.title}{a.detail ? ` — ${a.detail}` : ""}</div>)}
+          </div>}
           {notices.length > 0 && <button type="button" onClick={() => setShowNotices(current => !current)} style={{ alignSelf: "flex-start", background: "transparent", border: 0, color: T.blue, padding: 0, fontSize: "11px", cursor: "pointer" }}>
             {showNotices ? "Hide" : "Show"} {notices.length} operational notice{notices.length !== 1 ? "s" : ""}
           </button>}

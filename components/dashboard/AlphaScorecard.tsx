@@ -85,7 +85,10 @@ export default function AlphaScorecard({ market }: { market: "us" | "india" }) {
   async function runRollup() {
     setRunMsg("Running…");
     try {
-      const res = await fetch("/api/agents/benchmark-scorecard", { method: "POST" });
+      // Manual materialization uses the same market-local contract as cron.
+      // A combined run could mark one market done while its other benchmark
+      // ledger was still stale.
+      const res = await fetch(`/api/agents/benchmark-scorecard?market=${market}&attempt=initial`, { method: "POST" });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error ?? "rollup_failed");
       setRunMsg(`Updated ${json.rows_written} rows`);

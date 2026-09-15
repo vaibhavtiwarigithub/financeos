@@ -15,9 +15,20 @@ Implementation allowed: Phases 0-3
 0 open, 91 owner-pinned, RLS on 213/213 tables. No viewer role, allowlist, or
 invitation exists. See Decision 76.
 
-> Phase 0 is approved and applied. Phases 1-3 (role model, allowlist, route
-> gating, invitation) remain DESIGN ONLY and ship nothing until separately
-> approved per CLAUDE.md "Architecture-First Mode".
+**Phases 1-3 status: IMPLEMENTED, 2026-09-15** — `app_user_roles` is the
+sole non-owner authority; middleware and each viewer-safe handler enforce the
+same allowlist; owner-only `/dashboard/admin/access` can invite, resend a
+single-use access link, revoke (with a notice), restore, and permanently delete
+a viewer account. Delete first revokes, then removes the `auth.users` identity
+(cascading its grant); a typed `DELETE <email>` confirmation is required. Mail
+delivery is explicitly reported rather than assumed. A delivery failure never
+undoes a revocation or misreports a sent notice.
+
+The authorization controls, not the UI, are the boundary: the server resolves
+viewer grants on every request, viewer routes enforce `requireViewerOrOwner`,
+and direct PostgREST reads remain owner-pinned by RLS. `tests/viewer-route-sweep.test.ts`
+asserts both route allowlisting and handler gates so a future route cannot become
+viewer-reachable merely because its navigation is hidden.
 
 Related designs: `features/per-user-broker-risk/FEATURE_ARCHITECTURE.md` (draft,
 unapproved) builds on this one — it gives a guest their own broker connection and

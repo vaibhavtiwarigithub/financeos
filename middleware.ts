@@ -1,7 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { OWNER_EMAIL } from "@/lib/auth/owner";
-import { isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
+import { isOwnerIdentity, isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
 
 /** Paths that require a signed-in owner to VIEW. */
 function isProtectedPage(pathname: string): boolean {
@@ -64,7 +63,9 @@ export async function middleware(request: NextRequest) {
   // user update their own row, so trusting it would let a guest self-promote.
   // The table starts empty, so until a grant is created this behaves exactly as
   // the previous owner-only gate did.
-  const isOwner = user?.email === OWNER_EMAIL;
+  // Match requireOwner(): an unverified account that happens to claim the
+  // owner's email cannot inherit the owner's page access at the edge.
+  const isOwner = isOwnerIdentity(user?.email, user?.email_confirmed_at);
   let isViewer = false;
   if (user && !isOwner) {
     const { data: grant } = await supabase

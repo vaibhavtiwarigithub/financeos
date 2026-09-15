@@ -119,7 +119,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     minCoverage: 1,
     lookbackDays: 60,
     impact: "A stale benchmark truncates or misstates portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
-    recovery: "POST /api/agents/benchmark-scorecard, then confirm every enabled US benchmark has a session-dated observation for the latest completed US session.",
+    recovery: "POST /api/agents/benchmark-scorecard?market=us, then confirm every enabled US benchmark has a session-dated observation for the latest completed US session.",
   },
   {
     id: "benchmark-observations-india",
@@ -135,7 +135,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     minCoverage: 1,
     lookbackDays: 60,
     impact: "A stale benchmark truncates or misstates India portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
-    recovery: "POST /api/agents/benchmark-scorecard, then confirm every enabled India benchmark has a session-dated observation for the latest completed India session.",
+    recovery: "POST /api/agents/benchmark-scorecard?market=india, then confirm every enabled India benchmark has a session-dated observation for the latest completed India session.",
   },
   {
     id: "observation-labels-maturation",

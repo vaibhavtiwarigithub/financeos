@@ -11,6 +11,12 @@ import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { describeRoleAccess, VIEWER_PAGES } from "@/lib/auth/roles";
 import { getEmailProvider, emailDeliveryAvailable } from "@/lib/providers/email";
 import { buildInviteEmailHtml, inviteEmailSubject } from "@/lib/email/invite-email";
+import {
+  accessLifecycleSubject,
+  accessResendSubject,
+  buildAccessLifecycleEmailHtml,
+  buildAccessResendEmailHtml,
+} from "@/lib/email/access-lifecycle-email";
 
 export const dynamic = "force-dynamic";
 
@@ -43,14 +49,18 @@ export async function POST(req: NextRequest) {
   const action = String(body?.action ?? "");
 
   if (action === "invite") return invite(body, req);
+  if (action === "resend") return resendAccess(body, req);
 
   const userId = String(body?.user_id ?? "").trim();
   if (!userId) return NextResponse.json({ error: "user_id required" }, { status: 400 });
-  if (!["revoke", "restore"].includes(action)) {
-    return NextResponse.json({ error: "action must be invite|revoke|restore" }, { status: 400 });
+  if (![
+    "revoke", "restore", "delete",
+  ].includes(action)) {
+    return NextResponse.json({ error: "action must be invite|resend|revoke|restore|delete" }, { status: 400 });
   }
 
   const svc = createServiceClient();
+  if (action === "delete") return deleteViewerAccount(svc, userId, body);
   const patch = action === "revoke"
     ? { revoked_at: new Date().toISOString(), revoked_by: OWNER_EMAIL }
     : { revoked_at: null, revoked_by: null };
@@ -64,7 +74,24 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "grant not found" }, { status: 404 });
 
-  return NextResponse.json({ ok: true, action, grant: { ...data, active: !data.revoked_at } });
+  if (action !== "revoke") {
+    return NextResponse.json({ ok: true, action, grant: { ...data, active: !data.revoked_at } });
+  }
+
+  // Security takes precedence over delivery: access is already revoked even if
+  // Resend is temporarily unavailable. The response makes a failed notice loud
+  // instead of quietly claiming that the recipient was told.
+  const delivery = await sendLifecycleNotice({
+    kind: "revoked",
+    recipientEmail: String((data as any).email),
+  });
+  return NextResponse.json({
+    ok: true,
+    action,
+    grant: { ...data, active: false },
+    email_sent: delivery.ok,
+    email_error: delivery.ok ? undefined : delivery.error,
+  });
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -216,6 +243,76 @@ async function invite(body: any, req: NextRequest): Promise<NextResponse> {
     invited_new_account: !returning,
     access: describeRoleAccess("viewer"),
   });
+}
+
+/** Send a fresh one-time sign-in link to an already active viewer. */
+async function resendAccess(body: any, req: NextRequest): Promise<NextResponse> {
+  const userId = String(body?.user_id ?? "").trim();
+  if (!userId) return NextResponse.json({ error: "user_id required" }, { status: 400 });
+  const svc = createServiceClient();
+  const { data: grant, error } = await svc.from("app_user_roles")
+    .select("user_id,email,revoked_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!grant) return NextResponse.json({ error: "grant not found" }, { status: 404 });
+  if ((grant as any).revoked_at) return NextResponse.json({ error: "restore access before sending a sign-in email" }, { status: 409 });
+  if (!(await emailDeliveryAvailable())) return NextResponse.json({ error: "email is not configured" }, { status: 503 });
+
+  const base = process.env.APP_BASE_URL || req.nextUrl.origin;
+  const redirectTo = `${base.replace(/\/+$/, "")}/dashboard/portfolio`;
+  const { data: linkData, error: linkError } = await svc.auth.admin.generateLink({
+    type: "magiclink", email: (grant as any).email, options: { redirectTo },
+  } as any);
+  const actionLink = (linkData as any)?.properties?.action_link;
+  if (!actionLink) return NextResponse.json({ error: `could not generate sign-in link: ${linkError?.message ?? "unknown"}` }, { status: 502 });
+
+  const provider = getEmailProvider();
+  const sent = provider.sendChecked
+    ? await provider.sendChecked({
+      from: process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>",
+      to: (grant as any).email,
+      subject: accessResendSubject(),
+      html: buildAccessResendEmailHtml({ actionLink, recipientEmail: (grant as any).email, ownerEmail: OWNER_EMAIL }),
+    })
+    : { ok: false, error: "configured email provider cannot confirm delivery" };
+  if (!sent.ok) return NextResponse.json({ error: `access email could not be sent: ${String(sent.error ?? "unknown").slice(0, 200)}` }, { status: 502 });
+  return NextResponse.json({ ok: true, action: "resend", email: (grant as any).email, email_sent: true });
+}
+
+async function sendLifecycleNotice(input: { kind: "revoked" | "deleted"; recipientEmail: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!(await emailDeliveryAvailable())) return { ok: false, error: "email is not configured" };
+  const provider = getEmailProvider();
+  if (!provider.sendChecked) return { ok: false, error: "configured email provider cannot confirm delivery" };
+  return provider.sendChecked({
+    from: process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>",
+    to: input.recipientEmail,
+    subject: accessLifecycleSubject(input.kind),
+    html: buildAccessLifecycleEmailHtml({ ...input, ownerEmail: OWNER_EMAIL }),
+  });
+}
+
+async function deleteViewerAccount(svc: any, userId: string, body: any): Promise<NextResponse> {
+  const { data: grant, error } = await svc.from("app_user_roles")
+    .select("user_id,email,revoked_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!grant) return NextResponse.json({ error: "grant not found" }, { status: 404 });
+  const email = String((grant as any).email ?? "").toLowerCase();
+  if (String(body?.confirmation ?? "") !== `DELETE ${email}`) {
+    return NextResponse.json({ error: `confirmation must equal DELETE ${email}` }, { status: 400 });
+  }
+
+  // Revoke first, so even a deletion failure cannot leave a working viewer.
+  await svc.from("app_user_roles").update({ revoked_at: new Date().toISOString(), revoked_by: OWNER_EMAIL })
+    .eq("user_id", userId).is("revoked_at", null);
+  const { error: deleteError } = await svc.auth.admin.deleteUser(userId);
+  if (deleteError) {
+    return NextResponse.json({ error: `account was revoked but could not be deleted: ${deleteError.message}` }, { status: 502 });
+  }
+  const delivery = await sendLifecycleNotice({ kind: "deleted", recipientEmail: email });
+  return NextResponse.json({ ok: true, action: "delete", email, email_sent: delivery.ok, email_error: delivery.ok ? undefined : delivery.error });
 }
 
 /** Bounded lookup — this supabase-js version has no getUserByEmail. */

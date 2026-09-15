@@ -59,26 +59,50 @@ export default function AccessPage() {
       const json = await res.json();
       if (!res.ok) { setError(json?.error ?? `Invite failed (${res.status})`); return; }
       setError(null);
-      setNotice(
-        json.invited_new_account
-          ? `Invitation email sent to ${email}. Access starts once they set their password.`
-          : `${email} already had an account — viewer access granted, no email sent.`
-      );
+      setNotice(json.invited_new_account
+        ? `Invitation email sent to ${email}. Access starts once they set their password.`
+        : `Access email sent to ${email}. They can use the single-use sign-in link.`);
       setInviteEmail("");
       await load();
     } finally { setInviting(false); }
   }
 
-  async function act(userId: string, action: "revoke" | "restore") {
-    setBusy(userId);
+  async function act(g: Grant, action: "revoke" | "restore" | "resend" | "delete") {
+    if (action === "revoke" && !confirm(`Revoke ${g.email}'s viewing permission now? They will be blocked immediately and receive a Kairos notice.`)) return;
+    if (action === "delete") {
+      const confirmation = prompt(`This permanently deletes ${g.email}'s Kairos account.\n\nType exactly: DELETE ${g.email}`);
+      if (confirmation !== `DELETE ${g.email}`) return;
+      setBusy(g.user_id);
+      try {
+        const res = await fetch("/api/admin/access", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: g.user_id, action, confirmation }),
+        });
+        const json = await res.json();
+        if (!res.ok) setError(json?.error ?? `delete failed (${res.status})`);
+        else {
+          setError(null);
+          setNotice(json.email_sent ? `${g.email}'s access was revoked, their account deleted, and the notice email sent.` : `${g.email}'s account was deleted, but the notification email could not be delivered: ${json.email_error ?? "unknown error"}`);
+          await load();
+        }
+      } finally { setBusy(null); }
+      return;
+    }
+    setBusy(g.user_id);
     try {
       const res = await fetch("/api/admin/access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, action }),
+        body: JSON.stringify({ user_id: g.user_id, action }),
       });
-      if (!res.ok) setError(`${action} failed (${res.status})`);
-      else await load();
+      const json = await res.json();
+      if (!res.ok) setError(json?.error ?? `${action} failed (${res.status})`);
+      else {
+        setError(null);
+        if (action === "revoke") setNotice(json.email_sent ? `${g.email}'s access was revoked and the notice email was sent.` : `${g.email}'s access was revoked, but the notification email could not be delivered: ${json.email_error ?? "unknown error"}`);
+        if (action === "resend") setNotice(`Access email sent to ${g.email}.`);
+        await load();
+      }
     } finally { setBusy(null); }
   }
 
@@ -91,8 +115,8 @@ export default function AccessPage() {
     <div style={{ padding: "24px", color: T.text, maxWidth: "1000px" }}>
       <h1 style={{ fontSize: "20px", fontWeight: 700, marginBottom: "4px" }}>Access &amp; Permissions</h1>
       <p style={{ fontSize: "12px", color: T.muted, marginBottom: "20px" }}>
-        Who can sign in, what each role may view or edit, and revocation. Revoking takes effect on the
-        next request — it blocks the API and the page, not just the navigation.
+        Who can sign in, what each role may view or edit, and account lifecycle. Revoking takes effect on the
+        next request — it blocks the API and the page, not just the navigation. Deleting is permanent.
       </p>
 
       {error && (
@@ -187,7 +211,7 @@ export default function AccessPage() {
                     <th style={{ padding: "6px 10px 6px 0" }}>Role</th>
                     <th style={{ padding: "6px 10px 6px 0" }}>Status</th>
                     <th style={{ padding: "6px 10px 6px 0" }}>Granted</th>
-                    <th style={{ padding: "6px 0" }} />
+                    <th style={{ padding: "6px 0" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -200,18 +224,11 @@ export default function AccessPage() {
                       </td>
                       <td style={{ padding: "8px 10px 8px 0", color: T.muted }}>{g.granted_at?.slice(0, 10)}</td>
                       <td style={{ padding: "8px 0", textAlign: "right" }}>
-                        <button
-                          onClick={() => act(g.user_id, g.active ? "revoke" : "restore")}
-                          disabled={busy === g.user_id}
-                          style={{
-                            background: "transparent", cursor: "pointer",
-                            border: `1px solid ${g.active ? T.red : T.green}`,
-                            color: g.active ? T.red : T.green,
-                            borderRadius: "6px", padding: "4px 12px", fontSize: "11px", fontWeight: 600,
-                          }}
-                        >
-                          {busy === g.user_id ? "…" : g.active ? "Revoke" : "Restore"}
-                        </button>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px", flexWrap: "wrap" }}>
+                          {g.active && <button onClick={() => act(g, "resend")} disabled={busy === g.user_id} style={{ background: "transparent", cursor: "pointer", border: `1px solid ${T.accent}`, color: T.accent, borderRadius: "6px", padding: "4px 9px", fontSize: "11px", fontWeight: 600 }}>Resend email</button>}
+                          <button onClick={() => act(g, g.active ? "revoke" : "restore")} disabled={busy === g.user_id} style={{ background: "transparent", cursor: "pointer", border: `1px solid ${g.active ? T.red : T.green}`, color: g.active ? T.red : T.green, borderRadius: "6px", padding: "4px 9px", fontSize: "11px", fontWeight: 600 }}>{busy === g.user_id ? "…" : g.active ? "Revoke" : "Restore"}</button>
+                          <button onClick={() => act(g, "delete")} disabled={busy === g.user_id} style={{ background: "transparent", cursor: "pointer", border: `1px solid ${T.red}`, color: T.red, borderRadius: "6px", padding: "4px 9px", fontSize: "11px", fontWeight: 600 }}>Delete account</button>
+                        </div>
                       </td>
                     </tr>
                   ))}

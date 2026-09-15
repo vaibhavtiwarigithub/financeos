@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { VIEWER_API_ROUTES } from "@/lib/auth/roles";
 import { expectedLatestSessionDate, marketClosedReason } from "@/lib/trading/market-calendar";
@@ -31,8 +30,16 @@ function routeFileFor(prefix: string): string {
 function routeFilesUnder(prefix: string): string[] {
   const dir = resolve(ROOT, `app${prefix}`);
   if (!existsSync(dir)) return [];
-  return execSync(`find ${JSON.stringify(dir)} -name route.ts`, { encoding: "utf8" })
-    .split("\n").map((l) => l.trim()).filter(Boolean);
+  const files: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = resolve(current, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile() && entry.name === "route.ts") files.push(full);
+    }
+  };
+  visit(dir);
+  return files;
 }
 
 const PROVIDER_IMPORT = /from\s+"[^"]*(provider|massive|alphavantage|alpha-vantage|finnhub|yahoo|gdelt|broker|mcp|anthropic|openai)[^"]*"/i;
@@ -67,6 +74,19 @@ describe("viewer-reachable route sweep", () => {
         const hit = src.match(PROVIDER_IMPORT);
         expect(hit?.[0] ?? null, `${file} imports ${hit?.[0]}`).toBeNull();
       }
+    }
+  });
+
+  it("every shared-read route re-checks a server-side role in the handler", () => {
+    // Middleware is defense in depth, not the only security boundary. A route
+    // remains safe if it is invoked outside the normal browser navigation path.
+    for (const route of VIEWER_API_ROUTES) {
+      const file = routeFileFor(route.prefix);
+      const src = readFileSync(file, "utf8");
+      expect(
+        src.includes("requireViewerOrOwner") || src.includes("getSessionRole"),
+        `${file} lacks its handler authorization gate`,
+      ).toBe(true);
     }
   });
 

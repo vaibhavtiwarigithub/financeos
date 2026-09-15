@@ -6,7 +6,8 @@
   "regions": ["iad1"],
   "git": {
     "deploymentEnabled": {
-      "worktree-agent-*": false
+      "worktree-agent-*": false,
+      "claude/**": false
     }
   },
   "functions": {

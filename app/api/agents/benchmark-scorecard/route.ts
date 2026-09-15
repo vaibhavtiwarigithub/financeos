@@ -15,12 +15,15 @@ import {
   type LevelPoint,
 } from "@/lib/analytics/benchmark-alpha";
 import { primaryBenchmarkContractErrors } from "@/lib/data/benchmark-registry";
+import { admitMarketLocalSlot, expectedLatestSessionDate } from "@/lib/trading/market-calendar";
+import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MARKETS = ["us", "india"] as const;
 const CURRENCY = { us: "USD", india: "INR" } as const;
+type Market = typeof MARKETS[number];
 
 function asLevel(row: any, field: string): LevelPoint {
   return { date: String(row.date).slice(0, 10), level: row[field] == null ? null : Number(row[field]) };
@@ -301,17 +304,18 @@ async function loadLiveSeries(svc: any, market: "us" | "india", currency: "USD" 
   };
 }
 
-async function buildScorecards(svc: any) {
+async function buildScorecards(svc: any, marketScope: Market) {
   const benchmarks = await loadBenchmarks(svc);
   const rows: any[] = [];
   const asOf = new Date().toISOString().slice(0, 10);
+  const scopedBenchmarks = benchmarks.filter((benchmark) => benchmark.market === marketScope);
 
   // The session the BOOK has reached, per market. A secondary benchmark that
   // cannot reach this date truncates every comparison drawn against it, so it
   // is the right yardstick for "stale" — not a fixed number of days, which would
   // fire on weekends and holidays.
   const latestBookSession = new Map<string, string | null>();
-  for (const market of MARKETS) {
+  for (const market of [marketScope]) {
     // Use the most recent portfolio observation, not merely the latest EOD
     // observation. PaperTrader may write an intraday NAV after PositionMonitor
     // has written EOD. The chart includes that row, so using EOD here caused
@@ -323,15 +327,15 @@ async function buildScorecards(svc: any) {
     latestBookSession.set(market, data?.date ? String(data.date).slice(0, 10) : null);
   }
 
-  for (const benchmark of benchmarks) {
+  for (const benchmark of scopedBenchmarks) {
     await upsertPaperObservations(svc, benchmark);
     await upsertLiveObservations(svc, benchmark);
     await upsertProviderObservations(svc, benchmark, latestBookSession.get(benchmark.market) ?? null);
   }
 
-  for (const market of MARKETS) {
+  for (const market of [marketScope]) {
     const currency = CURRENCY[market];
-    const marketBenchmarks = benchmarks.filter((b) => b.market === market);
+    const marketBenchmarks = scopedBenchmarks;
     const paper = await loadPaperSeries(svc, market);
     const live = await loadLiveSeries(svc, market, currency);
 
@@ -401,6 +405,56 @@ async function buildScorecards(svc: any) {
   return rows;
 }
 
+type BenchmarkCompletion = {
+  benchmark_id: string;
+  benchmark: string;
+  provider: string | null;
+  expected_session: string;
+  observed_session: string | null;
+  source_status: string | null;
+  error: string | null;
+  complete: boolean;
+};
+
+/**
+ * A materialized scorecard row is not proof that its comparator is current.
+ * Completion is intentionally checked AFTER ingestion from the durable
+ * benchmark ledger, one enabled benchmark at a time.
+ */
+async function verifyMarketCompletion(
+  svc: any,
+  market: Market,
+  expectedSession: string,
+): Promise<BenchmarkCompletion[]> {
+  const { data: configured, error: configError } = await svc.from("benchmarks")
+    .select("id,label,symbol,provider_symbol")
+    .eq("market", market).eq("enabled", true).order("label", { ascending: true });
+  if (configError) throw new Error(`enabled benchmark read failed: ${configError.message}`);
+  const results: BenchmarkCompletion[] = [];
+  for (const benchmark of configured ?? []) {
+    const { data: observed, error } = await svc.from("benchmark_price_observations")
+      .select("date,provider,source_status,error")
+      .eq("benchmark_id", (benchmark as any).id)
+      .order("date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`benchmark observation read failed for ${(benchmark as any).label}: ${error.message}`);
+    const observedSession = observed?.date ? String((observed as any).date).slice(0, 10) : null;
+    const sourceStatus = observed?.source_status ? String((observed as any).source_status) : null;
+    results.push({
+      benchmark_id: String((benchmark as any).id),
+      benchmark: String((benchmark as any).label ?? (benchmark as any).symbol),
+      provider: observed?.provider ? String((observed as any).provider) : null,
+      expected_session: expectedSession,
+      observed_session: observedSession,
+      source_status: sourceStatus,
+      error: observed?.error ? String((observed as any).error) : null,
+      complete: observedSession === expectedSession && sourceStatus === "ok",
+    });
+  }
+  return results;
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
@@ -424,31 +478,86 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await requireOwnerOrCron(req);
   if (gate) return gate;
+  const url = new URL(req.url);
+  const market = url.searchParams.get("market");
+  if (market !== "us" && market !== "india") {
+    return NextResponse.json({ error: "market=us|india is required; collectors are intentionally market-local" }, { status: 400 });
+  }
+  const marketScope = market as Market;
+  const attempt = url.searchParams.get("attempt") === "retry" ? "retry" : "initial";
+  const localSlot = url.searchParams.get("local_slot");
+  if (localSlot) {
+    const slot = admitMarketLocalSlot(marketScope, localSlot);
+    if (!slot.admitted) return NextResponse.json({ skipped: true, reason: slot.reason, local_time: slot.localTime, expected_local_slot: localSlot });
+  }
   const startedAt = new Date().toISOString();
   const svc = createServiceClient();
+  const expected = expectedLatestSessionDate(marketScope);
+  const runBase = {
+    agent_type: "benchmark_scorecard",
+    market: marketScope,
+    symbols: [],
+    trigger_source: verifyCronSecret(req) ? "scheduled" : "manual",
+    started_at: startedAt,
+    completed_at: new Date().toISOString(),
+  };
+  if (!expected.date || !expected.calendarSupported) {
+    const error = `expected completed ${marketScope} session is unknown; calendar support is required before benchmark freshness can be claimed`;
+    await svc.from("agent_runs").insert({ ...runBase, status: "error", result_summary: error } as any).catch(() => undefined);
+    await reportIssue({ issueKey: `benchmark-collector-freshness:${marketScope}`, severity: "critical", category: "data", title: `${marketScope.toUpperCase()} benchmark collector cannot determine the expected session`, detail: error }, svc);
+    return NextResponse.json({ ok: false, market: marketScope, attempt, error }, { status: 500 });
+  }
   try {
-    const rows = await buildScorecards(svc);
+    const rows = await buildScorecards(svc, marketScope);
+    const completion = await verifyMarketCompletion(svc, marketScope, expected.date);
+    const incomplete = completion.filter((row) => !row.complete);
+    const status = completion.length > 0 && incomplete.length === 0 ? "done" : "partial";
+    const accounting = runAccountingEnvelope({
+      job: "benchmark_scorecard",
+      market: marketScope,
+      eligible: completion.length,
+      succeeded: completion.length - incomplete.length,
+      expectedSkip: 0,
+      deferred: 0,
+      unavailable: incomplete.length,
+      failed: 0,
+      blockers: incomplete.map((row) => `${row.benchmark}: provider=${row.provider ?? "none"}, expected=${row.expected_session}, observed=${row.observed_session ?? "none"}, status=${row.source_status ?? "none"}`),
+      highWatermark: expected.date,
+      businessMetrics: { scorecard_rows: rows.length },
+    });
     const payload = {
-      ok: true,
+      ok: status === "done",
+      market: marketScope,
+      attempt,
+      expected_session: expected.date,
       rows_written: rows.length,
       statuses: rows.reduce((acc: Record<string, number>, row: any) => {
         acc[row.status] = (acc[row.status] ?? 0) + 1;
         return acc;
       }, {}),
+      benchmarks: completion,
+      ...accounting,
     };
-    await svc.from("agent_runs").insert({
-      agent_type: "benchmark_scorecard", market: "us", status: "done", symbols: [],
-      trigger_source: verifyCronSecret(req) ? "scheduled" : "manual",
-      result_summary: JSON.stringify(payload), started_at: startedAt, completed_at: new Date().toISOString(),
-    } as any);
-    return NextResponse.json(payload);
+    await svc.from("agent_runs").insert({ ...runBase, status, result_summary: JSON.stringify(payload).slice(0, 8000) } as any);
+    const freshnessKey = `benchmark-collector-freshness:${marketScope}`;
+    if (status === "done") {
+      // The market-level freshness alert clears only after EVERY enabled
+      // comparator reaches the same completed market session.
+      await resolveIssue(freshnessKey, svc);
+    } else {
+      await reportIssue({
+        issueKey: freshnessKey,
+        severity: "critical",
+        category: "data",
+        title: `${marketScope.toUpperCase()} benchmark collector is partial for ${expected.date}`,
+        detail: incomplete.map((row) => `${row.benchmark}: provider=${row.provider ?? "none"}; expected=${row.expected_session}; observed=${row.observed_session ?? "none"}; retry=${attempt}; status=${row.source_status ?? "none"}${row.error ? `; error=${row.error}` : ""}`).join(" | "),
+      }, svc);
+    }
+    return NextResponse.json(payload, { status: status === "done" ? 200 : 207 });
   } catch (e: any) {
     const error = e?.message ?? "benchmark_scorecard_failed";
-    await svc.from("agent_runs").insert({
-      agent_type: "benchmark_scorecard", market: "us", status: "error", symbols: [],
-      trigger_source: verifyCronSecret(req) ? "scheduled" : "manual",
-      result_summary: `Benchmark scorecard failed: ${error}`.slice(0, 500), started_at: startedAt, completed_at: new Date().toISOString(),
-    } as any).then(() => undefined, () => undefined);
-    return NextResponse.json({ ok: false, error }, { status: 500 });
+    await svc.from("agent_runs").insert({ ...runBase, status: "error", result_summary: `Benchmark scorecard failed (${marketScope}, ${attempt}): ${error}`.slice(0, 8000) } as any).then(() => undefined, () => undefined);
+    await reportIssue({ issueKey: `benchmark-collector-freshness:${marketScope}`, severity: "critical", category: "data", title: `${marketScope.toUpperCase()} benchmark collector errored`, detail: `attempt=${attempt}; expected=${expected.date}; ${error}` }, svc);
+    return NextResponse.json({ ok: false, market: marketScope, attempt, expected_session: expected.date, error }, { status: 500 });
   }
 }
