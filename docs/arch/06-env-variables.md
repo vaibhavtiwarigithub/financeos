@@ -33,6 +33,14 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 
 # Email
 RESEND_API_KEY=
+EMAIL_FROM=                       # e.g. "Kairos <hello@yourdomain.com>". Defaults to Resend's shared
+                                  # onboarding@resend.dev, which may only mail the Resend ACCOUNT
+                                  # OWNER's own address — inviting anyone else needs a verified domain.
+RESEND_WEBHOOK_SECRET=            # Svix signing secret (whsec_...) from the Resend dashboard webhook.
+                                  # Required by /api/webhooks/resend, which FAILS CLOSED without it:
+                                  # unset means every delivery event is rejected 401 and bounces are
+                                  # never recorded, so a dead invite address stays invisible. There is
+                                  # deliberately no verification-skip flag.
 BRIEFING_TO=                      # Email address that receives briefings (test mode: any address)
 
 # LLM observability
@@ -132,5 +140,7 @@ the entire RAG path silently no-ops — no errors, no embeddings, no retrieval.
 | `ROBINHOOD_ACCESS_TOKEN` | `lib/robinhood-mcp-client.ts` |
 | `JINA_API_KEY` | `lib/providers/embeddings/jina.ts`, `lib/providers/rerank/jina.ts` |
 | `RESEND_API_KEY` | `lib/providers/email/resend.ts` |
+| `EMAIL_FROM` | `app/api/admin/access/route.ts` (invitation sender) |
+| `RESEND_WEBHOOK_SECRET` | `lib/email/resend-webhook.ts`, `app/api/webhooks/resend/route.ts` |
 | `LANGFUSE_*` | `lib/llm-router.ts` (Langfuse tracing) |
 | `STRIPE_*` | `app/api/stripe/*` |

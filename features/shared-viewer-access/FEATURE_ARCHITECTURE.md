@@ -399,3 +399,92 @@ gains an outbound call or a provider/broker/LLM import. It also asserts the
 calendar and analytics helpers on the viewer read path stay **synchronous** — a
 synchronous function cannot await a network call, which proves the path cannot
 reach `fetchMarketStatuses` inside `market-calendar.ts`.
+
+---
+
+## Invitation lifecycle correctness (2026-09-15, owner-approved "fix all")
+
+### The defect
+
+Three questions the owner asks of the access page had been collapsed into one
+green **"Active"**, because the only fact the page carried was
+`active = !revoked_at`:
+
+1. They accepted the invitation and can sign in.
+2. The invitation was sent and is sitting unopened.
+3. The invitation **bounced**. Nobody received it and nobody ever will.
+
+(3) is why this matters. Nothing in the chain could detect it:
+
+- `generateLink` creates an `auth.users` row for any address matching the
+  route's syntax check. It does not verify the mailbox exists.
+- Resend returns success when it **accepts** a message. A dead mailbox bounces
+  asynchronously, minutes later, reported only by webhook — which the app did
+  not consume.
+
+So a mistyped address produced an orphan auth user plus a grant the owner's own
+screen reported as active access. The access itself was inert (no link, no
+session), but the page whose entire job is answering *"who can see my book?"*
+was giving the wrong answer.
+
+### Three cases, as verified against the code and production
+
+| Case | Behaviour | Status |
+|---|---|---|
+| Invite the same address twice | `findUserByEmail` → `returning=true` → **recovery** link (Supabase refuses to re-invite an existing account). Grant is `upsert(onConflict: "user_id")` on the PK, so one row is updated, never duplicated. | Correct before this change |
+| Revoke, then invite again | Same path; the upsert explicitly writes `revoked_at: null, revoked_by: null`. Their existing password still works. | Correct before this change |
+| Address does not exist | Grant written on provider acceptance, rendered "Active" forever. | **Fixed here** |
+
+### Design
+
+**Acceptance and deliverability are separate axes and are deliberately not
+merged into one enum.**
+
+- **Acceptance** is `auth.users.confirmed_at`, *read* by the GET handler and
+  never mirrored into `app_user_roles`. Supabase owns that fact; a copy would
+  go stale the moment someone accepts.
+- **Deliverability** is the new `undeliverable_*` columns, written only by the
+  Resend webhook.
+
+Collapsing them would introduce a second lie in the opposite direction: a guest
+who already uses the app daily would look locked out the day their mailbox
+fills up. `lib/auth/grant-status.ts` is the single derivation, shared by the
+API, the page, and the tests.
+
+**Deliverability NEVER gates access.** A bounce is a fact about a mailbox, not a
+judgement about a person. Revocation stays the owner's deliberate act.
+
+### The webhook is a public endpoint, so it fails closed
+
+`POST /api/webhooks/resend` must be public — Resend calls it — and what it
+writes is read by the owner as "can this person be reached". Therefore:
+
+- Every request is Svix signature-verified against `RESEND_WEBHOOK_SECRET`,
+  over the **raw bytes**, before the body is parsed. No secret, missing headers,
+  wrong signature, or a timestamp outside ±5 minutes → 401, nothing written.
+  **There is no verification-skip flag**, because that flag is the bug.
+- It can write **only** the three `undeliverable_*` columns. It cannot insert,
+  cannot upsert, cannot touch `role`, `granted_by`, `revoked_at`, or
+  `revoked_by`. An unverified public endpoint that could change who signs in
+  would be handing a stranger the access controls.
+- Transient bounces (full mailbox, greylisting) are ignored — they clear on
+  their own, and flagging them would put a red warning on a grant that is fine
+  by morning.
+- A recipient with no grant row (the owner's own newsletter) is a silent no-op.
+
+### Residual risk, stated rather than solved
+
+A typo landing on a domain **someone else controls** means that person receives
+a working set-password link and becomes a viewer. That is inherent to email
+invitation and is not fixed here. What this change does is make it *visible*:
+such an invite shows as "Invited — not yet accepted" until used, and the owner
+can revoke it. Shortening the link's validity is a separate decision, not taken.
+
+### Acceptance tests
+
+`tests/invite-delivery-state.test.ts` — 22 assertions, all 12 mutations in the
+harness caught, including: pending rendered as active, a bounce rendered as
+active, a post-acceptance bounce removing access, a dev bypass on the missing
+secret, dropped replay tolerance, an always-true signature compare, the webhook
+gaining insert/upsert or touching `revoked_at`, parsing before verifying, and
+the page reverting to counting un-revoked rows.
