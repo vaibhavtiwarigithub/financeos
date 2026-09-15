@@ -118,11 +118,12 @@ async function pendingPage(
   cutoff: string,
   marketScope: "us" | "india" | null,
   offset: number,
+  newestFirst = false,
 ): Promise<PendingPage> {
   let query = svc.from("decision_observations")
     .select("id, ts, market, symbol, price_at_decision, currency, features")
     .lte("ts", cutoff)
-    .order("ts", { ascending: true })
+    .order("ts", { ascending: !newestFirst })
     .range(offset, offset + PAGE_SIZE - 1);
   if (marketScope) query = query.eq("market", marketScope);
   const { data: observations, error: observationError } = await query;
@@ -262,12 +263,13 @@ async function runPass(
   scanCap: number,
   seen: Set<string>,
   deadline: number,
+  newestFirst = false,
 ): Promise<{ produced: number; scanned: number }> {
   let produced = 0, scanned = 0;
   const BATCH = 8;
 
   for (let offset = startOffset; scanned < scanCap && produced < successBudget && Date.now() < deadline; offset += PAGE_SIZE) {
-    const page = await pendingPage(ctx.svc, horizonDays, cutoff, marketScope, offset);
+    const page = await pendingPage(ctx.svc, horizonDays, cutoff, marketScope, offset, newestFirst);
     scanned += page.scanned;
 
     // Group by market/symbol so the resolver's per-symbol fetch is shared and
@@ -306,16 +308,19 @@ async function runMaturation(marketScope: "us" | "india" | null) {
       const total = await eligibleTotal(svc, cutoff, market);
       const seen = new Set<string>();
 
-      // Half the capacity to the oldest eligible work, half to a rotating cursor.
+      // Half the capacity to the NEWEST eligible work, half to a rotating cursor
+      // that still sweeps older gaps across days. Oldest-first spent its whole
+      // scan cap on an already-labelled prefix: on 2026-09-15, 99% of the US
+      // h5/h10 backlog (08-06..09-05) sat past scan position 2000.
       const half = Math.floor(SUCCESS_BUDGET / 2);
-      const oldest = await runPass(ctx, horizonDays, cutoff, market, 0, half, Math.floor(SCAN_CAP / 2), seen, deadline);
+      const newest = await runPass(ctx, horizonDays, cutoff, market, 0, half, Math.floor(SCAN_CAP / 2), seen, deadline, true);
       const rotated = await runPass(
         ctx, horizonDays, cutoff, market,
         rotatingOffset(total, PAGE_SIZE, epochDay()),
-        SUCCESS_BUDGET - oldest.produced, SCAN_CAP - oldest.scanned, seen, deadline,
+        SUCCESS_BUDGET - newest.produced, SCAN_CAP - newest.scanned, seen, deadline,
       );
-      matured += oldest.produced + rotated.produced;
-      scanned += oldest.scanned + rotated.scanned;
+      matured += newest.produced + rotated.produced;
+      scanned += newest.scanned + rotated.scanned;
     }
   }
   const deadlineHit = Date.now() >= deadline;

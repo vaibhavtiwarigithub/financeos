@@ -661,6 +661,14 @@ Owner-approved fix in `app/api/agents/label-maturation/route.ts`:
   India each with the full per-horizon budget instead of sharing one.
 - **Run deadline** at 240s of the 300s `maxDuration`; a run that stops with work
   left says so in `agent_runs.result_summary`.
+- **Newest-first instead of oldest-first.** The first production run after the
+  two changes above caught India up (h10 to 2026-08-31) but wrote zero US h5/h10
+  labels: 1,060 of 1,071 unlabelled US h5 rows and 1,323 of 1,334 h10 rows sat
+  past scan position 2,000 behind an already-labelled July prefix, where neither
+  the oldest-first pass nor that day's rotating cursor reached. The first pass now
+  scans newest-first from the maturity cutoff; the rotating cursor still sweeps
+  older gaps over consecutive days, so a permanently failing old row still cannot
+  block newer work.
 
 Existing labels are not rewritten; earlier same-session duplicates that already
 have labels keep them. No schedule, schema, score or trading change.
