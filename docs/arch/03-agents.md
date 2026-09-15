@@ -446,6 +446,25 @@ states, and fills are displayed as distinct stages. Only fills are executions;
 a pending/rejected/expired proposal is a recorded app decision, not a trade.
 The table's latest Trade value is market-scoped across actual paper/live fills.
 
+**Why column (2026-09-15).** Next to Trade, `trade_why` explains in plain English
+what the PAPER trader last decided for each market+symbol (bought, not bought,
+no trade, sold) and why, with the numbers that mattered (score vs threshold, open
+positions vs cap, sector, remaining room vs the minimum trade size). The single
+mapper is `lib/trading/trade-why.ts`; `/api/research/universe` (latest mode) feeds
+it, newest decision first: the newest trading-stage chain in `pipeline_stage_events`
+(grouped by `signal_id`), the newest `research` stage event, the newest
+`decision_observations` row when no stage event exists, then the last paper trade
+(exit reason included). A decision older than 14 days is prefixed "As of MM-DD";
+with no data at all it reads "Not researched yet". Shadow and measurement stages
+(`risk_plan`, `earnings_risk_shadow`, `correlation_shadow`, `capital_rotation`)
+are never shown as the reason. Reads cover only the response's symbols, in chunks
+of 200, newest first, stopping once every key is found (cap 5,000 rows per source
+per chunk, 400 per-key observation lookups). A read error leaves the cell blank
+and does not fail the page. To keep the column complete for future symbols, every
+`skipped.push` and `filled.push` in the paper-trade route now writes a stage event.
+This was logging only; no gate changed. `tests/trade-why.test.ts` fails if a new
+skip path stops logging.
+
 **Feature-pack catalog (P0, 2026-08-02).** `lib/feature-packs/catalog.ts` is a typed read model that classifies a decision's inputs as active v1, measure-only, observed-only or inapplicable for its instrument family. Research Journal renders this classification from stored evidence only; it never fetches data or changes a decision. Strategy Library uses the same catalog to label manual Scanner support, shadow-only rules and unsupported conditions. The catalog has no score, paper, live, exit, sizing, broker or feature-registry writer.
 
 **Feature registry lifecycle (2026-08-02).** Learner-proposed formulas are `proposed`, `quarantined`, `measure_only`, or `retired`. A deterministic IC screen can only advance a formula to `measure_only`; it is recorded under `decision_observations.features.measured_feature_values` and cannot alter a score, eligibility, size, paper/live proposal, exit, or broker order. Any future score use requires the separate market-local replay, shadow, challenger and owner-promotion path in `docs/arch/09-learning-loop.md`.

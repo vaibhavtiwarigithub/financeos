@@ -1825,6 +1825,13 @@
       "nodeId": "LEARNER",
       "label": "Label maturation labels the last decision per symbol-session with per-market budgets",
       "reason": "Research writes ~210 decisions/day (one symbol up to three runs a session) against 200 labels per horizon per night shared by US and India, so h10 labels stopped at 2026-08-24 in the US and India h10 was nearly empty, starving the learner and every family/oil evaluation. Earlier same-session duplicates are now skipped (evaluations already dedupe to the last one), US and India each get the full budget, and the run stops at a 240s deadline. The observation_labels contract the learner reads is unchanged; existing labels are not rewritten."
+    },
+    {
+      "date": "2026-09-15",
+      "event": "modify",
+      "nodeId": "TRADER,RESEARCH",
+      "label": "Fundamentals 'Why' column reads the paper trader's stage trail; every paper skip now logs a stage event",
+      "reason": "Owner could not tell why a long, high-score symbol was never bought. /api/research/universe now reads pipeline_stage_events (trading chain + research stage) and, when no stage event exists, decision_observations, and lib/trading/trade-why.ts turns them into a plain-English verdict. Read-only UI consumer; no agent consumes it. Paper-trade skip paths that previously skipped silently (no pool, sector cap, pricing, invalid trade plan, fill RPC failures, legacy insert failures) now write a pipeline_stage_events row. Logging only: no gate, size or fill changed. tests/trade-why.test.ts fails if a future skip path stops logging."
     }
   ]
 }
