@@ -7,6 +7,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 import { paperExitEconomics } from "@/lib/trading/paper-exit-economics";
+import { formatPaperPositionOpenedAt } from "@/lib/paper/position-opened-at";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
 import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
@@ -718,6 +719,7 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewer
   const posValue = px * p.qty;
   const hasLive = !!p.current_price;
   const pColor = pnlColor(pnl);
+  const openedAt = formatPaperPositionOpenedAt(p.opened_at ?? p.created_at, market);
   const [closing, setClosing] = useState(false);
   const [closeMsg, setCloseMsg] = useState("");
 
@@ -758,6 +760,9 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewer
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
         <SymbolName name={name} style={{ marginTop: 0 }} />
+        <div style={{ fontSize: "11px", color: openedAt ? T.textSub : T.amber }}>
+          {openedAt ? `Bought ${openedAt}` : "Purchase time unavailable"}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: T.textSub }}>
           <span>{fmtMoney(p.avg_cost, market === "india" ? "india" : "us")}</span>
           <span style={{ color: T.muted }}>→</span>
