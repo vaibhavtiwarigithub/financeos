@@ -60,12 +60,12 @@
     },
     "SCORE": {
       "label": "Score 5 dimensions",
-      "description": "Before provider work, one earnings_calendar batch read assigns company fundamentals a 1-day cache inside the prior-3/next-14-day report window and 7 days otherwise or when unknown; issuer profiles use 30 days. Theme Scout validates with keyless quotes, not fundamentals. Reviewed ADRs are explicit, skip structurally inapplicable Form 4, and use ADS-compatible Yahoo values without foreign-underlying fallthrough. The deterministic v1 vocabulary is fundamental, technical, sentiment, macro, and insider, but only structurally applicable and available dimensions enter a symbol's composite. India sentiment and macro are unavailable; options and analyst evidence are logged only and never weighted.",
+      "description": "Before provider work, one earnings_calendar batch read assigns company fundamentals a 1-day cache inside the prior-3/next-14-day report window and 7 days otherwise or when unknown; issuer profiles use 30 days. Theme Scout validates with keyless quotes, not fundamentals. Reviewed ADRs are explicit, skip structurally inapplicable Form 4, and use ADS-compatible Yahoo values without foreign-underlying fallthrough. The deterministic v1 vocabulary is fundamental, technical, sentiment, macro, and insider, but only structurally applicable and available dimensions enter a symbol's composite. India sentiment and macro are unavailable; options and analyst evidence are logged only and never weighted. Alongside scoring, measure-only evidence is recorded and never weighted: metal family features (instrument-family-features.v2: FRED DFII10/DTWEXBGS, exact 20-bar GLD/SLV/GDX returns) and, for a curated US/India oil map, oil_exposure_evidence (FRED WTI/Brent % change, settled USO returns). Stale FRED inputs raise a System Health warning.",
       "addedAt": "2026-06-25",
       "addReason": "Multi-dimensional scoring is the core of the strategy.",
       "status": "changed",
-      "changedAt": "2026-07-31",
-      "changeReason": "Added event-aware fundamental cache ownership and reviewed ADR data/applicability boundaries; scoring formula and weights are unchanged.",
+      "changedAt": "2026-09-15",
+      "changeReason": "Metal evidence price window fixed (was ~100 rows labelled 20 bars) and oil exposure evidence added; both measure-only, scoring formula and weights unchanged.",
       "removedAt": null,
       "removeReason": null
     },
@@ -265,6 +265,13 @@
       "nodeId": "SCORE",
       "label": "Event-aware fundamental freshness and reviewed ADR identity",
       "reason": "Fundamentals now reuse one-/seven-day provider cache windows derived from one earnings-calendar batch read, while Theme Scout uses quotes only. SKHY is a reviewed Nasdaq ADR, scored from ADS-compatible Yahoo fundamentals and persisted as asset_class=adr; insider is structurally inapplicable and obsolete/OTC substitutes are blocked. Paper and live safety gates are unchanged."
+    },
+    {
+      "date": "2026-09-15",
+      "event": "modify",
+      "nodeId": "SCORE",
+      "label": "Metal evidence window fix, FRED freshness alert, oil exposure evidence (measure-only)",
+      "reason": "Production audit: gold/silver/miner features labelled 20bars measured first-to-last over ~100 cached rows (GLD -7.17% recorded vs -0.05% real), and DFII10 sat on one observation for nine cache days because failed FRED calls were carried forward. Returns now use exactly 20 settled bars under instrument-family-features.v2, staleness is per series, and stale series alert System Health. A curated oil exposure map adds WTI/Brent/USO features to decision_observations for US energy names and India ONGC/OIL/BPCL/IOC/HINDPETRO/RELIANCE. A read-only counterfactual did not support an 'OMCs suffer when crude rises' sign, so no sign is encoded. Nothing here reaches score, eligibility, paper, live, exit or broker paths."
     }
   ]
 }

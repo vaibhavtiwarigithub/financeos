@@ -1,4 +1,15 @@
 # Kairos — Agents
+> 2026-09-15: **ResearchAgent family evidence repaired + oil exposure pack (measure-only).**
+> `lib/scoring/instrument-family-evidence.ts`: metal price features labelled "20bars" were
+> really ~100-row returns (GLD recorded -7.17% vs real -0.05%); now exactly 20 settled bars,
+> version `instrument-family-features.v2` (v1 rows immutable, evaluate separately). FRED
+> staleness is per series (DFII10 7d, DTWEXBGS 10d, crude 10d) and a stale/missing series
+> raises System Health `family-evidence-fred-stale:<series>`. New
+> `decision_observations.features.oil_exposure_evidence` for a curated US/India oil map
+> (WTI/Brent % change from FRED, settled USO returns); unmapped symbols get nothing and no
+> expected sign is stored. No score, eligibility, paper, live, exit or broker consumer.
+> Details and the read-only oil counterfactual: `features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md` §11.
+>
 > 2026-09-09: **`scoreFundamentals` gained REIT awareness (`lib/data/scores.ts`,
 > `isReitSector`).** A REIT's net income is structurally suppressed by mandatory
 > real-estate depreciation, so P/E, profit margin, ROE, and EPS-sign all mean

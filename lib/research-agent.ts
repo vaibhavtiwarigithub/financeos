@@ -22,7 +22,7 @@ import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext 
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
 import { classifyInstrumentPolicy } from "@/lib/scoring/instrument-taxonomy";
-import { loadInstrumentFamilyEvidence } from "@/lib/scoring/instrument-family-evidence";
+import { loadInstrumentFamilyEvidence, loadOilExposureEvidence } from "@/lib/scoring/instrument-family-evidence";
 import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 import { cryptoCompletedCandles } from "@/lib/data/crypto-session";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
@@ -1680,6 +1680,8 @@ export async function processSymbol(
     instrumentPolicy,
     scores.technical_score,
   ).catch(() => null);
+  // Same contract for the curated oil exposure map; unmapped symbols resolve null.
+  const oilEvidencePromise = loadOilExposureEvidence(supabase, symbol, market).catch(() => null);
   const instrumentRegistryWrite = persistInstrumentClassification(supabase, instrument)
     .catch((error) => console.error("[research-agent] instrument registry write failed:", error instanceof Error ? error.message : error));
   const tradingMandate = await loadTradingMandate(supabase, market);
@@ -2369,6 +2371,7 @@ export async function processSymbol(
       ? Number((presentWeight / applicableWeight).toFixed(4))
       : null;
     const instrumentFamilyEvidence = await familyEvidencePromise;
+    const oilExposureEvidence = await oilEvidencePromise;
 
     const { data: obsRow, error: obsErr } = await supabase.from("decision_observations").insert({
       market,
@@ -2397,6 +2400,7 @@ export async function processSymbol(
         trading_mandate: tradingMandate,
         trade_plan: tradePlan,
         ...(instrumentFamilyEvidence ? { instrument_family_evidence: instrumentFamilyEvidence } : {}),
+        ...(oilExposureEvidence ? { oil_exposure_evidence: oilExposureEvidence } : {}),
         ...(measuredFeatureValues ? { measured_feature_values: measuredFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).
