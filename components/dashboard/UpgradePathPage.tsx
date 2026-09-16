@@ -200,6 +200,24 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
         {program.blockers.map((blocker) => <div key={blocker} style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginBottom: "3px" }}>• {blocker}</div>)}
         <div style={{ color: T.accent, fontSize: "12px", lineHeight: 1.5, marginTop: "7px" }}>Next: {program.nextAction}</div>
         <div style={{ color: T.yellow, fontSize: "12px", lineHeight: 1.5, marginTop: "7px" }}>Why not next stage: {program.deployment.whyNotNextStage}</div>
+        <div style={{
+          marginTop: "12px", padding: "8px 10px", borderRadius: "6px",
+          border: `1px solid ${program.reviewDate ? T.accent : T.border}55`,
+          background: program.reviewDate ? `${T.accent}0D` : T.surface,
+        }}>
+          <div style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: program.reviewDate ? T.accent : T.muted, marginBottom: "4px", letterSpacing: "0.08em" }}>
+            Review date
+          </div>
+          {program.reviewDate
+            ? <>
+                <div style={{ color: T.text, fontSize: "13px", fontWeight: 650 }}>
+                  {new Date(program.reviewDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                </div>
+                {program.reviewNote && <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginTop: "4px" }}>{program.reviewNote}</div>}
+              </>
+            : <div style={{ color: T.muted, fontSize: "12px" }}>No review date set — add one before shipping.</div>
+          }
+        </div>
       </div>
     </div>
   </section>;

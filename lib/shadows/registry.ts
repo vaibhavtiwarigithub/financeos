@@ -55,6 +55,14 @@ export interface ShadowProgramDefinition {
   owner: string;
   architectureRef: string;
   mainline: MainlineRelease;
+  /**
+   * Calendar date (YYYY-MM-DD) when the owner must review this program —
+   * whether evidence is met (promote?) or not (continue / abandon?).
+   * null = no date set yet; set one before merging a new program.
+   */
+  reviewDate?: string | null;
+  /** One line describing what to decide at the review date. */
+  reviewNote?: string | null;
 }
 
 export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
@@ -76,6 +84,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Research / Evidence",
     architectureRef: "features/new-symbol-and-ipo-discovery/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "46a25283", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Separate pre-listing issuer evidence from tradeable-symbol and strategy decisions." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Have 20+ matured listing-event cohorts accumulated? If yes, design the admission shadow. If no, decide whether to continue or fund an authoritative source.",
   },
   {
     id: "broker-symbol-tradability",
@@ -95,6 +105,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Execution safety",
     architectureRef: "features/broker-symbol-tradability/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "a77e64f2", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Collect broker-authoritative symbol/side evidence before adding a new live-order refusal boundary." },
+    reviewDate: "2026-10-15",
+    reviewNote: "Have 10 distinct sessions accumulated with all disagreements reconciled? If yes, promote to fail-closed gateway with owner approval.",
   },
   {
     id: "score-price-divergence",
@@ -114,6 +126,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Scoring / Evidence",
     architectureRef: "features/score-price-divergence/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "d46d2d9b", enteredAt: "2026-09-08", implementationScope: "measure_only", reason: "Replace a market-blind latest-signal heuristic with immutable session-based divergence evidence and owner-visible price/score context." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Have 30 primary events across 20 distinct end sessions matured per market? If yes, run sealed validation and decide on a challenger.",
   },
   {
     id: "dimension-diagnostics",
@@ -133,6 +147,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Learning / Evidence",
     architectureRef: "features/dimension-diagnostics/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "0a48e791", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Add governed, append-only diagnostics so weak results are attributed before any score or strategy repair is proposed." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Review diagnostic findings: any qualified finding ready to spawn a shadow candidate? Permanently measure-only — review is for findings, not promotion.",
   },
   {
     // Added 2026-08-06. This program exists because a diagnosis written that
@@ -160,6 +176,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Evidence / Learning",
     architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
     mainline: { commit: "1704c18a", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Expose independent-date and symbol coverage so thin correlated samples cannot masquerade as learning evidence." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Does label coverage now span enough independent dates and symbols for other programs to claim results? Permanently measure-only — no promotion decision needed.",
   },
   {
     // Added 2026-08-06. The owner asked to shorten the exit target; measuring it
@@ -187,6 +205,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Trading / Evidence",
     architectureRef: "features/portfolio-underperformance/DIAGNOSIS.md",
     mainline: { commit: "b2834f48", enteredAt: "2026-08-06", implementationScope: "measure_only", reason: "Measure alternative stop/target geometry from matured labels before changing any exit behavior." },
+    reviewDate: "2026-12-01",
+    reviewNote: "Have 20 distinct decision dates at h10 matured per market with ambiguous share ≤20%? If yes, propose an exit-geometry change. If no, extend collection.",
   },
   {
     id: "horizon-extension",
@@ -206,6 +226,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Trading / Evidence",
     architectureRef: "features/time-review-exit/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "984e02bc", enteredAt: "2026-08-11", implementationScope: "measure_only", reason: "Collect a bounded counterfactual for the dominant time-stop exit path before changing holding-period behavior." },
+    reviewDate: "2026-11-01",
+    reviewNote: "Have 20 market sessions with exact-horizon reviews and both +5/+10 outcomes? If yes, run sealed replay and decide on promotion.",
   },
   {
     id: "live-exit-ladder-parity",
@@ -225,6 +247,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Trading / Risk",
     architectureRef: "features/live-exit-ladder-parity/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "c556a6f6", enteredAt: "2026-09-09", implementationScope: "measure_only", reason: "Live and paper had two independent exit implementations with materially different behavior; a single shared decision core makes divergence impossible by construction." },
+    reviewDate: "2026-11-01",
+    reviewNote: "Do shadow rows confirm live exit ladder matches paper behavior on real positions? If yes and parity suite is green, enable live_auto_enabled.",
   },
   {
     id: "exit-stop-shadow",
@@ -244,6 +268,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Trading / Risk",
     architectureRef: "features/atr-exit-stop/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "9f985b0b", enteredAt: "2026-09-01", implementationScope: "measure_only", reason: "Test one ATR-scaled stop against the live fixed stop without changing target or time-stop behavior." },
+    reviewDate: "2026-11-15",
+    reviewNote: "Have 12 effective independent observations across 4 validation windows matured? If yes, run cost/FDR review and decide on owner approval.",
   },
   {
     id: "score-exit-shadow",
@@ -263,6 +289,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Trading / Evidence",
     architectureRef: "features/us-selection-and-hold-gaps/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "e0871f98", enteredAt: "2026-09-11", implementationScope: "measure_only", reason: "Separate held-position score evidence from entry-selection evidence before changing the score-exit policy." },
+    reviewDate: "2026-11-15",
+    reviewNote: "Have 12 effective non-overlapping holding observations matured? If yes, run competing-exit review and cost-aware replay before owner approval.",
   },
   {
     id: "archetype-ic",
@@ -282,6 +310,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Scoring / Learner",
     architectureRef: "features/dimension-diagnostics/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "5d9f0f7f", enteredAt: "2026-08-12", implementationScope: "measure_only", reason: "Measure setup-specific weighting arms on the usable entry cohort before any scoring challenger can be proposed." },
+    reviewDate: "2026-11-01",
+    reviewNote: "Have 6 stable weekly IC windows run per market? If yes, review benchmark-neutral outcomes and decide whether to propose a weighting challenger.",
   },
   {
     id: "alpha-diagnostics",
@@ -301,6 +331,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Learning / Evidence",
     architectureRef: "features/alpha-diagnostic-lab/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "f95c3951", enteredAt: "2026-08-27", implementationScope: "measure_only", reason: "Provide a governed funnel diagnosis before any benchmark-underperformance explanation can authorize a strategy change." },
+    reviewDate: "2026-12-01",
+    reviewNote: "Has A0 data-truth passed and do independent-date cohorts exist? Review funnel diagnostics and decide if any stage warrants a shadow experiment.",
   },
   {
     id: "evidence-router",
@@ -323,6 +355,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Evidence / Research",
     architectureRef: "features/router-cutover/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "fc9bace1", enteredAt: "2026-07-13", implementationScope: "measure_only", reason: "Collect dual-run provider parity evidence before allowing the configurable router to replace canonical research inputs." },
+    reviewDate: "2026-10-15",
+    reviewNote: "Have 10 validated sessions with zero unreviewed eligibility flips? If yes, run owner activation decision for router_enabled.",
   },
   {
     id: "degradation-guard",
@@ -342,6 +376,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Research safety",
     architectureRef: "features/router-cutover/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "eb5bca43", enteredAt: "2026-07-16", implementationScope: "measure_only", reason: "Record whether missing evidence would create false eligibility through weight renormalization before enabling a subtractive guard." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Is the would-abstain rate stable with a reviewed false-positive sample? If yes, decide on enabling the subtractive long-to-neutral guard.",
   },
   {
     id: "india-news-evidence",
@@ -361,6 +397,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Evidence / India Research",
     architectureRef: "features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "dc1e2960", enteredAt: "2026-07-31", implementationScope: "measure_only", reason: "Begin bounded India-specific news and corporate-event collection without borrowing US sentiment semantics or changing scores." },
+    reviewDate: "2026-11-15",
+    reviewNote: "Have 20 distinct collection dates with stable relevant-headline coverage? If yes, run source-health review and decide on PIT historical evaluation.",
   },
   {
     id: "setup-experts",
@@ -380,6 +418,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Scoring / Learner",
     architectureRef: "features/scoring-methodology/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "6dca1f3c", enteredAt: "2026-07-10", implementationScope: "measure_only", reason: "Compare setup-specific scoring experts against the champion on identical evidence while keeping them outside eligibility and trading." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Do any setup experts show consistent point-in-time IC advantage over the champion? If yes, design walk-forward validation. If no, reassess expert definitions.",
   },
   {
     id: "technical-calibration",
@@ -402,6 +442,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "EdgeScout / EdgeIC",
     architectureRef: "features/technical-factor-calibration/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "a249d50e", enteredAt: "2026-07-21", implementationScope: "measure_only", reason: "Measure parameter stability and cost/FDR robustness before any technical feature may enter a scoring challenger." },
+    reviewDate: "2026-11-15",
+    reviewNote: "Have 6 stable weekly + 4 point-in-time cost/FDR-adjusted windows completed? If yes, decide which edge(s) are ready for a scoring challenger.",
   },
   {
     id: "pit-fundamental-qualification",
@@ -421,6 +463,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Research data / PIT",
     architectureRef: "features/feature-pack-validation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "e2cd9b73", enteredAt: "2026-07-10", implementationScope: "measure_only", reason: "Archive point-in-time fundamental vintages so future qualification cannot use revised or future-known facts." },
+    reviewDate: "2027-01-15",
+    reviewNote: "Are per-market source, units, known-at, restatement and freshness contracts defined? If yes, design sealed replay for candidate fundamental features.",
   },
   {
     id: "specialist-feature-packs",
@@ -440,6 +484,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Instrument governance",
     architectureRef: "features/feature-pack-validation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "4ea20075", enteredAt: "2026-08-02", implementationScope: "inert_scaffold", reason: "Publish an instrument-aware feature applicability catalog before choosing or funding any specialist data contract." },
+    reviewDate: "2027-01-15",
+    reviewNote: "Is qualified raw data available for any instrument family (banks, REITs, leveraged ETFs)? If yes, fund the first specialist data contract.",
   },
   {
     id: "capital-rotation",
@@ -470,6 +516,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "PaperTrader / TraderAgent",
     architectureRef: "features/capital-rotation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "ac7ffda0", enteredAt: "2026-07-13", implementationScope: "paper_capable", reason: "Measure opportunity-cost replacements in fully invested paper books; execution remains separately gated after unsafe early P1 behavior." },
+    reviewDate: "2026-10-15",
+    reviewNote: "Understand why paper flags were disabled 2026-08-11 (see audits/2026-08-25 trace). If safe to re-enable, re-activate paper and review net outcome after costs.",
   },
   {
     id: "earnings-risk",
@@ -489,6 +537,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Risk / Earnings",
     architectureRef: "features/earnings-aware-risk/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "65c1c5be", enteredAt: "2026-07-29", implementationScope: "measure_only", reason: "Capture point-in-time earnings proximity and move-risk evidence before allowing event risk to change entries or sizing." },
+    reviewDate: "2026-12-15",
+    reviewNote: "Have 60 otherwise-eligible US entries and 20 distinct events with usable quote coverage matured? If yes, run calibration review and decide on entry block or size reduction.",
   },
   {
     id: "exogenous-risk",
@@ -508,6 +558,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Macro / Risk",
     architectureRef: "features/exogenous-risk-evidence/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "57c63cf3", enteredAt: "2026-08-01", implementationScope: "inert_scaffold", reason: "Create governed append-only source and regime ledgers before approving official adapters or score consumers." },
+    reviewDate: "2027-01-15",
+    reviewNote: "Are stable official timestamped source adapters for India macro and global spillover ready? If yes, approve the first adapter and begin point-in-time coverage.",
   },
   {
     id: "international-allocation",
@@ -527,6 +579,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Portfolio construction",
     architectureRef: "features/international-equity-allocation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "89ca679f", enteredAt: "2026-07-27", implementationScope: "measure_only", reason: "Make international exposure and target/deadband proposals observable before any allocation can alter a portfolio." },
+    reviewDate: "2026-12-01",
+    reviewNote: "Is the target/deadband policy defined and broader family compared? If yes, approve paper allocation. If no, decide whether to fund the analysis or abandon.",
   },
   {
     id: "autonomous-live",
@@ -546,6 +600,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Execution kernel",
     architectureRef: "features/live-auto-trading/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "e45ca642", enteredAt: "2026-07-10", implementationScope: "live_capable", reason: "Land the fail-closed per-market autonomous execution path behind disabled policy, evidence, broker-canary, and kill-switch gates." },
+    reviewDate: "2027-03-01",
+    reviewNote: "Have a new approved evidence campaign, sufficient queued-vs-blocked samples, broker canaries and kill-switch drills been completed? If yes, decide on owner enablement.",
   },
   {
     id: "challenger-validation",
@@ -565,6 +621,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Learner / Validation",
     architectureRef: "features/automated-strategy-validation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "0004eeb8", enteredAt: "2026-07-12", implementationScope: "measure_only", reason: "Automate deterministic challenger validation and bounded shadow-slot routing without granting promotion or money authority." },
+    reviewDate: "2026-11-01",
+    reviewNote: "Has a challenger been validated and routed to the shadow slot? If yes, review shadow_decisions and decide on paper promotion.",
   },
   {
     id: "downside-hedge",
@@ -584,6 +642,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     owner: "Portfolio risk",
     architectureRef: "features/downside-hedging/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "38a18f0a", enteredAt: "2026-07-15", implementationScope: "paper_capable", reason: "Ship a governed hedge evaluator and paper-only path behind independent disabled flags so drag and precision can be measured first." },
+    reviewDate: "2027-01-15",
+    reviewNote: "Enable shadow collection first. After shadow data: is stress precision and hedge drag acceptable? If yes, decide on paper-only activation.",
   },
 ] as const;
 
