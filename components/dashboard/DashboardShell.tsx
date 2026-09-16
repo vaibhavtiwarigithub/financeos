@@ -71,7 +71,7 @@ const NAV_SECTIONS = [
     hint: "Find and test ideas outside the automatic loop",
     items: [
       { href: "/dashboard/research",     label: "Fundamentals",     icon: "📊", hint: "Price charts, technical indicators, fundamentals, score history, and trade markers per symbol", alertCat: "" },
-      { href: "/dashboard/watchlist",  label: "Watchlist",        icon: "◎", hint: "AI-curated + manual symbols to track",alertCat: "watchlist" },
+      { href: "/dashboard/watchlist",  label: "My Watchlist",     icon: "◎", hint: "Personal symbol list — track research dates, scores, and link to Deep Dive", alertCat: "watchlist" },
       { href: "/dashboard/scanner",            label: "Scanner",           icon: "⟐", hint: "Screen stocks by technical + fundamental conditions", alertCat: "" },
       { href: "/dashboard/strategies",         label: "Strategies",       icon: "⬡", hint: "Fit scores (7 templates) + Algo Library (8 strategies) — two tabs", alertCat: "strategy" },
       { href: "/dashboard/backtest",           label: "Backtest",          icon: "⏮", hint: "Replay signals against historical prices — win rate, Sharpe, alpha", alertCat: "" },
@@ -91,6 +91,7 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Account, trading, AI & keys, automation, data, and system controls", alertCat: "" },
+      { href: "/dashboard/user-settings",         label: "My Preferences", icon: "⊕", hint: "Email digest, newsletter opt-in, and broker connections", alertCat: "" },
       { href: "/dashboard/admin/access",           label: "Access & Permissions", icon: "🔑", hint: "Who can sign in, what each role may view or edit, invite and revoke viewers", alertCat: "" },
     ],
   },

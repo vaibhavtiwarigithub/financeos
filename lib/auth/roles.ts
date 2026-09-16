@@ -32,6 +32,13 @@ export const VIEWER_PAGES = [
   // read" calls the LLM (2026-09-15 audit).
   "/dashboard/research-journal",
   "/dashboard/calendar",
+  // Markets: indices + sectors + treemap visible to viewers. Insider/AI panels
+  // are hidden client-side; the routes they call are not listed here.
+  "/dashboard/markets",
+  // Viewer settings: email digest prefs + broker connection link.
+  "/dashboard/user-settings",
+  // Per-user watchlist tab.
+  "/dashboard/watchlist",
 ] as const;
 
 /**
@@ -85,6 +92,14 @@ export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   { prefix: "/api/research/fundamentals/cached", methods: ["GET"], exact: true },
   // Earnings Calendar (US). The parent route refreshes from Alpha Vantage.
   { prefix: "/api/calendar/earnings/cached", methods: ["GET"], exact: true },
+  // Markets page. The parent /api/markets/overview may call Massive for the
+  // owner; the stored-only sibling is used for viewers (same pattern as
+  // fundamentals/cached and calendar/earnings/cached). The quotes route reads
+  // price_cache only (no provider call per its own comment).
+  { prefix: "/api/markets/overview/cached", methods: ["GET"], exact: true },
+  { prefix: "/api/markets/quotes", methods: ["GET"] },
+  // User-watchlist: viewer's own saved symbols + last research metadata.
+  { prefix: "/api/user-watchlist", methods: ["GET"] },
 ];
 
 function matchesRoute(pathname: string, route: ViewerRoute): boolean {
@@ -116,6 +131,10 @@ export const VIEWER_OWN_DATA_ROUTES: ReadonlyArray<{ prefix: string; methods: re
   // here so that a SIGNED-IN viewer clicking the same link is not 403'd by the
   // viewer API gate.
   { prefix: "/api/user-risk/unsubscribe", methods: ["GET", "POST"] },
+  // Per-user watchlist mutations: only touches rows keyed to the caller's uid.
+  { prefix: "/api/user-watchlist", methods: ["GET", "POST", "DELETE"] },
+  // User notification/newsletter prefs (email digest + newsletter opt-in).
+  { prefix: "/api/user-prefs", methods: ["GET", "POST"] },
 ];
 
 /** Where a viewer lands, and where they are sent when they request anything else. */

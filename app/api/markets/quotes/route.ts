@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveSymbolPair } from "@/lib/markets/price-cache-sessions";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,9 @@ async function fetchQuote(symbol: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const { gate } = await requireViewerOrOwner(req);
+  if (gate) return gate;
+
   const raw = req.nextUrl.searchParams.get("symbols") ?? "";
   const symbols = raw
     .split(",")

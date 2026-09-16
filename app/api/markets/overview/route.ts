@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { expectedLatestSessionDate } from "@/lib/trading/market-calendar";
 import {
@@ -7,8 +7,10 @@ import {
   sessionCandidates,
   type Quote,
 } from "@/lib/markets/daily-change";
+import { requireViewerOrOwner } from "@/lib/auth/session-role";
+import { verifyCronSecret } from "@/lib/auth/cron";
 
-export const revalidate = 300; // 5-minute Next.js route cache
+export const dynamic = "force-dynamic";
 
 export type IndexQuote = Quote;
 export type SectorQuote = Quote;
@@ -269,7 +271,17 @@ async function writeSnapshot(overview: MarketOverview): Promise<void> {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const isCron = verifyCronSecret(req);
+  let role: string | null = null;
+  if (!isCron) {
+    const result = await requireViewerOrOwner(req);
+    if (result.gate) return result.gate;
+    role = result.role;
+  } else {
+    role = "owner"; // cron may trigger Massive to warm the snapshot
+  }
+
   if (cache && Date.now() - cache.ts < MEM_CACHE_TTL_MS) {
     return NextResponse.json(cache.data);
   }
@@ -278,6 +290,14 @@ export async function GET() {
   if (snapshot) {
     cache = { data: snapshot, ts: Date.now() };
     return NextResponse.json(snapshot);
+  }
+
+  // Viewers never trigger a Massive call — return degraded state so a missing
+  // snapshot surfaces as a visible gap, not a surprise provider charge.
+  if (role !== "owner") {
+    return NextResponse.json(
+      degradedOverview("Market data is being prepared — check back shortly")
+    );
   }
 
   const apiKey = process.env.MASSIVE_API_KEY;

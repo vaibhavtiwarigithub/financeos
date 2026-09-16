@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, lazy, Suspense } from "react"
 import { useRouter } from "next/navigation";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useMarket, CURRENCY } from "@/lib/market-context";
+import { useRole } from "@/lib/auth/use-role";
 // India market data is fetched from the server route /api/markets/india — the
 // browser NEVER calls Yahoo/NSE directly. `import type` is erased at build, so no
 // provider hostname or adapter code lands in the client bundle.
@@ -1506,7 +1507,11 @@ function IndiaBreadthBlock({ breadth }: { breadth: NonNullable<IndiaMarketsSnaps
 export default function MarketsPage() {
   const router = useRouter();
   const { market } = useMarket();
-  const isIndia = market === "india";
+  const role = useRole();
+  const isOwner = role === "owner";
+  // Viewers only see US indices + sectors + treemap + TradingView widget.
+  // India requires a live Yahoo call (owner-only route) so hidden for viewers.
+  const isIndia = market === "india" && isOwner;
   const [data, setData] = useState<MarketOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [slowFetch, setSlowFetch] = useState(false);
@@ -1544,7 +1549,10 @@ export default function MarketsPage() {
     // After 10s without data, surface a "fetching live data…" note instead of blank spinner
     const slowTimer = setTimeout(() => setSlowFetch(true), 10_000);
     try {
-      const res = await fetch("/api/markets/overview");
+      // Viewers use the snapshot-only sibling (no Massive call). Owners use the
+      // live route which falls back to Massive when the snapshot is missing.
+      const endpoint = isOwner ? "/api/markets/overview" : "/api/markets/overview/cached";
+      const res = await fetch(endpoint);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -1668,8 +1676,8 @@ export default function MarketsPage() {
         </>
       )}
 
-      {/* Market Synthesis — US regime read across asset classes (fetches independently) */}
-      {!isIndia && (
+      {/* Market Synthesis — owner-only (LLM call). */}
+      {!isIndia && isOwner && (
         <div style={{ marginBottom: "16px" }}>
           <MarketSynthesis />
         </div>
@@ -1870,73 +1878,70 @@ export default function MarketsPage() {
       )}
 
       {/* US-only analytics — sector rotation, breadth, sentiment, thesis, macro,
-          smart money. No free India equivalent, so hidden when India is selected
-          (the India gap note above stands in for these). */}
+          smart money. No free India equivalent, so hidden when India is selected. */}
       {!isIndia && (
         <>
-      {/* Sector charts — render immediately from Supabase cache, no dependency on live quotes */}
-      <div style={{ marginTop: "16px" }}>
-        <Suspense fallback={
-          <div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "420px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
-            Loading sector performance…
+        {/* TradingView sector widget — static embed, no API call, visible to viewers. */}
+        <div style={{ marginTop: "16px" }}>
+          <Suspense fallback={
+            <div style={{ height: "460px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
+              Loading sector charts…
+            </div>
+          }>
+            <SectorTradingViewOverview />
+          </Suspense>
+        </div>
+
+        {/* Owner-only: provider calls or LLM calls below. */}
+        {isOwner && (
+          <>
+          {/* Sector performance chart (calls Massive via sector-returns route) */}
+          <div style={{ marginTop: "16px" }}>
+            <Suspense fallback={
+              <div style={{ background: "#1A1D27", border: "1px solid #252836", borderRadius: "12px", padding: "20px", height: "420px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
+                Loading sector performance…
+              </div>
+            }>
+              <SectorPerformanceChart />
+            </Suspense>
           </div>
-        }>
-          <SectorPerformanceChart />
-        </Suspense>
-      </div>
 
-      <div style={{ marginTop: "16px" }}>
-        <Suspense fallback={
-          <div style={{ height: "460px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
-            Loading sector charts…
+          {/* Sector breadth (calls markets/breadth which fans out to Massive) */}
+          <div style={{ marginTop: "16px" }}>
+            <Suspense fallback={
+              <div style={{ height: "300px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
+                Loading sector breadth…
+              </div>
+            }>
+              <SectorBreadth />
+            </Suspense>
           </div>
-        }>
-          <SectorTradingViewOverview />
-        </Suspense>
-      </div>
 
-      {/* Sector breadth */}
-      <div style={{ marginTop: "16px" }}>
-        <Suspense fallback={
-          <div style={{ height: "300px", background: T.surface, borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280", fontSize: "13px" }}>
-            Loading sector breadth…
+          <div style={{ marginTop: "16px" }}>
+            <SentimentPairs />
           </div>
-        }>
-          <SectorBreadth />
-        </Suspense>
-      </div>
 
-      {/* Sentiment pairs */}
-      <div style={{ marginTop: "16px" }}>
-        <SentimentPairs />
-      </div>
+          <div style={{ marginTop: "16px", marginBottom: "32px" }}>
+            <MarketThesis />
+          </div>
 
-      {/* Market thesis */}
-      <div style={{ marginTop: "16px", marginBottom: "32px" }}>
-        <MarketThesis />
-      </div>
+          <div style={{ marginTop: "16px", marginBottom: "16px" }}>
+            <MacroSentinelCard />
+          </div>
 
-      {/* Macro Recession Sentinel */}
-      <div style={{ marginTop: "16px", marginBottom: "16px" }}>
-        <MacroSentinelCard />
-      </div>
+          <div style={{ marginBottom: "16px" }}>
+            <PolicyEventLedger market="us" />
+          </div>
 
-      <div style={{ marginBottom: "16px" }}>
-        <PolicyEventLedger market="us" />
-      </div>
+          <div style={{ marginBottom: "16px" }}>
+            <MacroReadCard market="us" />
+          </div>
 
-      {/* What the macro backdrop means for your book (Agent Mind, Phase 3).
-          Explicitly "us": this call site is inside the `{!isIndia && (` block, so
-          passing {market} only ever passed "us" while looking market-aware. The
-          India instance lives in the India block above. */}
-      <div style={{ marginBottom: "16px" }}>
-        <MacroReadCard market="us" />
-      </div>
-
-      {/* Smart Money Trades */}
-      <div style={{ marginTop: "16px", marginBottom: "32px" }}>
-        <SmartMoneyTrades />
-      </div>
+          <div style={{ marginTop: "16px", marginBottom: "32px" }}>
+            <SmartMoneyTrades />
+          </div>
+          </>
+        )}
         </>
       )}
       </div>

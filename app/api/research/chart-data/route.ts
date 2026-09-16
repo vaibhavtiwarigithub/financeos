@@ -13,14 +13,15 @@ const PRICE_INDICATOR = "price";
 const FUNDAMENTAL_KEYS = new Set(["PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield","DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS"]);
 
 export async function GET(req: NextRequest) {
-  const { gate } = await requireViewerOrOwner(req);
+  const { gate, role } = await requireViewerOrOwner(req);
   if (gate) return gate;
 
   const sp = req.nextUrl.searchParams;
   const symbolsRaw    = sp.get("symbols") ?? "";
   const indicatorsRaw = sp.get("indicators") ?? "analyst_score";
   const days          = Math.min(Math.max(parseInt(sp.get("days") ?? "365"), 30), 2000);
-  const includeTrades = sp.get("include_trades") === "true";
+  // Viewers see no paper_trades — those are the owner's positions.
+  const includeTrades = role === "owner" && sp.get("include_trades") === "true";
   const market = sp.get("market")?.toLowerCase() ?? "us";
   if (market !== "us" && market !== "india") {
     return NextResponse.json({ error: "market must be us or india" }, { status: 400 });

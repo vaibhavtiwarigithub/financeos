@@ -79,7 +79,7 @@ describe("viewer API boundary", () => {
   it("blocks money-path and agent routes outright", () => {
     for (const route of [
       "/api/paper-positions/close", "/api/agents/trader", "/api/agents/paper-trade",
-      "/api/admin/access", "/api/admin/vault", "/api/markets/quotes", "/api/calendar/earnings",
+      "/api/admin/access", "/api/admin/vault", "/api/calendar/earnings",
     ]) {
       expect(isViewerApiRoute(route, "GET"), route).toBe(false);
       expect(isViewerApiRoute(route, "POST"), route).toBe(false);
