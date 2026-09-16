@@ -70,6 +70,13 @@ OPENAI_API_KEY=
 COHERE_API_KEY=
 
 # SMTP (only needed if EMAIL_PROVIDER=smtp)
+# Gmail: smtp.gmail.com / 465 / the full address / a 16-char APP PASSWORD (needs 2FA —
+# a normal account password is refused with 535 5.7.8). EMAIL_FROM must be that same
+# mailbox or a verified alias, or Gmail rewrites/rejects the sender. This is the free way
+# to mail someone other than the Resend account owner without verifying a domain.
+# ORDER MATTERS: EMAIL_FROM and EMAIL_PROVIDER must flip TOGETHER with SMTP_PASS.
+# EMAIL_FROM set to a gmail address while still on Resend 403s every send; EMAIL_PROVIDER
+# =smtp without SMTP_PASS makes isAvailable() false and invites return 503.
 SMTP_HOST=
 SMTP_PORT=
 SMTP_USER=
@@ -140,7 +147,8 @@ the entire RAG path silently no-ops — no errors, no embeddings, no retrieval.
 | `ROBINHOOD_ACCESS_TOKEN` | `lib/robinhood-mcp-client.ts` |
 | `JINA_API_KEY` | `lib/providers/embeddings/jina.ts`, `lib/providers/rerank/jina.ts` |
 | `RESEND_API_KEY` | `lib/providers/email/resend.ts` |
-| `EMAIL_FROM` | `app/api/admin/access/route.ts` (invitation sender) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | `lib/providers/email/smtp.ts` (only when `EMAIL_PROVIDER=smtp`) |
+| `EMAIL_FROM` | `app/api/admin/access/route.ts` (invitation sender), `app/api/agents/user-risk-email/route.ts` |
 | `RESEND_WEBHOOK_SECRET` | `lib/email/resend-webhook.ts`, `app/api/webhooks/resend/route.ts` |
 | `LANGFUSE_*` | `lib/llm-router.ts` (Langfuse tracing) |
 | `STRIPE_*` | `app/api/stripe/*` |

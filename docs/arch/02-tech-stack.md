@@ -310,7 +310,28 @@ callers never know which concrete provider runs.
 | Value | Provider | Notes |
 |---|---|---|
 | `resend` (default) | Resend | Requires `RESEND_API_KEY`; test-mode sends to `BRIEFING_TO` |
-| `smtp` | Any SMTP server | Requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` |
+| `smtp` | Any SMTP server (**nodemailer**) | Requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`. Implemented 2026-09-15 — it was a non-functional stub before that |
+
+**SMTP was a stub until 2026-09-15, and the stub was dangerous (`lib/providers/email/smtp.ts`).**
+`send()` only logged "nodemailer not installed" and `sendChecked` did not exist. `invite()`
+falls back to `provider.send(...).then(() => ({ ok: true }))` when `sendChecked` is absent,
+so `EMAIL_PROVIDER=smtp` would have reported every invitation as sent, written the access
+grant, and mailed nothing — the "granted access to someone never told they have it" failure
+the invite route's checked-send contract exists to prevent, one env var away. It now
+implements `sendChecked` and `isDeliverable`, and treats an address in nodemailer's
+`rejected` list as a failure (`sendMail` resolves when *any* recipient is accepted, so
+reading only the resolve would turn a refusal into a grant).
+
+**Why it exists:** Resend's shared `onboarding@resend.dev` sender may only mail the Resend
+account owner, so inviting anyone else returns HTTP 403. SMTP with a Gmail app password
+(`smtp.gmail.com:465`, 2FA required) needs no verified domain and costs nothing;
+`EMAIL_FROM` must be the authenticated mailbox or Gmail rewrites the sender.
+
+**It is a global transport switch,** not per-feature: everything reaching
+`getEmailProvider()` moves — invitations, access lifecycle notices, the daily user risk
+email. The newsletter Edge Function calls Resend directly and is unaffected. Bounce
+tracking degrades: there is no webhook, so an async bounce is never recorded, though a hard
+SMTP rejection is caught and the `messageId` is retained.
 
 ---
 
