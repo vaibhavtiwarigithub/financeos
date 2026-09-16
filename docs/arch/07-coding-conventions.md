@@ -2,6 +2,8 @@
 > Last updated: 2026-09-15
 > Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
 
+> 2026-09-15 (viewer Phase 4 — markets + settings + watchlist): `VIEWER_OWN_DATA_ROUTES` expanded to cover per-user watchlist (`/api/user-watchlist`) and notification prefs (`/api/user-prefs`). Both write only rows keyed to `auth.uid()` and call no provider. `MarketsPage` uses role to pick `/api/markets/overview` (owner) vs `/api/markets/overview/cached` (viewer); client role-switching is presentation-only — the route itself has the gate. The cron warm endpoint (`/api/cron/warm-market-snapshot`) accepts either a valid cron-secret header or an owner session, granting an owner-level bypass via `verifyCronSecret` before calling the live overview route so the snapshot is written without a live session.
+
 > 2026-09-15 (viewer Phase 3): **a route a viewer page needs gets a viewer-safe path, never a relaxed owner path.**
 > - `VIEWER_API_ROUTES` entries may set `exact: true`; use it whenever a route's children are not viewer-safe (`/api/agents/research-journal` is exact because `/context` calls Alpha Vantage and `/evolution` exposes learning internals). `tests/viewer-route-sweep.test.ts` sweeps only the exact file for such entries.
 > - A route that serves both roles resolves `role` with `requireViewerOrOwner(req)` and **skips** owner-only reads for a viewer (live snapshots, broker orders, trade proposals) rather than filtering them out of a response built with them.
