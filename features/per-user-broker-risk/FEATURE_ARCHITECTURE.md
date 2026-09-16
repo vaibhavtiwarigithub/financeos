@@ -191,6 +191,19 @@ reason**, never silently, and never falls back to the owner's data.
 
 ### 5. Opt-in daily risk email
 
+> **STATUS 2026-09-16 — the opt-in UI is WITHDRAWN; the backend is intact.** The
+> toggle was removed from `/dashboard/user-settings`, so no guest can currently
+> turn this on. Everything below still exists and still runs: the table, the
+> hourly `kairos-user-risk-email` cron, the `send_hour_utc` honouring, the
+> one-send-per-day index and the unsubscribe route. What does not work is
+> DELIVERY — the send goes through the shared `onboarding@resend.dev` sender,
+> which Resend permits only to the Resend account owner, so a guest who enabled
+> it received nothing and had no way to tell why. Offering a switch that silently
+> does nothing is worse than offering none. Restore the UI once either a verified
+> domain or the SMTP transport (`EMAIL_PROVIDER=smtp`, implemented 2026-09-16) is
+> configured; `/api/user-prefs` and the preference rows were deliberately left
+> untouched so that is a one-file change.
+
 - Off by default. `user_risk_email_prefs` holds the opt-in, the send hour, and an
   unsubscribe token.
 - Content is built **only** from that user's own `user_holding_risk_*` rows. The
