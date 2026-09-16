@@ -53,6 +53,12 @@ const NAV_SECTIONS = [
       { href: "/dashboard/portfolio",      label: "Paper Portfolio", icon: "◈", hint: "Paper positions, P&L, open trades — US ($) and India (₹) via the market switcher above", alertCat: "portfolio" },
       { href: "/dashboard/live-portfolio", label: "Live Portfolio", icon: "◉", hint: "Live holdings — Robinhood (US) or Zerodha Kite (India), controlled by the market switcher above", alertCat: "" },
       { href: "/dashboard/risk",           label: "Risk Analytics", icon: "⚠", hint: "Beta, VaR, sector concentration across all accounts", alertCat: "" },
+      // The GUEST risk page, over the caller's OWN connected broker — deliberately
+      // a separate path from /dashboard/risk, which is the owner's book and is not
+      // in VIEWER_PAGES. Without this entry a viewer had no link to it at all: the
+      // owner's "Risk Analytics" above is filtered out for them, so the only way in
+      // was typing the URL.
+      { href: "/dashboard/my-risk",        label: "My Risk Analytics", icon: "◑", hint: "Risk for YOUR connected broker account — needs a broker connected under My Preferences", alertCat: "" },
     ],
   },
   {
@@ -91,7 +97,7 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Account, trading, AI & keys, automation, data, and system controls", alertCat: "" },
-      { href: "/dashboard/user-settings",         label: "My Preferences", icon: "⊕", hint: "Email digest, newsletter opt-in, and broker connections", alertCat: "" },
+      { href: "/dashboard/user-settings",         label: "My Preferences", icon: "⊕", hint: "Connect your own broker account for personal risk analytics", alertCat: "" },
       { href: "/dashboard/admin/access",           label: "Access & Permissions", icon: "🔑", hint: "Who can sign in, what each role may view or edit, invite and revoke viewers", alertCat: "" },
     ],
   },
