@@ -626,6 +626,14 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
         {/* Sectioned nav */}
         <nav style={{ flex: 1, padding: "10px 8px", overflowY: "auto" }}>
+          {viewerPages === undefined && (
+            // Loading skeleton — 3 placeholder bars while role fetch is in-flight
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "8px" }}>
+              {[80, 65, 75].map((w) => (
+                <div key={w} style={{ height: "28px", width: `${w}%`, borderRadius: "6px", background: T.border, opacity: 0.5 }} />
+              ))}
+            </div>
+          )}
           {navSections.map((section, si) => (
             <div key={section.label} style={{ marginBottom: si < navSections.length - 1 ? "16px" : "0" }}>
               {/* Section label */}
