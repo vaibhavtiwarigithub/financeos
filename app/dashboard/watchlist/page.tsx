@@ -85,7 +85,15 @@ export default function WatchlistPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "Inter, sans-serif" }}>
-      <PageHeader title="My Watchlist" />
+      <PageHeader
+        title="My Watchlist"
+        whatItDoes="Your own list of symbols to track, separate from the agent's research universe."
+        whatToLookFor={[
+          "Add a symbol to keep it handy; it is private to your account.",
+          "Click a symbol to open its Deep Dive with scores and price history.",
+          "Remove anything you have stopped following so the list stays short.",
+        ]}
+      />
       <div style={{ maxWidth: "900px", margin: "0 auto", padding: "32px 16px" }}>
 
         {/* Add symbol */}
