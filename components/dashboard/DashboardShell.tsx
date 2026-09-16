@@ -240,20 +240,25 @@ export default function DashboardShell({ profile, children }: { profile: Profile
   // A viewer may only reach a narrow page set, so showing them the full nav
   // offers links that bounce straight back. Presentation only — middleware and
   // each route enforce the boundary regardless of what is rendered here.
-  const [viewerPages, setViewerPages] = useState<string[] | null>(null);
+  // undefined = role fetch in-flight (suppress nav to avoid flash of owner UI)
+  // null      = owner (show all)
+  // string[]  = viewer (filter to allowed pages)
+  const [viewerPages, setViewerPages] = useState<string[] | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/role")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (cancelled || !d) return;
-        setViewerPages(d.role === "viewer" ? (d.access?.pages ?? []) : null);
+        if (cancelled) return;
+        setViewerPages(d?.role === "viewer" ? (d.access?.pages ?? []) : null);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setViewerPages(null); });
     return () => { cancelled = true; };
   }, []);
 
-  const navSections = viewerPages
+  const navSections = viewerPages === undefined
+    ? []
+    : viewerPages
     ? NAV_SECTIONS
         .map((section) => ({
           ...section,
@@ -791,7 +796,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
             <span style={{ color: T.textSub, fontVariantNumeric: "tabular-nums" }}>{timeStr} ET</span>
           </div>
         </div>
-        {children}
+        {viewerPages === undefined ? null : children}
 
         {/* Per-page country-support badge — single source of truth in lib/market-support.ts */}
         {(() => {
