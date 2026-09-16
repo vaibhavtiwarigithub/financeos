@@ -25,24 +25,21 @@ describe("CRYPTO_SESSION_CUTOFF_UTC", () => {
 });
 
 describe("cryptoSessionDate", () => {
-  it("returns today's UTC date at or after midnight UTC", () => {
-    // 00:01 UTC on 2026-09-04
+  it("returns the preceding UTC date immediately after midnight", () => {
+    // 00:01 UTC on 2026-09-04: the 2026-09-04 bar has just opened.
     const at = new Date("2026-09-04T00:01:00Z");
-    expect(cryptoSessionDate(at)).toBe("2026-09-04");
+    expect(cryptoSessionDate(at)).toBe("2026-09-03");
   });
 
-  it("returns yesterday's UTC date before midnight UTC", () => {
-    // 23:59 UTC on 2026-09-03 — bar for 2026-09-03 not yet sealed
-    // BUT: CRYPTO_SESSION_CUTOFF_UTC = 0, so utcHour < 0 is never true.
-    // The cutoff is midnight, meaning the bar seals AT midnight (hour >= 0 always).
-    // This test documents: at any UTC time, today's bar is "complete".
+  it("does not expose the still-accumulating current UTC bar", () => {
+    // 23:59 UTC on 2026-09-03 — the 2026-09-03 bar is still live.
     const at = new Date("2026-09-03T23:59:59Z");
-    expect(cryptoSessionDate(at)).toBe("2026-09-03"); // 23:59 → still today UTC
+    expect(cryptoSessionDate(at)).toBe("2026-09-02");
   });
 
-  it("handles midnight exactly (bar sealed)", () => {
+  it("handles midnight exactly without admitting the new bar", () => {
     const at = new Date("2026-09-04T00:00:00Z");
-    expect(cryptoSessionDate(at)).toBe("2026-09-04");
+    expect(cryptoSessionDate(at)).toBe("2026-09-03");
   });
 });
 
@@ -57,7 +54,7 @@ describe("cryptoCompletedCandles", () => {
   it("drops future dates", () => {
     const now = new Date("2026-09-04T12:00:00Z");
     const result = cryptoCompletedCandles(candles, now);
-    expect(result.map((c) => c.date)).toEqual(["2026-09-02", "2026-09-03", "2026-09-04"]);
+    expect(result.map((c) => c.date)).toEqual(["2026-09-02", "2026-09-03"]);
   });
 
   it("returns empty array when all candles are future", () => {

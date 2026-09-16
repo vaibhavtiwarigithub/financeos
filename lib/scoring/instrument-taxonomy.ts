@@ -20,8 +20,9 @@ export type InstrumentFamily =
   | "royalty_streaming_equity"
   | "india_etf"
   | "leveraged_or_inverse_etf"
-  // Stage 1 (2026-09-04): paper-only, scoreMode=blocked until Stage 2 evidence clears.
-  // Uses CRYPTO_SESSION_CUTOFF_UTC, NOT America/New_York — see lib/data/crypto-session.ts.
+  // Stage 3 (2026-09-16): scoreMode=legacy_v1, paper trading only — see
+  // features/robinhood-crypto/FEATURE_ARCHITECTURE.md. Uses
+  // CRYPTO_SESSION_CUTOFF_UTC, NOT America/New_York — see lib/data/crypto-session.ts.
   | "crypto"
   | "unknown";
 
@@ -79,9 +80,13 @@ function policy(
     version: INSTRUMENT_TAXONOMY_VERSION,
     scoreMode: family === "leveraged_or_inverse_etf" || family === "unknown"
       ? "blocked"
-      : ["gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund", "india_etf", "crypto"].includes(family)
-        ? "measure_only"
-        : "legacy_v1",
+      // Stage 3 (2026-09-16, owner-approved evidence-gate override — see
+      // features/robinhood-crypto/FEATURE_ARCHITECTURE.md). Paper only.
+      : family === "crypto"
+        ? "legacy_v1"
+        : ["gold_bullion_fund", "silver_bullion_fund", "gold_miners_fund", "india_etf"].includes(family)
+          ? "measure_only"
+          : "legacy_v1",
   };
 }
 

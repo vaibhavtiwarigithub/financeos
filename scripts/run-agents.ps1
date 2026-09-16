@@ -9,6 +9,9 @@
 #   17:00  nav-snapshot      — daily NAV + alpha snapshot
 #   Friday 17:00  learner    — weekly weight learning (Fridays only; route skips other days)
 #   Every 4h  stale-check   — alert on stale agent runs
+# Crypto paper jobs are deliberately absent: they run through Supabase pg_cron
+# (`kairos-crypto-paper-trade` / `kairos-crypto-position-monitor`) so they do
+# not depend on this computer or a localhost dev server.
 param(
   [Parameter(Mandatory=$true)]
   [string]$Agent  # "research" | "learner" | "brief-morning" | "brief-evening" | "position-monitor" | "nav-snapshot" | "stale-check" | "trader" | "embed"
@@ -66,6 +69,7 @@ $endpoints = @{
   "score-price-divergence-us" = @{ method="POST"; url="$BASE/api/agents/score-price-divergence?market=us"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "score-price-divergence-india" = @{ method="POST"; url="$BASE/api/agents/score-price-divergence?market=india"; headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}" }
   "mentor-coach"     = @{ method="POST"; url="$BASE/api/agents/mentor-coach";           headers=@{"x-cron-secret"=$CRON_SECRET;"Content-Type"="application/json"}; body="{}"; timeoutSec=180 }
+  # Crypto paper trading (Stage 3, 2026-09-16). Daily cadence — AV
 }
 
 if (-not $endpoints.ContainsKey($Agent)) {

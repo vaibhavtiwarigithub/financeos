@@ -677,7 +677,16 @@ const MIN_PREDICTIVE_DATES = 20; // Stage 3 gate — see FEATURE_ARCHITECTURE.md
 
 type CryptoEvidenceRow = { symbol: string; created_at: string; features: Record<string, { value: number | null; asOf: string | null; source: string; status: string }> };
 
-function CryptoWatchSection({ rows }: { rows: CryptoEvidenceRow[] }) {
+type CryptoPosition = { id: string; symbol: string; qty: number; avg_cost: number; current_price: number | null; price_target: number | null; stop_loss: number | null; opened_at: string };
+type CryptoTrade = { id: string; symbol: string; order_side: string; qty: number; fill_price: number; realized_pnl: number | null; pnl_pct: number | null; outcome: string | null; exit_reason: string | null; executed_at: string; closed_at: string | null };
+
+function CryptoWatchSection({ rows, positions, trades, pool }: {
+  rows: CryptoEvidenceRow[];
+  positions: CryptoPosition[];
+  trades: CryptoTrade[];
+  pool: { cash_balance: number; nav: number } | null;
+}) {
+  const router = useRouter();
   // Group by symbol: latest features + count distinct calendar dates
   const bySymbol = Object.fromEntries(
     CRYPTO_COINS.map(sym => {
@@ -697,14 +706,14 @@ function CryptoWatchSection({ rows }: { rows: CryptoEvidenceRow[] }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: "13px", fontWeight: 700, color: T.text }}>
-            🔬 Crypto Watch · Stage 2 — Measure Only
+            🔬 Crypto Watch · Stage 3 — Paper Trading
           </div>
           <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>
-            BTC · ETH · SOL · no paper trades · evidence accumulation toward Stage 3 gate
+            BTC · ETH · SOL · own $10k paper pool, separate from the equity book · no live orders
           </div>
         </div>
-        <div style={{ background: "#1a1020", border: `1px solid #7c3aed55`, borderRadius: "8px", padding: "6px 12px", fontSize: "11px", color: "#a78bfa", fontWeight: 600, whiteSpace: "nowrap" }}>
-          ⛔ Not trading
+        <div style={{ background: "#052E16", border: `1px solid ${T.green}55`, borderRadius: "8px", padding: "6px 12px", fontSize: "11px", color: T.green, fontWeight: 600, whiteSpace: "nowrap" }}>
+          📝 Paper only
         </div>
       </div>
 
@@ -721,10 +730,57 @@ function CryptoWatchSection({ rows }: { rows: CryptoEvidenceRow[] }) {
         </div>
         <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
           {totalDates >= MIN_PREDICTIVE_DATES
-            ? "Gate met — Stage 3 (paper pool + scoring) can be considered."
-            : `Need ${MIN_PREDICTIVE_DATES - totalDates} more daily research runs to qualify for Stage 3.`}
+            ? "Gate met naturally."
+            : `Owner-approved evidence-gate override (2026-09-16) — paper trading is live below this floor.`}
         </div>
       </div>
+
+      {/* Paper pool + positions + trades */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "10px", padding: "10px 14px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px" }}>
+        <div style={{ fontSize: "11px", color: T.muted }}>Crypto paper pool NAV</div>
+        <div style={{ fontSize: "16px", fontWeight: 700, color: T.text, fontFamily: "monospace" }}>
+          {pool ? `$${Number(pool.nav).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}
+          {pool && <span style={{ fontSize: "11px", color: T.muted, fontWeight: 400, marginLeft: "8px" }}>cash ${Number(pool.cash_balance).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>}
+        </div>
+      </div>
+
+      {positions.length > 0 && (
+        <div style={{ marginBottom: "16px" }}>
+          <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Open positions</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {positions.map(p => {
+              const cur = p.current_price ?? p.avg_cost;
+              const pnlPct = p.avg_cost > 0 ? ((cur - p.avg_cost) / p.avg_cost) * 100 : 0;
+              return (
+                <div key={p.id} onClick={() => router.push(`/dashboard/symbol/${p.symbol}`)}
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "12px" }}>
+                  <span style={{ fontWeight: 700, color: T.text }}>{p.symbol.replace("-USD", "")}</span>
+                  <span style={{ color: T.muted, fontFamily: "monospace" }}>{p.qty.toFixed(4)} @ ${p.avg_cost.toFixed(2)}</span>
+                  <span style={{ color: pnlColor(pnlPct), fontWeight: 600, fontFamily: "monospace" }}>{fmtPct(pnlPct)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {trades.length > 0 && (
+        <div style={{ marginBottom: "16px" }}>
+          <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>Recent closed trades</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {trades.filter(t => t.closed_at).slice(0, 8).map(t => (
+              <div key={t.id} onClick={() => router.push(`/dashboard/symbol/${t.symbol}`)}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "12px" }}>
+                <span style={{ fontWeight: 700, color: T.text }}>{t.symbol.replace("-USD", "")}</span>
+                <span style={{ color: T.muted }}>{t.exit_reason ?? "—"}</span>
+                <span style={{ color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.muted, fontWeight: 600, fontFamily: "monospace" }}>
+                  {t.pnl_pct != null ? fmtPct(Number(t.pnl_pct)) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Coin cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
@@ -766,10 +822,13 @@ function CryptoWatchSection({ rows }: { rows: CryptoEvidenceRow[] }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market, liveOrders, cryptoEvidence }: {
+export default function TradingPage({ pendingSignals, tradeLog, strategy, portfolio, queue, positions, market, liveOrders, cryptoEvidence, cryptoPositions, cryptoTrades, cryptoPool }: {
   pendingSignals: any[]; tradeLog: any[]; strategy: any; portfolio: any; queue: any[]; positions: any[];
   liveOrders: BrokerOrder[];
   cryptoEvidence: CryptoEvidenceRow[];
+  cryptoPositions: CryptoPosition[];
+  cryptoTrades: CryptoTrade[];
+  cryptoPool: { cash_balance: number; nav: number } | null;
   // Resolved from the `mkt` cookie by the server component. Every row here is
   // already scoped to this market and every amount renders in its currency —
   // US ($) and India (₹) NAV are never blended.
@@ -955,7 +1014,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
       <LiveOrdersSection liveOrders={liveOrders} />
 
       {/* Crypto Watch — US only, Stage 2 measure-only. No India crypto path. */}
-      {!isIndia && <CryptoWatchSection rows={cryptoEvidence} />}
+      {!isIndia && <CryptoWatchSection rows={cryptoEvidence} positions={cryptoPositions} trades={cryptoTrades} pool={cryptoPool} />}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>

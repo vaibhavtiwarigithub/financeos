@@ -1512,8 +1512,14 @@ US `624b3c85-965d-4e89-8bee-b06729a89160`; India
 
 ## Decision 72: Amend Decision 2's Crypto Exclusion — PAPER Only (2026-09-04)
 
-**Status:** DRAFT / PROPOSED — not approved, not shipped. Awaiting Vaibhav's review of
-`features/robinhood-crypto/FEATURE_ARCHITECTURE.md`.
+**Status:** Approved and shipped 2026-09-16 (Stage 3, paper trading) — see Decision 77. The
+evidence-gate condition below ("Stage 3 requires MIN_PREDICTIVE_DATES=20") was overridden by
+explicit owner direction at ~12/20 sessions; the override itself is Decision 77, not this one.
+One schema nuance emerged during implementation, not anticipated below: "market stays 'us', no
+`market` schema change" held for the SCORING layer exactly as written, but the PAPER-EXECUTION
+LEDGER (`paper_portfolio`/`paper_positions`/`paper_trades`/`paper_performance` — 4 tables, none
+CHECK-constrained on `market`) needed its own pool-isolation mechanism and got a third `market`
+value, `'crypto'`, scoped to those 4 tables only. See Decision 77.
 
 **Decision.** Amend Decision 2 (2026-06-27)'s exclusion of crypto from Kairos's trading scope,
 for **paper trading only**. Robinhood cryptocurrency, scored via its own technical+sentiment+macro
@@ -1714,3 +1720,57 @@ to paper performance alone) with people who may trade their own money on it
 creates a regulatory exposure — India/SEBI research-analyst rules are the sharper
 question. This is flagged as a gate to clear outside the repository; it is not
 adjudicated by this decision and it gates Phase 3, not Phase 0.
+
+
+## Decision 77: Crypto Stage 3 Paper Trading — Evidence-Gate Override (2026-09-16)
+
+**Status:** Approved and shipped 2026-09-16. Converts Decision 72 from DRAFT to shipped.
+
+**Decision.** Ship Stage 3 (paper trading) of `features/robinhood-crypto/FEATURE_ARCHITECTURE.md`:
+crypto `scoreMode` `measure_only` → `legacy_v1`, a dedicated $10,000 crypto paper pool, and two new
+small agents (`CryptoPaperTrader`, `CryptoPositionMonitor`) — deliberately NOT threaded into the
+equity/India `paper-trade`/`position-monitor` routers, which are calibrated for equity
+payoff/volatility distributions via a portfolio constructor, correlation shadow, capital rotation,
+and Kelly/genome sizing keyed to `market:"us"|"india"` through CHECK-constrained tables. Also
+shipped: a symbol-detail view for crypto (`/dashboard/symbol/<coin>`, Options tab hidden, a
+technical+macro composite in place of stock fundamentals) and a fuller Trading-page Crypto Watch
+panel (pool NAV, open positions, recent trades).
+
+**The override, stated plainly.** The feature doc's own Stage 3 gate — `MIN_PREDICTIVE_DATES=20`
+qualifying evidence sessions — was NOT met. `crypto_basket` started 2026-09-04; at approval
+(2026-09-16, 12 days later) the session count was ~12/20. Vaibhav was told this directly and chose
+to override the gate rather than wait. Scoring/entry quality for BUY calls at this sample size is
+unproven; this is a known, accepted risk, not a silent one. This is a PAPER-only decision — Stage 4
+(live crypto orders) remains unauthorized and requires its own separate future decision, exactly as
+Decision 72 already specified.
+
+**Schema shape (refines Decision 72, does not violate it).** Decision 72 said "market stays 'us',
+no `market` schema change" — true for the scoring layer (`instrument_family_observations`,
+`decision_observations`, unchanged). The paper-execution ledger needed its own pool-isolation
+mechanism to satisfy Decision 72's own contamination concern ("crypto's paper NAV must never sum
+into the US equity pool's NAV"). Two options existed: a new `instrument_family` column on all 4
+paper tables (requiring an audit of ~40 existing read/write call sites to add `IS NULL` filters), or
+reusing the free-text, non-CHECK-constrained `market` column with a third value, `'crypto'`, scoped
+to those 4 tables only. Chose the latter: every existing consumer already filters
+`market IN ('us','india')` explicitly (verified by repo-wide grep — no reader selects across all
+markets unfiltered), so a `'crypto'` row is invisible to every existing equity/India NAV, P&L,
+learning, or benchmark computation by construction, not by an added filter. Two more CHECK-adjacent
+fixes were required and found only by reading the reused RPCs' SQL bodies, not by guessing:
+`decision_journal.market`'s CHECK (`execute_paper_exit` unconditionally writes a row there on every
+close) and `lib/market-controls.ts`'s `Mkt`/`norm()` (previously coerced any unrecognized market
+string to `"us"` — a crypto kill-switch trip would otherwise have disabled US equity trading).
+
+**Alternatives considered.** Threading crypto through `paper-trade`/`position-monitor` as a third
+`market:"us"|"india"|"crypto"` value (rejected — those routes' portfolio constructor/rotation/Kelly
+sizing are equity-calibrated and backed by tables like `trading_mandates` whose CHECK genuinely does
+need to stay `('us','india')` for the scoring/session layer per Decision 72's own reasoning; forking
+that router was a materially larger and riskier change than Stage 3 needs). Waiting for the real
+20-session gate before shipping anything (the path Decision 72 itself specified — overridden here by
+explicit owner instruction, not a unilateral call).
+
+**Safety boundary (unchanged from Decision 72).** Paper only. No live crypto order. Flat sizing only
+(no Kelly/genome/portfolio-constructor parity with equities — future decision once real paper history
+exists). No benchmark comparison for the crypto book.
+
+**Architecture:** `features/robinhood-crypto/FEATURE_ARCHITECTURE.md`. Migration:
+`supabase/migrations/20260916020000_crypto_paper_pool.sql`.

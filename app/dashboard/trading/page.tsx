@@ -23,6 +23,9 @@ export default async function Page() {
     { data: positions },
     { data: liveOrders },
     { data: cryptoEvidence },
+    { data: cryptoPositions },
+    { data: cryptoTrades },
+    { data: cryptoPool },
   ] = await Promise.all([
     supabase.from("agent_signals").select("*, research_packets(*)").eq("market", market).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
     supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(30),
@@ -54,6 +57,18 @@ export default async function Page() {
           .eq("instrument_family", "crypto")
           .order("created_at", { ascending: false })
           .limit(90),
+    // Stage 3 crypto paper book (US-only view; own pool, market="crypto" —
+    // never blended with the US equity paper book). See
+    // supabase/migrations/20260916020000_crypto_paper_pool.sql.
+    market === "india"
+      ? Promise.resolve({ data: [] as any[] })
+      : supabase.from("paper_positions").select("*").eq("market", "crypto"),
+    market === "india"
+      ? Promise.resolve({ data: [] as any[] })
+      : supabase.from("paper_trades").select("*").eq("market", "crypto").order("executed_at", { ascending: false }).limit(20),
+    market === "india"
+      ? Promise.resolve({ data: null })
+      : supabase.from("paper_portfolio").select("*").eq("market", "crypto").maybeSingle(),
   ]);
 
   return (
@@ -67,6 +82,9 @@ export default async function Page() {
       market={market}
       liveOrders={liveOrders ?? []}
       cryptoEvidence={cryptoEvidence ?? []}
+      cryptoPositions={cryptoPositions ?? []}
+      cryptoTrades={cryptoTrades ?? []}
+      cryptoPool={cryptoPool ?? null}
     />
   );
 }

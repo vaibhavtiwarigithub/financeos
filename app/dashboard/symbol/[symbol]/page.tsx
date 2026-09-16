@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import SymbolDetailPage from "@/components/dashboard/SymbolDetailPage";
+import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 
 export default async function SymbolPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await params;
@@ -21,11 +22,13 @@ export default async function SymbolPage({ params }: { params: Promise<{ symbol:
 
   // Market drives the Stock Context strip's provider (US Finnhub vs India Yahoo).
   const market = /\.(NS|BO)$/i.test(sym) ? "india" : "us";
+  const isCrypto = CRYPTO_SYMBOLS.has(sym);
 
   return (
     <SymbolDetailPage
       symbol={sym}
       market={market}
+      isCrypto={isCrypto}
       signals={signals ?? []}
       trades={trades ?? []}
     />

@@ -1,16 +1,47 @@
 # Robinhood Crypto — Feature Architecture
 
-> Status: **Stage 2b LIVE** — measure_only composite + crypto_basket + Trading UI watch section.
-> Author: Claude (Sonnet 4.6), 2026-09-04. Approved by Vaibhav 2026-09-04.
-> Stage 3 (paper pool + legacy_v1 scoring) requires MIN_PREDICTIVE_DATES (20) evidence sessions.
-> Scope: PAPER trading only. No live order authorized.
+> Status: **Stage 3 LIVE (paper trading)** — legacy_v1 scoring + own $10k paper pool + dedicated
+> entry/exit routes + Trading UI watch section + per-coin symbol-detail page.
+> Author: Claude (Sonnet 5), 2026-09-16. Approved by Vaibhav 2026-09-16.
+> **Evidence-gate override (owner-directed):** Stage 3 was gated on MIN_PREDICTIVE_DATES (20)
+> evidence sessions per this doc's original text below. At approval time (2026-09-16) the
+> `crypto_basket` had run ~12 days since 2026-09-04 — below the floor. The owner explicitly
+> directed the override rather than waiting; scoring quality for BUY/SELL calls at this sample
+> size is unproven. Recorded, not silently applied — see PROJECT_DECISIONS.md.
+> Scope: PAPER trading only. No live order authorized — Stage 4 remains a separate future decision.
 >
 > **Implementation log:**
 > - Stage 0 (db57bfd1): RH capability probe — onboarded, 58 pairs, BTC/ETH/SOL selected
 > - Stage 1 (120935f4): `InstrumentFamily="crypto"`, `CRYPTO_SESSION_CUTOFF_UTC`, session guards, 14 tests
 > - Stage 2 (be9b1b9b): `scoreMode="measure_only"`, IFE composite (technical+macro+sentiment), AV DIGITAL_CURRENCY_DAILY
 > - Stage 2b (f29e0ee6): `crypto_basket` always-feeds BTC/ETH/SOL into research runs (parallel to metals_basket)
-> - Stage 2c (pending): Trading page "Crypto Watch" section — shows evidence progress, coin scores (US-only)
+> - Stage 2c: Trading page "Crypto Watch" section — evidence progress, coin scores (US-only)
+> - Stage 3 (2026-09-16): `scoreMode="legacy_v1"`; own paper pool via a THIRD `market='crypto'`
+>   value scoped to the 4 paper-ledger tables only (`paper_portfolio/positions/trades/performance`
+>   — none carry a CHECK constraint, verified) — NOT `instrument_family`, and NOT threaded through
+>   `app/api/agents/paper-trade` or `position-monitor` (those are equity/India-calibrated: portfolio
+>   constructor, correlation shadow, capital rotation, Kelly/genome sizing, all keyed to
+>   `market:"us"|"india"` through library functions backed by market-CHECK-constrained tables —
+>   forking that router was a materially larger, riskier change than Stage 3 needs). Two small
+>   dedicated routes instead: `app/api/agents/crypto-paper-trade` (flat-sizing entries, one position
+>   per coin, price = latest completed AV DIGITAL_CURRENCY_DAILY close — same source the signal was
+>   scored against) and `app/api/agents/crypto-position-monitor` (mechanical OHLC-aware stop/target
+>   exits + daily NAV snapshot; no time-stop). Both reuse the existing atomic `execute_paper_fill` /
+>   `execute_paper_exit` RPCs (fully generic on `market`, verified by reading their SQL bodies) and
+>   the existing `checkKillSwitches`/`isPaused`/`isTradingEnabled` machinery (`lib/market-controls.ts`
+>   widened from `"us"|"india"` to include `"crypto"` — its `norm()` helper silently coerced any
+>   other value to `"us"`, which would have let a crypto kill-switch trip disable US equity trading).
+>   `decision_journal.market`'s CHECK (migration 084) also had to widen: `execute_paper_exit`
+>   unconditionally inserts a `decision_journal` row using the position's own market, and the
+>   original `('us','india')` CHECK would have rolled back every crypto exit — found by reading the
+>   RPC body before shipping, not in production. Migration:
+>   `supabase/migrations/20260916020000_crypto_paper_pool.sql`.
+>   UI: Trading page's Crypto Watch section now shows the pool NAV, open positions, and recent
+>   closed trades (linking to `/dashboard/symbol/<coin>`); the symbol-detail page hides the Options
+>   tab and swaps `SymbolFundamentals` for a technical+macro composite view when the symbol is
+>   crypto (`app/api/charts/crypto-overview`).
+>   No genome/portfolio-constructor parity attempted (§2.4/§4 — future decision once real paper
+>   history exists). No benchmark comparison for the crypto book (no crypto analog to VOO/^NSEI).
 
 ## 0. What this reopens, and what it doesn't
 
@@ -35,11 +66,12 @@ own future decision after paper history exists, exactly like equities' own L3/L4
 - **Unverified**: whether the agentic account is actually crypto-onboarded at Robinhood
   (`get_crypto_account_onboarding_info` was not called this session — no live MCP session
   available). This is Stage 0, not assumed either way.
-- `market` is `check (market in ('us','india'))` on at least 34 migrations across the schema.
-  **Crypto must NOT become a third `market` value** — that blast radius (rewriting 34+ CHECK
-  constraints) is disproportionate to what's needed, and every session/timezone primitive in this
-  codebase (18 files hardcoding `America/New_York`/`Asia/Kolkata`, 11 files building purge/embargo
-  logic off a trading-day calendar) is written for exactly two markets.
+- The scoring/session schema keeps its `market in ('us','india')` contract. Crypto does **not**
+  become a third scoring market: it remains `market='us'` plus `InstrumentFamily='crypto'`.
+  The isolated paper ledger is the narrow exception: its existing free-text `market` discriminator
+  uses `'crypto'`, and the two generic infrastructure constraints needed by its paper exit
+  (`market_controls`, `decision_journal`) admit that value. This avoids rewriting the 34+ scoring
+  market constraints or routing crypto through US/India session, purge, and embargo primitives.
 - The right existing mechanism already exists and is already live:
   `lib/scoring/instrument-taxonomy.ts`'s `InstrumentFamily` union (`operating_company`, `adr`,
   `bank`, `reit`, five ETF families, three metals-adjacent equity families, `india_etf`,
@@ -156,8 +188,9 @@ an equivalent scoping column — exact schema left to the migration design, not 
 
 ## 4. Acceptance criteria
 
-1. No `market` CHECK constraint changes anywhere — crypto is `market='us'`, a new
-   `InstrumentFamily`, never a new market value.
+1. No scoring/session market CHECK constraint changes — crypto research is `market='us'` plus a
+   new `InstrumentFamily`. Only the isolated paper-ledger/control/exit path may use
+   `market='crypto'`, and it must remain excluded from US/India aggregates by construction.
 2. Crypto rows never enter a US-equity purge/embargo/fold calculation through the equity session
    functions — mutation test: routing a crypto row through `America/New_York`-based session logic
    must fail a detector.

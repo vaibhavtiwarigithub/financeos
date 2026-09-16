@@ -1,4 +1,13 @@
 # Kairos — Crons & Scheduling
+> 2026-09-16: **Crypto paper Stage 3 jobs are cloud-scheduled through Supabase pg_cron** (migration
+> `20260916020000_crypto_paper_pool.sql`, applied with the Stage 3 pool). `kairos-crypto-paper-trade`
+> calls `POST /api/agents/crypto-paper-trade` at 14:30 UTC daily; `kairos-crypto-position-monitor`
+> calls `POST /api/agents/crypto-position-monitor` at 00:30 UTC daily. Both use the existing
+> Vault-backed `kairos_call_agent` bridge and never depend on Windows Task Scheduler, a local
+> development server, or Vercel Cron's GET-only trigger. The monitor fails closed unless Alpha
+> Vantage supplied the exact UTC day that just closed; it never treats a provisional daily candle
+> or yesterday's stale candle as a valid stop/target input. Paper only; no broker order path.
+>
 > 2026-09-15: **`warm-market-snapshot` pg_cron added (migration `20260916010000_warm_market_snapshot_cron.sql` — NOT yet applied; requires substituting `{{APP_URL}}` and `<CRON_SECRET>` placeholders before applying via `db query --linked`).** Schedule `15 21 * * 1-5` (21:15 UTC = 16:15 ET after NYSE close). Calls `POST /api/cron/warm-market-snapshot` with cron-secret header. That endpoint calls `/api/markets/overview` with the cron secret, which grants an owner-level bypass (via `verifyCronSecret`) so the Massive provider call runs and writes `market_overview_snapshots` once per session. Result: viewer requests to `/api/markets/overview/cached` always find a fresh snapshot and never trigger a live provider call. The endpoint is idempotent — the overview route writes the snapshot on every successful call and the pg_cron job fires once per session.
 >
 > 2026-09-14: **Markets pages now inherit a once-per-session cadence; no new cron was added.** `/api/markets/quotes` is cache-only — it reads `price_cache`, which `kairos-price-cache-fill` (13:25 UTC weekdays, retry 13:45) already populates for the whole regime/sector/leveraged universe in ONE grouped provider call. Its old path called the provider's previous-day aggregate per symbol behind a 5-minute cache AND computed an intraday `(c - o)` move, so the cached path is both cheaper and more correct. `/api/markets/overview` keeps the grouped provider as its source — reading `price_cache` there was tried and rejected on production evidence (2026-07-17) — and instead stores its resolved payload in `market_overview_snapshots`, keyed by session date, so the provider is resolved at most once per session rather than once per 5-minute window per warm instance.

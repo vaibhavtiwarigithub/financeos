@@ -625,8 +625,8 @@ NAV state per market (cash + positions = NAV).
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `market` | text | `us` \| `india` |
-| `cash` | numeric | Starting: US $10,000, India ₹1,000,000 |
+| `market` | text | `us` \| `india` \| `crypto` (added 2026-09-16 — Stage 3 crypto paper pool, `supabase/migrations/20260916020000_crypto_paper_pool.sql`; no CHECK constraint on this column, so the third value needed no schema change; scoped to this table + `paper_positions`/`paper_trades`/`paper_performance` only — scoring/research still tags crypto `market='us'`) |
+| `cash` | numeric | Starting: US $10,000, India ₹1,000,000, Crypto $10,000 |
 | `nav` | numeric | cash + sum of open position values |
 | `peak_nav` | numeric | All-time high NAV (for drawdown circuit breaker) |
 | `updated_at` | timestamptz | |
@@ -863,7 +863,7 @@ Audit log of every trade decision (live or paper).
 |---|---|---|
 | `id` | uuid PK | |
 | `symbol` | text | |
-| `market` | text | |
+| `market` | text | CHECK widened 2026-09-16 to `('us','india','crypto')` — `execute_paper_exit` unconditionally inserts a row here on every close using the position's own market; the original `('us','india')` CHECK would have rolled back every crypto paper exit. |
 | `action` | text | |
 | `rationale` | text | |
 | `approved_by` | text | `owner` \| `auto` (auto not used; kept for schema compat) |

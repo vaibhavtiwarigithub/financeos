@@ -9,10 +9,12 @@
 // Missing rows and read errors fail closed. A DB/API blip must block new entries
 // and live orders, not permit them.
 
-export type Mkt = "us" | "india";
+export type Mkt = "us" | "india" | "crypto";
 
 function norm(market?: string | null): Mkt {
-  return market === "india" ? "india" : "us";
+  if (market === "india") return "india";
+  if (market === "crypto") return "crypto";
+  return "us";
 }
 
 async function readGlobal(svc: any): Promise<{ paused: boolean; trading: boolean }> {

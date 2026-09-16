@@ -1,4 +1,18 @@
 # Kairos — Agents
+> 2026-09-16: **Crypto Stage 3 — paper trading live (owner-approved evidence-gate override).**
+> `lib/scoring/instrument-taxonomy.ts` crypto `scoreMode` `measure_only` → `legacy_v1`. Two new small
+> agents, `CryptoPaperTrader` and `CryptoPositionMonitor` (registry entries below), deliberately NOT
+> threaded into the equity/India `paper-trade`/`position-monitor` routers. New pool: a third `market`
+> value, `'crypto'`, scoped to the 4 paper-ledger tables only (no CHECK constraint on any of them,
+> verified) — see "Crypto paper pool isolation" below. `decision_journal`'s market CHECK widened
+> (blocking bug found by reading `execute_paper_exit`'s SQL body before shipping) and
+> `lib/market-controls.ts`'s `Mkt`/`norm()` widened (previously coerced any unrecognized market to
+> `"us"`, which would have let a crypto kill-switch trip disable US equity trading). Trading page's
+> Crypto Watch section now shows pool NAV/positions/trades; `/dashboard/symbol/<coin>` gained a
+> technical+macro composite view in place of stock fundamentals. Evidence gate
+> (`MIN_PREDICTIVE_DATES=20`) was NOT met (~12/20 sessions at approval) — owner directed the override
+> explicitly; see `features/robinhood-crypto/FEATURE_ARCHITECTURE.md` and `PROJECT_DECISIONS.md`.
+>
 > 2026-09-15: **ResearchAgent family evidence repaired + oil exposure pack (measure-only).**
 > `lib/scoring/instrument-family-evidence.ts`: metal price features labelled "20bars" were
 > really ~100-row returns (GLD recorded -7.17% vs real -0.05%); now exactly 20 settled bars,
@@ -625,6 +639,74 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
 - `paper_order_events` row (submitted + filled events)
 - Updates `paper_portfolio.cash` and `paper_portfolio.nav`
 - `rotation_events` row when either `max_open_names` or `insufficient_cash` triggers a shadow rotation evaluation
+
+---
+
+### CryptoPaperTrader — the crypto entry agent (Stage 3, 2026-09-16)
+
+**File:** `app/api/agents/crypto-paper-trade/route.ts`
+**Schedule:** `kairos-crypto-paper-trade`, daily 14:30 UTC via Supabase pg_cron; cloud-delivered through the existing Vault-backed `kairos_call_agent` bridge after the US research crypto_basket slot
+**LLM:** None
+
+A deliberately small, separate sibling to PaperTrader — NOT a `market` branch inside it. PaperTrader's
+portfolio constructor, correlation shadow, capital rotation, and Kelly/genome sizing are calibrated on
+equity payoff/volatility distributions and keyed to `market:"us"|"india"` through library functions
+backed by market-CHECK-constrained tables (`trading_mandates`, `strategy_validation_automation`).
+Forking that router for a third book was a materially larger, riskier change than Stage 3 paper
+trading needs.
+
+**Inputs:** `agent_signals` WHERE `market='us'` AND `symbol` ∈ {BTC-USD, ETH-USD, SOL-USD} AND
+`direction='long'` AND `status='pending'`, fresher than 48h, `score_source='deterministic_v1'`.
+
+**Key behavior:**
+- Flat sizing only — no Kelly, no genome, no portfolio constructor. `min(33%, strategy_config.position_size_pct)` of the crypto pool's own NAV per name.
+- One position per coin (3 coins total) — no sector caps, no correlation shadow, no capital rotation.
+- Price = latest **exact preceding UTC completed** AV `DIGITAL_CURRENCY_DAILY` close (`lib/data/crypto-quotes.ts`) — the same source the signal was scored against, not a second unvetted feed. A late provider bar declines the entry rather than filling at stale data.
+- Static mandate (`CRYPTO_MANDATE` in the route): stop 15%, target 25%, and a 10-day *research-label horizon* stored with the fill. It is not an exit clock and cannot close a position. Not read from `trading_mandates` (CHECK-constrained to `us`/`india`).
+- Fills via the existing `execute_paper_fill` RPC with `p_market='crypto'` — the RPC is fully generic on market (verified by reading its SQL body), so no RPC change was needed.
+
+**Outputs:** `paper_positions`/`paper_trades` rows with `market='crypto'` — a pool kept out of every
+existing equity/India aggregate by construction (see §"Crypto paper pool isolation" below), not by an
+added filter.
+
+---
+
+### CryptoPositionMonitor — the crypto exit agent (Stage 3, 2026-09-16)
+
+**File:** `app/api/agents/crypto-position-monitor/route.ts`
+**Schedule:** `kairos-crypto-position-monitor`, daily 00:30 UTC via Supabase pg_cron; it evaluates only the immediately preceding, fully closed UTC candle
+**LLM:** None
+
+Mechanical exits only: daily-OHLC-aware stop / target. There is deliberately no time-stop: elapsed
+time alone is not evidence that a crypto thesis failed. No trailing stop, no partial profit, no
+benchmark comparison (no crypto analog to VOO/^NSEI) — a deliberately smaller sibling to
+PositionMonitor's 1200+ lines of equity/India-specific logic, same rationale as CryptoPaperTrader
+above.
+
+**Inputs:** All open `paper_positions` WHERE `market='crypto'`; the latest exact preceding UTC
+AV daily OHLC candle per coin. A late/missing bar fails closed rather than using an older bar.
+
+**Outputs:** Closes via the existing `execute_paper_exit` RPC (also fully generic on market); writes one
+`paper_performance` row per crypto session date (idempotent) as the canonical EOD snapshot for this
+book, mirroring PositionMonitor's role for `us`/`india`.
+
+---
+
+#### Crypto paper pool isolation (Stage 3 schema note)
+
+`paper_portfolio`/`paper_positions`/`paper_trades`/`paper_performance` carry a THIRD `market` value,
+`'crypto'` — none of the 4 tables have a CHECK constraint on `market` (verified), so this required no
+constraint change. Every existing consumer of these tables filters `market IN ('us','india')`
+explicitly (verified by repo-wide grep — no reader selects across all markets unfiltered), so a
+`'crypto'` row is invisible to every existing equity/India NAV, P&L, learning, or benchmark computation
+without touching that code. This is scoped to the paper-execution ledger only — `decision_journal`'s
+`market` CHECK also had to widen (the `execute_paper_exit` RPC writes a `decision_journal` row on every
+close using the position's own market) — and `lib/market-controls.ts`'s `Mkt` type/`norm()` helper,
+which previously coerced any non-`"india"` value to `"us"` (a crypto kill-switch trip would otherwise
+have disabled US equity trading). Scoring/research keeps crypto tagged `market='us'` +
+`instrument_family='crypto'` (`lib/scoring/instrument-taxonomy.ts`) — unchanged; the 30+ tables whose
+`market` CHECK the original feature doc left at `('us','india')` for the scoring/session layer were
+never touched. Migration: `supabase/migrations/20260916020000_crypto_paper_pool.sql`.
 
 ---
 

@@ -157,22 +157,92 @@ function RangeBar({ low, high, current, target, cur }: { low: number; high: numb
   );
 }
 
+interface CryptoOverviewData {
+  sessionCount: number;
+  latestEvidenceAt: string | null;
+  technicalScore: number | null;
+  realYieldChange20obsPp: number | null;
+  dollarChange20obsIndexPoints: number | null;
+  analystScore: number | null;
+  direction: string | null;
+  rationale: string | null;
+  signalStatus: string | null;
+}
+
+// Crypto has no P/E, margin, ROE, or analyst coverage — this renders the same
+// technical+macro(+sentiment) composite the Trading page's Crypto Watch panel
+// shows, but as a per-coin breakdown (mirrors the equity fundamentals card's
+// role: "why was this scored the way it was"). See FEATURE_ARCHITECTURE.md §2.3.
+function CryptoOverview({ symbol }: { symbol: string }) {
+  const [data, setData] = useState<CryptoOverviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/charts/crypto-overview?symbol=${symbol}`)
+      .then(r => r.json())
+      .then(d => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+        {Array.from({ length: 4 }).map((_, i) => <SkeletonBox key={i} />)}
+      </div>
+    );
+  }
+  if (!data) return <div style={{ color: T.muted, fontSize: "13px", padding: "12px 0" }}>Crypto evidence unavailable for {symbol}.</div>;
+
+  const scoreColor = data.analystScore != null
+    ? (data.analystScore >= 70 ? T.green : data.analystScore >= 50 ? T.amber : T.red)
+    : T.muted;
+  const techColor = data.technicalScore != null
+    ? (data.technicalScore >= 60 ? T.green : data.technicalScore >= 40 ? T.amber : T.red)
+    : T.muted;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div style={{ fontSize: "11px", color: T.textSub }}>
+        Crypto composite: technical + macro (+ sentiment when available) — no fundamentals dimension exists for this asset class.
+      </div>
+      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+        <StatBox label="Analyst Score" value={data.analystScore != null ? String(data.analystScore) : "—"} color={scoreColor} />
+        <StatBox label="Direction" value={data.direction ? data.direction.toUpperCase() : "—"} color={data.direction === "long" ? T.green : T.muted} />
+        <StatBox label="Technical Score" value={data.technicalScore != null ? data.technicalScore.toFixed(1) : "—"} color={techColor} />
+        <StatBox label="Real Yield Δ20obs (pp)" value={data.realYieldChange20obsPp != null ? `${data.realYieldChange20obsPp >= 0 ? "+" : ""}${data.realYieldChange20obsPp.toFixed(2)}` : "—"} />
+        <StatBox label="DXY Δ20obs" value={data.dollarChange20obsIndexPoints != null ? `${data.dollarChange20obsIndexPoints >= 0 ? "+" : ""}${data.dollarChange20obsIndexPoints.toFixed(2)}` : "—"} />
+        <StatBox label="Evidence Sessions" value={String(data.sessionCount)} />
+      </div>
+      {data.rationale && (
+        <div style={{ fontSize: "12px", color: T.textSub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px" }}>
+          {data.rationale}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // `market` comes from the symbol's own .NS/.BO suffix (resolved by the symbol
 // page), not the global switcher — a .NS name's fundamentals are ₹ regardless of
 // which market the user is currently browsing.
-export default function SymbolFundamentals({ symbol, currentPrice, market = "us" }: { symbol: string; currentPrice?: number; market?: Market }) {
+export default function SymbolFundamentals({ symbol, currentPrice, market = "us", isCrypto }: { symbol: string; currentPrice?: number; market?: Market; isCrypto?: boolean }) {
   const cur = CURRENCY[market] ?? "$";
   const [data, setData] = useState<FundamentalsData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (isCrypto) { setLoading(false); return; }
     setLoading(true);
     fetch(`/api/charts/symbol-overview?symbol=${symbol}`)
       .then(r => r.json())
       .then(d => setData(d))
       .catch(() => setData({ error: "fetch failed" }))
       .finally(() => setLoading(false));
-  }, [symbol]);
+  }, [symbol, isCrypto]);
+
+  if (isCrypto) return <CryptoOverview symbol={symbol} />;
 
   if (loading) {
     return (

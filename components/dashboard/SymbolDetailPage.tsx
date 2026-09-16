@@ -543,9 +543,9 @@ function ChatTab({ symbol }: { symbol: string }) {
 import { useRole } from "@/lib/auth/use-role";
 
 export default function SymbolDetailPage({
-  symbol, market, signals, trades,
+  symbol, market, signals, trades, isCrypto,
 }: {
-  symbol: string; market?: "us" | "india"; signals: any[]; trades: any[];
+  symbol: string; market?: "us" | "india"; signals: any[]; trades: any[]; isCrypto?: boolean;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("chart");
@@ -609,7 +609,7 @@ export default function SymbolDetailPage({
         <button style={tabStyle(tab === "signals")} onClick={() => setTab("signals")}>
           Signals {signals.length > 0 ? `(${signals.length})` : ""}
         </button>
-        <button style={tabStyle(tab === "options")} onClick={() => setTab("options")}>Options</button>
+        {!isCrypto && <button style={tabStyle(tab === "options")} onClick={() => setTab("options")}>Options</button>}
         <button style={tabStyle(tab === "chat")} onClick={() => setTab("chat")}>AI Chat</button>
         <button style={tabStyle(tab === "peers")} onClick={() => setTab("peers")}>Peers</button>
       </div>
@@ -618,7 +618,7 @@ export default function SymbolDetailPage({
       {tab === "chart" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <TradingViewChart symbol={symbol} height={520} />
-          <SymbolFundamentals symbol={symbol} market={market} />
+          <SymbolFundamentals symbol={symbol} market={market} isCrypto={isCrypto} />
         </div>
       )}
 

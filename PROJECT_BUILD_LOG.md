@@ -274,7 +274,7 @@ Notes: Migrations `20260911193121`, `20260911194022`, and `20260911194147` were 
 
 - Current prototype routes use LLM-generated prices and direct weight mutation, which conflict with the approved architecture.
 - `PRD.md`, `WORK_LOG.md`, local migrations, and live connection state have diverged and must be reconciled during stabilization.
-- Auto-live execution, options, shorts, leverage, crypto, and intraday trading are outside approved scope.
+- Auto-live execution, options, shorts, leverage, and intraday trading are outside approved scope. Crypto is approved for PAPER trading only (Decision 72/77, 2026-09-16) — live crypto orders remain out of scope.
 
 ## Repeated Patterns
 

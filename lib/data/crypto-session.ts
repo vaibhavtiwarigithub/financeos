@@ -23,17 +23,16 @@ export function isCryptoFamily(family: InstrumentFamily): family is "crypto" {
 /**
  * The newest complete crypto "session date" as of `now`.
  *
- * Before midnight UTC: yesterday's UTC date (bar still accumulating).
- * At or after midnight UTC: today's UTC date (bar sealed at the cutoff).
+ * A candle labelled YYYY-MM-DD covers that entire UTC calendar day. It cannot
+ * be complete until the next midnight, so the newest usable daily candle is
+ * always the preceding UTC date. This deliberately excludes the in-progress
+ * bar even when a provider publishes a provisional value for it.
  *
  * Returns YYYY-MM-DD in UTC.
  */
 export function cryptoSessionDate(now: Date = new Date()): string {
-  const utcHour = now.getUTCHours();
   const d = new Date(now);
-  if (utcHour < CRYPTO_SESSION_CUTOFF_UTC) {
-    d.setUTCDate(d.getUTCDate() - 1);
-  }
+  d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
