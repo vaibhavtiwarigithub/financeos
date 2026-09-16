@@ -48,10 +48,23 @@ function installFetch(handler: (date: string) => Response) {
 const groupedDates = () =>
   calls.map((c) => c.match(/market\/stocks\/(\d{4}-\d{2}-\d{2})/)?.[1]).filter(Boolean);
 
+// GET is gated by requireViewerOrOwner, which reaches cookies() and throws
+// outside a request scope. These tests cover the provider/caching contract,
+// not authorization, so admit an owner.
+vi.mock("@/lib/auth/session-role", () => ({
+  requireViewerOrOwner: async () => ({ gate: null, role: "owner" }),
+  getSessionRole: async () => ({ role: "owner", userId: "test-owner", email: "owner@test" }),
+}));
+
 async function loadRoute() {
   vi.resetModules();
   return await import("@/app/api/markets/overview/route");
 }
+
+// Empty headers: verifyCronSecret finds no secret and falls through to the
+// mocked role gate above.
+const req = () =>
+  ({ url: "https://kairos.test/api/markets/overview", method: "GET", headers: new Headers() }) as any;
 
 /** Freeze the clock so "today" in ET is deterministic. 2026-07-17 00:02 ET. */
 function freezeAt(iso: string) {
@@ -82,7 +95,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
   it("reports XLK -2.24% (close 177.52 vs prior close 181.58), NOT the -0.83% intraday move", async () => {
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     const xlk = body.sectors.find((s: any) => s.symbol === "XLK");
     expect(xlk.status).toBe("ok");
@@ -104,7 +117,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
   it("keeps the correct SIGN when a session gaps down and rallies (XLRE)", async () => {
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     const xlre = body.sectors.find((s: any) => s.symbol === "XLRE");
     // Intraday 44.71 → 45.46 vs prior close 44.56 — both positive here, but the
@@ -117,7 +130,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
   it("serves ALL 15 symbols from 3 grouped requests here, and never one-per-symbol", async () => {
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     // The provider key allows ~5 requests/minute (verified live). The old route
     // fired 15 parallel per-symbol /prev calls, so ~10 failed into silent zeros.
@@ -138,7 +151,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(calls.length).toBe(2);
     expect(groupedDates()).toEqual(["2026-07-17", "2026-07-16"]);
@@ -148,7 +161,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
   it("puts every symbol on the SAME session", async () => {
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
     expect(body.sessionDate).toBe("2026-07-16");
     // Spot-check against the fixture's 07-16 closes.
     expect(body.indices.find((i: any) => i.symbol === "VIXY").price).toBe(20.56);
@@ -164,7 +177,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(groupedDates()).toEqual(["2026-07-17", "2026-07-16", "2026-07-15", "2026-07-14"]);
     expect(body.sessionDate).toBe("2026-07-15");
@@ -181,7 +194,7 @@ describe("/api/markets/overview — daily change is close vs PRIOR close", () =>
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     // 07-18 and 07-19 are the weekend and must never be requested.
     expect(groupedDates()).toEqual(["2026-07-20", "2026-07-17", "2026-07-16"]);
@@ -215,7 +228,7 @@ describe("/api/markets/overview — freshness is never overstated", () => {
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(body.sessionDate).toBe("2026-07-17");
     expect(body.sessionDate).not.toBe("2026-07-20"); // today — the exact lie
@@ -231,7 +244,7 @@ describe("/api/markets/overview — freshness is never overstated", () => {
     // The route must resolve one session for all 15 or mark the gap explicitly.
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     const all = [...body.indices, ...body.sectors];
     expect(all).toHaveLength(15);
@@ -249,7 +262,7 @@ describe("/api/markets/overview — freshness is never overstated", () => {
     // relying on that side effect.
     installFetch(happyPath);
     const { GET } = await loadRoute();
-    await GET();
+    await GET(req());
 
     expect(calls.length).toBeGreaterThan(0);
     for (const url of calls) {
@@ -264,14 +277,14 @@ describe("/api/markets/overview — freshness is never overstated", () => {
     installFetch(happyPath);
     const { GET } = await loadRoute();
 
-    const first = await (await GET()).json();
+    const first = await (await GET(req())).json();
     expect(first.fetchedAt).toBe(new Date().toISOString());
 
     // 4 minutes later the memo still serves the ORIGINAL payload. fetchedAt must
     // still report the original upstream fetch, so the UI shows the real age
     // rather than re-stamping itself fresh on every request.
     vi.advanceTimersByTime(4 * 60 * 1000);
-    const second = await (await GET()).json();
+    const second = await (await GET(req())).json();
     expect(second.fetchedAt).toBe(first.fetchedAt);
     expect(calls.length).toBe(3); // served from the memo — no new provider calls
   });
@@ -312,7 +325,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
       })
     );
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(body.degraded).toMatch(/rate limit/i);
     expect(body.stale).toBe(true);
@@ -326,7 +339,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
   it("surfaces an HTTP 429 rate limit as degraded", async () => {
     installFetch(() => res(429, { error: "rate limited" }));
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
     expect(body.degraded).toMatch(/rate limit/i);
   });
 
@@ -339,7 +352,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     const xle = body.sectors.find((s: any) => s.symbol === "XLE");
     expect(xle.status).toBe("unavailable");
@@ -361,7 +374,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     const xlk = body.sectors.find((s: any) => s.symbol === "XLK");
     expect(xlk.status).toBe("unavailable");
@@ -374,7 +387,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
     delete process.env.MASSIVE_API_KEY;
     installFetch(() => res(200, NO_SESSION));
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(body.degraded).toMatch(/MASSIVE_API_KEY/);
     expect(body.stale).toBe(true);
@@ -399,7 +412,7 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
       return res(200, NO_SESSION);
     });
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
     const xlu = body.sectors.find((s: any) => s.symbol === "XLU");
     expect(xlu.status).toBe("unavailable");
     expect(xlu.changePct).toBeNull();
@@ -413,11 +426,11 @@ describe("/api/markets/overview — unavailable must never render as flat", () =
     });
     const { GET } = await loadRoute();
 
-    const first = await (await GET()).json();
+    const first = await (await GET(req())).json();
     expect(first.degraded).toMatch(/rate limit/i);
 
     limited = false;
-    const second = await (await GET()).json();
+    const second = await (await GET(req())).json();
     expect(second.degraded).toBeUndefined();
     expect(second.sectors.find((s: any) => s.symbol === "XLK").changePct).toBe(-2.24);
   });

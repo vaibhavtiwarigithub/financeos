@@ -203,9 +203,12 @@ function tradeWhy(t: TradeRowLite, now: Date): TradeWhy {
 }
 
 /**
- * Newest decision wins. Sources, in order: trading-stage chain (grouped by
+ * Newest DECISION wins. Sources, in order: trading-stage chain (grouped by
  * signal_id), research event, decision_observations row, last paper trade.
  * A paper trade newer than every decision overrides (e.g. a later exit).
+ *
+ * A passing re-score is not a decision: it annotates the recorded trading
+ * verdict rather than replacing it, so a real rejection stays visible.
  */
 export function explainTradeWhy(input: {
   market: string;
@@ -274,10 +277,31 @@ export function explainTradeWhy(input: {
   const r = research[0];
   if (r && (!top || (r.signal_id !== top.signal_id && r.created_at > top.created_at))) {
     const rs = normaliseResearchReason(r);
-    decision = rs.passed
-      ? finish("no_trade", "Eligible", `${rs.text}, but the paper trader has not acted on this signal.`, r.created_at,
-          ["A signal that is not traded on its market day expires.", "Other gates (open positions, sector, cash) run only when the paper trader picks it up."], now)
-      : finish("no_trade", "No trade", rs.text, r.created_at, [], now);
+    // A later research row is a RE-SCORE, not a decision, so it must not erase a
+    // trading-stage verdict already recorded for this symbol. It was doing exactly
+    // that: 9,619 real rejections across 113 symbols in 30 days (prod, 2026-09-15)
+    // displayed as "the paper trader has not acted on this signal" because a newer
+    // re-score outranked them. CORDSCABLE.NS was deferred at the name cap (15 of
+    // 15) at 07:45 and re-scored at 15:08, and only the re-score was shown.
+    //
+    // A re-score that FAILS still supersedes: eligibility genuinely changed, and
+    // "score is now below threshold" is the true current reason. The annotation
+    // is bounded to the SAME day: a month-old rejection must not headline a fresh
+    // re-score, which is the existing stale-chain contract.
+    if (decision?.at && rs.passed && r.created_at.slice(0, 10) === decision.at.slice(0, 10)) {
+      decision = {
+        ...decision,
+        bullets: [
+          ...decision.bullets,
+          `Re-scored ${mmdd(r.created_at)}: ${rs.text}. The verdict above is from the paper-trader run that actually looked at it.`,
+        ],
+      };
+    } else {
+      decision = rs.passed
+        ? finish("no_trade", "Eligible", `${rs.text}, but the paper trader has not acted on this signal.`, r.created_at,
+            ["A signal that is not traded on its market day expires.", "Other gates (open positions, sector, cash) run only when the paper trader picks it up."], now)
+        : finish("no_trade", "No trade", rs.text, r.created_at, [], now);
+    }
   }
 
   if (!decision && input.observation) {

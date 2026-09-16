@@ -51,10 +51,17 @@ describe("the two viewer route classes stay distinct", () => {
     // own-data routes are allowed the provider call it forbids. So this list is
     // the containment: widening it must be a deliberate act that edits a test,
     // never a quiet addition. Each entry writes ONLY rows keyed to the caller.
+    // Widened 2026-09-15, deliberately: the per-user watchlist and the user
+    // notification/newsletter prefs. Both qualify on the same rule as the
+    // entries above — every row they read or write is keyed to the caller's
+    // own uid under RLS, and neither calls a provider. They carry none of the
+    // owner's book.
     expect(VIEWER_OWN_DATA_ROUTES.map((r) => r.prefix)).toEqual([
       "/api/broker-connections",
       "/api/user-risk/prefs",
       "/api/user-risk/unsubscribe",
+      "/api/user-watchlist",
+      "/api/user-prefs",
     ]);
   });
 

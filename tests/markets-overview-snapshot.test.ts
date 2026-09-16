@@ -54,10 +54,23 @@ function installFetch() {
   }));
 }
 
+// GET is gated by requireViewerOrOwner, which reaches cookies() and throws
+// outside a request scope. These tests cover the snapshot cadence contract,
+// not authorization, so admit an owner.
+vi.mock("@/lib/auth/session-role", () => ({
+  requireViewerOrOwner: async () => ({ gate: null, role: "owner" }),
+  getSessionRole: async () => ({ role: "owner", userId: "test-owner", email: "owner@test" }),
+}));
+
 async function loadRoute() {
   vi.resetModules();
   return await import("@/app/api/markets/overview/route");
 }
+
+// Empty headers: verifyCronSecret finds no secret and falls through to the
+// mocked role gate above.
+const req = () =>
+  ({ url: "https://kairos.test/api/markets/overview", method: "GET", headers: new Headers() }) as any;
 
 beforeEach(() => {
   vi.resetModules();
@@ -85,7 +98,7 @@ describe("/api/markets/overview — once per session, not once per 5 minutes", (
     };
     installFetch();
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(calls.length).toBe(0); // the whole point
     expect(body.sessionDate).toBe("2026-07-16");
@@ -99,7 +112,7 @@ describe("/api/markets/overview — once per session, not once per 5 minutes", (
     snapshotRow = { session_date: "2026-07-15", payload: { sessionDate: "2026-07-15" } };
     installFetch();
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(calls.length).toBeGreaterThan(0);
     expect(body.sessionDate).toBe("2026-07-16");
@@ -108,7 +121,7 @@ describe("/api/markets/overview — once per session, not once per 5 minutes", (
   it("stores the resolved session so the next request needs no provider", async () => {
     installFetch();
     const { GET } = await loadRoute();
-    await (await GET()).json();
+    await (await GET(req())).json();
 
     expect(upserts.length).toBe(1);
     expect(upserts[0].market).toBe("us");
@@ -127,7 +140,7 @@ describe("/api/markets/overview — once per session, not once per 5 minutes", (
       return res(429, { error: "rate limit" });
     }));
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
 
     expect(body.degraded).toBeTruthy();
     expect(upserts.length).toBe(0);
@@ -137,7 +150,7 @@ describe("/api/markets/overview — once per session, not once per 5 minutes", (
     snapshotRow = null;
     installFetch();
     const { GET } = await loadRoute();
-    const body = await (await GET()).json();
+    const body = await (await GET(req())).json();
     expect(body.sessionDate).toBe("2026-07-16");
     expect(body.unavailableCount).toBe(0);
   });

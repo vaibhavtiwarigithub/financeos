@@ -21,6 +21,25 @@ describe("explainTradeWhy — production reason shapes", () => {
     expect(w.bullets.join(" ")).toContain("Sized 7.4% of the portfolio (proposed 20%)");
   });
 
+  // Regression: CORDSCABLE.NS on 2026-09-15 was deferred at the name cap (15 of
+  // 15) by the 07:45 paper-trader run, then re-scored at 15:08. The re-score had
+  // a different signal_id, so it outranked and ERASED the real reason — the page
+  // showed "the paper trader has not acted on this signal". Production sweep:
+  // 9,619 rejections across 113 symbols hidden this way in 30 days.
+  it("a same-day passing re-score annotates, never erases, a recorded rejection", () => {
+    const w = explainTradeWhy({ market: "india", now, events: [
+      ev("research", "passed", "Eligible: long direction and score 74 >= threshold 60", "2026-09-15T05:38:40Z", null, "sig-am"),
+      ev("portfolio_constructor", "deferred", "max_open_names_rotation_candidate", "2026-09-15T07:45:08Z", { cap: 15, current: 15 }, "sig-am"),
+      ev("research", "passed", "Eligible: long direction and score 74 >= threshold 60", "2026-09-15T15:08:48Z", null, "sig-pm"),
+    ] });
+    expect(w.outcome).toBe("not_bought");
+    expect(w.headline).toContain("maximum number of open positions (15)");
+    expect(w.headline).not.toContain("has not acted on this signal");
+    const all = w.bullets.join(" ");
+    expect(all).toContain("Open positions: 15 of 15.");
+    expect(all).toContain("Re-scored 09-15");
+  });
+
   it("multi-clause constructor denial => not bought, binding limit + sector, shadow stages ignored", () => {
     const reason = "portfolio_constructor_denied: name_cap: 20.00% -> 12.00% (existing 0.00%, cap 12%); gross_cap: 12.00% -> 0.00% (book+candidates would be 92.00%, cap 80%); stacked_bet(Energy): 0.00% -> 0.00% (sector already holds 3 positions); denied: scaled size 0.000% below minimum viable 0.5%";
     const w = explainTradeWhy({ market: "us", now, events: [

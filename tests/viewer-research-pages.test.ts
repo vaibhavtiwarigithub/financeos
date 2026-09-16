@@ -7,15 +7,17 @@ const read = (p: string) => code(readFileSync(p, "utf8"));
 
 // 2026-09-15: viewers get Earnings Calendar, Research → Daily Funnel and Score
 // Tracker, and the Deep Dive page stops 403ing ("Failed to load CORDSCABLE.NS:
-// Forbidden"). Markets stays owner-only. Nothing a viewer reaches may call a
-// provider or the LLM, write, or expose the owner's live broker book.
+// Forbidden"). Markets is PARTIALLY open: the page plus the stored-only
+// overview/cached and quotes routes. The live overview route is not — it is the
+// provider path. Nothing a viewer reaches may call a provider or the LLM, write,
+// or expose the owner's live broker book.
 
 describe("the viewer allowlist admits exactly the approved surface", () => {
   it("pages", () => {
-    for (const p of ["/dashboard/research-journal", "/dashboard/calendar", "/dashboard/research/CORDSCABLE.NS"]) {
+    for (const p of ["/dashboard/research-journal", "/dashboard/calendar", "/dashboard/research/CORDSCABLE.NS", "/dashboard/markets"]) {
       expect(isViewerPage(p), p).toBe(true);
     }
-    for (const p of ["/dashboard/markets", "/dashboard/risk", "/dashboard/live-portfolio", "/dashboard/scanner"]) {
+    for (const p of ["/dashboard/risk", "/dashboard/live-portfolio", "/dashboard/scanner"]) {
       expect(isViewerPage(p), p).toBe(false);
     }
   });
@@ -38,7 +40,7 @@ describe("the viewer allowlist admits exactly the approved surface", () => {
       "/api/calendar/earnings",                 // Alpha Vantage refresh
       "/api/calendar/earnings-india",           // NSE / Yahoo live
       "/api/live-portfolio", "/api/watchlist", "/api/strategies/versions",
-      "/api/markets/overview", "/api/markets/quotes", "/api/agent-mind/macro-read",
+      "/api/markets/overview", "/api/agent-mind/macro-read",
       "/api/options/chain", "/api/charts/symbol-peers", "/api/markets/quote",
     ]) {
       expect(isViewerApiRoute(p, "GET"), p).toBe(false);
