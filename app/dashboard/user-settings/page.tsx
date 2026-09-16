@@ -66,7 +66,11 @@ export default function UserSettingsPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text, fontFamily: "Inter, sans-serif" }}>
-      <PageHeader title="My Settings" />
+      <PageHeader
+        title="My Settings"
+        whatItDoes="Email digest timing, newsletter opt-in, and broker connection link."
+        whatToLookFor={["Toggle the daily risk email on or off and pick your preferred send hour.", "Opt in or out of the newsletter.", "Connect your own broker account for personal risk analytics."]}
+      />
       <div style={{ maxWidth: "600px", margin: "0 auto", padding: "32px 16px", display: "flex", flexDirection: "column", gap: "24px" }}>
 
         {/* Daily Risk Email */}
