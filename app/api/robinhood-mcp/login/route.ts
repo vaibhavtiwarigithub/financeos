@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getOrRegisterClient, makePkce, makeState, buildAuthUrl, signOAuthCookie } from "@/lib/robinhood-mcp";
+import { saveOAuthState } from "@/lib/brokers/mcp-driver";
 
 export const dynamic = "force-dynamic";
 const COOKIE = "rh_mcp_oauth";
@@ -15,38 +16,21 @@ export async function GET(req: NextRequest) {
 
   const origin = req.nextUrl.origin;
   const redirectUri = `${origin}/api/robinhood-mcp/callback`;
-  const appBase = process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  const redirectUris = [...new Set(
-    [
-      redirectUri,
-      appBase ? `${appBase}/api/robinhood-mcp/callback` : null,
-      // ALWAYS register the localhost loopback, including in production.
-      //
-      // The original rule here excluded it in prod on the reasoning that a
-      // real-money client should not carry a plaintext-HTTP redirect. That
-      // inverted the actual constraint: Robinhood's agentic OAuth refuses to
-      // issue the grant to a remote https redirect at all — consent and phone
-      // 2FA both succeed and it then dead-ends at robinhood.com/oauth/error.
-      // The loopback is the ONLY redirect that can complete a grant, so
-      // omitting it in production made the connect flow unrecoverable there:
-      // if the cached client_id were ever cleared while pointed at prod, no
-      // re-registration could produce a usable client without a code change.
-      //
-      // The exclusion also bought nothing. Robinhood returns a generic shared
-      // client regardless of the redirect_uris sent, so the client registration
-      // is not what gates trust; the access token in the vault is.
-      "http://localhost:3000/api/robinhood-mcp/callback",
-    ].filter(Boolean) as string[]
-  )];
-
   const svc = createServiceClient();
-  const reg = await getOrRegisterClient(svc, redirectUris);
+  // Register exactly the callback used in this authorization request. Do not
+  // add localhost or an unrelated deployment alias: OAuth requires byte-for-
+  // byte redirect URI consistency across registration, authorize and exchange.
+  const reg = await getOrRegisterClient(svc, [redirectUri]);
   if (!reg.ok || !reg.clientId) {
     return NextResponse.redirect(`${origin}/dashboard/settings?tab=agents&rhmcp=register_failed`);
   }
 
   const { verifier, challenge } = makePkce();
   const state = makeState();
+  // Server-side state is primary. A phone-confirmed or cross-site OAuth return
+  // may not carry the browser cookie; without this row it looks like a CSRF
+  // failure even though the user approved the connection.
+  await saveOAuthState(svc, state, verifier, redirectUri, "robinhood");
   const res = NextResponse.redirect(buildAuthUrl({ clientId: reg.clientId, redirectUri, state, challenge }));
   res.cookies.set(COOKIE, signOAuthCookie({ state, verifier, exp: Date.now() + 10 * 60 * 1000 }), {
     // Scope to the OAuth routes only — the state+verifier cookie has no business

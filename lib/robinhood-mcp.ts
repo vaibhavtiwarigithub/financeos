@@ -24,6 +24,11 @@ const SCOPE = "internal";
 
 const VK = {
   clientId: "ROBINHOOD_MCP_CLIENT_ID",
+  // Binds a dynamically registered public client to the exact callback set
+  // it was registered for. A bare client id is insufficient evidence: an old
+  // client can authorize and then fail at Robinhood before our callback when
+  // the deployed origin has changed.
+  clientRedirects: "ROBINHOOD_MCP_CLIENT_REDIRECTS",
   access: "ROBINHOOD_MCP_ACCESS_TOKEN",
   refresh: "ROBINHOOD_MCP_REFRESH_TOKEN",
   expiry: "ROBINHOOD_MCP_TOKEN_EXPIRY",
@@ -107,16 +112,27 @@ export function verifyOAuthCookie(cookie: string | undefined): { state: string; 
 }
 
 // ── dynamic client registration (RFC 7591) ───────────────────────────────────
+function normalizedRedirectUris(redirectUris: string[]): string[] {
+  return [...new Set(redirectUris.map((uri) => uri.trim()).filter(Boolean))].sort();
+}
+
 export async function getOrRegisterClient(svc: any, redirectUris: string[]): Promise<{ ok: boolean; clientId?: string; error?: string }> {
+  const normalizedUris = normalizedRedirectUris(redirectUris);
+  if (normalizedUris.length === 0) return { ok: false, error: "no callback redirect URI" };
   const existing = await vaultGet(svc, VK.clientId);
-  if (existing) return { ok: true, clientId: existing };
+  const registeredRedirects = await vaultGet(svc, VK.clientRedirects);
+  const requestedKey = JSON.stringify(normalizedUris);
+  // Do not reuse a client whose callback set is unknown or mismatched. The
+  // legacy vault stored only its client id, which is exactly how an obsolete
+  // registration kept producing Robinhood's generic post-consent error.
+  if (existing && registeredRedirects === requestedKey) return { ok: true, clientId: existing };
   try {
     const res = await fetch(REGISTER_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
         client_name: "Kairos FinanceOS",
-        redirect_uris: redirectUris,
+        redirect_uris: normalizedUris,
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
@@ -127,6 +143,7 @@ export async function getOrRegisterClient(svc: any, redirectUris: string[]): Pro
     const json: any = await res.json().catch(() => ({}));
     if (!res.ok || !json?.client_id) return { ok: false, error: `registration failed (${res.status}): ${redactStr(JSON.stringify(json)).slice(0, 300)}` };
     await vaultSet(svc, VK.clientId, json.client_id);
+    await vaultSet(svc, VK.clientRedirects, requestedKey);
     return { ok: true, clientId: json.client_id };
   } catch (e) { return { ok: false, error: `registration error: ${String(e)}` }; }
 }
