@@ -642,10 +642,30 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
 
 ---
 
-### CryptoPaperTrader — the crypto entry agent (Stage 3, 2026-09-16)
+### CryptoResearchShadow — the crypto-native evidence collector (2026-09-17)
+
+**File:** `app/api/agents/crypto-research-shadow/route.ts`
+**Schedule:** `kairos-crypto-native-shadow`, daily 00:15 UTC via Supabase pg_cron
+**LLM:** None
+
+This dedicated 24/7 lane prevents BTC/ETH/SOL from competing with US equity holdings for the
+equity ResearchAgent's bounded wall-clock budget. It records the completed UTC daily bar, 20/50-day
+trend/structure/volatility evidence, and one explicit universe-membership refusal per coin.
+
+It does not write `agent_signals`, create a paper position, infer broker pair eligibility, or invent an
+executable spread from a candle close. Until a broker pair and fresh bid/ask contract is implemented,
+each shadow is deliberately refused with that exact reason. The refusal is successful evidence, not a
+failed trade.
+
+**Outputs:** one `crypto_universe_runs` header, three `crypto_universe_members` rows, and up to three
+idempotent `crypto_geometry_shadows` rows. These are owner-readable evidence only.
+
+---
+
+### CryptoPaperTrader — legacy paper-entry route (contained, 2026-09-17)
 
 **File:** `app/api/agents/crypto-paper-trade/route.ts`
-**Schedule:** `kairos-crypto-paper-trade`, daily 14:30 UTC via Supabase pg_cron; cloud-delivered through the existing Vault-backed `kairos_call_agent` bridge after the US research crypto_basket slot
+**Schedule:** `kairos-crypto-paper-trade`, weekdays 14:30 UTC via Supabase pg_cron; currently returns an explicit no-op
 **LLM:** None
 
 A deliberately small, separate sibling to PaperTrader — NOT a `market` branch inside it. PaperTrader's
@@ -655,8 +675,10 @@ backed by market-CHECK-constrained tables (`trading_mandates`, `strategy_validat
 Forking that router for a third book was a materially larger, riskier change than Stage 3 paper
 trading needs.
 
-**Inputs:** `agent_signals` WHERE `market='us'` AND `symbol` ∈ {BTC-USD, ETH-USD, SOL-USD} AND
-`direction='long'` AND `status='pending'`, fresher than 48h, `score_source='deterministic_v1'`.
+The old route was driven by equity-shaped `agent_signals`. It is now explicitly contained by
+`CRYPTO_NATIVE_PAPER_READY=false`: it cannot create a crypto fill until the native collector, broker
+pair/quote contract, and intraday paper lifecycle meet their approved gates. This avoids treating a
+stock composite and a daily candle close as a credible crypto execution signal.
 
 **Key behavior:**
 - Flat sizing only — no Kelly, no genome, no portfolio constructor. `min(33%, strategy_config.position_size_pct)` of the crypto pool's own NAV per name.
@@ -665,9 +687,8 @@ trading needs.
 - Static mandate (`CRYPTO_MANDATE` in the route): stop 15%, target 25%, and a 10-day *research-label horizon* stored with the fill. It is not an exit clock and cannot close a position. Not read from `trading_mandates` (CHECK-constrained to `us`/`india`).
 - Fills via the existing `execute_paper_fill` RPC with `p_market='crypto'` — the RPC is fully generic on market (verified by reading its SQL body), so no RPC change was needed.
 
-**Outputs:** `paper_positions`/`paper_trades` rows with `market='crypto'` — a pool kept out of every
-existing equity/India aggregate by construction (see §"Crypto paper pool isolation" below), not by an
-added filter.
+**Outputs:** an auditable skipped response. No `paper_positions` or `paper_trades` can be created by
+this legacy path while native execution evidence is incomplete.
 
 ---
 

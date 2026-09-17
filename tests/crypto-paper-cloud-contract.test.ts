@@ -32,4 +32,10 @@ describe("crypto paper Stage 3 cloud contract", () => {
     expect(entry).toContain("last.date !== cryptoSessionDate()");
     expect(monitor).toContain("candle.date !== cryptoSessionDate()");
   });
+
+  it("cannot create a crypto paper fill from the legacy equity-score ledger", () => {
+    const entry = read("app/api/agents/crypto-paper-trade/route.ts");
+    expect(entry).toContain("const CRYPTO_NATIVE_PAPER_READY = false");
+    expect(entry).toContain("crypto_native_paper_execution_evidence_pending");
+  });
 });

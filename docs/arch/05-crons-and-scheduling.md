@@ -1,4 +1,11 @@
 # Kairos — Crons & Scheduling
+> 2026-09-17: **`kairos-crypto-native-shadow` runs every day at 00:15 UTC** (migration
+> `20260917190000_crypto_native_shadow_collector.sql`). It calls `POST /api/agents/crypto-research-shadow`
+> after the completed UTC daily-bar boundary and before the crypto position monitor at 00:30 UTC. It is a
+> separate 24/7 evidence lane: it writes daily research and explicit broker-quote/pair refusals, never a
+> paper or live order. This exists because sending crypto through the US ResearchAgent allowed it to be
+> repeatedly deferred behind equity holdings while a run misleadingly reported success.
+>
 > 2026-09-16: **Crypto paper Stage 3 jobs are cloud-scheduled through Supabase pg_cron** (migration
 > `20260916020000_crypto_paper_pool.sql`, applied with the Stage 3 pool). `kairos-crypto-paper-trade`
 > calls `POST /api/agents/crypto-paper-trade` at 14:30 UTC daily; `kairos-crypto-position-monitor`

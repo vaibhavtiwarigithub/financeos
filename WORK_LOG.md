@@ -1,5 +1,7 @@
 # Work Log
 
+| Crypto paper-pipeline completion | Codex / GPT-5 | in_progress | 2026-09-17 | Repair crypto research starvation and misleading run accounting; wire the approved native evidence/shadow path needed to make the Crypto Markets page truthfully collect current data. Paper-only; no live crypto order path or fabricated fills. |
+
 | Robinhood OAuth working-path recovery | Codex / GPT-6 | completed | 2026-09-17 | Restored authorization through PKCE loopback helper: token bundle saved 17:55 UTC; deployed cloud collector refreshed all six equity accounts including Agentic 0660 at 17:57 UTC. Crypto onboarding read returns already_onboarded=true. No crypto disconnection or order needed. Added reusable helper, callback validation test, and evidence/runbook. Remote callback compatibility is supported by the comparison; prior token disappearance remains unexplained. |
 
 | Robinhood OAuth reconnection retry | Codex / GPT-5 | completed | 2026-09-17 | Restored and browser-tested the prior Kairos OAuth initiator. Robinhood displayed the authorized account-consent screen, accepted the fresh device approval, then failed at robinhood.com/oauth/error before the Kairos callback. No access, refresh, or expiry token was written; client registration and PKCE state remain present. |

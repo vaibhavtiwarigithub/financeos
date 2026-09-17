@@ -42,6 +42,11 @@ const MAX_OPEN_CRYPTO_NAMES = CRYPTO_SYMBOLS.size; // one per coin, 3 coins tota
 // No live bid/ask for AV daily candles — same fixed slip-fraction fallback
 // already used for India fills (lib/analytics/performance-metrics.MODELED_SLIP_FRACTION).
 const CRYPTO_SLIP_FRACTION = 0.001;
+// The legacy route consumes the equity-shaped agent_signals ledger. Native
+// crypto research now has its own evidence lane, but broker pair/quote and
+// intraday execution contracts are not yet present. Never let an equity score
+// become the first crypto paper fill merely because the old scheduler fires.
+const CRYPTO_NATIVE_PAPER_READY = false;
 
 export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
@@ -58,6 +63,12 @@ export async function POST(req: NextRequest) {
     }
     if (!(await isTradingEnabled(supabase, "crypto"))) {
       return NextResponse.json({ skipped: true, reason: "crypto trading disabled" });
+    }
+    if (!CRYPTO_NATIVE_PAPER_READY) {
+      return NextResponse.json({
+        skipped: true,
+        reason: "crypto_native_paper_execution_evidence_pending",
+      });
     }
     const ks = await checkKillSwitches(supabase, { market: "crypto", book: "paper" });
     if (!ks.safe) {

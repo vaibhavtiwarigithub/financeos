@@ -43,6 +43,8 @@ export default async function CryptoPage() {
   const realizedPnl = closed.reduce((sum: number, trade: any) => sum + Number(trade.realized_pnl ?? 0), 0);
   const latestBySymbol = new Map<string, any>();
   for (const signal of signals ?? []) if (!latestBySymbol.has(signal.symbol)) latestBySymbol.set(signal.symbol, signal);
+  const latestShadowBySymbol = new Map<string, any>();
+  for (const shadow of shadows ?? []) if (!latestShadowBySymbol.has(shadow.symbol)) latestShadowBySymbol.set(shadow.symbol, shadow);
   const readiness = latestUniverse ? "Capability evidence recorded" : "Capability discovery not connected";
 
   return <div style={{ maxWidth: 1400 }}>
@@ -82,12 +84,18 @@ export default async function CryptoPage() {
           )}
         </div>
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 18 }}>
-          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Latest deterministic research</h2>
+          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Latest crypto-native research</h2>
           {symbols.map(symbol => {
+            const shadow = latestShadowBySymbol.get(symbol);
             const signal = latestBySymbol.get(symbol);
-            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{signal ? `${signal.direction ?? "—"} · ${dateTime(signal.created_at)}` : "No current signal"}</span><span style={{ color: signal && Number(signal.analyst_score) >= 60 ? T.green : T.muted, fontWeight: 700 }}>{signal ? Number(signal.analyst_score).toFixed(1) : "—"}</span></div>;
+            const score = shadow?.geometry?.score;
+            const evidence = shadow?.geometry?.evidence;
+            const detail = shadow
+              ? `${shadow.decision}${shadow.refusal_reason ? ` · ${shadow.refusal_reason}` : ""} · ${dateTime(shadow.observed_at)}`
+              : signal ? `Legacy only · ${signal.direction ?? "—"} · ${dateTime(signal.created_at)}` : "Awaiting native daily collector";
+            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{detail}{evidence?.sessionDate ? ` · session ${evidence.sessionDate}` : ""}</span><span style={{ color: score?.ok ? T.green : T.amber, fontWeight: 700 }}>{score?.ok ? Number(score.score).toFixed(1) : "Refused"}</span></div>;
           })}
-          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Legacy signals are displayed for provenance only. They cannot authorize future crypto execution once crypto-native scoring is enabled.</p>
+          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Daily research is recorded independently of equities. A refusal for a missing broker pair or executable quote is expected evidence, never a failed or skipped trade.</p>
         </div>
       </section>
 
