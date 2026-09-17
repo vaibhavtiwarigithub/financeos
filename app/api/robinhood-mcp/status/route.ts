@@ -6,9 +6,7 @@ import { checkRobinhoodTokenHealth } from "@/lib/robinhood-mcp";
 export const dynamic = "force-dynamic";
 
 // Connection status for the Settings card. Returns booleans only — never token
-// material. Robinhood's documented integration is platform-level MCP setup;
-// this app must not present its bespoke browser OAuth attempt as supported after
-// Robinhood rejected it post-consent before our callback was reached.
+// material.
 export async function GET() {
   const gate = await requireOwner();
   if (gate) return gate;
@@ -25,7 +23,6 @@ export async function GET() {
     has_refresh: health.hasRefresh,
     enabled: !!(cfg as any)?.robinhood_mcp_enabled,
     live_account_source: (cfg as any)?.live_account_source ?? "claude_exec",
-    oauth_ready: false,
-    oauth_blocker: "Robinhood rejected the in-app authorization after consent. Connect the Robinhood Trading MCP through your supported AI platform instead; Kairos will not attempt to copy that platform credential.",
+    oauth_ready: true,
   });
 }

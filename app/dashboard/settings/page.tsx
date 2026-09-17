@@ -145,7 +145,7 @@ export default function SettingsPage() {
 
   // Robinhood MCP scaffolding (OAuth connect is not yet wired — blocked on
   // Robinhood's real endpoints). Account allowlist + snapshot-source switch.
-  const [rhMcp, setRhMcp] = useState<{ connected: boolean; stale?: boolean; expires_at?: string | null; has_refresh?: boolean; enabled: boolean; live_account_source: string; oauth_ready: boolean; oauth_blocker?: string } | null>(null);
+  const [rhMcp, setRhMcp] = useState<{ connected: boolean; stale?: boolean; expires_at?: string | null; has_refresh?: boolean; enabled: boolean; live_account_source: string; oauth_ready: boolean } | null>(null);
   const [brokerAccounts, setBrokerAccounts] = useState<{ broker: string; market: string; account_number: string; label?: string; role: string }[]>([]);
   const [activeAccountUs, setActiveAccountUs] = useState<string>("");
   const [activeAccountIndia, setActiveAccountIndia] = useState<string>("");
@@ -273,7 +273,6 @@ export default function SettingsPage() {
         state_mismatch: "OAuth state check failed — please retry the connect.",
         exchange_failed: "Token exchange failed — please retry.",
         no_client: "No registered client — retry the connect.",
-        platform_connect_required: "In-app Robinhood connection is unavailable. Use the supported platform-level Robinhood Trading MCP setup instead.",
       };
       setRhMcpMsg(rmap[rh] ?? "");
       setTab("trading");
@@ -978,12 +977,6 @@ export default function SettingsPage() {
               <div style={{ fontSize: "13px", color: rhMcpMsg.toLowerCase().includes("fail") ? T.red : T.green, background: T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px" }}>{rhMcpMsg}</div>
             )}
 
-            {!rhMcp?.oauth_ready && rhMcp?.oauth_blocker && (
-              <div style={{ fontSize: "12px", color: T.yellow, background: T.surface, border: `1px solid ${T.yellow}55`, borderRadius: "8px", padding: "10px 14px", marginBottom: "14px", lineHeight: 1.55 }}>
-                <strong>In-app connection paused.</strong> {rhMcp.oauth_blocker} Robinhood&apos;s documented setup is: add <code>https://agent.robinhood.com/mcp/trading</code> as a Streamable HTTP MCP server in your AI platform&apos;s settings.
-              </div>
-            )}
-
             {/* Connection status + connect/disconnect */}
             <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" as const, marginBottom: "18px" }}>
               <div style={{ fontSize: "13px" }}>
@@ -1002,11 +995,11 @@ export default function SettingsPage() {
               </div>
               <button
                 disabled={!rhMcp?.oauth_ready}
-                title={rhMcp?.oauth_ready ? "" : "In-app Robinhood OAuth is paused after Robinhood rejected the post-consent authorization."}
+                title={rhMcp?.oauth_ready ? "" : "OAuth connect flow not yet configured — blocked on Robinhood's OAuth endpoints"}
                 onClick={() => { if (rhMcp?.oauth_ready) window.location.href = "/api/robinhood-mcp/login"; }}
                 style={{ background: rhMcp?.oauth_ready ? T.accent : T.surface, border: `1px solid ${T.border}`, borderRadius: "8px", color: rhMcp?.oauth_ready ? "#fff" : T.muted, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: rhMcp?.oauth_ready ? "pointer" : "not-allowed" }}
               >
-                {rhMcp?.oauth_ready ? "Connect" : "Connect in your AI platform"}
+                {rhMcp?.oauth_ready ? "Connect" : "Connect (coming soon)"}
               </button>
               {rhMcp?.connected && (
                 <button onClick={disconnectRhMcp} style={{ background: "transparent", border: `1px solid ${T.red}`, borderRadius: "8px", color: T.red, padding: "8px 18px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>Disconnect</button>

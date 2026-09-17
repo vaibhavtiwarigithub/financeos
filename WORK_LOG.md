@@ -1,5 +1,7 @@
 # Work Log
 
+| Robinhood OAuth reconnection retry | Codex / GPT-5 | in_progress | 2026-09-17 | Restoring the previously working Kairos OAuth initiator so the owner can retry authorization after confirming the Robinhood account-access grant. |
+
 | Owner navigation de-duplication + Robinhood OAuth containment | Codex / GPT-5 | completed | 2026-09-17 | Removed viewer-only broker/preferences and private-risk links from the owner sidebar; direct owner visits redirect to Settings → Trading. Browser reproduction confirmed Robinhood accepts the PKCE request/consent screen but errors before the Kairos callback. The in-app initiator now fails closed with supported platform-level MCP guidance rather than sending the owner through a broken authorization. |
 
 | Price-cache write acknowledgement and freshness recovery | Codex / GPT-5 | completed | 2026-09-17 | Fixed two prewarm false-success paths: rejected canonical `price_cache` upserts now throw, and a provider series must reach the exact expected market session before it is written/counts as fresh. The generic candle resolver now applies the same freshness contract to its Alpha Vantage fallback. Regression tests cover both failures. |
