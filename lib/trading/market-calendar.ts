@@ -7,6 +7,8 @@
 //      freshness check (no clean Kite "is-open" API). Broker order rejection is
 //      the ultimate backstop for any halt this layer misses.
 
+import { avCachedFetch } from "@/lib/av-cache";
+
 // ── Static holiday calendars (defense/fallback layer) ────────────────────────
 // A holiday on a weekday would otherwise pass weekday+hours. UPDATE ANNUALLY or
 // rely on the live status source (US) / quote-freshness (India) above it.
@@ -181,9 +183,15 @@ async function fetchMarketStatuses(): Promise<Record<string, MktStatus>> {
   const byMarket: Record<string, MktStatus> = { us: "unknown", india: "unknown" };
   if (!key) return byMarket;
   try {
-    const res = await fetch(`https://www.alphavantage.co/query?function=MARKET_STATUS&apikey=${key}`, { cache: "no-store" });
-    if (!res.ok) return byMarket;
-    const body = await res.json();
+    // This is an order-safety corroborator, not the authority to place an
+    // order. Reserve at most one AV call per provider day; the local session,
+    // quote-freshness checks and broker rejection remain the safety layers.
+    const body = await avCachedFetch(
+      "MARKET_STATUS",
+      `https://www.alphavantage.co/query?function=MARKET_STATUS&apikey=${key}`,
+      8_000,
+    );
+    if (!body) return byMarket;
     const markets: any[] = Array.isArray(body?.markets) ? body.markets : [];
     for (const mkt of ["us", "india"] as const) {
       const row = markets.find((m) => String(m?.market_type ?? "").toLowerCase() === "equity" &&

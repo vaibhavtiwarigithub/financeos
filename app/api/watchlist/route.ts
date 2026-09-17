@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +10,11 @@ async function fetchCompanyName(symbol: string): Promise<string | null> {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   if (!apiKey) return null;
   try {
-    const res = await fetch(
-      `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${apiKey}`
+    const data = await avCachedFetch(
+      `OVERVIEW:${symbol}`,
+      `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${apiKey}`,
+      8000, undefined, 14,
     );
-    const data = await res.json();
     return data.Name || null;
   } catch {
     return null;

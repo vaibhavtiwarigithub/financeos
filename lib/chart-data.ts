@@ -199,7 +199,7 @@ async function writePriceCacheRows(
 export async function prewarmPriceCache(
   symbols: string[],
   supabase: any,
-  opts?: { deadlineAt?: number },
+  opts: { market: "us" | "india"; deadlineAt?: number },
 ): Promise<{ ok: number; failed: number; skipped: number; alreadyFresh: number }> {
   const normalized = [...new Set(symbols.map((symbol) => symbol.toUpperCase()).filter(Boolean))];
   if (normalized.length === 0) {
@@ -223,7 +223,7 @@ export async function prewarmPriceCache(
   // Downstream cost of the old rule, from the monitor's own detail: "In Aug 2026
   // this produced 15 fills off quotes as-of Jul 22, up to 19.6% off the real
   // price."
-  const freshCutoff = expectedNewestSession("us", new Date());
+  const freshCutoff = expectedNewestSession(opts.market, new Date());
   let pending = normalized;
   let alreadyFresh = 0;
   try {

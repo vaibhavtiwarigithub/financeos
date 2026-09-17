@@ -114,6 +114,10 @@ export interface ProviderFetchOpts {
   // values a mapping fix has changed; a cache hit would defeat the whole point.
   // Still budget-guarded and still writes the fresh payload back to av_cache.
   forceRefresh?: boolean;
+  // Alpha Vantage's earnings calendar is CSV, not JSON. Keep its response in
+  // the same cache and hard budget guard instead of leaving a raw fetch escape
+  // hatch elsewhere in the application.
+  responseType?: "json" | "text";
 }
 
 // Cache key MUST be globally unique across providers. Callers pass a
@@ -154,8 +158,13 @@ export async function providerCachedFetch(
   // 2. Budget guard (only for providers with a daily cap). Reserve-before-spend.
   if (cfg.dailyBudget != null) {
     try {
-      const { data: count, error } = await svc.rpc("provider_budget_increment", { p_provider: provider, p_date: todayStr });
+      const { data: reservation, error } = await svc.rpc("provider_budget_reserve", {
+        p_provider: provider, p_date: todayStr, p_limit: cfg.dailyBudget,
+      });
       if (error) return lastCached(svc, cacheKey, maxStaleAgeDays); // fail closed
+      const row = Array.isArray(reservation) ? reservation[0] : reservation;
+      const granted = row?.granted === true;
+      const count = Number(row?.calls ?? 0);
       // Early warning at 80% of the daily cap — see pressure BEFORE it exhausts,
       // so a provider trending toward its ceiling is actionable (add a free
       // alternate) rather than a surprise at 100%. Auto-clears at UTC midnight.
@@ -172,7 +181,7 @@ export async function providerCachedFetch(
           autoExpireAt: nextUtcMidnight(),
         }, svc);
       }
-      if (typeof count === "number" && count > cfg.dailyBudget) {
+      if (!granted) {
         await reportIssue({
           issueKey: `provider-budget-exhausted:${provider}`,
           // INFO not WARN: exhausting a free-tier daily cap is expected on this
@@ -180,7 +189,7 @@ export async function providerCachedFetch(
           // Not an incident; auto-clears at UTC midnight when the quota resets.
           severity: "info", category: "data",
           title: `${cfg.label} daily budget exhausted`,
-          detail: `${count} fetch attempts reached the ${cfg.dailyBudget}-call ${cfg.label} free-tier budget today. Real calls remain capped at ${cfg.dailyBudget}; later attempts serve cached payloads until 00:00 UTC. Scoring inputs may be staler than usual.`,
+          detail: `${count}/${cfg.dailyBudget} real calls have been reserved today. Later requests serve cache until 00:00 UTC; denied requests are not counted as provider calls. Scoring inputs may be staler than usual.`,
           autoExpireAt: nextUtcMidnight(),
         }, svc);
         await resolveIssue(`provider-budget-pressure:${provider}`, svc);
@@ -212,7 +221,7 @@ export async function providerCachedFetch(
   let failure = "";
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: opts.headers });
-    if (res.ok) json = await res.json();
+    if (res.ok) json = opts.responseType === "text" ? await res.text() : await res.json();
     else failure = `HTTP ${res.status}`;
   } catch (e) {
     json = null;

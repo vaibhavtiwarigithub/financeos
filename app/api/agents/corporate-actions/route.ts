@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -35,12 +36,12 @@ export async function POST(req: NextRequest) {
 
   for (const symbol of symbols) {
     try {
-      // Fetch splits and dividends in parallel
+      // Corporate actions change slowly.  These used to be thirty raw AV calls
+      // per run, outside the shared budget.  Cached, hard-reserved requests
+      // keep the sync best-effort without starving research.
       const [splitsRes, dividendsRes] = await Promise.all([
-        fetch(`https://www.alphavantage.co/query?function=SPLITS&symbol=${symbol}&apikey=${avKey}`)
-          .then(r => r.json()).catch(() => null),
-        fetch(`https://www.alphavantage.co/query?function=DIVIDENDS&symbol=${symbol}&apikey=${avKey}`)
-          .then(r => r.json()).catch(() => null),
+        avCachedFetch(`SPLITS:${symbol}`, `https://www.alphavantage.co/query?function=SPLITS&symbol=${symbol}&apikey=${avKey}`, 10000, undefined, 30),
+        avCachedFetch(`DIVIDENDS:${symbol}`, `https://www.alphavantage.co/query?function=DIVIDENDS&symbol=${symbol}&apikey=${avKey}`, 10000, undefined, 30),
       ]);
 
       let splitsAdded = 0;

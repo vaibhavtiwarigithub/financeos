@@ -20,3 +20,20 @@ export async function avCachedFetch(
 ): Promise<any | null> {
   return providerCachedFetch("alpha_vantage", cacheKey, url, { timeoutMs, headers, maxAgeDays, maxStaleAgeDays });
 }
+
+// Alpha Vantage has one CSV endpoint (EARNINGS_CALENDAR).  It must use the
+// exact same cache and hard reservation as JSON endpoints; raw CSV fetches
+// were an unmetered path around the 25-call budget.
+export async function avCachedTextFetch(
+  cacheKey: string,
+  url: string,
+  timeoutMs = 6000,
+  maxAgeDays?: number,
+  maxStaleAgeDays?: number,
+): Promise<string | null> {
+  const data = await providerCachedFetch("alpha_vantage", cacheKey, url, {
+    timeoutMs, maxAgeDays, maxStaleAgeDays, responseType: "text",
+    isThrottled: (body) => typeof body === "string" && /"(?:Note|Information)"\s*:/i.test(body),
+  });
+  return typeof data === "string" ? data : null;
+}

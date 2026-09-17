@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
   const deadlineAt = startedAt + maxDuration * 1000 - RESPONSE_RESERVE_MS;
   let result;
   try {
-    result = await prewarmPriceCache(symbols, svc, { deadlineAt });
+    result = await prewarmPriceCache(symbols, svc, { market, deadlineAt });
   } catch (e: any) {
     return NextResponse.json(
       { market, symbols: symbols.length, error: `prewarm threw: ${e?.message ?? String(e)}` },

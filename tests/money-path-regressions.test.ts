@@ -42,9 +42,10 @@ describe("research holding and market contracts", () => {
     expect(monitor).not.toContain('sc.direction !== "long"');
   });
 
-  it("reserves existing worker capacity for candidates without raising concurrency", () => {
+  it("gives the main run's worker capacity to held positions; discovery has its own run", () => {
     const cron = readFileSync("app/api/agents/research/cron/route.ts", "utf8");
-    expect(cron).toContain('i === 0 && candidateIndexes.length > 0 ? "candidate" : "holding"');
+    expect(cron).toContain('() => discoveryOnly ? "candidate" : "holding"');
+    expect(cron).toContain("Discovery has its OWN market-scoped run after this one");
     expect(cron).toContain("const workerCount = Math.min(concurrency, entries.length)");
     expect(cron).toContain("workerPreferences.map(worker)");
   });

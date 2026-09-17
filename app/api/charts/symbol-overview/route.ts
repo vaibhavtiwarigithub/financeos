@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { avCachedFetch } from "@/lib/av-cache";
 export const revalidate = 3600; // 1h cache
 
 export async function GET(req: NextRequest) {
@@ -8,11 +9,12 @@ export async function GET(req: NextRequest) {
   const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "no key" }, { status: 500 });
 
-  const res = await fetch(
+  const data = await avCachedFetch(
+    `OVERVIEW:${symbol}`,
     `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${apiKey}`,
-    { next: { revalidate: 3600 } }
+    8000, undefined, 14,
   );
-  const data = await res.json();
+  if (!data) return NextResponse.json({ error: "provider_unavailable" }, { status: 503 });
 
   // Detect Alpha Vantage rate limit responses
   if (data.Note || data.Information) {

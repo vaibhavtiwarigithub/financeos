@@ -5,6 +5,7 @@
 
 import { callLLM } from "@/lib/llm-router";
 import { createServiceClient } from "@/lib/supabase/service";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export interface ResearchResult {
   symbol: string;
@@ -58,11 +59,9 @@ async function fetchCompanyOverview(
   apiKey: string
 ): Promise<CompanyOverviewResponse> {
   const url = `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`Alpha Vantage COMPANY_OVERVIEW ${resp.status} for ${symbol}`);
-  }
-  return (await resp.json()) as CompanyOverviewResponse;
+  const data = await avCachedFetch(`OVERVIEW:${symbol}`, url, 10_000, undefined, 14);
+  if (!data) throw new Error(`Alpha Vantage COMPANY_OVERVIEW unavailable for ${symbol}`);
+  return data as CompanyOverviewResponse;
 }
 
 async function fetchRSI(
@@ -70,11 +69,9 @@ async function fetchRSI(
   apiKey: string
 ): Promise<number | null> {
   const url = `https://www.alphavantage.co/query?function=RSI&symbol=${encodeURIComponent(symbol)}&interval=daily&time_period=14&series_type=close&apikey=${apiKey}`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`Alpha Vantage RSI ${resp.status} for ${symbol}`);
-  }
-  const data = (await resp.json()) as RSIResponse;
+  const fetched = await avCachedFetch(`RSI:${symbol}`, url, 10_000);
+  if (!fetched) throw new Error(`Alpha Vantage RSI unavailable for ${symbol}`);
+  const data = fetched as RSIResponse;
   const series = data["Technical Analysis: RSI"];
   if (!series) return null;
   const latestDate = Object.keys(series)[0];

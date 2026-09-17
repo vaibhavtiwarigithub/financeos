@@ -1160,10 +1160,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         market: (marketScope ?? "us") as "us" | "india",
         eligible: positions.length,
         succeeded: closed.length + updated.length,
-        // A stale/one-session score-exit hold is an evaluated, intentional
-        // no-action decision — not a lost position. It must reconcile here or
-        // System Health raises a false critical for every such safety hold.
-        expectedSkip: staleScoresHeld.length,
+        // A stale/one-session score-exit hold is still fully evaluated and
+        // marked by this monitor, so it belongs in succeeded (via `updated`),
+        // not in a second mutually-exclusive accounting bucket. Counting it in
+        // both was the source of the false critical accounting alert.
+        expectedSkip: 0,
         deferred: 0,
         unavailable: unpricedPositionIds.size,
         // Positions whose evaluation threw (e.g. a denied exit). Isolated above
@@ -1171,7 +1172,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         // a critical on any failed unit regardless of how many succeeded, which
         // is right — a position whose stop went unchecked is not a healthy run.
         failed: exitFailures.length,
-        skipReasons: staleScoresHeld.length ? { score_exit_safety_hold: staleScoresHeld.length } : undefined,
+        skipReasons: undefined,
         businessMetrics: {
           closed: closed.length,
           stops_updated: updated.length,

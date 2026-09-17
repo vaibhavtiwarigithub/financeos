@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const revalidate = 21600; // 6h cache
 
@@ -11,11 +12,12 @@ export async function GET(req: NextRequest) {
   if (!avKey || !fdKey) return NextResponse.json({ error: "API keys missing" }, { status: 500 });
 
   // 1. Get sector + industry from Alpha Vantage COMPANY_OVERVIEW
-  const ovRes = await fetch(
+  const ov = await avCachedFetch(
+    `OVERVIEW:${symbol}`,
     `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${avKey}`,
-    { next: { revalidate: 21600 } }
+    8000, undefined, 14,
   );
-  const ov = await ovRes.json();
+  if (!ov) return NextResponse.json({ error: "provider_unavailable", peers: [] }, { status: 503 });
   const sector = ov.Sector as string | undefined;
   const industry = ov.Industry as string | undefined;
   if (!sector) return NextResponse.json({ error: "Could not identify sector", peers: [] });
@@ -57,11 +59,11 @@ export async function GET(req: NextRequest) {
   // 3. Fetch COMPANY_OVERVIEW for each peer in parallel
   const peerData = await Promise.allSettled(
     allSymbols.map(async (sym) => {
-      const r = await fetch(
+      const d = await avCachedFetch(
+        `OVERVIEW:${sym}`,
         `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${sym}&apikey=${avKey}`,
-        { next: { revalidate: 21600 } }
+        8000, undefined, 14,
       );
-      const d = await r.json();
       if (!d.Symbol) return null;
       return {
         symbol: sym,

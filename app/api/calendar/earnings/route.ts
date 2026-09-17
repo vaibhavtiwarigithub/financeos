@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { avCachedTextFetch } from "@/lib/av-cache";
 
 // Hardcoded watchlist — also accepts ?symbols=AAPL,MSFT override
 const DEFAULT_WATCHLIST = [
@@ -28,9 +29,8 @@ async function fetchFromAlphaVantage(symbols: string[]): Promise<EarningsEvent[]
   // horizon=3month covers next 90 days of earnings
   const url = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=${key}`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (!res.ok) return [];
-    const csv = await res.text();
+    const csv = await avCachedTextFetch("EARNINGS_CALENDAR:3month", url, 12000, 1, 7);
+    if (!csv) return [];
     const lines = csv.trim().split("\n");
     if (lines.length < 2) return [];
 

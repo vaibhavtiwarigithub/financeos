@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +14,11 @@ export async function GET(req: NextRequest) {
   try {
     // Fetch realtime options from Alpha Vantage
     const url = `https://www.alphavantage.co/query?function=REALTIME_OPTIONS&symbol=${symbol}&apikey=${apiKey}`;
-    const res = await fetch(url, { next: { revalidate: 300 } });
-    const raw = await res.json();
+    // Free-tier AV cannot sustain a per-view "realtime" options chain. A
+    // same-day cached chain is honest about the data tier and cannot bypass the
+    // provider's shared hard reservation.
+    const raw = await avCachedFetch(`REALTIME_OPTIONS:${symbol}`, url, 10000);
+    if (!raw) return NextResponse.json({ error: "provider_unavailable" }, { status: 503 });
 
     if (raw["Error Message"] || raw["Note"]) {
       return NextResponse.json({ error: raw["Error Message"] ?? raw["Note"] ?? "API limit" }, { status: 429 });

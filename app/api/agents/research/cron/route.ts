@@ -393,12 +393,14 @@ export async function POST(req: NextRequest) {
     }
   }
   const workerCount = Math.min(concurrency, entries.length);
-  // Reserve one existing worker for candidates so a large live+paper book cannot
-  // consume every wall-clock slot. This does not raise concurrency or provider
-  // quota; remaining workers still prioritize the staleness-ordered holdings.
+  // Discovery has its OWN market-scoped run after this one. The main run is the
+  // only daily re-score for held positions and therefore must give every worker
+  // to holdings first. Reserving a candidate worker here left 15 owned symbols
+  // unscored on 2026-09-16 even though the separate discovery run completed.
+  // Workers still fall through to candidates once all holdings have started.
   const workerPreferences: Array<"holding" | "candidate"> = Array.from(
     { length: workerCount },
-    (_, i) => i === 0 && candidateIndexes.length > 0 ? "candidate" : "holding",
+    () => discoveryOnly ? "candidate" : "holding",
   );
   await Promise.all(workerPreferences.map(worker));
 
@@ -766,7 +768,7 @@ export async function POST(req: NextRequest) {
 
   let prewarm = { ok: 0, failed: 0, skipped: prewarmSymbols.length, alreadyFresh: 0 };
   try {
-    prewarm = await prewarmPriceCache(prewarmSymbols, supabase, { deadlineAt: prewarmDeadline });
+    prewarm = await prewarmPriceCache(prewarmSymbols, supabase, { market: prewarmMarket, deadlineAt: prewarmDeadline });
   } catch (e: any) {
     prewarm = { ok: 0, failed: prewarmSymbols.length, skipped: 0, alreadyFresh: 0 };
     console.error(`[research:${runTag}] price_cache prewarm threw:`, e?.message ?? e);

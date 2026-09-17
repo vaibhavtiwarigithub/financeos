@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -50,8 +51,8 @@ function addDays(dateStr: string, n: number): string {
 async function fetchDailySeries(symbol: string, avKey: string): Promise<Record<string, number>> {
   try {
     const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${encodeURIComponent(symbol)}&outputsize=full&apikey=${avKey}`;
-    const r = await fetch(url, { next: { revalidate: 3600 } });
-    const json = await r.json();
+    const json = await avCachedFetch(`DAILY_ADJ_FULL:${symbol}`, url, 12000);
+    if (!json) return {};
     const series = json["Time Series (Daily)"];
     if (!series) return {};
     const result: Record<string, number> = {};

@@ -1,5 +1,7 @@
 # Work Log
 
+| Alpha Vantage hard quota enforcement + System Health remediation | Codex / GPT-5 | completed | 2026-09-17 | Shipped atomic daily reservations, removed app/lib raw Alpha Vantage fetch bypasses, corrected India prewarm's market calendar and PositionMonitor accounting, and reassigned main-run capacity to held positions. Production RPC was verified at its hard cap; unresolved alerts now represent live data/schedule conditions or owner credential actions. |
+
 | Benchmark collector reliability + viewer lifecycle hardening | Codex / GPT-5 | completed | 2026-09-15 | Shipped in ab1781b2/434c7bab/0f743a7b: market-local benchmark completion/retry/run accounting/freshness alert semantics; separate US/India run records; non-failure health notices; viewer resend/revoke/delete controls with branded delivery and owner-boundary audit. |
 
 | Crypto paper-trading Stage 3 audit, completion, and cloud scheduling | Codex / GPT-5 | completed | 2026-09-16 | Shipped crypto paper-only Stage 3: isolated $10k crypto ledger, BTC/ETH/SOL research/display, completed-UTC-candle pricing, OHLC-aware conservative stop/target exits with no time stop, two active Vault-backed Supabase pg_cron jobs, and regression contracts. Production migration/version/constraints/pool/jobs verified before deployment. |

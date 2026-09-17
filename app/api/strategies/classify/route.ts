@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { avCachedFetch } from "@/lib/av-cache";
 
 interface StrategyTemplate {
   id: string;
@@ -41,34 +42,33 @@ function scoreStrategy(rules: Record<string, unknown>, data: SymbolData): number
 }
 
 async function fetchSymbolData(symbol: string, apiKey: string): Promise<SymbolData> {
-  const [overviewRes, rsiRes] = await Promise.all([
-    fetch(`https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${apiKey}`),
-    fetch(`https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${apiKey}`),
+  const [overview, rsiData] = await Promise.all([
+    avCachedFetch(`OVERVIEW:${symbol}`, `https://www.alphavantage.co/query?function=COMPANY_OVERVIEW&symbol=${symbol}&apikey=${apiKey}`, 8000, undefined, 14),
+    avCachedFetch(`RSI:${symbol}`, `https://www.alphavantage.co/query?function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close&apikey=${apiKey}`, 8000),
   ]);
-
-  const overview = await overviewRes.json() as Record<string, string>;
-  const rsiData = await rsiRes.json() as Record<string, unknown>;
+  const overviewRecord = (overview ?? {}) as Record<string, string>;
+  const rsiRecord = (rsiData ?? {}) as Record<string, unknown>;
 
   // Parse RSI
   let rsi = 50;
-  const rsiSeries = rsiData["Technical Analysis: RSI"] as Record<string, Record<string, string>> | undefined;
+  const rsiSeries = rsiRecord["Technical Analysis: RSI"] as Record<string, Record<string, string>> | undefined;
   if (rsiSeries) {
     const latestDate = Object.keys(rsiSeries)[0];
     if (latestDate) rsi = parseFloat(rsiSeries[latestDate]["RSI"] ?? "50") || 50;
   }
 
   // Parse overview fields
-  const high52w = parseFloat(overview["52WeekHigh"] ?? "0") || 0;
-  const ma50 = parseFloat(overview["50DayMovingAverage"] ?? "0") || 0;
-  const ma200 = parseFloat(overview["200DayMovingAverage"] ?? "0") || 0;
+  const high52w = parseFloat(overviewRecord["52WeekHigh"] ?? "0") || 0;
+  const ma50 = parseFloat(overviewRecord["50DayMovingAverage"] ?? "0") || 0;
+  const ma200 = parseFloat(overviewRecord["200DayMovingAverage"] ?? "0") || 0;
   const price = ma50 > 0 ? ma50 : 0; // Use 50DMA as price proxy
-  const peRatio = parseFloat(overview["PERatio"] ?? "0") || null;
-  const pegRatio = parseFloat(overview["PEGRatio"] ?? "0") || null;
-  const roe = parseFloat(overview["ReturnOnEquityTTM"] ?? "0") * 100 || 0;
-  const opCashflow = parseFloat(overview["OperatingCashflowTTM"] ?? "0") || 0;
-  const marketCap = parseFloat(overview["MarketCapitalization"] ?? "0") || 0;
+  const peRatio = parseFloat(overviewRecord["PERatio"] ?? "0") || null;
+  const pegRatio = parseFloat(overviewRecord["PEGRatio"] ?? "0") || null;
+  const roe = parseFloat(overviewRecord["ReturnOnEquityTTM"] ?? "0") * 100 || 0;
+  const opCashflow = parseFloat(overviewRecord["OperatingCashflowTTM"] ?? "0") || 0;
+  const marketCap = parseFloat(overviewRecord["MarketCapitalization"] ?? "0") || 0;
   const fcfYield = marketCap > 0 ? (opCashflow / marketCap) * 100 : 0;
-  const revenueGrowthYOY = parseFloat(overview["QuarterlyRevenueGrowthYOY"] ?? "0") * 100 || 0;
+  const revenueGrowthYOY = parseFloat(overviewRecord["QuarterlyRevenueGrowthYOY"] ?? "0") * 100 || 0;
   const pctFrom52wHigh = high52w > 0 && price > 0 ? ((high52w - price) / high52w) * 100 : 100;
 
   return {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { avCachedFetch } from "@/lib/av-cache";
 
 export const revalidate = 1800;
 
@@ -14,9 +15,8 @@ interface Holding {
 
 async function getEtfHoldings(sector: string, avKey: string): Promise<{ symbol: string; weightPct: number }[]> {
   const url = `https://www.alphavantage.co/query?function=ETF_PROFILE&symbol=${sector}&apikey=${avKey}`;
-  const res = await fetch(url, { next: { revalidate: 86400 } });
-  if (!res.ok) throw new Error(`ETF_PROFILE fetch failed: ${res.status}`);
-  const data = await res.json();
+  const data = await avCachedFetch(`ETF_PROFILE:${sector}`, url, 10000, undefined, 30);
+  if (!data) throw new Error("ETF_PROFILE unavailable");
 
   if (!data.holdings || !Array.isArray(data.holdings)) {
     throw new Error("No holdings in ETF_PROFILE response");

@@ -12,6 +12,7 @@ import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { EXCLUDE_SHADOW_FILTER } from "@/lib/trading/proposal-status";
 import { isPaused } from "@/lib/market-controls";
+import { avCachedTextFetch } from "@/lib/av-cache";
 import {
   annotateEarningsRisk,
   earningsRiskVerdict,
@@ -274,10 +275,14 @@ async function buildProposals(supabase: any, isCron: boolean) {
       // Earnings blackout: skip if earnings within ±2 days (±5 for safety)
       if (avKey) {
         try {
-          const ecUrl = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&symbol=${encodeURIComponent(signal.symbol)}&horizon=3month&apikey=${avKey}`;
-          const ecRes = await fetch(ecUrl, { signal: AbortSignal.timeout(5000) });
-          if (ecRes.ok) {
-            const csv = await ecRes.text();
+          // One cached calendar covers every candidate. Per-symbol raw CSV
+          // requests previously bypassed the shared AV budget.
+          const csv = await avCachedTextFetch(
+            "EARNINGS_CALENDAR:3month",
+            `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=${avKey}`,
+            5000, 1, 7,
+          );
+          if (csv) {
             const today = new Date();
             const inBlackout = csv.split("\n").slice(1).some(row => {
               const cols = row.split(",");

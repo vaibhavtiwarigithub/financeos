@@ -97,7 +97,7 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     // deadlineAt in the past: the freshness probe still runs, the fetch loop
     // exits immediately, so this isolates the cutoff without hitting providers.
-    await prewarmPriceCache(["AAPL"], supabase, { deadlineAt: Date.now() - 1 });
+    await prewarmPriceCache(["AAPL"], supabase, { market: "us", deadlineAt: Date.now() - 1 });
 
     expect(capturedGte).not.toBeNull();
     // The cutoff must be a market session, never a rolling 96h calendar date.
@@ -110,5 +110,24 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
     if (expectedNewestSession("us", new Date()) !== calendar96h) {
       expect(capturedGte).not.toBe(calendar96h);
     }
+  });
+
+  it("does not silently use the US calendar for an India prewarm", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    let capturedGte: string | null = null;
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = (_col: string, value: string) => { capturedGte = value; return chain; };
+        chain.limit = async () => ({ data: [], error: null });
+        chain.upsert = async () => ({ error: null });
+        return chain;
+      },
+    };
+
+    await prewarmPriceCache(["RELIANCE.NS"], supabase, { market: "india", deadlineAt: Date.now() - 1 });
+    expect(capturedGte).toBe(expectedNewestSession("india", new Date()));
   });
 });
