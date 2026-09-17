@@ -4,6 +4,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { inspectRobinhoodMcpCapabilities } from "@/lib/robinhood-mcp";
 import { assessCryptoBrokerCapability } from "@/lib/brokers/crypto-capability";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -51,6 +52,18 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await supabase.from("crypto_universe_runs").insert(row).select("id").single();
   if (error) return NextResponse.json({ error: "crypto capability evidence write failed" }, { status: 500 });
+  if (row.status === "done") {
+    await resolveIssue("crypto-capability-probe", supabase);
+  } else {
+    await reportIssue({
+      issueKey: "crypto-capability-probe",
+      severity: row.status === "error" ? "warn" : "info",
+      category: "broker",
+      title: "Crypto broker capability is not ready for execution",
+      detail: row.error ?? "The broker contract is incomplete. Crypto remains paper/shadow-only; no live order path is enabled.",
+      autoExpireAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+    }, supabase);
+  }
   return NextResponse.json({ id: data?.id, observedAt, ...row });
 }
 
