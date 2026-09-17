@@ -33,9 +33,13 @@ export default function UserSettingsPage() {
 
   useEffect(() => {
     if (role === null) router.replace("/login");
+    // This page is the private viewer plane. The owner configures the shared
+    // broker/trading integration in Settings → Trading; keeping an owner-facing
+    // copy creates two apparently equivalent connection flows.
+    if (role === "owner") router.replace("/dashboard/settings?tab=trading");
   }, [role, router]);
 
-  if (role === undefined) {
+  if (role === undefined || role === "owner") {
     return (
       <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: T.muted, fontSize: "14px" }}>Loading…</div>

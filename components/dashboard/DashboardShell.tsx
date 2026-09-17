@@ -59,7 +59,7 @@ const NAV_SECTIONS = [
       // in VIEWER_PAGES. Without this entry a viewer had no link to it at all: the
       // owner's "Risk Analytics" above is filtered out for them, so the only way in
       // was typing the URL.
-      { href: "/dashboard/my-risk",        label: "My Risk Analytics", icon: "◑", hint: "Risk for YOUR connected broker account — needs a broker connected under My Preferences", alertCat: "" },
+      { href: "/dashboard/my-risk",        label: "My Risk Analytics", icon: "◑", hint: "Risk for YOUR connected broker account — needs a broker connected under My Preferences", alertCat: "", viewerOnly: true },
     ],
   },
   {
@@ -98,7 +98,10 @@ const NAV_SECTIONS = [
     hint: "",
     items: [
       { href: "/dashboard/settings",              label: "Settings",   icon: "⚙", hint: "Account, trading, AI & keys, automation, data, and system controls", alertCat: "" },
-      { href: "/dashboard/user-settings",         label: "My Preferences", icon: "⊕", hint: "Connect your own broker account for personal risk analytics", alertCat: "" },
+      // Private broker preferences belong only to invited viewers. The owner
+      // configures the system broker in Settings → Trading; showing both links
+      // duplicated one concept and implied they were interchangeable.
+      { href: "/dashboard/user-settings",         label: "My Preferences", icon: "⊕", hint: "Connect your own broker account for personal risk analytics", alertCat: "", viewerOnly: true },
       { href: "/dashboard/admin/access",           label: "Access & Permissions", icon: "🔑", hint: "Who can sign in, what each role may view or edit, invite and revoke viewers", alertCat: "" },
     ],
   },
@@ -274,7 +277,12 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           ),
         }))
         .filter((section) => section.items.length > 0)
-    : NAV_SECTIONS;
+    : NAV_SECTIONS
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) => !item.viewerOnly),
+        }))
+        .filter((section) => section.items.length > 0);
   // Close the drawer automatically on navigation — otherwise it stays open
   // over the newly-loaded page.
   useEffect(() => { setMobileNavOpen(false); }, [pathname]);
