@@ -1,14 +1,28 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
+
+const h = vi.hoisted(() => ({
+  fetchUsCandles: vi.fn(async () => ({ candles: [], source: "yahoo" })),
+  priceCacheUpsert: vi.fn(async () => ({ error: null })),
+}));
 
 // Stub the provider edges so prewarmPriceCache can run without network.
 vi.mock("@/lib/data/candles", () => ({
-  fetchUsCandles: vi.fn(async () => ({ candles: [], source: "yahoo" })),
+  fetchUsCandles: h.fetchUsCandles,
   fetchMassiveCandles: vi.fn(async () => []),
   fetchEodhdCandles: vi.fn(async () => []),
   fetchTwelveDataCandles: vi.fn(async () => []),
 }));
-vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({ from: () => ({}) }) }));
+vi.mock("@/lib/supabase/service", () => ({
+  createServiceClient: () => ({ from: () => ({ upsert: h.priceCacheUpsert }) }),
+}));
+
+beforeEach(() => {
+  h.fetchUsCandles.mockReset();
+  h.fetchUsCandles.mockResolvedValue({ candles: [], source: "yahoo" });
+  h.priceCacheUpsert.mockReset();
+  h.priceCacheUpsert.mockResolvedValue({ error: null });
+});
 
 // Pins the freshness rule the price-cache prewarm uses to decide which symbols
 // to re-fetch.
@@ -129,5 +143,29 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     await prewarmPriceCache(["RELIANCE.NS"], supabase, { market: "india", deadlineAt: Date.now() - 1 });
     expect(capturedGte).toBe(expectedNewestSession("india", new Date()));
+  });
+
+  it("reports a rejected canonical write as failed rather than claiming a fresh cache", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    h.fetchUsCandles.mockResolvedValue({
+      source: "yahoo",
+      candles: [{ date: "2026-09-16", open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+    });
+    h.priceCacheUpsert.mockResolvedValue({ error: { message: "constraint rejected write" } });
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = async () => ({ data: [], error: null });
+        return chain;
+      },
+    };
+
+    const result = await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
+
+    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0 });
+    expect(h.priceCacheUpsert).toHaveBeenCalledOnce();
   });
 });

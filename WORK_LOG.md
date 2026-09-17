@@ -1,5 +1,7 @@
 # Work Log
 
+| Price-cache write acknowledgement and freshness recovery | Codex / GPT-5 | completed | 2026-09-17 | Fixed the prewarm false-success defect: rejected canonical `price_cache` upserts now throw and are recorded as failed rather than falsely fresh. Added a regression test; deployment is required before stale symbols can be retried correctly. |
+
 | Alpha Vantage hard quota enforcement + System Health remediation | Codex / GPT-5 | completed | 2026-09-17 | Shipped atomic daily reservations, removed app/lib raw Alpha Vantage fetch bypasses, corrected India prewarm's market calendar and PositionMonitor accounting, and reassigned main-run capacity to held positions. Production RPC was verified at its hard cap; unresolved alerts now represent live data/schedule conditions or owner credential actions. |
 
 | Benchmark collector reliability + viewer lifecycle hardening | Codex / GPT-5 | completed | 2026-09-15 | Shipped in ab1781b2/434c7bab/0f743a7b: market-local benchmark completion/retry/run accounting/freshness alert semantics; separate US/India run records; non-failure health notices; viewer resend/revoke/delete controls with branded delivery and owner-boundary audit. |

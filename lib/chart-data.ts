@@ -174,7 +174,15 @@ async function writePriceCacheRows(
     provenance_version: PROVENANCE_VERSION,
   }));
   for (let i = 0; i < rows.length; i += 200) {
-    await supabase.from("price_cache").upsert(rows.slice(i, i + 200), { onConflict: "symbol,date" });
+    const { error } = await supabase
+      .from("price_cache")
+      .upsert(rows.slice(i, i + 200), { onConflict: "symbol,date" });
+    // Supabase reports database failures in the result rather than rejecting.
+    // Prewarm is a freshness producer: treating a rejected upsert as success
+    // turns a real stale-price failure into a false green run.
+    if (error) {
+      throw new Error(`price_cache upsert failed for ${symbol}: ${error.message}`);
+    }
   }
 }
 
