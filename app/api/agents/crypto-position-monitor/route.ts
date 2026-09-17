@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
       const highest = Math.max(Number(pos.highest_price ?? candle.close), candle.high);
       await supabase
         .from("paper_positions")
-        .update({ current_price: close, highest_price: highest, updated_at: new Date().toISOString() })
+        .update({ current_price: candle.close, highest_price: highest, updated_at: new Date().toISOString() })
         .eq("id", pos.id);
       updated.push({ symbol, price: candle.close });
     }

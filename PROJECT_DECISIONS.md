@@ -1774,3 +1774,22 @@ exists). No benchmark comparison for the crypto book.
 
 **Architecture:** `features/robinhood-crypto/FEATURE_ARCHITECTURE.md`. Migration:
 `supabase/migrations/20260916020000_crypto_paper_pool.sql`.
+
+## Decision 78: Crypto-Native Research and Execution Foundation (2026-09-16)
+
+**Status:** Approved for Stages A–D by Vaibhav. Live execution remains disabled.
+
+**Decision.** Build a crypto-native research, measurement, paper-execution and
+benchmark foundation rather than extending the US equity genome. Crypto is
+broker-universe-scoped, deterministic, execution-cost-aware, and evaluated in
+its own strategy/evidence namespace. The stock/ETF score, benchmark, sizing,
+time-stop, and fixed 15%/25% geometry are not evidence for crypto and must not
+be copied into the new lane.
+
+**Live boundary.** No implementation in this decision may submit a crypto order.
+Stage E can build preview/tap-approve plumbing behind `CRYPTO_LIVE_ENABLED=false`
+only after broker capability, quote integrity, and protective-order reconciliation
+drills pass. Autonomous crypto execution (Stage F) remains a separate decision
+and explicit owner switch.
+
+**Architecture:** `features/crypto-native-platform/FEATURE_ARCHITECTURE.md`.

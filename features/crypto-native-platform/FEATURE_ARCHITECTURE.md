@@ -1,8 +1,8 @@
 # Crypto-Native Research, Execution, and Learning
 
-> Status: **DRAFT — architecture only.** This does not authorize a live crypto
-> order. It supersedes no current paper-trading behavior until its individual
-> stages pass their gates.
+> Status: **Approved for Stages A–D by Vaibhav, 2026-09-16.** This does not
+> authorize a live crypto order. Stage E remains preview/tap-approve only and
+> Stage F requires a separate owner decision after its gates pass.
 >
 > Owner intent: Kairos should research, paper-trade, evaluate, and eventually
 > execute crypto with the same rigor as equities — while treating crypto as a

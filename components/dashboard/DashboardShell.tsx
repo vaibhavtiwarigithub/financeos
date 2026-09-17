@@ -44,6 +44,7 @@ const NAV_SECTIONS = [
     items: [
       { href: "/dashboard",              label: "Home",             icon: "⌂", hint: "Portfolio snapshot + today's signals", alertCat: "home" },
       { href: "/dashboard/markets",      label: "Markets",          icon: "◉", hint: "Indices, sectors, VIX proxy",         alertCat: "market" },
+      { href: "/dashboard/crypto",       label: "Crypto Markets",   icon: "₿", hint: "Crypto research, paper evidence, and live-readiness", alertCat: "market" },
     ],
   },
   {
