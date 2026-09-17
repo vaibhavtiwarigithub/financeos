@@ -150,8 +150,8 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
     h.fetchUsCandles.mockResolvedValue({
       source: "yahoo",
       candles: [{ date: "2026-09-16", open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
-    });
-    h.priceCacheUpsert.mockResolvedValue({ error: { message: "constraint rejected write" } });
+    } as any);
+    h.priceCacheUpsert.mockResolvedValue({ error: { message: "constraint rejected write" } } as any);
     const supabase = {
       from: () => {
         const chain: any = {};
@@ -167,5 +167,28 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0 });
     expect(h.priceCacheUpsert).toHaveBeenCalledOnce();
+  });
+
+  it("does not claim success when a provider returns bars older than the required session", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    h.fetchUsCandles.mockResolvedValue({
+      source: "yahoo",
+      candles: [{ date: "2000-01-03", open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+    } as any);
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = async () => ({ data: [], error: null });
+        return chain;
+      },
+    };
+
+    const result = await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
+
+    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0 });
+    expect(h.priceCacheUpsert).not.toHaveBeenCalled();
   });
 });

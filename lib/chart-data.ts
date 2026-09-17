@@ -271,7 +271,18 @@ export async function prewarmPriceCache(
           () => fetchAvDailyCandles(sym),
           1,
         );
-        if (resolved.length === 0) return;
+        // `fetchUsCandles` rejects materially stale feeds, but its recency
+        // guard deliberately allows a long weekend. Prewarm has a stronger
+        // contract: it is successful only when the exact market session the
+        // quote gate expects is present. Otherwise an old source response can
+        // be written and counted as a successful freshness repair.
+        const newest = resolved.reduce<string | null>(
+          (latest, candle) => !latest || candle.date > latest ? candle.date : latest,
+          null,
+        );
+        if (!newest || newest < freshCutoff) {
+          throw new Error(`provider bars for ${sym} end at ${newest ?? "none"}; expected ${freshCutoff}`);
+        }
         await writePriceCacheRows(sym, resolved.map(c => ({
           date: c.date,
           open: Number(c.open) || 0,

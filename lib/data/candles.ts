@@ -129,5 +129,9 @@ export async function fetchUsCandles(
   const t = await fetchTwelveDataCandles(symbol);
   if (accept(t)) return { candles: t, source: "twelvedata" };
   const av = await avFallback().catch(() => [] as Candle[]);
-  return { candles: av, source: av.length ? "alpha_vantage" : "unavailable" };
+  // The final fallback is still a provider response, not an exemption from
+  // the same coverage/recency contract. Returning a stale AV series here used
+  // to let callers overwrite a healthy cache with old bars.
+  if (accept(av)) return { candles: av, source: "alpha_vantage" };
+  return { candles: [], source: "unavailable" };
 }

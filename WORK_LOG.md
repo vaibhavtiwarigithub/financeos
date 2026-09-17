@@ -1,6 +1,6 @@
 # Work Log
 
-| Price-cache write acknowledgement and freshness recovery | Codex / GPT-5 | completed | 2026-09-17 | Fixed the prewarm false-success defect: rejected canonical `price_cache` upserts now throw and are recorded as failed rather than falsely fresh. Added a regression test; deployment is required before stale symbols can be retried correctly. |
+| Price-cache write acknowledgement and freshness recovery | Codex / GPT-5 | completed | 2026-09-17 | Fixed two prewarm false-success paths: rejected canonical `price_cache` upserts now throw, and a provider series must reach the exact expected market session before it is written/counts as fresh. The generic candle resolver now applies the same freshness contract to its Alpha Vantage fallback. Regression tests cover both failures. |
 
 | Alpha Vantage hard quota enforcement + System Health remediation | Codex / GPT-5 | completed | 2026-09-17 | Shipped atomic daily reservations, removed app/lib raw Alpha Vantage fetch bypasses, corrected India prewarm's market calendar and PositionMonitor accounting, and reassigned main-run capacity to held positions. Production RPC was verified at its hard cap; unresolved alerts now represent live data/schedule conditions or owner credential actions. |
 
