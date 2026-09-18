@@ -31,6 +31,8 @@ describe("paper capital-rotation hardening", () => {
         },
         scoreThreshold: 60,
         minHoldingDays: 2,
+        p1Readiness: null,
+        p1EvaluatedAt: null,
       });
       expect(result).toEqual({ executed: false, reason: "deployment_disabled" });
     } finally {
@@ -65,8 +67,66 @@ describe("paper capital-rotation hardening", () => {
         },
         scoreThreshold: 60,
         minHoldingDays: 2,
+        p1Readiness: null,
+        p1EvaluatedAt: null,
       });
       expect(result).toEqual({ executed: false, reason: "score_only_execution_disabled" });
+    } finally {
+      if (previous == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+      else process.env.CAPITAL_ROTATION_PAPER_ENABLED = previous;
+    }
+  });
+
+  it("requires the completed P1 evidence contract before reading the book", async () => {
+    const previous = process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+    process.env.CAPITAL_ROTATION_PAPER_ENABLED = "true";
+    const chain: any = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: async () => ({
+        data: { rotation_paper_execute_enabled: true, rotation_allow_score_only_paper: true },
+        error: null,
+      }),
+    };
+    try {
+      const result = await executeCapitalRotationPaper({ from: () => chain }, {
+        runId: "00000000-0000-0000-0000-000000000001",
+        rotationsThisRun: 0,
+        candidate: {
+          signalId: "00000000-0000-0000-0000-000000000002",
+          symbol: "TEST", market: "us", currency: "USD", score: 90,
+          targetNotional: 1000, cash: 0, qty: 10, fillPrice: 100,
+          priceTarget: 120, stopLoss: 90, sector: "Technology",
+        },
+        scoreThreshold: 60,
+        minHoldingDays: 2,
+        p1Readiness: { ready: false, blockers: ["score_to_return_mapping_unvalidated"], netExpectedEdgePct: null, turnoverAfterPct: null },
+        p1EvaluatedAt: new Date().toISOString(),
+      });
+      expect(result).toEqual({ executed: false, reason: "p1_evidence_not_ready:score_to_return_mapping_unvalidated" });
+    } finally {
+      if (previous == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+      else process.env.CAPITAL_ROTATION_PAPER_ENABLED = previous;
+    }
+  });
+
+  it("refuses a stale P1 contract even when every reported gate passed", async () => {
+    const previous = process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+    process.env.CAPITAL_ROTATION_PAPER_ENABLED = "true";
+    const chain: any = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: async () => ({ data: { rotation_paper_execute_enabled: true, rotation_allow_score_only_paper: true }, error: null }),
+    };
+    try {
+      const result = await executeCapitalRotationPaper({ from: () => chain }, {
+        runId: "00000000-0000-0000-0000-000000000001", rotationsThisRun: 0,
+        candidate: { signalId: "00000000-0000-0000-0000-000000000002", symbol: "TEST", market: "us", currency: "USD", score: 90, targetNotional: 1000, cash: 0, qty: 10, fillPrice: 100, priceTarget: 120, stopLoss: 90, sector: "Technology" },
+        scoreThreshold: 60, minHoldingDays: 2,
+        p1Readiness: { ready: true, blockers: [], netExpectedEdgePct: 1, turnoverAfterPct: 10 },
+        p1EvaluatedAt: new Date(Date.now() - 61_000).toISOString(),
+      });
+      expect(result).toEqual({ executed: false, reason: "p1_evidence_stale" });
     } finally {
       if (previous == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
       else process.env.CAPITAL_ROTATION_PAPER_ENABLED = previous;

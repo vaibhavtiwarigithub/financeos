@@ -203,6 +203,21 @@ visibility only: it does not grant P1 permission.
 
 ### P1 - Paper auto-rotation, still default off
 
+**Owner approval, 2026-09-18:** build the missing evidence and accounting
+contracts for this phase. The execution flag remains default-off and may be
+enabled per market only after the new common-window, net-of-cost gate reports a
+passing result. This approval does not authorize live rotation.
+
+**Implemented P1 evidence contract (2026-09-18):** every cash-constrained
+candidate now records (a) a 20% owner-approved monthly gross turnover ceiling,
+(b) a traceable single paper cost-basis lot rather than a merged/add-to-position
+lot, (c) a matched candidate-versus-holding forward-return score-edge estimate
+collapsed to non-overlapping sessions with a positive lower confidence bound,
+(d) post-swap portfolio-constructor admissibility, and (e) complete candidate
+correlation coverage. A failed or missing contract blocks execution before the
+book or atomic RPC is touched. `ready_for_review` is evidence readiness only;
+it is not a forecast of portfolio or benchmark outperformance.
+
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
 
 **Current enforcement (2026-07-22):** P1 is not approved. A production audit

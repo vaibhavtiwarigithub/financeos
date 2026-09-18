@@ -830,9 +830,13 @@ export async function POST(req: NextRequest) {
           targetNotional: totalCost,
           cash: Number(portfolio.cash_balance ?? 0),
         };
-        // Always log the shadow evaluation (measurement).
+        // Always log the shadow evaluation (measurement). Its P1 readiness
+        // contract is the sole authorization input for a paper rotation; a raw
+        // score margin never reaches the execution function by itself.
+        let rotationP1Readiness: Awaited<ReturnType<typeof recordCapitalRotationShadow>>["readiness"] | null = null;
+        let rotationP1EvaluatedAt: string | null = null;
         try {
-          await recordCapitalRotationShadow(supabase, {
+          const rotationShadow = await recordCapitalRotationShadow(supabase, {
             runId,
             candidate: { ...rotCandidate, sector: candSector, dailyVol },
             scoreThreshold: tradingMandate.score_threshold,
@@ -845,6 +849,8 @@ export async function POST(req: NextRequest) {
             portfolioLimits: marketLimits,
             existingPositionsPolicy: tradingMandate.existing_positions_policy,
           });
+          rotationP1Readiness = rotationShadow.readiness;
+          rotationP1EvaluatedAt = rotationShadow.evaluatedAt;
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
@@ -852,21 +858,20 @@ export async function POST(req: NextRequest) {
         // daily-cap gates, then the execute_paper_rotation RPC atomically sells
         // the source and buys the candidate (buy-leg denial rolls back the sell).
         //
-        // NOTE (verified against rotation_config, 2026-08-25): this call is a
-        // no-op in production today. The comment here used to claim "P1 PAPER
-        // execution is live (owner-approved 2026-07-23)" — it is not. All four
-        // rotation_config rows carry rotation_paper_execute_enabled = false, and
-        // across 98 rotation_events in both markets every trade_proposal_id and
-        // paper_trade_ids is NULL. Rotation has never moved capital. Turning the
-        // flag on is an owner decision, not a code change, and its own gate list
-        // still reports p1_blockers (turnover budget, exact tax lots,
-        // score→return mapping, post-swap gate, candidate correlation).
+        // NOTE (re-verified 2026-09-18): this is a no-op in production today.
+        // Both paper execution switches are false. Two old July paper rotations
+        // exist, before P1 evidence contracts; they do not qualify the current
+        // path. Turning a flag on remains an owner decision after each current
+        // P1 gate passes (turnover, exact cost basis, matched score→return edge,
+        // post-swap construction and candidate correlation).
         let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
             runId, rotationsThisRun: rotationsThisRun.get(market) ?? 0,
             candidate: { ...rotCandidate, qty, fillPrice, priceTarget, stopLoss, sector: candSector },
             scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
+            p1Readiness: rotationP1Readiness,
+            p1EvaluatedAt: rotationP1EvaluatedAt,
           });
           if (rot.executed) {
             rotationsThisRun.set(market, (rotationsThisRun.get(market) ?? 0) + 1);

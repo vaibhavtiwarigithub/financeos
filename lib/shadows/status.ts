@@ -15,6 +15,8 @@ import {
   type LabelRow,
 } from "@/lib/shadows/label-coverage";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
+import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -252,7 +254,7 @@ async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<Qu
 
   for (let from = 0; from < maxRows; from += pageSize) {
     const { data, error } = await svc.from("observation_labels")
-      .select("horizon_days,fwd_return,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
+      .select("horizon_days,fwd_return,max_favorable_excursion,max_adverse_excursion,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("decision_observations.market", market)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
@@ -369,7 +371,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("rotation_config")
       .select("market,book_type,rotation_shadow_enabled,rotation_paper_execute_enabled,rotation_live_proposals_enabled").eq("market", market),
     svc.from("rotation_events")
-      .select("market,status,created_at,candidate_symbol,source_symbol").eq("market", market).gte("created_at", since45).limit(2000),
+      .select("market,status,created_at,candidate_symbol,source_symbol,turnover_consumed,gate_results_json,audit_json,cost_model_json,tax_model_json").eq("market", market).gte("created_at", since45).limit(2000),
     svc.from("paper_trades")
       .select("market,exit_reason,realized_pnl,pnl_pct,closed_at").eq("market", market).eq("exit_reason", "capital_rotation").gte("closed_at", since90).limit(500),
     svc.from("earnings_risk_observations")
@@ -526,6 +528,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     })
     .filter((row: LabelRow | null): row is LabelRow => row != null && Number.isFinite(row.horizonDays));
   const labelCoverage = coverageByHorizon(labelRows);
+  let currentMandate: Awaited<ReturnType<typeof loadTradingMandateStrict>> | null = null;
+  try {
+    currentMandate = await loadTradingMandateStrict(svc, market as TradingMarket);
+  } catch {
+    // Exit geometry must refuse readiness if the baseline is unavailable.
+  }
 
   const statuses = SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
@@ -627,26 +635,43 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const atTradedHorizon = coverageByHorizon(labelRows.filter((row) => row.entryEligible))
         .find((row) => row.horizonDays === PRIMARY_HORIZON_DAYS);
       const dates = atTradedHorizon?.distinctDates ?? 0;
-      const decidable = dates >= MIN_DISTINCT_DATES;
+      const points: LabelPoint[] = (labelCoverageRes.data ?? []).flatMap((row: any) => {
+        const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
+        const eligible = decision && isEntryCandidateLong({
+          entryEligible: decision.entry_eligible, direction: decision.direction,
+          decisionContext: decision.decision_context, discoverySource: decision.discovery_source,
+        });
+        if (!eligible || Number(row.horizon_days) !== PRIMARY_HORIZON_DAYS || row.fwd_return == null) return [];
+        return [{
+          mfe: Number(row.max_favorable_excursion), mae: Number(row.max_adverse_excursion), fwd: Number(row.fwd_return),
+          atrPct: Number(row.entry_atr_pct) > 0 ? Number(row.entry_atr_pct) : 0,
+        }];
+      });
+      const baseline = currentMandate
+        ? evaluateGeometry(points, { stopPct: currentMandate.stop_loss_pct / 100, targetPct: currentMandate.target_pct / 100 })
+        : null;
+      const ambiguityPasses = baseline?.usable === true;
+      const decidable = dates >= MIN_DISTINCT_DATES && ambiguityPasses;
 
       status.lifecycle = !atTradedHorizon ? "idle" : decidable ? "ready_for_review" : "collecting";
       status.benefitVerdict = "operational_only";
       status.benefitEvidence = atTradedHorizon
-        ? `${market.toUpperCase()}: ${atTradedHorizon.observations} matured ${PRIMARY_HORIZON_DAYS}-day labels across ${dates} decision date(s), ${atTradedHorizon.eligibleObservations} entry-eligible.`
+        ? `${market.toUpperCase()}: ${atTradedHorizon.observations} matured ${PRIMARY_HORIZON_DAYS}-day labels across ${dates} decision date(s), ${atTradedHorizon.eligibleObservations} entry-eligible. Current-baseline ambiguity: ${baseline ? `${(baseline.ambiguousShare * 100).toFixed(1)}%` : "unavailable"}.`
         : `No matured ${PRIMARY_HORIZON_DAYS}-day labels for ${market.toUpperCase()} yet.`;
       status.progress = progress(dates, MIN_DISTINCT_DATES, "distinct decision dates at the traded horizon", 45);
       status.calls = calls("zero_incremental", "Derived from labels already written by the maturation job. No provider request and no table written.");
       status.latestAt = labelRows.length ? labelRows.map((row) => row.date).sort().at(-1) ?? null : null;
-      status.blockers = decidable ? [] : [
-        `${dates}/${MIN_DISTINCT_DATES} distinct decision dates at the ${PRIMARY_HORIZON_DAYS}-day horizon. A geometry chosen below this floor is fitted to one regime.`,
-      ];
+      status.blockers = [];
+      if (dates < MIN_DISTINCT_DATES) status.blockers.push(`${dates}/${MIN_DISTINCT_DATES} distinct decision dates at the ${PRIMARY_HORIZON_DAYS}-day horizon. A geometry chosen below this floor is fitted to one regime.`);
+      if (!currentMandate) status.blockers.push("Current market mandate unavailable; the incumbent stop/target baseline cannot be verified.");
+      else if (!ambiguityPasses) status.blockers.push(`Baseline ambiguity ${((baseline?.ambiguousShare ?? 1) * 100).toFixed(1)}% exceeds the ${(MAX_AMBIGUOUS_SHARE * 100).toFixed(0)}% ceiling; MFE/MAE cannot order too many stop/target touches.`);
       status.nextAction = decidable
         ? "Re-run GET /api/agents/exit-geometry-shadow and open a separate architecture round. Coverage alone does not authorise an exit change."
         : "Let maturation accumulate dates. Do not change a stop, target or time stop from the current numbers.";
       status.details = [
-        "Measured 2026-08-06 and NOT acted on: for US, targets of 19.2%, 10% and 6% produce the identical mean, because most positions never reach +6% at all.",
-        "For India, a 6% target with a 5% stop beat the live geometry, with +4% worse than +6% — an interior optimum, not 'shorter is better'.",
-        "A window that touched both candidate levels is ambiguous: max-excursion data cannot order them.",
+        "A geometry result is a counterfactual, not a portfolio-vs-benchmark forecast; a matched execution-faithful replay remains required before any change.",
+        `The current baseline must keep ambiguous stop/target windows at or below ${(MAX_AMBIGUOUS_SHARE * 100).toFixed(0)}%; max-excursion data cannot order a double touch.`,
+        "The live mandate is read at evaluation time so the incumbent cannot silently drift from the reported baseline.",
       ];
       status.available = !labelCoverageRes.error;
       return status;
@@ -1069,15 +1094,38 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const paperExecuted = rotationEvents.filter((row: any) => row.status === "paper_executed").length;
       const closedOutcomes = rotationTrades.filter((row: any) => row.closed_at != null);
       const pnl = closedOutcomes.reduce((sum: number, row: any) => sum + Number(row.realized_pnl ?? 0), 0);
-      status.lifecycle = paperEnabled ? "paper_active" : rotationEvents.length ? "collecting" : "idle";
+      const contractEvents = rotationEvents.filter((row: any) => Array.isArray(row.gate_results_json?.p1_blockers));
+      const latestContract = [...contractEvents].sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0] ?? null;
+      const latestBlockers = Array.isArray(latestContract?.gate_results_json?.p1_blockers)
+        ? latestContract.gate_results_json.p1_blockers.map((value: unknown) => String(value)) : [];
+      const mapping = latestContract?.gate_results_json?.score_to_return_mapping as any;
+      const p1Ready = contractEvents.filter((row: any) => row.gate_results_json?.p1_ready === true).length;
+      // "Ready" is evidence ready for owner review, never a promised return or
+      // automatic activation. Historical paper rotations predate this contract.
+      status.lifecycle = paperEnabled ? "paper_active" : p1Ready > 0 ? "ready_for_review" : rotationEvents.length ? "collecting" : "idle";
       status.benefitVerdict = closedOutcomes.length >= 10 ? (pnl > 0 ? "promising" : "not_beneficial") : "insufficient";
-      status.benefitEvidence = `${paperExecuted} paper rotation(s) in 45 days; ${closedOutcomes.length} closed rotation outcome(s) available for net-benefit review.`;
+      status.benefitEvidence = p1Ready > 0
+        ? `${p1Ready} current P1 contract(s) passed. Portfolio-versus-benchmark improvement is still unmeasured until a predeclared, matched paper replay or sufficient post-activation outcomes exist.`
+        : `${paperExecuted} historical paper rotation(s) in 45 days; ${closedOutcomes.length} closed rotation outcome(s). No trustworthy portfolio-versus-benchmark improvement estimate exists yet.`;
       status.progress = progress(rotationEvents.length, null, "rotation evaluations", 45);
       status.calls = calls("zero_incremental", "Uses candidate/holding scores and prices already fetched by the paper-trade flow.");
       status.latestAt = latestIso(rotationEvents, "created_at");
-      status.blockers = liveEnabled ? [] : ["Live rotation proposals are disabled.", "Closed net-of-cost/tax outcome sample is thin."];
-      status.nextAction = "Keep paper execution bounded; review churn, realized outcomes and two-leg reconciliation before any live proposal.";
-      status.details = [`Paper execution: ${paperEnabled ? "enabled" : "disabled"}.`, `Live proposals: ${liveEnabled ? "enabled" : "disabled"}.`];
+      status.blockers = [
+        ...latestBlockers,
+        ...(latestContract ? [] : ["No current P1 evidence contract has been recorded; historical rotations cannot substitute for it."]),
+        ...(paperEnabled ? [] : ["Paper rotation execution remains explicitly disabled."]),
+        ...(liveEnabled ? [] : ["Live rotation proposals are disabled."]),
+      ];
+      status.nextAction = p1Ready > 0
+        ? "Review the common-window net-of-cost paper evidence and owner-approve a bounded paper cohort; do not infer benchmark improvement from a score-edge estimate."
+        : "Collect a complete P1 contract for a cash-constrained candidate. Resolve every reported blocker before paper rotation can be reviewed.";
+      status.details = [
+        `Paper execution: ${paperEnabled ? "enabled" : "disabled"}.`,
+        `Live proposals: ${liveEnabled ? "enabled" : "disabled"}.`,
+        `P1 evidence contracts: ${contractEvents.length}; passing: ${p1Ready}.`,
+        mapping ? `Score-edge mapping: ${mapping.independentSessions ?? 0}/${mapping.requiredIndependentSessions ?? 20} non-overlapping sessions; conservative lower edge ${mapping.lowerConfidenceEdgePct == null ? "unavailable" : `${Number(mapping.lowerConfidenceEdgePct).toFixed(2)}%`}.` : "Score-edge mapping has not yet been recorded on a current contract.",
+        "A passing P1 contract means the proposed replacement passed safety and evidence gates; it is not a forecast of portfolio or benchmark outperformance.",
+      ];
       status.available = !rotationConfigRes.error && !rotationEventRes.error;
       return status;
     }

@@ -5,7 +5,16 @@ import {
   assessRotationP1Readiness,
   estimateRotationFrictionPct,
   measureCandidatePostSwapCorrelation,
+  type RotationP1Readiness,
 } from "@/lib/trading/rotation-readiness";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import {
+  hasExactPaperTaxLot,
+  summarizeRotationScoreEdgeEvidence,
+  type RotationScoreEdgeEvidence,
+  type RotationScoreOutcome,
+} from "@/lib/trading/rotation-evidence";
 
 export interface RotationCandidate {
   signalId: string;
@@ -197,6 +206,52 @@ async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbo
   return out;
 }
 
+async function loadRotationScoreEdgeEvidence(supabase: any, args: {
+  market: "us" | "india";
+  minScoreEdge: number;
+  horizonDays: number;
+}): Promise<RotationScoreEdgeEvidence> {
+  const since = new Date(Date.now() - 400 * 86400000).toISOString();
+  const rows = await fetchAllRows((from, to) => supabase
+    .from("decision_observations")
+    .select("ts,symbol,analyst_score,entry_eligible,direction,decision_context,discovery_source,observation_labels!inner(horizon_days,fwd_return)")
+    .eq("market", args.market)
+    .gte("ts", since)
+    .eq("observation_labels.horizon_days", args.horizonDays)
+    .order("ts", { ascending: true })
+    .range(from, to), "rotation score-edge evidence");
+  const outcomes: RotationScoreOutcome[] = [];
+  for (const row of rows as any[]) {
+    const labels = Array.isArray(row.observation_labels) ? row.observation_labels : [row.observation_labels];
+    const label = labels.find((item: any) => Number(item?.horizon_days) === args.horizonDays);
+    if (label?.fwd_return == null || row.analyst_score == null || !row.ts) continue;
+    const candidate = isEntryCandidateLong({
+      entryEligible: row.entry_eligible,
+      direction: row.direction,
+      decisionContext: row.decision_context,
+      discoverySource: row.discovery_source,
+    });
+    const holding = row.decision_context === "holding_review";
+    if (!candidate && !holding) continue;
+    outcomes.push({
+      sessionDate: String(row.ts).slice(0, 10), observedAt: String(row.ts), symbol: String(row.symbol ?? ""),
+      role: candidate ? "candidate" : "holding", score: Number(row.analyst_score), forwardReturn: Number(label.fwd_return),
+    });
+  }
+  return summarizeRotationScoreEdgeEvidence(outcomes, {
+    minScoreEdge: args.minScoreEdge,
+    horizonDays: args.horizonDays,
+    requiredIndependentSessions: 20,
+  });
+}
+
+export interface RotationShadowRecord {
+  evaluation: RotationEvaluation;
+  readiness: RotationP1Readiness;
+  scoreEdgeEvidence: RotationScoreEdgeEvidence;
+  evaluatedAt: string;
+}
+
 export async function recordCapitalRotationShadow(supabase: any, args: {
   runId: string | null;
   candidate: RotationCandidate;
@@ -299,18 +354,30 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     : postSwapAllowed && correlationAllowed;
 
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-  const [mandateResult, turnoverResult, persistenceResult] = await Promise.all([
+  const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, scoreEdgeEvidence] = await Promise.all([
     supabase.from("investment_mandates").select("turnover_budget_monthly, tax_sensitivity")
       .eq("market", candidate.market).eq("active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("paper_order_events").select("total_value", { count: "exact" }).eq("market", candidate.market)
       .eq("fill_status", "filled").gte("created_at", monthStart).limit(1000),
     supabase.from("rotation_events").select("audit_json").eq("market", candidate.market)
       .eq("candidate_symbol", candidate.symbol).eq("status", "planned").gte("created_at", new Date(Date.now() - 4 * 86400000).toISOString()),
+    evaluation.source?.openedAt
+      ? supabase.from("paper_order_events").select("symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
+        .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("event_type", "fill").eq("side", "buy")
+        .gte("created_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(20)
+      : Promise.resolve({ data: [], count: 0, error: null }),
+    loadRotationScoreEdgeEvidence(supabase, {
+      market: candidate.market,
+      minScoreEdge: Number((cfgRow as any)?.rotation_margin_score ?? 12),
+      horizonDays: args.resolvedHorizonDays,
+    }),
   ]);
   if (mandateResult.error) throw new Error(`rotation mandate query failed: ${mandateResult.error.message}`);
   if (turnoverResult.error) throw new Error(`rotation turnover query failed: ${turnoverResult.error.message}`);
   if ((turnoverResult.count ?? 0) > (turnoverResult.data?.length ?? 0)) throw new Error(`rotation turnover cohort truncated: ${turnoverResult.data?.length ?? 0}/${turnoverResult.count}`);
   if (persistenceResult.error) throw new Error(`rotation persistence query failed: ${persistenceResult.error.message}`);
+  if (lotFillsResult.error) throw new Error(`rotation tax-lot query failed: ${lotFillsResult.error.message}`);
+  if ((lotFillsResult.count ?? 0) > (lotFillsResult.data?.length ?? 0)) throw new Error(`rotation tax-lot cohort truncated: ${lotFillsResult.data?.length ?? 0}/${lotFillsResult.count}`);
   const monthlyTurnover = (turnoverResult.data ?? []).reduce((sum: number, row: any) => sum + Math.max(0, Number(row.total_value ?? 0)), 0);
   const proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
   const persistenceRequiredRuns = Math.max(0, Number((cfgRow as any)?.rotation_persistence_runs ?? 2) - 1);
@@ -324,8 +391,15 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     proposedTurnoverPct: args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null,
     taxSensitivity: ["low", "high"].includes(String((mandateResult.data as any)?.tax_sensitivity))
       ? (mandateResult.data as any).tax_sensitivity : "medium",
-    hasExactTaxLots: false,
-    expectedEdgePct: null,
+    hasExactTaxLots: hasExactPaperTaxLot(evaluation.source ? {
+      symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt, qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
+    } : null, (lotFillsResult.data ?? []).map((row: any) => ({
+      symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty), fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
+    }))),
+    // A score gap becomes an executable economic premise only when its matched,
+    // session-independent lower confidence bound is positive. The raw mean is
+    // retained in the audit but is never used to pass this gate.
+    expectedEdgePct: scoreEdgeEvidence.status === "validated" ? scoreEdgeEvidence.lowerConfidenceEdgePct : null,
     frictionPct,
     postSwapAllowed: completePostSwapAllowed,
     correlation,
@@ -340,6 +414,15 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   evaluation.gates.candidate_correlation_allowed = correlationAllowed;
   evaluation.gates.monthly_turnover_used_pct = readiness.turnoverAfterPct == null || args.portfolioNav <= 0 ? null : monthlyTurnover / args.portfolioNav * 100;
   evaluation.gates.proposed_turnover_pct = args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null;
+  evaluation.gates.exact_tax_lot = {
+    available: hasExactPaperTaxLot(evaluation.source ? {
+      symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt, qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
+    } : null, (lotFillsResult.data ?? []).map((row: any) => ({
+      symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty), fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
+    }))),
+    treatment: "paper_cost_basis_reconciled_not_statutory_tax_calculation",
+  };
+  evaluation.gates.score_to_return_mapping = scoreEdgeEvidence;
 
   const idempotencyKey = `paper:${candidate.market}:${args.runId ?? "manual"}:${candidate.signalId}:rotation-shadow`;
   const event = {
@@ -375,7 +458,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   if (error && String(error.code ?? "") !== "23505") {
     throw new Error(`rotation_events insert failed: ${error.message}`);
   }
-  return evaluation;
+  return { evaluation, readiness, scoreEdgeEvidence, evaluatedAt: now.toISOString() } satisfies RotationShadowRecord;
 }
 
 // ── Phase 1 PAPER EXECUTION (ENABLED 2026-07-23) ─────────────────────────────
@@ -392,6 +475,9 @@ export interface RotationExecInput {
   };
   scoreThreshold: number;
   minHoldingDays: number;
+  /** Read from the immediately preceding append-only shadow event in this run. */
+  p1Readiness: RotationP1Readiness | null;
+  p1EvaluatedAt: string | null;
 }
 
 export async function executeCapitalRotationPaper(supabase: any, args: RotationExecInput): Promise<{ executed: boolean; reason: string; sourceSymbol?: string }> {
@@ -417,6 +503,17 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     // before reading positions or invoking the atomic money-moving RPC.
     if ((cfgRow as any)?.rotation_allow_score_only_paper !== true) {
       return { executed: false, reason: "score_only_execution_disabled" };
+    }
+    // A score margin is not an economic edge by itself. The immediately
+    // preceding shadow must have produced a complete turnover/lot/mapping/risk
+    // contract. This check sits before any book read or RPC call.
+    if (!args.p1Readiness?.ready) {
+      const blockers = args.p1Readiness?.blockers?.join(",") ?? "shadow_evidence_unavailable";
+      return { executed: false, reason: `p1_evidence_not_ready:${blockers}` };
+    }
+    const evidenceAgeMs = args.p1EvaluatedAt ? Date.now() - Date.parse(args.p1EvaluatedAt) : Number.NaN;
+    if (!Number.isFinite(evidenceAgeMs) || evidenceAgeMs < 0 || evidenceAgeMs > 60_000) {
+      return { executed: false, reason: "p1_evidence_stale" };
     }
 
     const persistenceRuns = Math.max(1, Number((cfgRow as any)?.rotation_persistence_runs ?? 2));

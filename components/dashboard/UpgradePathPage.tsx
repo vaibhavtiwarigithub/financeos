@@ -273,6 +273,9 @@ export default function UpgradePathPage() {
         <p style={{ color: T.textSub, fontSize: "13px", lineHeight: 1.55, margin: "8px 0 0", maxWidth: "780px" }}>
           {MARKET_LABEL[data?.market ?? market]} evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
         </p>
+        <p style={{ color: T.yellow, fontSize: "12px", lineHeight: 1.5, margin: "7px 0 0", maxWidth: "780px" }}>
+          “Ready for review” means its predeclared evidence and safety checks are complete. It never means guaranteed portfolio or benchmark improvement, and it never deploys itself.
+        </p>
       </div>
       <button type="button" onClick={load} title="Refresh status" aria-label="Refresh status" style={{
         width: "36px", height: "36px", borderRadius: "6px", border: `1px solid ${T.border}`,
