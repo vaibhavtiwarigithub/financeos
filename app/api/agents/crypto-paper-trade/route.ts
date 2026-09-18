@@ -21,13 +21,11 @@ export const maxDuration = 60;
 // router for a third book is a much larger, riskier change than Stage 3 paper
 // trading needs. This is a small, separate, flat-sizing path:
 //   - own pool: paper_portfolio/positions/trades/performance market='crypto'
-//     (see supabase/migrations/20260916020000_crypto_paper_pool.sql — RUN
-//     THIS MIGRATION before this route is called, or every fill fails closed
-//     on "no_crypto_pool")
+//     (see supabase/migrations/20260916020000_crypto_paper_pool.sql)
 //   - no sector caps, no correlation shadow, no capital rotation, no
 //     calibrated Kelly sizing, no genome — flat % of crypto-pool NAV
-//   - price = latest COMPLETED AV DIGITAL_CURRENCY_DAILY close (same source
-//     ResearchAgent scored the signal against — lib/data/crypto-quotes.ts)
+//   - price = latest COMPLETED independent public daily candle (Coinbase first,
+//     Kraken second; Alpha Vantage only as a fallback — lib/data/crypto-quotes.ts)
 //   - one position per coin (3 coins total: BTC/ETH/SOL)
 // Genome/portfolio-constructor parity is a future decision once real paper
 // history exists, not guessed here (doc §2.4).
@@ -42,11 +40,6 @@ const MAX_OPEN_CRYPTO_NAMES = CRYPTO_SYMBOLS.size; // one per coin, 3 coins tota
 // No live bid/ask for AV daily candles — same fixed slip-fraction fallback
 // already used for India fills (lib/analytics/performance-metrics.MODELED_SLIP_FRACTION).
 const CRYPTO_SLIP_FRACTION = 0.001;
-// The legacy route consumes the equity-shaped agent_signals ledger. Native
-// crypto research now has its own evidence lane, but broker pair/quote and
-// intraday execution contracts are not yet present. Never let an equity score
-// become the first crypto paper fill merely because the old scheduler fires.
-const CRYPTO_NATIVE_PAPER_READY = false;
 
 export async function POST(req: NextRequest) {
   const supabase = createServiceClient();
@@ -63,12 +56,6 @@ export async function POST(req: NextRequest) {
     }
     if (!(await isTradingEnabled(supabase, "crypto"))) {
       return NextResponse.json({ skipped: true, reason: "crypto trading disabled" });
-    }
-    if (!CRYPTO_NATIVE_PAPER_READY) {
-      return NextResponse.json({
-        skipped: true,
-        reason: "crypto_native_paper_execution_evidence_pending",
-      });
     }
     const ks = await checkKillSwitches(supabase, { market: "crypto", book: "paper" });
     if (!ks.safe) {
@@ -148,8 +135,9 @@ export async function POST(req: NextRequest) {
           .eq("id", signal.id).eq("status", "claiming");
       };
 
-      if (!avKey) { await revertClaim(); skipped.push({ symbol, reason: "no_av_key" }); continue; }
-      const { candles, source } = await fetchCryptoCandles(symbol, avKey);
+      // Coinbase/Kraken are the normal path. Alpha Vantage is optional fallback
+      // only, so a shared-equity quota/key cannot disable crypto paper research.
+      const { candles, source } = await fetchCryptoCandles(symbol, avKey ?? "");
       const completed = cryptoCompletedCandles(candles);
       const last = completed.at(-1);
       // A stale daily bar is not a valid entry price. The signal and fill must

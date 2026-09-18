@@ -669,7 +669,7 @@ owner-readable evidence only.
 ### CryptoPaperTrader — legacy paper-entry route (contained, 2026-09-17)
 
 **File:** `app/api/agents/crypto-paper-trade/route.ts`
-**Schedule:** `kairos-crypto-paper-trade`, weekdays 14:30 UTC via Supabase pg_cron; currently returns an explicit no-op
+**Schedule:** `kairos-crypto-paper-trade`, daily 00:45 UTC via Supabase pg_cron
 **LLM:** None
 
 A deliberately small, separate sibling to PaperTrader — NOT a `market` branch inside it. PaperTrader's
@@ -679,20 +679,20 @@ backed by market-CHECK-constrained tables (`trading_mandates`, `strategy_validat
 Forking that router for a third book was a materially larger, riskier change than Stage 3 paper
 trading needs.
 
-The old route was driven by equity-shaped `agent_signals`. It is now explicitly contained by
-`CRYPTO_NATIVE_PAPER_READY=false`: it cannot create a crypto fill until the native collector, broker
-pair/quote contract, and intraday paper lifecycle meet their approved gates. This avoids treating a
-stock composite and a daily candle close as a credible crypto execution signal.
+The route is active for paper-only execution. It uses the existing deterministic crypto research-signal
+ledger and completed public-candle price adapter; no live broker order is reachable. A missing or stale
+bar, paused book, active kill switch, insufficient cash, duplicate position, or RPC refusal remains a
+recorded refusal—not a fictional fill.
 
 **Key behavior:**
 - Flat sizing only — no Kelly, no genome, no portfolio constructor. `min(33%, strategy_config.position_size_pct)` of the crypto pool's own NAV per name.
 - One position per coin (3 coins total) — no sector caps, no correlation shadow, no capital rotation.
-- Price = latest **exact preceding UTC completed** AV `DIGITAL_CURRENCY_DAILY` close (`lib/data/crypto-quotes.ts`) — the same source the signal was scored against, not a second unvetted feed. A late provider bar declines the entry rather than filling at stale data.
+- Price = latest **exact preceding UTC completed** Coinbase candle, Kraken fallback, Alpha Vantage compatibility fallback (`lib/data/crypto-quotes.ts`). A late provider bar declines the entry rather than filling at stale data.
 - Static mandate (`CRYPTO_MANDATE` in the route): stop 15%, target 25%, and a 10-day *research-label horizon* stored with the fill. It is not an exit clock and cannot close a position. Not read from `trading_mandates` (CHECK-constrained to `us`/`india`).
 - Fills via the existing `execute_paper_fill` RPC with `p_market='crypto'` — the RPC is fully generic on market (verified by reading its SQL body), so no RPC change was needed.
 
-**Outputs:** an auditable skipped response. No `paper_positions` or `paper_trades` can be created by
-this legacy path while native execution evidence is incomplete.
+**Outputs:** an auditable fill/skipped response and isolated crypto `paper_positions`/`paper_trades`.
+This is paper-only; it is not crypto live-trading authorization.
 
 ---
 

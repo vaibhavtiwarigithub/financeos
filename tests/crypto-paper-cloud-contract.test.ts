@@ -15,6 +15,12 @@ describe("crypto paper Stage 3 cloud contract", () => {
     expect(migration).toContain("public.kairos_call_agent");
   });
 
+  it("runs crypto paper entry every calendar day after the UTC research session", () => {
+    const schedule = read("supabase/migrations/20260918015027_crypto_paper_daily_schedule.sql");
+    expect(schedule).toContain("'45 0 * * *'");
+    expect(schedule).toContain("cron.unschedule('kairos-crypto-paper-trade')");
+  });
+
   it("keeps local agent runner free of crypto production jobs", () => {
     expect(read("scripts/run-agents.ps1")).not.toMatch(/^\s*"crypto-(paper-trade|position-monitor)"\s*=/m);
   });
@@ -33,9 +39,10 @@ describe("crypto paper Stage 3 cloud contract", () => {
     expect(monitor).toContain("candle.date !== cryptoSessionDate()");
   });
 
-  it("cannot create a crypto paper fill from the legacy equity-score ledger", () => {
+  it("runs the approved paper lifecycle without a manual native-readiness hard-off", () => {
     const entry = read("app/api/agents/crypto-paper-trade/route.ts");
-    expect(entry).toContain("const CRYPTO_NATIVE_PAPER_READY = false");
-    expect(entry).toContain("crypto_native_paper_execution_evidence_pending");
+    expect(entry).not.toContain("CRYPTO_NATIVE_PAPER_READY");
+    expect(entry).not.toContain("crypto_native_paper_execution_evidence_pending");
+    expect(entry).toContain("fetchCryptoCandles(symbol, avKey ?? \"\")");
   });
 });
