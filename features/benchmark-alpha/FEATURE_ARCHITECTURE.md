@@ -227,7 +227,9 @@ Benchmark:
 2. Filter portfolio and benchmark levels to dates >= target start and <= as_of.
 3. Inner join by date. Do not forward-fill for scorecard math.
 4. Use the first joined row as the base for both portfolio and benchmark.
-5. Compute simple daily returns from adjacent joined rows.
+5. Compute simple daily returns only for adjacent joined rows separated by
+   exactly one market session. A multi-session gap remains visible in coverage
+   but must not be annualized as one daily return.
 6. If common rows or return pairs fail the horizon confidence floor, write `status='insufficient_data'`.
 
 ### Math

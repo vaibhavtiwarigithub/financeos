@@ -1,3 +1,5 @@
+import { tradingSessionsBetween } from "@/lib/risk/earnings-risk";
+
 const TRADING_DAYS = 252;
 
 export const BENCHMARK_HORIZONS = ["1W", "1M", "3M", "YTD", "1Y"] as const;
@@ -177,7 +179,19 @@ export function computeBenchmarkScorecardRow(args: {
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const nObservations = joined.length;
-  const nReturnDays = Math.max(0, nObservations - 1);
+  // A return spanning a missing trading session is not a daily return. For
+  // example, Friday -> Tuesday is contiguous over a Monday holiday, whereas
+  // Friday -> Wednesday with Tuesday missing must not be annualized as one day.
+  const dailyExcessPct: number[] = [];
+  for (let i = 1; i < joined.length; i++) {
+    const prev = joined[i - 1];
+    const cur = joined[i];
+    if (tradingSessionsBetween(args.market, prev.date, cur.date) !== 1) continue;
+    const pRet = (cur.portfolio / prev.portfolio - 1) * 100;
+    const bRet = (cur.benchmark / prev.benchmark - 1) * 100;
+    if (Number.isFinite(pRet) && Number.isFinite(bRet)) dailyExcessPct.push(pRet - bRet);
+  }
+  const nReturnDays = dailyExcessPct.length;
   const expected = expectedTradingDays(start, args.asOf);
   const coveragePct = expected > 0 ? (nObservations / expected) * 100 : null;
   const confidence = confidenceFor(nReturnDays, coveragePct);
@@ -216,15 +230,6 @@ export function computeBenchmarkScorecardRow(args: {
   const last = joined[joined.length - 1];
   const portfolioReturnPct = (last.portfolio / first.portfolio - 1) * 100;
   const benchReturnPct = (last.benchmark / first.benchmark - 1) * 100;
-  const dailyExcessPct: number[] = [];
-  for (let i = 1; i < joined.length; i++) {
-    const prev = joined[i - 1];
-    const cur = joined[i];
-    const pRet = (cur.portfolio / prev.portfolio - 1) * 100;
-    const bRet = (cur.benchmark / prev.benchmark - 1) * 100;
-    if (Number.isFinite(pRet) && Number.isFinite(bRet)) dailyExcessPct.push(pRet - bRet);
-  }
-
   const te = sampleStdev(dailyExcessPct);
   const dailyMean = mean(dailyExcessPct);
   const infoRatio = te > 0 ? (dailyMean / te) * Math.sqrt(TRADING_DAYS) : null;

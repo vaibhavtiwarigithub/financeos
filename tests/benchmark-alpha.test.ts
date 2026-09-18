@@ -43,26 +43,8 @@ describe("benchmark-alpha math", () => {
   });
 
   it("does not divide cumulative excess by daily tracking error", () => {
-    const portfolio = [
-      { date: "2026-01-01", level: 100 },
-      { date: "2026-01-02", level: 102 },
-      { date: "2026-01-03", level: 101 },
-      { date: "2026-01-04", level: 104 },
-      { date: "2026-01-05", level: 103 },
-      { date: "2026-01-06", level: 106 },
-      { date: "2026-01-07", level: 105 },
-      { date: "2026-01-08", level: 108 },
-      { date: "2026-01-09", level: 107 },
-      { date: "2026-01-10", level: 110 },
-      { date: "2026-01-11", level: 109 },
-      { date: "2026-01-12", level: 112 },
-      { date: "2026-01-13", level: 111 },
-      { date: "2026-01-14", level: 114 },
-      { date: "2026-01-15", level: 113 },
-      { date: "2026-01-16", level: 116 },
-      { date: "2026-01-17", level: 115 },
-    ];
-    const bench = series("2026-01-01", 17, 100, 0.5);
+    const portfolio = series("2026-01-01", 70, 100, 1.2);
+    const bench = series("2026-01-01", 70, 100, 0.5);
     const row = computeBenchmarkScorecardRow({
       market: "us",
       currency: "USD",
@@ -70,7 +52,7 @@ describe("benchmark-alpha math", () => {
       bookScope: "market_paper_pool",
       benchmark,
       horizon: "1M",
-      asOf: "2026-01-17",
+      asOf: "2026-03-10",
       portfolio,
       benchmarkLevels: bench,
     });
@@ -109,6 +91,20 @@ describe("benchmark-alpha math", () => {
     expect(row.status).toBe("stale_series");
     expect(row.window_end).toBe("2026-03-03");
     expect(row.excess_return_pct).toBeNull();
+  });
+
+  it("does not annualize a multi-session gap as one daily return", () => {
+    const dates = ["2026-01-15", "2026-01-16", "2026-01-21", "2026-01-22", "2026-01-23"];
+    const levels = dates.map((date, index) => ({ date, level: 100 + index }));
+    const row = computeBenchmarkScorecardRow({
+      market: "us", currency: "USD", book: "paper", bookScope: "market_paper_pool",
+      benchmark, horizon: "1W", asOf: "2026-01-23", portfolio: levels, benchmarkLevels: levels,
+    });
+    // The 1W window starts on Friday; Fri -> Wed skips the eligible Tuesday
+    // session. Only the two contiguous pairs count, so the four-day floor is
+    // not met.
+    expect(row.n_return_days).toBe(2);
+    expect(row.status).toBe("insufficient_data");
   });
 
   it("rejects currency mismatches instead of computing cross-currency alpha", () => {

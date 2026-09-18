@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       loadAllRows<any>((from, to) => svc.from("decision_observations")
-        .select("id, signal_id, score_source, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
+        .select("id, signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
         .not("analyst_score", "is", null)
         .order("ts", { ascending: true })
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
 
     const perfRows = (perfRes.data ?? []) as any[];
     const allLotRows = (tradesRes.data ?? []) as any[];
-    const executableSignalIds = await loadExecutableSignalIds(
+    const executableSignalVersions = await loadExecutableSignalVersions(
       svc,
       observationRows.map((row: any) => row.signal_id),
       market,
@@ -229,7 +229,10 @@ export async function POST(req: NextRequest) {
     // the immutable ledger but cannot answer whether the equity entry selector
     // would have outperformed.
     const selectionObservationRows = observationRows.filter((row: any) =>
-      row.score_source === "deterministic_v1" && executableSignalIds.has(String(row.signal_id)),
+      row.score_source === "deterministic_v1"
+      && typeof row.scoring_version === "string"
+      && row.scoring_version.length > 0
+      && executableSignalVersions.get(String(row.signal_id)) === row.scoring_version,
     );
     // Closed-lot cohorts. A3/A4/A5/A7 are all realized-outcome metrics and must
     // not see an open position, whose P&L has not happened yet.
@@ -455,7 +458,16 @@ export async function POST(req: NextRequest) {
       benchmark: plan.benchmark,
       accountingCohort: { closedLots: accountingLots.length },
       learningCohort: { closedLots: learningLots.length, excluded: accountingLots.length - learningLots.length },
-      coverage: { navRows: navRows.length, taintedNavRowsExcludedFromA0: taintedNavRows, markRows: (marksRes.data ?? []).length, lotRows: allLotRows.length, openLots: allLotRows.length - tradeRows.length },
+      coverage: {
+        navRows: navRows.length,
+        taintedNavRowsExcludedFromA0: taintedNavRows,
+        markRows: (marksRes.data ?? []).length,
+        lotRows: allLotRows.length,
+        openLots: allLotRows.length - tradeRows.length,
+        selectionObservationRows: observationRows.length,
+        selectionProvenanceMatchedRows: selectionObservationRows.length,
+        selectionProvenanceCoveragePct: observationRows.length === 0 ? null : selectionObservationRows.length / observationRows.length * 100,
+      },
       tests: Object.fromEntries(findings.map(f => [f.testId, f])),
       verdict,
       influence: "none",
@@ -555,12 +567,12 @@ function pctFromFill(level: unknown, fill: unknown, direction: "target" | "stop"
  * therefore prove its source was a current-session, deterministic equity signal
  * instead of treating every historical score as an executable opportunity.
  */
-async function loadExecutableSignalIds(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<Set<string>> {
+async function loadExecutableSignalVersions(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<Map<string, string>> {
   const ids = [...new Set(signalIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
-  const executable = new Set<string>();
+  const executable = new Map<string, string>();
   for (let start = 0; start < ids.length; start += 200) {
     const { data, error } = await svc.from("agent_signals")
-      .select("id,market,asset_class,score_source,session_validated")
+      .select("id,market,asset_class,score_source,scoring_version,session_validated")
       .in("id", ids.slice(start, start + 200));
     if (error) throw new Error(`selection signal provenance read failed: ${error.message}`);
     for (const signal of data ?? []) {
@@ -568,8 +580,10 @@ async function loadExecutableSignalIds(svc: any, signalIds: unknown[], market: D
         String((signal as any).market ?? "us") === market
         && (signal as any).asset_class !== "crypto"
         && (signal as any).score_source === "deterministic_v1"
+        && typeof (signal as any).scoring_version === "string"
+        && (signal as any).scoring_version.length > 0
         && (signal as any).session_validated === true
-      ) executable.add(String((signal as any).id));
+      ) executable.set(String((signal as any).id), String((signal as any).scoring_version));
     }
   }
   return executable;

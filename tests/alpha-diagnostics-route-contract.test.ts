@@ -11,7 +11,7 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
   });
 
   it("queries entry eligibility, excursions, initial stops, and persisted mark quantity", () => {
-    expect(route).toContain("signal_id, score_source, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source");
+    expect(route).toContain("signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source");
     expect(route).toContain("max_adverse_excursion, max_favorable_excursion");
     expect(route).toContain('.select("session_date, symbol, qty, mark_price")');
     expect(route).toContain("initial_stop_loss, stop_loss, price_target");
@@ -36,11 +36,12 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
   });
 
   it("fails closed unless source signals were executable deterministic equity research", () => {
-    expect(route).toContain("async function loadExecutableSignalIds");
+    expect(route).toContain("async function loadExecutableSignalVersions");
     expect(route).toContain("session_validated === true");
     expect(route).toContain('score_source === "deterministic_v1"');
     expect(route).toContain('asset_class !== "crypto"');
-    expect(route).toContain("executableSignalIds.has(String(row.signal_id))");
+    expect(route).toContain("executableSignalVersions.get(String(row.signal_id)) === row.scoring_version");
+    expect(route).toContain("selectionProvenanceCoveragePct");
   });
 
   it("starts A6 only from a canonical mark with an untainted performance row", () => {

@@ -10,7 +10,6 @@ import { pickFreshestProvider, newestBarDate } from "@/lib/data/benchmark-ingest
 import {
   BENCHMARK_HORIZONS,
   computeBenchmarkScorecardRow,
-  latestAsOf,
   type BenchmarkConfig,
   type LevelPoint,
 } from "@/lib/analytics/benchmark-alpha";
@@ -304,10 +303,9 @@ async function loadLiveSeries(svc: any, market: "us" | "india", currency: "USD" 
   };
 }
 
-async function buildScorecards(svc: any, marketScope: Market) {
+async function buildScorecards(svc: any, marketScope: Market, expectedSession: string) {
   const benchmarks = await loadBenchmarks(svc);
   const rows: any[] = [];
-  const asOf = new Date().toISOString().slice(0, 10);
   const scopedBenchmarks = benchmarks.filter((benchmark) => benchmark.market === marketScope);
 
   // The session the BOOK has reached, per market. A secondary benchmark that
@@ -341,8 +339,6 @@ async function buildScorecards(svc: any, marketScope: Market) {
 
     for (const benchmark of marketBenchmarks) {
       const benchmarkLevels = await loadBenchmarkLevels(svc, benchmark);
-      const paperAsOf = latestAsOf([...paper, ...benchmarkLevels]);
-      const liveAsOf = latestAsOf([...live.levels, ...benchmarkLevels]);
       for (const horizon of BENCHMARK_HORIZONS) {
         rows.push(computeBenchmarkScorecardRow({
           market,
@@ -351,7 +347,7 @@ async function buildScorecards(svc: any, marketScope: Market) {
           bookScope: "market_paper_pool",
           benchmark,
           horizon,
-          asOf: paperAsOf || asOf,
+          asOf: expectedSession,
           portfolio: paper,
           benchmarkLevels,
           unavailableStatus: benchmarkLevels.length ? undefined : "benchmark_unpriceable",
@@ -364,7 +360,7 @@ async function buildScorecards(svc: any, marketScope: Market) {
           bookScope: "all_live_accounts",
           benchmark,
           horizon,
-          asOf: liveAsOf || asOf,
+          asOf: expectedSession,
           portfolio: live.levels,
           benchmarkLevels,
           unavailableStatus: live.missingProvenance
@@ -508,7 +504,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, market: marketScope, attempt, error }, { status: 500 });
   }
   try {
-    const rows = await buildScorecards(svc, marketScope);
+    const rows = await buildScorecards(svc, marketScope, expected.date);
     const completion = await verifyMarketCompletion(svc, marketScope, expected.date);
     const incomplete = completion.filter((row) => !row.complete);
     const status = completion.length > 0 && incomplete.length === 0 ? "done" : "partial";

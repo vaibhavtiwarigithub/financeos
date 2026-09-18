@@ -18,18 +18,28 @@ function percentile(sorted: number[], p: number): number {
 
 async function entryCandidateObservationIds(supabase: any, market: "us" | "india"): Promise<number[]> {
   const rows = await fetchAllRows<any>((from, to) => supabase.from("decision_observations")
-    .select("id,entry_eligible,direction,decision_context,discovery_source")
+    .select("id,symbol,ts,entry_eligible,direction,decision_context,discovery_source")
     .eq("market", market)
     .eq("entry_eligible", true)
     .eq("direction", "long")
     .order("id", { ascending: true })
     .range(from, to), "MAE/MFE entry observations");
+  // Research can run more than once for the same symbol/session. Geometry is
+  // an entry-policy sample, not a count of retries, so preserve the earliest
+  // eligible decision for each symbol/session.
+  const seenSymbolSessions = new Set<string>();
   return rows.filter((row) => isEntryCandidateLong({
     entryEligible: row.entry_eligible,
     direction: row.direction,
     decisionContext: row.decision_context,
     discoverySource: row.discovery_source,
-  })).map((row) => Number(row.id)).filter(Number.isFinite);
+  })).filter((row) => {
+    const session = String(row.ts ?? "").slice(0, 10);
+    const key = `${String(row.symbol ?? "")}|${session}`;
+    if (!session || !row.symbol || seenSymbolSessions.has(key)) return false;
+    seenSymbolSessions.add(key);
+    return true;
+  }).map((row) => Number(row.id)).filter(Number.isFinite);
 }
 
 export async function getGlobalMaeMfePercentiles(
@@ -45,16 +55,22 @@ export async function getGlobalMaeMfePercentiles(
     if (ids.length === 0) return null;
     const labels = await fetchAllRows<any>((from, to) => supabase
       .from("observation_labels")
-      .select("max_adverse_excursion, max_favorable_excursion")
+      .select("observation_id,max_adverse_excursion, max_favorable_excursion")
       .eq("horizon_days", horizonDays)
       .in("observation_id", ids)
       .order("id", { ascending: true })
       .range(from, to), "MAE/MFE labels");
     const finite = (value: unknown): number | null => value == null ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
+    const seenObservationIds = new Set<string>();
     const valid = labels.map((l: any) => ({
+      observationId: String(l.observation_id ?? ""),
       mae: finite(l.max_adverse_excursion),
       mfe: finite(l.max_favorable_excursion),
-    })).filter((l: any): l is { mae: number; mfe: number } => l.mae != null && l.mfe != null);
+    })).filter((l: any): l is { observationId: string; mae: number; mfe: number } => {
+      if (!l.observationId || l.mae == null || l.mfe == null || seenObservationIds.has(l.observationId)) return false;
+      seenObservationIds.add(l.observationId);
+      return true;
+    });
     if (valid.length < 60) return null;
 
     const maes = valid.map((l: any) => l.mae).sort((a: number, b: number) => a - b);
