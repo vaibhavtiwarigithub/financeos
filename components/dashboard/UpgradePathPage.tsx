@@ -48,6 +48,12 @@ const DEPLOYMENT_META = {
   not_applicable: { label: "Not applicable", color: T.muted },
   status_unavailable: { label: "Production status unknown", color: T.red },
 };
+const ATTRIBUTION_META = {
+  measured: { label: "Measured", color: T.green },
+  collecting: { label: "Collecting", color: T.yellow },
+  not_attributable: { label: "Not attributable", color: T.blue },
+  invalid: { label: "Invalid", color: T.red },
+};
 
 function useIsMobile(breakpoint = 900) {
   const [mobile, setMobile] = useState(false);
@@ -67,6 +73,9 @@ function fmtNumber(value: number | null) {
 function fmtDate(value: string | null) {
   if (!value) return "No evidence yet";
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function fmtPct(value: number | null) {
+  return value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 function etaLabel(program: ShadowProgramStatus) {
   if (program.lifecycle === "not_applicable") return "Not applicable";
@@ -120,6 +129,7 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
   const lifecycle = LIFECYCLE_META[program.lifecycle];
   const benefit = BENEFIT_META[program.benefitVerdict];
   const deployment = DEPLOYMENT_META[program.deployment.state];
+  const attribution = ATTRIBUTION_META[program.attribution.state];
   return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", opacity: program.available ? 1 : 0.72 }}>
     <div style={{
       padding: mobile ? "16px" : "18px 20px", display: "flex", justifyContent: "space-between",
@@ -130,6 +140,7 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
           <h2 style={{ fontSize: "17px", lineHeight: 1.3, margin: 0, color: T.text }}>{program.name}</h2>
           <StatusPill label={lifecycle.label} color={lifecycle.color} />
           <StatusPill label={benefit.label} color={benefit.color} />
+          <StatusPill label={`Attribution · ${attribution.label}`} color={attribution.color} />
           <StatusPill label={deployment.label} color={deployment.color} />
         </div>
         <div style={{ color: T.muted, fontSize: "12px", marginTop: "7px" }}>
@@ -150,6 +161,25 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
         </div>
         <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
           <TextBlock label="Observed benefit" text={program.benefitEvidence} />
+        </div>
+        <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "7px" }}>
+            <div style={{ color: T.muted, fontSize: "11px", fontWeight: 750, textTransform: "uppercase" }}>Causal attribution</div>
+            <StatusPill label={attribution.label} color={attribution.color} />
+            <span style={{ color: T.muted, fontSize: "11px" }}>{program.attribution.comparisonType.replace(/_/g, " ")}</span>
+          </div>
+          <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>{program.attribution.reason}</div>
+          {program.attribution.state === "measured" && <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(3, minmax(0, 1fr))", gap: "8px 14px", marginTop: "10px" }}>
+            <TextBlock label="Net portfolio delta" text={fmtPct(program.attribution.netIncrementalReturnPct)} />
+            <TextBlock label="Vs benchmark" text={fmtPct(program.attribution.benchmarkRelativeIncrementalReturnPct)} />
+            <TextBlock label="95% interval" text={`${fmtPct(program.attribution.ciLowerPct)} to ${fmtPct(program.attribution.ciUpperPct)}`} />
+            <TextBlock label="Independent sessions" text={program.attribution.independentSessions == null ? "—" : String(program.attribution.independentSessions)} />
+            <TextBlock label="Turnover" text={fmtPct(program.attribution.turnoverPct)} />
+            <TextBlock label="Drawdown delta" text={fmtPct(program.attribution.drawdownDeltaPct)} />
+          </div>}
+          {program.attribution.asOfSession && <div style={{ color: T.muted, fontSize: "11px", marginTop: "8px" }}>
+            Window: {program.attribution.windowStart ?? "—"} to {program.attribution.windowEnd ?? "—"} · As of {program.attribution.asOfSession} · {program.attribution.baselineVersion} → {program.attribution.programVersion}
+          </div>}
         </div>
       </div>
       <div style={{ padding: mobile ? "16px" : "18px 20px", display: "flex", flexDirection: "column", gap: "17px" }}>

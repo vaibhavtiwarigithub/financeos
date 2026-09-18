@@ -17,6 +17,7 @@ import {
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
+import { defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -52,6 +53,25 @@ export interface ProgramRuntimeDeployment {
   whyNotNextStage: string;
 }
 
+export interface ProgramAttributionStatus {
+  state: AttributionState;
+  comparisonType: AttributionClass;
+  reason: string;
+  asOfSession: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  programVersion: string | null;
+  baselineVersion: string | null;
+  incrementalReturnPct: number | null;
+  netIncrementalReturnPct: number | null;
+  benchmarkRelativeIncrementalReturnPct: number | null;
+  ciLowerPct: number | null;
+  ciUpperPct: number | null;
+  independentSessions: number | null;
+  turnoverPct: number | null;
+  drawdownDeltaPct: number | null;
+}
+
 export interface ShadowProgramStatus extends ShadowProgramDefinition {
   lifecycle: ShadowLifecycle;
   benefitVerdict: BenefitVerdict;
@@ -64,6 +84,7 @@ export interface ShadowProgramStatus extends ShadowProgramDefinition {
   nextAction: string;
   details: string[];
   available: boolean;
+  attribution: ProgramAttributionStatus;
   deployment: ProgramRuntimeDeployment;
 }
 
@@ -153,6 +174,7 @@ function calls(mode: CallAccountingMode, note: string, recorded: number | null =
 }
 
 function base(program: ShadowProgramDefinition): ShadowProgramStatus {
+  const attribution = defaultAttribution(program.attributionClass);
   return {
     ...program,
     lifecycle: "idle",
@@ -166,12 +188,52 @@ function base(program: ShadowProgramDefinition): ShadowProgramStatus {
     nextAction: "Inspect the source ledger and System Health.",
     details: [],
     available: false,
+    attribution: {
+      state: attribution.state,
+      comparisonType: attribution.comparison_type,
+      reason: attribution.validity_reason ?? "No attribution status is available.",
+      asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null,
+      incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null,
+      ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null,
+    },
     deployment: {
       state: "status_unavailable",
       summary: "Mainline implementation exists, but production runtime state could not be verified.",
       proof: [],
       whyNotNextStage: "Restore the status adapter before making a rollout decision.",
     },
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttributionRow | null, error: { message?: string } | null): ProgramAttributionStatus {
+  const fallback = defaultAttribution(program.attributionClass);
+  if (error) {
+    return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+  }
+  if (!row) {
+    return { state: fallback.state, comparisonType: fallback.comparison_type, reason: fallback.validity_reason ?? "No attribution evidence exists.", asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+  }
+  const normalized: UpgradePathAttributionRow = {
+    ...row, constraints: row.constraints ?? {},
+    baseline_portfolio_return_pct: numberOrNull(row.baseline_portfolio_return_pct), variant_portfolio_return_pct: numberOrNull(row.variant_portfolio_return_pct), benchmark_return_pct: numberOrNull(row.benchmark_return_pct), incremental_return_pct: numberOrNull(row.incremental_return_pct), net_incremental_return_pct: numberOrNull(row.net_incremental_return_pct), benchmark_relative_incremental_return_pct: numberOrNull(row.benchmark_relative_incremental_return_pct), drawdown_delta_pct: numberOrNull(row.drawdown_delta_pct), turnover_pct: numberOrNull(row.turnover_pct), independent_sessions: numberOrNull(row.independent_sessions), ci_lower_pct: numberOrNull(row.ci_lower_pct), ci_upper_pct: numberOrNull(row.ci_upper_pct), t_statistic: numberOrNull(row.t_statistic),
+  };
+  const validation = validateAttributionRow(normalized);
+  const state = normalized.state === "measured" && !validation.valid ? "invalid" : normalized.state;
+  return {
+    state, comparisonType: normalized.comparison_type,
+    reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
+    asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
+    programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,
+    incrementalReturnPct: normalized.incremental_return_pct, netIncrementalReturnPct: normalized.net_incremental_return_pct,
+    benchmarkRelativeIncrementalReturnPct: normalized.benchmark_relative_incremental_return_pct,
+    ciLowerPct: normalized.ci_lower_pct, ciUpperPct: normalized.ci_upper_pct,
+    independentSessions: normalized.independent_sessions, turnoverPct: normalized.turnover_pct, drawdownDeltaPct: normalized.drawdown_delta_pct,
   };
 }
 
@@ -337,6 +399,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     scorePriceOutcomeRes,
     brokerPreflightRes,
     listingCandidateRes,
+    attributionRes,
   ] = await Promise.all([
     svc.rpc("get_shadow_cron_status"),
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
@@ -468,6 +531,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("listing_candidates")
       .select("id,state,first_seen_at,last_seen_at,first_trade_date,latest_preflight_id")
       .eq("market", market).order("last_seen_at", { ascending: false }).limit(5000),
+    svc.from("upgrade_path_attribution_runs")
+      .select("program_id,market,program_version,baseline_version,comparison_type,state,as_of_session,window_start,window_end,baseline_portfolio_return_pct,variant_portfolio_return_pct,benchmark_return_pct,incremental_return_pct,net_incremental_return_pct,benchmark_relative_incremental_return_pct,drawdown_delta_pct,turnover_pct,independent_sessions,ci_lower_pct,ci_upper_pct,t_statistic,matched_population_hash,input_snapshot_hash,cost_model_version,validity_reason,constraints,created_at")
+      .eq("market", market).order("as_of_session", { ascending: false }).order("created_at", { ascending: false }).limit(500),
   ]) as Array<QueryResult<any>>;
 
   const cronRows = cronRes.data ?? [];
@@ -509,6 +575,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const scorePriceOutcomes = scorePriceOutcomeRes.data ?? [];
   const brokerPreflights = brokerPreflightRes.data ?? [];
   const listingCandidates = listingCandidateRes.data ?? [];
+  const attributionRows = attributionRes.data ?? [];
 
   const labelRows: LabelRow[] = (labelCoverageRes.data ?? [])
     .map((row: any) => {
@@ -1258,5 +1325,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     return status;
   });
 
-  return statuses.map((status) => ({ ...status, deployment: deploymentFor(status) }));
+  return statuses.map((status) => {
+    const row = attributionRows.find((candidate: any) => candidate.program_id === status.id) as UpgradePathAttributionRow | undefined;
+    const withAttribution = { ...status, attribution: attributionFor(status, row ?? null, attributionRes.error) };
+    return { ...withAttribution, deployment: deploymentFor(withAttribution) };
+  });
 }

@@ -28,6 +28,9 @@ export type MainlineImplementationScope =
   | "paper_capable"
   | "live_capable";
 
+/** The only comparison a program is allowed to make on the Upgrade Path page. */
+export type UpgradePathAttributionClass = "matched_replay" | "paper_cohort" | "operational_only";
+
 export interface MainlineRelease {
   /** First commit that put the program's runnable or owner-visible implementation on main. */
   commit: string;
@@ -41,6 +44,8 @@ export interface ShadowProgramDefinition {
   id: string;
   name: string;
   category: "Data" | "Scoring" | "Trading" | "Risk" | "Portfolio" | "Learning";
+  /** Explicit by program: no generic return claim or implicit default is allowed. */
+  attributionClass: UpgradePathAttributionClass;
   markets: readonly ("us" | "india")[];
   purpose: string;
   productBenefit: string;
@@ -70,6 +75,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "new-listing-discovery",
     name: "New listing discovery",
     category: "Data",
+    attributionClass: "operational_only",
     markets: ["us"],
     purpose: "Collect SEC registration and prospectus evidence into a separate candidate registry without adding symbols to research or trading.",
     productBenefit: "Makes newly filing issuers visible with immutable provenance instead of silently losing them in a watchlist.",
@@ -91,6 +97,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "broker-symbol-tradability",
     name: "Broker symbol tradability",
     category: "Trading",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Compare every attempted live order with the exact broker/account instrument and side capability before enforcement is allowed.",
     productBenefit: "Shows whether researched and approved symbols can actually be traded through the selected account without trusting a generic universe list.",
@@ -112,6 +119,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "score-price-divergence",
     name: "Score / price divergence",
     category: "Scoring",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Measure when composite conviction and the decision-time price move persistently in opposite directions under one unchanged scoring methodology.",
     productBenefit: "Makes score drift visible on the symbol chart and turns repeated disagreement with price into structured, outcome-labelled evidence.",
@@ -133,6 +141,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "dimension-diagnostics",
     name: "Dimension and agent diagnostics",
     category: "Learning",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Separates evidence degradation, descriptive factor behavior, agent contribution and execution confounders before any repair is proposed.",
     productBenefit: "Turns a bad result into an auditable diagnosis instead of an automatic score rewrite or an untestable explanation.",
@@ -162,6 +171,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "decision-label-coverage",
     name: "Decision-label coverage",
     category: "Learning",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Measure whether matured decision labels span enough independent dates and symbols to support any claim about scoring, universe or exits.",
     productBenefit: "Stops Kairos drawing confident conclusions — and shipping changes — from a single market fortnight.",
@@ -191,6 +201,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "exit-geometry",
     name: "Exit-geometry shadow",
     category: "Trading",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Measure what alternative stop/target geometries would have produced, before any exit rule is changed.",
     productBenefit: "Turns 'shorten the target' from a guess into a decidable question with a stated evidence threshold.",
@@ -212,6 +223,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "horizon-extension",
     name: "Conditional horizon extension",
     category: "Trading",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "At the exact holding horizon, record whether a healthy position qualifies for predeclared +5/+10-session holds and mature matched outcomes.",
     productBenefit: "Tests whether the clock is exiting winners or weak positions before any holding-period rule changes.",
@@ -233,6 +245,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "live-exit-ladder-parity",
     name: "Live exit ladder parity shadow",
     category: "Trading",
+    attributionClass: "paper_cohort",
     markets: ["us", "india"],
     purpose: "Prove the live exit engine reaches parity with the paper ladder (partial target + trailing runner stop) BEFORE live_auto_enabled is ever flipped.",
     productBenefit: "Removes a silent behavioral gap: live closed a winner entirely at target and never trailed its stop, while paper banked half and protected the runner.",
@@ -254,6 +267,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "exit-stop-shadow",
     name: "ATR exit-stop shadow",
     category: "Trading",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Compare one predeclared ATR stop with the live fixed stop while holding target and time-stop rules constant.",
     productBenefit: "Separates premature stop-outs from broader exit-policy effects using paired evidence.",
@@ -275,6 +289,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "score-exit-shadow",
     name: "Holding score-exit shadow",
     category: "Trading",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Test whether fresh, session-validated holding scores identify positions that should exit, without confusing held-position reviews with entry selection.",
     productBenefit: "Makes the score-exit rule earn its place with immutable, market-local counterfactual evidence.",
@@ -296,6 +311,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "archetype-ic",
     name: "Archetype weighting IC",
     category: "Scoring",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Grade predeclared setup weighting arms against the champion composite on the same entry-eligible long observations.",
     productBenefit: "Shows whether market-local weighting improves ranking without confusing descriptive IC with promotion evidence.",
@@ -317,6 +333,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "alpha-diagnostics",
     name: "Alpha Diagnostic Lab",
     category: "Learning",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Decompose benchmark-relative performance into data truth, selection, payoff, exits, sizing, risk and cost using immutable diagnostic runs.",
     productBenefit: "Turns underperformance into a repeatable funnel diagnosis instead of a speculative strategy rewrite.",
@@ -338,6 +355,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "evidence-router",
     name: "Evidence Router parity",
     category: "Data",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Prove that configurable provider routing preserves or improves the evidence used by the current scorer.",
     productBenefit: "Lets Kairos change providers and quotas without rewriting every agent or silently changing scores.",
@@ -362,6 +380,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "degradation-guard",
     name: "Evidence degradation guard",
     category: "Risk",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Measure when missing or degraded evidence would make a new long eligible only because weights were renormalized.",
     productBenefit: "Makes provider degradation visible before it can change eligibility.",
@@ -383,6 +402,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "india-news-evidence",
     name: "India news and event evidence",
     category: "Data",
+    attributionClass: "operational_only",
     markets: ["india"],
     purpose: "Measure reliable symbol-level India headline coverage and official corporate announcements after the zero-output GDELT scoring path was retired.",
     productBenefit: "Can restore an India-specific news evidence dimension only if the replacement proves freshness, relevance and stable coverage.",
@@ -404,6 +424,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "setup-experts",
     name: "Setup expert comparison",
     category: "Scoring",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Compare asset/setup-specific score formulas with the v1 actionable score on the same opportunities.",
     productBenefit: "Shows whether one universal score should eventually be replaced by setup-aware experts.",
@@ -425,6 +446,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "technical-calibration",
     name: "Technical edge calibration",
     category: "Scoring",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Measure every registered price/volume technical edge, including the existing composite, MACD/ATR, signed ADX, momentum, breakout and relative-strength challengers.",
     productBenefit: "Prevents indicator changes from being made because they sound plausible rather than because they improve ranking.",
@@ -449,6 +471,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "pit-fundamental-qualification",
     name: "Point-in-time fundamental qualification",
     category: "Data",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Qualify dated, restatement-safe reported facts before gross profitability, leverage, free-cash-flow yield, or growth-acceleration can be measured.",
     productBenefit: "Prevents current provider snapshots from being misrepresented as historical inputs and keeps a single fundamental provenance ledger.",
@@ -470,6 +493,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "specialist-feature-packs",
     name: "Specialist instrument packs",
     category: "Scoring",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Define separate data contracts for banks, REITs and leveraged ETFs rather than applying generic company fundamentals to incompatible instruments.",
     productBenefit: "Keeps instrument-specific analysis extensible without silently widening the universal five-dimension score.",
@@ -491,6 +515,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "capital-rotation",
     name: "Capital rotation",
     category: "Trading",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Evaluate replacing the weakest sellable holding when a materially better candidate appears and the book is full or cash-constrained.",
     productBenefit: "Makes opportunity cost explicit instead of treating a full book as a permanent no-op.",
@@ -523,6 +548,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "earnings-risk",
     name: "Earnings event risk",
     category: "Risk",
+    attributionClass: "matched_replay",
     markets: ["us", "india"],
     purpose: "Measure whether a planned swing crosses earnings and, for US names, whether the analytical stop sits inside the option-implied move.",
     productBenefit: "Adds an auditable event-risk layer without inventing a directional options signal.",
@@ -544,6 +570,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "exogenous-risk",
     name: "India macro and global spillover evidence",
     category: "Risk",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Create a timestamped, source-backed record of India domestic macro facts and global spillover facts before any regime interpretation is considered.",
     productBenefit: "Makes missing India macro coverage explicit and prevents an untraceable or stale macro input from being mistaken for neutral.",
@@ -565,6 +592,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "international-allocation",
     name: "International allocation",
     category: "Portfolio",
+    attributionClass: "matched_replay",
     markets: ["us"],
     purpose: "Observe whether a US book should reserve a broad non-US equity sleeve rather than relying entirely on domestic names.",
     productBenefit: "Creates an explicit, reviewable diversification policy instead of accidental country exposure.",
@@ -586,6 +614,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "autonomous-live",
     name: "Autonomous live execution",
     category: "Trading",
+    attributionClass: "paper_cohort",
     markets: ["us", "india"],
     purpose: "Dry-run the deterministic nine-gate execution kernel against qualifying signals before any autonomous broker submission is allowed.",
     productBenefit: "Proves the execution envelope and audit trail independently from broker money movement.",
@@ -607,6 +636,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "challenger-validation",
     name: "Strategy challenger validation",
     category: "Learning",
+    attributionClass: "paper_cohort",
     markets: ["us", "india"],
     purpose: "Validate learner-proposed challengers and route at most one passing version per market into non-executing shadow evidence.",
     productBenefit: "Turns strategy improvement into a controlled lifecycle rather than direct weight mutation.",
@@ -628,6 +658,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "downside-hedge",
     name: "Downside hedge",
     category: "Risk",
+    attributionClass: "paper_cohort",
     markets: ["us"],
     purpose: "Evaluate a small, time-bounded inverse-ETF hedge when deterministic portfolio and macro stress gates agree.",
     productBenefit: "Provides a governed alternative to ad hoc discretionary hedging.",

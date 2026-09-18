@@ -27,6 +27,7 @@ describe("shadow registry governance contract", () => {
       expect(program.mainline.enteredAt).toMatch(/^20\d{2}-\d{2}-\d{2}$/);
       expect(program.mainline.commit).toMatch(/^[0-9a-f]{8}$/);
       expect(program.mainline.reason.length).toBeGreaterThan(30);
+      expect(["matched_replay", "paper_cohort", "operational_only"]).toContain(program.attributionClass);
     }
   });
 
@@ -130,6 +131,8 @@ describe("shadow registry governance contract", () => {
     expect(statusAdapter).toContain("production_measurement");
     expect(statusAdapter).toContain("production_blocked");
     expect(statusAdapter).toContain("scheduled_idle");
+    expect(statusAdapter).toContain("upgrade_path_attribution_runs");
+    expect(upgradePage).toContain("Causal attribution");
   });
 
   it("reports the setup-expert idempotency conflict instead of calling India merely idle", () => {
