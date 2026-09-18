@@ -35,7 +35,24 @@ export function computeWeightedAnalystScore(
   included: DimensionRecord<boolean>,
   baseWeights: DimensionRecord<number>
 ): WeightedScoreResult {
-  const includedDims = SCORE_DIMENSIONS.filter(k => included[k]);
+  // Reject corrupt configuration before either research or validation can emit
+  // a plausible-looking directional score. Do not silently repair weights.
+  for (const k of SCORE_DIMENSIONS) {
+    if (!Number.isFinite(baseWeights[k]) || baseWeights[k] < 0) {
+      throw new Error(`Invalid scoring weight: ${k}`);
+    }
+    if (typeof included[k] !== "boolean") {
+      throw new Error(`Invalid scoring availability: ${k}`);
+    }
+    if (included[k] && (!Number.isFinite(scores[k]) || scores[k] < 0 || scores[k] > 100)) {
+      throw new Error(`Invalid included dimension score: ${k}`);
+    }
+  }
+  const weightTotal = SCORE_DIMENSIONS.reduce((sum, k) => sum + baseWeights[k], 0);
+  if (Math.abs(weightTotal - 1) > 1e-6) {
+    throw new Error("Scoring weights must sum to 1");
+  }
+  const includedDims = SCORE_DIMENSIONS.filter(k => included[k] === true);
   let effWeights: DimensionRecord<number> = { ...baseWeights };
   let renormalized = false;
 
@@ -57,7 +74,12 @@ export function computeWeightedAnalystScore(
     effWeights = { fundamental: 0, technical: 0, sentiment: 0, macro: 0, insider: 0 };
   }
 
-  const score = SCORE_DIMENSIONS.reduce((s, k) => s + scores[k] * effWeights[k], 0);
+  // The single-dimension fallback keeps its base weight, but excluded values
+  // never contribute (including placeholders and NaN, since NaN * 0 is NaN).
+  for (const k of SCORE_DIMENSIONS) {
+    if (!included[k]) effWeights[k] = 0;
+  }
+  const score = includedDims.reduce((s, k) => s + scores[k] * effWeights[k], 0);
   return { score: Math.round(score), effWeights, renormalized, includedDims, abstain: includedDims.length < 2 };
 }
 

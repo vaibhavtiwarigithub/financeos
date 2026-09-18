@@ -44,4 +44,38 @@ describe("weighted-score: computeWeightedAnalystScore", () => {
     expect(isThinEvidence(["fundamental"])).toBe(true);
     expect(isThinEvidence(["fundamental", "technical"])).toBe(false);
   });
+
+  it.each([NaN, Infinity, -0.1, undefined, null])("rejects invalid weights: %s", (bad) => {
+    expect(() => computeWeightedAnalystScore(S, allIn, { ...W, fundamental: bad as number })).toThrow(/weight/i);
+  });
+
+  it.each([0, 0.5, 2])("rejects weights totaling %s instead of silently rescaling", (total) => {
+    const weights = { fundamental: total, technical: 0, sentiment: 0, macro: 0, insider: 0 };
+    expect(() => computeWeightedAnalystScore(S, allIn, weights)).toThrow(/sum to 1/);
+  });
+
+  it.each([NaN, Infinity, -1, 101, null, undefined])("rejects an included invalid score: %s", (bad) => {
+    expect(() => computeWeightedAnalystScore({ ...S, fundamental: bad as number }, allIn, W)).toThrow(/dimension score/);
+  });
+
+  it("ignores unavailable nonfinite values and leaves inputs unchanged", () => {
+    const scores = Object.freeze({ ...S, macro: NaN, insider: Infinity });
+    const included = Object.freeze({ ...allIn, macro: false, insider: false });
+    const result = computeWeightedAnalystScore(scores, included, Object.freeze({ ...W }));
+    expect(result.score).toBe(65);
+    expect(result.effWeights.macro).toBe(0);
+    expect(result.effWeights.insider).toBe(0);
+  });
+
+  it("single-dimension abstention excludes finite placeholders as well as nonfinite values", () => {
+    const included = { fundamental: true, technical: false, sentiment: false, macro: false, insider: false };
+    const result = computeWeightedAnalystScore({ ...S, technical: NaN }, included, W);
+    expect(result.score).toBe(24);
+    expect(result.abstain).toBe(true);
+    expect(result.effWeights.technical).toBe(0);
+  });
+
+  it("requires explicit boolean availability", () => {
+    expect(() => computeWeightedAnalystScore(S, { ...allIn, macro: undefined as unknown as boolean }, W)).toThrow(/availability/);
+  });
 });

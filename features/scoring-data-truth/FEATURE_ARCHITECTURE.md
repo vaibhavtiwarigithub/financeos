@@ -120,3 +120,21 @@ These change strategy semantics and require owner approval plus shadow evidence:
 - Missing availability metadata excludes a dimension.
 - Exactly one production component can write authoritative ResearchAgent scores.
 - No corrective deployment writes an order or mutates historical trades.
+
+## 7. Shared composite input contract (2026-09-18)
+
+Research and offline validation share `computeWeightedAnalystScore`. The Astra
+audit corrective pass now rejects nonfinite/negative weights, weights whose total
+differs from one by more than 0.000001, non-boolean availability, and included
+scores outside finite 0..100. Invalid inputs throw an explicit error rather than
+producing a directional score or silently rescaling a broken configuration.
+
+Excluded scores never participate in arithmetic, including in the thin-evidence
+fallback. A single available dimension keeps its original base weight and returns
+`abstain=true`; absent placeholders no longer contribute to that diagnostic number.
+Valid multi-dimension calculations retain their existing formula and rounding.
+The existing zero-included-weight equal-split policy is unchanged.
+
+This closes input validation and unavailable-value contamination only. Availability
+mask calibration, OOF expected returns, and dimension challengers remain separate
+pending work; this patch supplies no evidence of increased investment returns.
