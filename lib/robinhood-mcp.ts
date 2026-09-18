@@ -484,11 +484,22 @@ export type RobinhoodCryptoQuote = {
   observedAt: string;
 };
 
+export type RobinhoodCryptoPair = {
+  /** Internal instrument symbol (e.g. BTC), never a guessed broker order id. */
+  symbol: string;
+  /** The broker's explicit pair identifier, retained only as read evidence. */
+  brokerPair: string;
+  /** True only when the broker response explicitly says the pair is tradable. */
+  tradeable: boolean;
+};
+
 export type RobinhoodCryptoExecutionSnapshot = {
   connected: boolean;
   accountEligible: boolean;
-  pairInventoryObserved: false;
+  pairInventoryObserved: boolean;
   quoteToolAvailable: boolean;
+  quoteCoverageLimited: boolean;
+  pairs: Map<string, RobinhoodCryptoPair>;
   quotes: Map<string, RobinhoodCryptoQuote>;
   errorCodes: string[];
 };
@@ -497,7 +508,18 @@ function cryptoSymbol(value: unknown): string | null {
   const raw = String(value ?? "").trim().toUpperCase().replace(/\//g, "-").replace(/_+/g, "-");
   if (!raw) return null;
   const base = raw.replace(/(?:-?USD|\s*USD)$/, "");
-  return ["BTC", "ETH", "SOL"].includes(base) ? base : null;
+  return /^[A-Z0-9]{2,15}$/.test(base) ? base : null;
+}
+
+function cryptoWireSymbol(symbol: string, property: string, schema: any): string {
+  const base = cryptoSymbol(symbol)!;
+  const pair = `${base}-USD`;
+  const enumValues: unknown[] = Array.isArray(schema?.enum) ? schema.enum
+    : Array.isArray(schema?.items?.enum) ? schema.items.enum : [];
+  const known = [pair, base, `${base}/USD`];
+  const fromEnum = known.find((value) => enumValues.includes(value));
+  if (fromEnum) return fromEnum;
+  return /pair/.test(property) ? pair : base;
 }
 
 /**
@@ -518,7 +540,9 @@ export function buildRobinhoodCryptoQuoteArgs(inputSchema: unknown, symbols: str
   // A plural field declared as a string could mean a comma-delimited list, a
   // provider-specific identifier, or something else. Do not invent an encoding.
   if (property !== "symbol" && (declaredType === "string" || (Array.isArray(declaredType) && declaredType.includes("string")))) return null;
-  const value = property === "symbol" ? requested[0] : requested;
+  const value = property === "symbol"
+    ? cryptoWireSymbol(requested[0], property, props[property])
+    : requested.map((symbol) => cryptoWireSymbol(symbol, property, props[property]));
   const args: Record<string, unknown> = { [property]: value };
   const required = Array.isArray(schema?.required) ? schema.required : [];
   return required.every((key: string) => key in args) ? args : null;
@@ -548,6 +572,28 @@ export function parseRobinhoodCryptoQuotes(payload: unknown, observedAt: string)
   return quotes;
 }
 
+function explicitTradability(item: Record<string, unknown>): boolean {
+  for (const key of ["tradable", "is_tradable", "trade_enabled", "is_tradeable", "can_trade"]) {
+    if (item[key] === true) return true;
+  }
+  return false;
+}
+
+/** Parses only USD pairs with an explicit broker tradability flag. */
+export function parseRobinhoodCryptoPairs(payload: unknown): Map<string, RobinhoodCryptoPair> {
+  const pairs = new Map<string, RobinhoodCryptoPair>();
+  for (const item of nestedObjects(payload)) {
+    const pairValue = item.symbol ?? item.currency_pair ?? item.pair ?? item.currency_pair_id ?? item.id;
+    const base = String(item.base_currency ?? item.base ?? "").trim().toUpperCase();
+    const quote = String(item.quote_currency ?? item.quote ?? "").trim().toUpperCase();
+    const raw = String(pairValue ?? (base && quote ? `${base}-${quote}` : "")).trim().toUpperCase().replace(/[\/_]/g, "-");
+    const symbol = cryptoSymbol(pairValue ?? (quote === "USD" ? base : null));
+    if (!symbol || !raw || !/(?:-|^)USD$/.test(raw)) continue;
+    pairs.set(symbol, { symbol, brokerPair: raw, tradeable: explicitTradability(item) });
+  }
+  return pairs;
+}
+
 export function parseRobinhoodCryptoOnboarding(payload: unknown): boolean {
   for (const item of nestedObjects(payload)) {
     for (const key of ["already_onboarded", "is_onboarded", "onboarded", "account_eligible", "eligible"]) {
@@ -565,7 +611,7 @@ export function parseRobinhoodCryptoOnboarding(payload: unknown): boolean {
  */
 export async function readRobinhoodCryptoExecutionSnapshot(symbols: string[]): Promise<RobinhoodCryptoExecutionSnapshot> {
   const empty = (errorCodes: string[], connected = false): RobinhoodCryptoExecutionSnapshot => ({
-    connected, accountEligible: false, pairInventoryObserved: false, quoteToolAvailable: false, quotes: new Map(), errorCodes,
+    connected, accountEligible: false, pairInventoryObserved: false, quoteToolAvailable: false, quoteCoverageLimited: false, pairs: new Map(), quotes: new Map(), errorCodes,
   });
   const svc = createServiceClient();
   const token = await getValidAccessToken(svc);
@@ -576,6 +622,7 @@ export async function readRobinhoodCryptoExecutionSnapshot(symbols: string[]): P
     const listed = await listTools(token.token, session.sessionId);
     if (!listed.ok || !Array.isArray(listed.tools)) return empty(["tools_list_failed"], true);
     const onboardingTool = listed.tools.find((tool: any) => tool?.name === "get_crypto_account_onboarding_info");
+    const pairTool = listed.tools.find((tool: any) => tool?.name === "get_currency_pairs");
     const quoteTool = listed.tools.find((tool: any) => tool?.name === "get_crypto_quotes");
     const errorCodes: string[] = [];
     let accountEligible = false;
@@ -585,14 +632,29 @@ export async function readRobinhoodCryptoExecutionSnapshot(symbols: string[]): P
       if (!result.ok) errorCodes.push("onboarding_read_failed");
       else accountEligible = parseRobinhoodCryptoOnboarding(mcpToolJson(result.result?.content ?? result.result));
     }
-    if (!quoteTool) return { connected: true, accountEligible, pairInventoryObserved: false, quoteToolAvailable: false, quotes: new Map(), errorCodes: [...errorCodes, "quote_tool_unavailable"] };
-    const allSymbolsArgs = buildRobinhoodCryptoQuoteArgs(quoteTool.inputSchema, symbols);
+    let pairs = new Map<string, RobinhoodCryptoPair>();
+    let pairInventoryObserved = false;
+    if (!pairTool) errorCodes.push("pair_inventory_tool_unavailable");
+    else {
+      const result = await mcpRpc(token.token, "tools/call", { name: "get_currency_pairs", arguments: {} }, session.sessionId);
+      if (!result.ok) errorCodes.push("pair_inventory_read_failed");
+      else {
+        pairs = parseRobinhoodCryptoPairs(mcpToolJson(result.result?.content ?? result.result));
+        pairInventoryObserved = pairs.size > 0;
+        if (!pairInventoryObserved) errorCodes.push("pair_inventory_unparseable_or_empty");
+      }
+    }
+    if (!quoteTool) return { connected: true, accountEligible, pairInventoryObserved, quoteToolAvailable: false, quoteCoverageLimited: false, pairs, quotes: new Map(), errorCodes: [...errorCodes, "quote_tool_unavailable"] };
+    const brokerSymbols = pairInventoryObserved ? [...pairs.keys()] : symbols;
+    const allSymbolsArgs = buildRobinhoodCryptoQuoteArgs(quoteTool.inputSchema, brokerSymbols);
     // Singular schemas are read one pair at a time. This remains read-only and
     // avoids guessing a plural encoding such as "BTC,ETH,SOL".
-    const requests = allSymbolsArgs ? [allSymbolsArgs] : symbols
+    const individualSymbols = brokerSymbols.slice(0, 12);
+    const requests = allSymbolsArgs ? [allSymbolsArgs] : individualSymbols
       .map((symbol) => buildRobinhoodCryptoQuoteArgs(quoteTool.inputSchema, [symbol]))
       .filter((args): args is Record<string, unknown> => !!args);
-    if (!requests.length) return { connected: true, accountEligible, pairInventoryObserved: false, quoteToolAvailable: true, quotes: new Map(), errorCodes: [...errorCodes, "quote_schema_unmapped"] };
+    const quoteCoverageLimited = !allSymbolsArgs && brokerSymbols.length > individualSymbols.length;
+    if (!requests.length) return { connected: true, accountEligible, pairInventoryObserved, quoteToolAvailable: true, quoteCoverageLimited, pairs, quotes: new Map(), errorCodes: [...errorCodes, "quote_schema_unmapped"] };
     const quotePayloads: unknown[] = [];
     for (const args of requests) {
       const result = await mcpRpc(token.token, "tools/call", { name: "get_crypto_quotes", arguments: args }, session.sessionId);
@@ -606,8 +668,8 @@ export async function readRobinhoodCryptoExecutionSnapshot(symbols: string[]): P
     const quotes = new Map<string, RobinhoodCryptoQuote>();
     for (const payload of quotePayloads) for (const [symbol, quote] of parseRobinhoodCryptoQuotes(payload, observedAt)) quotes.set(symbol, quote);
     return {
-      connected: true, accountEligible, pairInventoryObserved: false, quoteToolAvailable: true,
-      quotes,
+      connected: true, accountEligible, pairInventoryObserved, quoteToolAvailable: true,
+      quoteCoverageLimited, pairs, quotes,
       errorCodes,
     };
   } catch {

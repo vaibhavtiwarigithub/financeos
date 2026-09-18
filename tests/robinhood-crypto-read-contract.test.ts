@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRobinhoodCryptoQuoteArgs,
   parseRobinhoodCryptoOnboarding,
+  parseRobinhoodCryptoPairs,
   parseRobinhoodCryptoQuotes,
 } from "@/lib/robinhood-mcp";
 
@@ -22,5 +23,16 @@ describe("Robinhood crypto read contract", () => {
   it("requires affirmative broker onboarding evidence", () => {
     expect(parseRobinhoodCryptoOnboarding({ already_onboarded: true })).toBe(true);
     expect(parseRobinhoodCryptoOnboarding({ status: "unknown" })).toBe(false);
+  });
+
+  it("requires explicit broker tradability and preserves the broker pair identifier", () => {
+    const pairs = parseRobinhoodCryptoPairs({ currency_pairs: [
+      { symbol: "BTC-USD", tradable: true },
+      { base_currency: "ETH", quote_currency: "USD", is_tradable: false },
+      { symbol: "SOL-EUR", tradable: true },
+    ] });
+    expect(pairs.get("BTC")).toEqual({ symbol: "BTC", brokerPair: "BTC-USD", tradeable: true });
+    expect(pairs.get("ETH")).toEqual({ symbol: "ETH", brokerPair: "ETH-USD", tradeable: false });
+    expect(pairs.has("SOL")).toBe(false);
   });
 });

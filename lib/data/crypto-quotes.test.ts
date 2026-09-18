@@ -29,6 +29,16 @@ describe("crypto public candle adapters", () => {
     expect(requests).toEqual(["https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=86400"]);
   });
 
+  it("uses the broker-selected base symbol for Coinbase rather than a static three-coin universe", async () => {
+    const requests: string[] = [];
+    const result = await fetchCryptoCandles("DOGE", "", async (url) => {
+      requests.push(url);
+      return new Response(JSON.stringify(coinbaseRows(51)), { status: 200 });
+    });
+    expect(result.source).toBe("coinbase_exchange");
+    expect(requests).toEqual(["https://api.exchange.coinbase.com/products/DOGE-USD/candles?granularity=86400"]);
+  });
+
   it("falls through an insufficient Coinbase response to independent Kraken evidence", async () => {
     const result = await fetchCryptoCandles("ETH", "", async (url) => new Response(
       JSON.stringify(url.includes("coinbase") ? coinbaseRows(1) : { result: { XETHZUSD: krakenRows(51), last: start } }), { status: 200 },

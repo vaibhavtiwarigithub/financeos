@@ -5,10 +5,12 @@ export type CryptoCandleSource = "coinbase_exchange" | "kraken" | "alpha_vantage
 export type CryptoCandleResult = { candles: Candle[]; source: CryptoCandleSource; attempted: CryptoCandleSource[] };
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-const COINBASE_PRODUCT: Record<string, string> = { BTC: "BTC-USD", ETH: "ETH-USD", SOL: "SOL-USD" };
 const KRAKEN_PAIR: Record<string, string> = { BTC: "XBTUSD", ETH: "ETHUSD", SOL: "SOLUSD" };
 
-function coinFor(symbol: string): string { return symbol.trim().toUpperCase().replace(/-USD$/, ""); }
+function coinFor(symbol: string): string {
+  const coin = symbol.trim().toUpperCase().replace(/(?:-|\/)?USD$/, "");
+  return /^[A-Z0-9]{2,15}$/.test(coin) ? coin : "";
+}
 
 function dateFromEpochSeconds(value: unknown): string | null {
   const seconds = Number(value);
@@ -59,8 +61,12 @@ async function fetchJson(url: string, fetcher: FetchLike): Promise<unknown> {
 }
 
 async function coinbaseCandles(coin: string, fetcher: FetchLike): Promise<Candle[]> {
-  const product = COINBASE_PRODUCT[coin];
-  return product ? parseCoinbaseDailyCandles(await fetchJson(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=86400`, fetcher)) : [];
+  // Coinbase products use BASE-USD. Do not keep a three-coin allowlist here:
+  // the broker's point-in-time inventory is the universe authority. A product
+  // Coinbase does not offer simply yields its normal provider error and lets
+  // the independent fallback run.
+  if (!coin) return [];
+  return parseCoinbaseDailyCandles(await fetchJson(`https://api.exchange.coinbase.com/products/${coin}-USD/candles?granularity=86400`, fetcher));
 }
 
 async function krakenCandles(coin: string, fetcher: FetchLike): Promise<Candle[]> {

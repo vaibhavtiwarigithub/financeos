@@ -1,6 +1,5 @@
 import PageHeader from "@/components/dashboard/PageHeader";
 import { createServiceClient } from "@/lib/supabase/service";
-import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 
 export const dynamic = "force-dynamic";
 
@@ -23,29 +22,29 @@ function Card({ label, value, detail, color = T.text }: { label: string; value: 
 
 export default async function CryptoPage() {
   const supabase = createServiceClient();
-  const symbols = [...CRYPTO_SYMBOLS];
   const [
     { data: pool }, { data: positions }, { data: trades }, { data: performance },
-    { data: signals }, { data: latestUniverse }, { data: shadows }, { data: strategies },
+    { data: latestUniverse }, { data: shadows }, { data: strategies },
   ] = await Promise.all([
     supabase.from("paper_portfolio").select("nav,cash_balance,updated_at").eq("market", "crypto").maybeSingle(),
     supabase.from("paper_positions").select("symbol,qty,entry_price,current_price,stop_loss,price_target,updated_at").eq("market", "crypto").order("symbol"),
     supabase.from("paper_trades").select("id,outcome,realized_pnl,executed_at").eq("market", "crypto").order("executed_at", { ascending: false }).limit(100),
     supabase.from("paper_performance").select("date,nav,total_pnl_pct").eq("market", "crypto").order("date", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("agent_signals").select("symbol,analyst_score,direction,created_at,rationale").eq("market", "us").in("symbol", symbols).order("created_at", { ascending: false }).limit(30),
     supabase.from("crypto_universe_runs").select("id,observed_at,source,status,summary,error").order("observed_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("crypto_geometry_shadows").select("symbol,strategy_version,decision,refusal_reason,geometry,observed_at").order("observed_at", { ascending: false }).limit(20),
     supabase.from("crypto_strategy_versions").select("version,state,is_champion,created_at,notes").order("created_at", { ascending: false }).limit(10),
   ]);
+  const { data: members } = latestUniverse?.id
+    ? await supabase.from("crypto_universe_members").select("symbol,broker_tradeable,account_eligible,history_days,quote_observed_at,bid,ask,spread_pct,admitted,refusal_reason,raw").eq("run_id", latestUniverse.id).order("admitted", { ascending: false }).order("symbol").limit(60)
+    : { data: [] as any[] };
 
   const closed = (trades ?? []).filter((trade: any) => trade.outcome != null);
   const winners = closed.filter((trade: any) => trade.outcome === "win").length;
   const realizedPnl = closed.reduce((sum: number, trade: any) => sum + Number(trade.realized_pnl ?? 0), 0);
-  const latestBySymbol = new Map<string, any>();
-  for (const signal of signals ?? []) if (!latestBySymbol.has(signal.symbol)) latestBySymbol.set(signal.symbol, signal);
   const latestShadowBySymbol = new Map<string, any>();
   for (const shadow of shadows ?? []) if (!latestShadowBySymbol.has(shadow.symbol)) latestShadowBySymbol.set(shadow.symbol, shadow);
-  const readiness = latestUniverse ? "Capability evidence recorded" : "Capability discovery not connected";
+  const summary: any = latestUniverse?.summary ?? {};
+  const readiness = latestUniverse ? `${summary.broker_pairs ?? 0} broker pairs · ${summary.research_targets ?? 0} researched · ${summary.admitted ?? 0} eligible` : "Capability discovery not connected";
 
   return <div style={{ maxWidth: 1400 }}>
     <PageHeader
@@ -84,18 +83,18 @@ export default async function CryptoPage() {
           )}
         </div>
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 18 }}>
-          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Latest crypto-native research</h2>
-          {symbols.map(symbol => {
+          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Broker universe and native research</h2>
+          {(members ?? []).length === 0 ? <p style={{ color: T.muted, fontSize: 13 }}>Awaiting the first broker-universe collection.</p> : (members ?? []).map((member: any) => {
+            const symbol = member.symbol;
             const shadow = latestShadowBySymbol.get(symbol);
-            const signal = latestBySymbol.get(symbol);
             const score = shadow?.geometry?.score;
             const evidence = shadow?.geometry?.evidence;
-            const detail = shadow
-              ? `${shadow.decision}${shadow.refusal_reason ? ` · ${shadow.refusal_reason}` : ""} · ${dateTime(shadow.observed_at)}`
-              : signal ? `Legacy only · ${signal.direction ?? "—"} · ${dateTime(signal.created_at)}` : "Awaiting native daily collector";
-            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{detail}{evidence?.sessionDate ? ` · session ${evidence.sessionDate}` : ""}</span><span style={{ color: score?.ok ? T.green : T.amber, fontWeight: 700 }}>{score?.ok ? Number(score.score).toFixed(1) : "Refused"}</span></div>;
+            const detail = member.admitted
+              ? `Eligible research observation · ${member.history_days} daily bars · spread ${pct(member.spread_pct)}`
+              : member.refusal_reason ?? "Not eligible";
+            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{detail}{evidence?.sessionDate ? ` · session ${evidence.sessionDate}` : ""}</span><span style={{ color: member.admitted && score?.ok ? T.green : T.amber, fontWeight: 700 }}>{member.admitted && score?.ok ? Number(score.score).toFixed(1) : member.admitted ? "Eligible" : "Refused"}</span></div>;
           })}
-          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Daily research is recorded independently of equities. A refusal for a missing broker pair or executable quote is expected evidence, never a failed or skipped trade.</p>
+          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Daily research is recorded independently of equities. Eligible means valid for measurement only—not paper or live trading. Deferred pairs stay visible with the exact reason.</p>
         </div>
       </section>
 

@@ -648,17 +648,21 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
 **Schedule:** `kairos-crypto-native-shadow`, daily 00:15 UTC via Supabase pg_cron
 **LLM:** None
 
-This dedicated 24/7 lane prevents BTC/ETH/SOL from competing with US equity holdings for the
-equity ResearchAgent's bounded wall-clock budget. It records the completed UTC daily bar, 20/50-day
-trend/structure/volatility evidence, and one explicit universe-membership refusal per coin.
+This dedicated 24/7 lane prevents broker-listed crypto pairs from competing with US equity holdings
+for the equity ResearchAgent's bounded wall-clock budget. It reads Robinhood's point-in-time USD-pair
+inventory, explicit tradability, onboarding and two-sided quotes, then records completed UTC daily-bar
+trend/structure/volatility evidence for a bounded deterministic subset (the lowest observed spreads).
+Every unresearched or ineligible pair remains in the run with an explicit refusal rather than vanishing.
 
-It does not write `agent_signals`, create a paper position, infer broker pair eligibility, or invent an
-executable spread from a candle close. Until a broker pair and fresh bid/ask contract is implemented,
-each shadow is deliberately refused with that exact reason. The refusal is successful evidence, not a
-failed trade.
+It does not write `agent_signals`, create a paper position, infer broker eligibility from a quote, or
+invent an executable spread from a candle close. A pair can become an **eligible research observation**
+only with explicit broker tradability, a current quote, 90 completed daily bars and a passing deterministic
+score. That state is measure-only—not permission to paper trade, preview, or submit an order. A refusal is
+successful evidence, not a failed trade.
 
-**Outputs:** one `crypto_universe_runs` header, three `crypto_universe_members` rows, and up to three
-idempotent `crypto_geometry_shadows` rows. These are owner-readable evidence only.
+**Outputs:** one `crypto_universe_runs` header, one `crypto_universe_members` row for every observed
+broker USD pair, and idempotent `crypto_geometry_shadows` for the bounded researched subset. These are
+owner-readable evidence only.
 
 ---
 
@@ -1165,12 +1169,11 @@ not consume the shared Alpha Vantage equity budget. All candle providers are
 historical research inputs and cannot authorize a paper or live order.
 
 Robinhood MCP is the separate execution-truth source. The native shadow
-collector may read the account onboarding response and current two-sided crypto
-quotes, recording broker receipt time, bid, ask, and spread with the run. It
-does not call preview, place, cancel, or order-status tools. A quote is not
-treated as proof of a tradeable pair: until Robinhood exposes and Kairos
-validates a pair-inventory contract, `broker_tradeable` remains false and every
-candidate is refused. Webull is not a crypto source: its registered MCP role is
+collector reads account onboarding, the broker's USD-pair inventory and explicit
+tradability fields, plus current two-sided crypto quotes, recording broker receipt
+time, bid, ask, and spread with the run. It does not call preview, place, cancel,
+or order-status tools. A quote is not treated as proof of a tradeable pair; only
+the explicit pair-inventory field can establish `broker_tradeable`. Webull is not a crypto source: its registered MCP role is
 read-only US equity fundamentals/analyst research and it has no verified crypto
 pair, quote, or account-eligibility contract.
 
