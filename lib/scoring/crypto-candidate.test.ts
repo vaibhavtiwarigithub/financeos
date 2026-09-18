@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyCryptoCandidate } from "./crypto-candidate";
+import { classifyCryptoCandidate, classifyCryptoPaperCandidate } from "./crypto-candidate";
 
 const eligible = () => classifyCryptoCandidate({
   pairInventoryObserved: true, accountEligible: true, brokerTradeable: true,
@@ -30,5 +30,9 @@ describe("native crypto candidate admission", () => {
       score: { ok: true, score: 100, components: { trend: 100, structure: 100, volatility: 100 }, version: "crypto-score-shadow-v1" },
     });
     expect(result).toEqual({ admitted: false, reason: "insufficient_completed_daily_history" });
+  });
+
+  it("keeps paper evidence independent of a missing live broker quote", () => {
+    expect(classifyCryptoPaperCandidate({ historyDeferred: false, historyDays: 100, observedSession: "2026-09-16", expectedSession: "2026-09-16", hasEvidence: true, hasMarketQuote: true, score: { ok: true, score: 72, components: { trend: 70, structure: 75, volatility: 70 }, version: "crypto-score-shadow-v1" } })).toEqual({ admitted: true, reason: null });
   });
 });

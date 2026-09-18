@@ -31,3 +31,15 @@ export function classifyCryptoCandidate(input: {
   if (!input.score.ok) return { admitted: false, reason: input.score.reason };
   return { admitted: true, reason: null };
 }
+
+/** Paper research requires reproducible public market data, not a live-broker credential. */
+export function classifyCryptoPaperCandidate(input: Omit<Parameters<typeof classifyCryptoCandidate>[0], "pairInventoryObserved" | "accountEligible" | "brokerTradeable" | "hasExecutableQuote"> & { hasMarketQuote: boolean }): CryptoCandidateEligibility {
+  if (!input.hasMarketQuote) return { admitted: false, reason: "public_two_sided_quote_unavailable" };
+  if (input.historyDeferred) return { admitted: false, reason: "history_capture_deferred_by_bounded_research_budget" };
+  if (!Number.isFinite(input.historyDays) || input.historyDays < 90) return { admitted: false, reason: "insufficient_completed_daily_history" };
+  if (input.observedSession !== input.expectedSession) return { admitted: false, reason: "daily_candle_unavailable_or_stale" };
+  if (!input.hasEvidence) return { admitted: false, reason: "insufficient_or_invalid_daily_history" };
+  if (!input.score) return { admitted: false, reason: "native_score_unavailable" };
+  if (!input.score.ok) return { admitted: false, reason: input.score.reason };
+  return { admitted: true, reason: null };
+}

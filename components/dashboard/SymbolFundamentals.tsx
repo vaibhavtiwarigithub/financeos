@@ -160,19 +160,21 @@ function RangeBar({ low, high, current, target, cur }: { low: number; high: numb
 interface CryptoOverviewData {
   sessionCount: number;
   latestEvidenceAt: string | null;
-  technicalScore: number | null;
-  realYieldChange20obsPp: number | null;
-  dollarChange20obsIndexPoints: number | null;
+  trendScore: number | null;
+  structureScore: number | null;
+  volatilityScore: number | null;
+  atrPct: number | null;
+  publicQuoteSource: string | null;
+  refusalReason: string | null;
   analystScore: number | null;
   direction: string | null;
   rationale: string | null;
   signalStatus: string | null;
 }
 
-// Crypto has no P/E, margin, ROE, or analyst coverage — this renders the same
-// technical+macro(+sentiment) composite the Trading page's Crypto Watch panel
-// shows, but as a per-coin breakdown (mirrors the equity fundamentals card's
-// role: "why was this scored the way it was"). See FEATURE_ARCHITECTURE.md §2.3.
+// Crypto has no P/E, margin, ROE, or analyst coverage. This shows the native
+// paper score: 40% trend + 35% structure + 25% volatility, with liquidity as a
+// hard quote gate rather than a score booster.
 function CryptoOverview({ symbol }: { symbol: string }) {
   const [data, setData] = useState<CryptoOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,21 +200,23 @@ function CryptoOverview({ symbol }: { symbol: string }) {
   const scoreColor = data.analystScore != null
     ? (data.analystScore >= 70 ? T.green : data.analystScore >= 50 ? T.amber : T.red)
     : T.muted;
-  const techColor = data.technicalScore != null
-    ? (data.technicalScore >= 60 ? T.green : data.technicalScore >= 40 ? T.amber : T.red)
+  const techColor = data.trendScore != null
+    ? (data.trendScore >= 60 ? T.green : data.trendScore >= 40 ? T.amber : T.red)
     : T.muted;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
       <div style={{ fontSize: "11px", color: T.textSub }}>
-        Crypto composite: technical + macro (+ sentiment when available) — no fundamentals dimension exists for this asset class.
+        Native crypto paper score: 40% trend + 35% structure + 25% volatility. A public two-sided quote is required; Robinhood eligibility is a separate live-only gate.
       </div>
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
         <StatBox label="Analyst Score" value={data.analystScore != null ? String(data.analystScore) : "—"} color={scoreColor} />
         <StatBox label="Direction" value={data.direction ? data.direction.toUpperCase() : "—"} color={data.direction === "long" ? T.green : T.muted} />
-        <StatBox label="Technical Score" value={data.technicalScore != null ? data.technicalScore.toFixed(1) : "—"} color={techColor} />
-        <StatBox label="Real Yield Δ20obs (pp)" value={data.realYieldChange20obsPp != null ? `${data.realYieldChange20obsPp >= 0 ? "+" : ""}${data.realYieldChange20obsPp.toFixed(2)}` : "—"} />
-        <StatBox label="DXY Δ20obs" value={data.dollarChange20obsIndexPoints != null ? `${data.dollarChange20obsIndexPoints >= 0 ? "+" : ""}${data.dollarChange20obsIndexPoints.toFixed(2)}` : "—"} />
+        <StatBox label="Trend · 40%" value={data.trendScore != null ? data.trendScore.toFixed(1) : "—"} color={techColor} />
+        <StatBox label="Structure · 35%" value={data.structureScore != null ? data.structureScore.toFixed(1) : "—"} />
+        <StatBox label="Volatility · 25%" value={data.volatilityScore != null ? data.volatilityScore.toFixed(1) : "—"} />
+        <StatBox label="ATR(20)" value={data.atrPct != null ? `${data.atrPct.toFixed(2)}%` : "—"} />
+        <StatBox label="Paper quote" value={data.publicQuoteSource ?? "—"} />
         <StatBox label="Evidence Sessions" value={String(data.sessionCount)} />
       </div>
       {data.rationale && (

@@ -3,6 +3,9 @@ import { avCachedFetch } from "@/lib/av-cache";
 
 export type CryptoCandleSource = "coinbase_exchange" | "kraken" | "alpha_vantage" | "unavailable";
 export type CryptoCandleResult = { candles: Candle[]; source: CryptoCandleSource; attempted: CryptoCandleSource[] };
+export type CryptoQuoteSource = "coinbase_exchange" | "kraken" | "unavailable";
+export type CryptoQuote = { bid: number; ask: number; observedAt: string; source: Exclude<CryptoQuoteSource, "unavailable"> };
+export type CryptoQuoteResult = { quote: CryptoQuote | null; source: CryptoQuoteSource; attempted: CryptoQuoteSource[] };
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const KRAKEN_PAIR: Record<string, string> = { BTC: "XBTUSD", ETH: "ETHUSD", SOL: "SOLUSD" };
@@ -72,6 +75,40 @@ async function coinbaseCandles(coin: string, fetcher: FetchLike): Promise<Candle
 async function krakenCandles(coin: string, fetcher: FetchLike): Promise<Candle[]> {
   const pair = KRAKEN_PAIR[coin];
   return pair ? parseKrakenDailyCandles(await fetchJson(`https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440`, fetcher)) : [];
+}
+
+function positive(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+export function parseCoinbaseQuote(payload: unknown, observedAt = new Date().toISOString()): CryptoQuote | null {
+  const bid = positive((payload as any)?.bid); const ask = positive((payload as any)?.ask);
+  return bid != null && ask != null && ask >= bid ? { bid, ask, observedAt, source: "coinbase_exchange" } : null;
+}
+
+export function parseKrakenQuote(payload: unknown, observedAt = new Date().toISOString()): CryptoQuote | null {
+  const rows = Object.entries((payload as any)?.result ?? {});
+  const quote = rows.length ? rows[0]?.[1] as any : null;
+  const bid = positive(quote?.b?.[0]); const ask = positive(quote?.a?.[0]);
+  return bid != null && ask != null && ask >= bid ? { bid, ask, observedAt, source: "kraken" } : null;
+}
+
+/** Public two-sided quote for paper-market realism. Broker truth remains a separate live-order gate. */
+export async function fetchCryptoQuote(symbol: string, fetcher: FetchLike = fetch): Promise<CryptoQuoteResult> {
+  const coin = coinFor(symbol); const attempted: CryptoQuoteSource[] = [];
+  for (const [source, url, parse] of [
+    ["coinbase_exchange", `https://api.exchange.coinbase.com/products/${coin}-USD/ticker`, parseCoinbaseQuote],
+    ["kraken", `https://api.kraken.com/0/public/Ticker?pair=${KRAKEN_PAIR[coin] ?? ""}`, parseKrakenQuote],
+  ] as const) {
+    if (!coin || (source === "kraken" && !KRAKEN_PAIR[coin])) continue;
+    attempted.push(source);
+    try {
+      const quote = parse(await fetchJson(url, fetcher));
+      if (quote) return { quote, source, attempted };
+    } catch { /* Independent fallback is intentional. */ }
+  }
+  return { quote: null, source: "unavailable", attempted };
 }
 
 async function alphaVantageCandles(coin: string, avKey: string): Promise<Candle[]> {

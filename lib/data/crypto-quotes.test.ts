@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchCryptoCandles, parseCoinbaseDailyCandles, parseKrakenDailyCandles } from "./crypto-quotes";
+import { fetchCryptoCandles, fetchCryptoQuote, parseCoinbaseDailyCandles, parseKrakenDailyCandles } from "./crypto-quotes";
 
 const DAY = 86_400;
 const start = 1_700_000_000;
@@ -46,5 +46,10 @@ describe("crypto public candle adapters", () => {
     expect(result.source).toBe("kraken");
     expect(result.attempted).toEqual(["coinbase_exchange", "kraken"]);
     expect(result.candles).toHaveLength(51);
+  });
+
+  it("uses an independent public two-sided quote for paper evidence", async () => {
+    const result = await fetchCryptoQuote("BTC-USD", async () => new Response(JSON.stringify({ bid: "99", ask: "101" }), { status: 200 }));
+    expect(result).toMatchObject({ source: "coinbase_exchange", quote: { bid: 99, ask: 101, source: "coinbase_exchange" } });
   });
 });

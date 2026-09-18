@@ -6,8 +6,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 import { scoreCryptoShadow } from "@/lib/scoring/crypto-score";
 import { deriveCryptoResearchShadow } from "@/lib/scoring/crypto-research-shadow";
-import { classifyCryptoCandidate } from "@/lib/scoring/crypto-candidate";
-import { fetchCryptoCandles } from "@/lib/data/crypto-quotes";
+import { classifyCryptoPaperCandidate } from "@/lib/scoring/crypto-candidate";
+import { fetchCryptoCandles, fetchCryptoQuote } from "@/lib/data/crypto-quotes";
 import { cryptoCompletedCandles, cryptoSessionDate } from "@/lib/data/crypto-session";
 import { readRobinhoodCryptoExecutionSnapshot } from "@/lib/robinhood-mcp";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -52,24 +52,21 @@ export async function POST(req: NextRequest) {
   const broker = await readRobinhoodCryptoExecutionSnapshot([...CRYPTO_SYMBOLS]);
   const inventory = broker.pairInventoryObserved
     ? [...broker.pairs.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
+    // Public research/paper is allowed to continue against the fixed, reviewed
+    // basket when a live broker read is unavailable. This is never a claim that
+    // Robinhood would accept an order; live remains fail-closed below.
     : [...CRYPTO_SYMBOLS].map((symbol) => ({ symbol, brokerPair: `${symbol}-USD`, tradeable: false }));
   // The broker inventory decides the population. History pulls are intentionally
   // bounded and deterministic: if the broker offers more pairs than one run can
   // reasonably source, the lowest observed spreads are covered first and every
   // deferred pair is explicitly recorded rather than disappearing from the run.
-  const targets = inventory
-    .filter((pair) => broker.accountEligible && pair.tradeable && broker.quotes.has(pair.symbol))
-    .sort((left, right) => {
-      const leftQuote = broker.quotes.get(left.symbol)!;
-      const rightQuote = broker.quotes.get(right.symbol)!;
-      return ((leftQuote.ask - leftQuote.bid) / leftQuote.ask) - ((rightQuote.ask - rightQuote.bid) / rightQuote.ask)
-        || left.symbol.localeCompare(right.symbol);
-    })
-    .slice(0, MAX_HISTORY_FETCHES_PER_RUN);
+  const targets = inventory.slice(0, MAX_HISTORY_FETCHES_PER_RUN);
   const targetSymbols = new Set(targets.map((pair) => pair.symbol));
   const candleResults = new Map<string, Awaited<ReturnType<typeof fetchCryptoCandles>>>();
-  for (const [index, result] of (await withConcurrency(targets, 3, (pair) => fetchCryptoCandles(pair.symbol, avKey ?? ""))).entries()) {
-    candleResults.set(targets[index].symbol, result);
+  const quoteResults = new Map<string, Awaited<ReturnType<typeof fetchCryptoQuote>>>();
+  for (const [index, result] of (await withConcurrency(targets, 3, async (pair) => ({ candles: await fetchCryptoCandles(pair.symbol, avKey ?? ""), quote: await fetchCryptoQuote(pair.symbol) }))).entries()) {
+    candleResults.set(targets[index].symbol, result.candles);
+    quoteResults.set(targets[index].symbol, result.quote);
   }
   const rows: any[] = [];
   const shadows: any[] = [];
@@ -81,20 +78,20 @@ export async function POST(req: NextRequest) {
     const completed = cryptoCompletedCandles(candles);
     const last = completed.at(-1);
     const evidence = last?.date === expectedSession ? deriveCryptoResearchShadow(completed) : null;
-    const quote = broker.quotes.get(symbol);
-    const spreadPct = quote ? ((quote.ask - quote.bid) / quote.ask) * 100 : null;
+    const marketQuote = quoteResults.get(symbol)?.quote ?? null;
+    const brokerQuote = broker.quotes.get(symbol);
+    const spreadPct = marketQuote ? ((marketQuote.ask - marketQuote.bid) / marketQuote.ask) * 100 : null;
     const score = evidence ? scoreCryptoShadow({
       trendScore: evidence.trendScore,
       structureScore: evidence.structureScore,
       volatilityScore: evidence.volatilityScore,
       spreadPct,
-      quoteAgeSeconds: quote ? 0 : null,
+      quoteAgeSeconds: marketQuote ? 0 : null,
       maxSpreadPct: 0.5,
       maxQuoteAgeSeconds: 15,
     }) : null;
-    const candidate = classifyCryptoCandidate({
-      pairInventoryObserved: broker.pairInventoryObserved, accountEligible: broker.accountEligible,
-      brokerTradeable: pair.tradeable, hasExecutableQuote: !!quote,
+    const candidate = classifyCryptoPaperCandidate({
+      hasMarketQuote: !!marketQuote,
       historyDeferred: !targetSymbols.has(symbol), historyDays: completed.length,
       observedSession: last?.date ?? null, expectedSession, hasEvidence: !!evidence, score,
     });
@@ -102,26 +99,27 @@ export async function POST(req: NextRequest) {
     const refusalReason = candidate.reason;
     const member: any = {
       symbol, broker_tradeable: pair.tradeable && broker.pairInventoryObserved, account_eligible: broker.accountEligible,
-      history_days: completed.length, quote_observed_at: quote?.observedAt ?? null, bid: quote?.bid ?? null, ask: quote?.ask ?? null,
+      history_days: completed.length, quote_observed_at: marketQuote?.observedAt ?? null, bid: marketQuote?.bid ?? null, ask: marketQuote?.ask ?? null,
       spread_pct: spreadPct, admitted: candidate.admitted, refusal_reason: refusalReason,
       raw: {
         candle_source: source, candle_sources_attempted: attempted, expected_session: expectedSession,
         observed_session: last?.date ?? null, evidence, score: score ?? { ok: false, reason: refusalReason },
-        broker: { pair: pair.brokerPair, connected: broker.connected, account_eligible: broker.accountEligible, pair_inventory_observed: broker.pairInventoryObserved, quote_tool_available: broker.quoteToolAvailable, quote_coverage_limited: broker.quoteCoverageLimited, error_codes: broker.errorCodes },
+        public_quote: { source: marketQuote?.source ?? "unavailable", attempted: quoteResults.get(symbol)?.attempted ?? [] },
+        broker: { pair: pair.brokerPair, connected: broker.connected, account_eligible: broker.accountEligible, pair_inventory_observed: broker.pairInventoryObserved, quote_tool_available: broker.quoteToolAvailable, quote_coverage_limited: broker.quoteCoverageLimited, error_codes: broker.errorCodes, live_order_ready: broker.pairInventoryObserved && broker.accountEligible && pair.tradeable && !!brokerQuote },
       },
     };
     rows.push(member);
     if (!targetSymbols.has(symbol)) continue;
     const fingerprint = createHash("sha256")
-      .update(JSON.stringify({ symbol, strategy: STRATEGY_VERSION, expectedSession, close: evidence?.close ?? null, source, attempted, quote: quote ? { bid: quote.bid, ask: quote.ask, observedAt: quote.observedAt } : null, refusalReason }))
+      .update(JSON.stringify({ symbol, strategy: STRATEGY_VERSION, expectedSession, close: evidence?.close ?? null, source, attempted, quote: marketQuote ? { bid: marketQuote.bid, ask: marketQuote.ask, observedAt: marketQuote.observedAt, source: marketQuote.source } : null, refusalReason }))
       .digest("hex");
     shadows.push({
       symbol,
       strategy_version: STRATEGY_VERSION,
       entry_price: evidence?.close ?? null,
-      quote_observed_at: quote?.observedAt ?? null,
+      quote_observed_at: marketQuote?.observedAt ?? null,
       spread_pct: spreadPct,
-      geometry: { candle_source: source, candle_sources_attempted: attempted, expected_session: expectedSession, evidence, score: score ?? { ok: false, reason: refusalReason }, execution_gate: refusalReason ?? "native_candidate_measure_only" },
+      geometry: { candle_source: source, candle_sources_attempted: attempted, expected_session: expectedSession, evidence, score: score ?? { ok: false, reason: refusalReason }, public_quote: { source: marketQuote?.source ?? "unavailable", observed_at: marketQuote?.observedAt ?? null }, execution_gate: refusalReason ?? "native_candidate_measure_only" },
       decision,
       refusal_reason: refusalReason,
       input_fingerprint: fingerprint,
@@ -130,21 +128,17 @@ export async function POST(req: NextRequest) {
 
   const fresh = rows.filter((row) => targetSymbols.has(row.symbol) && row.raw.observed_session === expectedSession).length;
   const admitted = rows.filter((row) => row.admitted).length;
-  const fullQuoteCoverage = !broker.quoteCoverageLimited && targets.length === inventory.filter((pair) => pair.tradeable).length;
   const { data: run, error: runError } = await supabase.from("crypto_universe_runs").insert({
     source: "public_candles_plus_robinhood_readonly_crypto_shadow",
-    status: targets.length === 0 || fresh !== targets.length ? (targets.length === 0 ? "partial" : "error")
-      : broker.pairInventoryObserved && fullQuoteCoverage ? "done" : "partial",
+    status: targets.length > 0 && fresh === targets.length ? "done" : "partial",
     summary: {
       lane: "crypto_native_shadow", expected_session: expectedSession, broker_pairs: inventory.length, research_targets: targets.length, fresh_daily_evidence: fresh,
       executable_quotes: broker.quotes.size, broker_connected: broker.connected, broker_account_eligible: broker.accountEligible,
       broker_pair_inventory_observed: broker.pairInventoryObserved, broker_quote_tool_available: broker.quoteToolAvailable,
       broker_error_codes: broker.errorCodes, admitted, live_execution_enabled: false,
     },
-    error: targets.length === 0 ? "no broker-eligible pair with an observed executable quote; no history pull was attempted"
+    error: targets.length === 0 ? "no configured crypto research target"
       : fresh !== targets.length ? "one or more required daily candles were unavailable or stale"
-      : !broker.pairInventoryObserved ? "broker pair inventory is not offered by the verified read contract; all candidates remain refused"
-      : !fullQuoteCoverage ? "not every broker-tradeable pair had an observed executable quote; uncovered pairs remain explicitly deferred"
       : null,
   }).select("id").single();
   if (runError || !run) return NextResponse.json({ error: "crypto universe run write failed" }, { status: 500 });
@@ -152,6 +146,22 @@ export async function POST(req: NextRequest) {
   if (memberError) return NextResponse.json({ error: "crypto universe member write failed" }, { status: 500 });
   const { error: shadowError } = await supabase.from("crypto_geometry_shadows").upsert(shadows, { onConflict: "symbol,strategy_version,input_fingerprint", ignoreDuplicates: true });
   if (shadowError) return NextResponse.json({ error: "crypto shadow write failed" }, { status: 500 });
+  // Native crypto research owns its own signals. Do not feed these through the
+  // equity scorer or label them deterministic_v1: the paper trader consumes
+  // only this provenance tag, while the equity PaperTrader cannot select it.
+  for (const row of rows.filter((candidate) => candidate.admitted)) {
+    const score = row.raw?.score;
+    await supabase.from("agent_signals").update({ status: "superseded" })
+      .eq("market", "us").eq("symbol", row.symbol).eq("status", "pending").eq("score_source", "crypto_native_shadow_v1");
+    const { error: signalError } = await supabase.from("agent_signals").insert({
+      symbol: row.symbol, market: "us", direction: "long", analyst_score: Math.round(score.score), conviction: Math.round(score.score),
+      agent_type: "crypto_research", agent_label: "crypto_native", status: "pending", session_validated: true,
+      as_of_session: expectedSession, source: "crypto_native_shadow", score_source: "crypto_native_shadow_v1", scoring_version: STRATEGY_VERSION,
+      asset_class: "crypto", rationale: `Native crypto score ${score.score}: trend ${score.components.trend}, structure ${score.components.structure}, volatility ${score.components.volatility}; public ${row.raw.public_quote.source} quote.`,
+      signal_breakdown: { crypto_native: row.raw.evidence, score, public_quote: row.raw.public_quote },
+    });
+    if (signalError) return NextResponse.json({ error: `crypto native signal write failed: ${signalError.message}` }, { status: 500 });
+  }
   if (!broker.pairInventoryObserved || targets.length === 0) {
     await reportIssue({
       issueKey: "crypto-native-universe-coverage",
@@ -159,7 +169,7 @@ export async function POST(req: NextRequest) {
       category: "broker",
       title: "Crypto native research has no currently eligible broker pair",
       detail: !broker.pairInventoryObserved
-        ? "Robinhood did not return a parseable USD-pair inventory. Crypto paper and live execution remain blocked."
+        ? "Robinhood did not return a parseable USD-pair inventory. Public-market paper research continues; live execution remains blocked."
         : "No broker pair simultaneously had explicit tradability, account eligibility, and a current two-sided quote. The collector recorded each refusal.",
       autoExpireAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     }, supabase);

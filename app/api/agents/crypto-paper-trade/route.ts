@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
       .eq("direction", "long")
       .eq("status", "pending")
       .eq("session_validated", true)
-      .eq("score_source", "deterministic_v1")
+      .eq("score_source", "crypto_native_shadow_v1")
       .gte("analyst_score", CRYPTO_MANDATE.score_threshold)
       .gte("created_at", since)
       .order("analyst_score", { ascending: false });
