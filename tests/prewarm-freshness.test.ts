@@ -147,9 +147,12 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
   it("reports a rejected canonical write as failed rather than claiming a fresh cache", async () => {
     const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("us", new Date());
     h.fetchUsCandles.mockResolvedValue({
       source: "yahoo",
-      candles: [{ date: "2026-09-16", open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+      // The fixture must meet the same current-session contract as production;
+      // otherwise it tests stale-bar rejection rather than rejected DB writes.
+      candles: [{ date: currentSession, open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
     } as any);
     h.priceCacheUpsert.mockResolvedValue({ error: { message: "constraint rejected write" } } as any);
     const supabase = {
