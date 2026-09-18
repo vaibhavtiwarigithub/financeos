@@ -8,6 +8,7 @@ import { scoreCryptoShadow } from "@/lib/scoring/crypto-score";
 import { deriveCryptoResearchShadow } from "@/lib/scoring/crypto-research-shadow";
 import { fetchCryptoCandles } from "@/lib/data/crypto-quotes";
 import { cryptoCompletedCandles, cryptoSessionDate } from "@/lib/data/crypto-session";
+import { readRobinhoodCryptoExecutionSnapshot } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -30,51 +31,65 @@ export async function POST(req: NextRequest) {
     .select("key_value").eq("key_name", "ALPHA_VANTAGE_API_KEY").maybeSingle();
   const avKey = (vaultKey as any)?.key_value ?? process.env.ALPHA_VANTAGE_API_KEY ?? null;
   const expectedSession = cryptoSessionDate();
+  // Broker information is execution evidence. It is intentionally collected
+  // separately from public historical candles and cannot turn a shadow into an
+  // executable candidate while Robinhood lacks a verified pair-inventory API.
+  const broker = await readRobinhoodCryptoExecutionSnapshot([...CRYPTO_SYMBOLS]);
+  const candleResults = await Promise.all([...CRYPTO_SYMBOLS].map((symbol) => fetchCryptoCandles(symbol, avKey ?? "")));
   const rows: any[] = [];
   const shadows: any[] = [];
 
-  for (const symbol of [...CRYPTO_SYMBOLS]) {
-    const { candles, source } = avKey ? await fetchCryptoCandles(symbol, avKey) : { candles: [], source: "unavailable" };
+  for (const [index, symbol] of [...CRYPTO_SYMBOLS].entries()) {
+    const { candles, source, attempted } = candleResults[index];
     const completed = cryptoCompletedCandles(candles);
     const last = completed.at(-1);
     const evidence = last?.date === expectedSession ? deriveCryptoResearchShadow(completed) : null;
-    const baseReason = !avKey ? "alpha_vantage_key_unavailable"
-      : !last || last.date !== expectedSession ? "daily_candle_unavailable_or_stale"
+    const quote = broker.quotes.get(symbol);
+    const spreadPct = quote ? ((quote.ask - quote.bid) / quote.ask) * 100 : null;
+    const baseReason = !last || last.date !== expectedSession ? "daily_candle_unavailable_or_stale"
       : !evidence ? "insufficient_or_invalid_daily_history"
+      : !broker.connected ? "robinhood_mcp_not_connected"
+      : !broker.accountEligible ? "broker_account_eligibility_not_observed"
+      : !quote ? "broker_executable_quote_not_observed"
+      : !broker.pairInventoryObserved ? "broker_pair_inventory_not_observed"
       : "broker_pair_and_executable_quote_not_observed";
     rows.push({
       symbol,
       broker_tradeable: false,
-      account_eligible: false,
+      account_eligible: broker.accountEligible,
       history_days: completed.length,
-      quote_observed_at: null,
-      bid: null,
-      ask: null,
-      spread_pct: null,
+      quote_observed_at: quote?.observedAt ?? null,
+      bid: quote?.bid ?? null,
+      ask: quote?.ask ?? null,
+      spread_pct: spreadPct,
       admitted: false,
       refusal_reason: baseReason,
-      raw: { source, expected_session: expectedSession, observed_session: last?.date ?? null, evidence },
+      raw: {
+        candle_source: source, candle_sources_attempted: attempted,
+        expected_session: expectedSession, observed_session: last?.date ?? null, evidence,
+        broker: { connected: broker.connected, account_eligible: broker.accountEligible, pair_inventory_observed: broker.pairInventoryObserved, quote_tool_available: broker.quoteToolAvailable, error_codes: broker.errorCodes },
+      },
     });
     const score = evidence ? scoreCryptoShadow({
       trendScore: evidence.trendScore,
       structureScore: evidence.structureScore,
       volatilityScore: evidence.volatilityScore,
-      spreadPct: null,
-      quoteAgeSeconds: null,
+      spreadPct,
+      quoteAgeSeconds: quote ? 0 : null,
       maxSpreadPct: 0.5,
       maxQuoteAgeSeconds: 15,
     }) : null;
     const refusalReason = score && !score.ok ? score.reason : baseReason;
     const fingerprint = createHash("sha256")
-      .update(JSON.stringify({ symbol, strategy: STRATEGY_VERSION, expectedSession, close: evidence?.close ?? null, source, refusalReason }))
+      .update(JSON.stringify({ symbol, strategy: STRATEGY_VERSION, expectedSession, close: evidence?.close ?? null, source, attempted, quote: quote ? { bid: quote.bid, ask: quote.ask, observedAt: quote.observedAt } : null, refusalReason }))
       .digest("hex");
     shadows.push({
       symbol,
       strategy_version: STRATEGY_VERSION,
       entry_price: evidence?.close ?? null,
-      quote_observed_at: null,
-      spread_pct: null,
-      geometry: { source, expected_session: expectedSession, evidence, score: score ?? { ok: false, reason: baseReason }, execution_gate: "no_broker_quote_or_pair_observation" },
+      quote_observed_at: quote?.observedAt ?? null,
+      spread_pct: spreadPct,
+      geometry: { candle_source: source, candle_sources_attempted: attempted, expected_session: expectedSession, evidence, score: score ?? { ok: false, reason: baseReason }, execution_gate: baseReason },
       decision: "refused",
       refusal_reason: refusalReason,
       input_fingerprint: fingerprint,
@@ -83,10 +98,17 @@ export async function POST(req: NextRequest) {
 
   const fresh = rows.filter((row) => row.raw.observed_session === expectedSession).length;
   const { data: run, error: runError } = await supabase.from("crypto_universe_runs").insert({
-    source: "alpha_vantage_daily_crypto_shadow",
+    source: "public_candles_plus_robinhood_readonly_crypto_shadow",
     status: fresh === rows.length ? "partial" : "error",
-    summary: { lane: "crypto_native_shadow", expected_session: expectedSession, symbols: rows.length, fresh_daily_evidence: fresh, executable_quotes: 0, admitted: 0, live_execution_enabled: false },
-    error: fresh === rows.length ? "broker pair and executable quote collection is not implemented" : "one or more required daily candles were unavailable or stale",
+    summary: {
+      lane: "crypto_native_shadow", expected_session: expectedSession, symbols: rows.length, fresh_daily_evidence: fresh,
+      executable_quotes: broker.quotes.size, broker_connected: broker.connected, broker_account_eligible: broker.accountEligible,
+      broker_pair_inventory_observed: broker.pairInventoryObserved, broker_quote_tool_available: broker.quoteToolAvailable,
+      broker_error_codes: broker.errorCodes, admitted: 0, live_execution_enabled: false,
+    },
+    error: fresh !== rows.length ? "one or more required daily candles were unavailable or stale"
+      : !broker.pairInventoryObserved ? "broker pair inventory is not offered by the verified read contract; all candidates remain refused"
+      : "broker pair and executable quote collection is not implemented",
   }).select("id").single();
   if (runError || !run) return NextResponse.json({ error: "crypto universe run write failed" }, { status: 500 });
   const { error: memberError } = await supabase.from("crypto_universe_members").insert(rows.map((row) => ({ ...row, run_id: run.id })));

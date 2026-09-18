@@ -1156,6 +1156,24 @@ with paper/live flags false. Any future shadow producer is incomplete until its
 mainline provenance, ledger, schedule, safety boundary, activation gate, and
 runtime-state adapter are registered.
 
+## Crypto-native evidence sources (2026-09-17)
+
+The crypto research lane uses public, completed UTC daily candles from Coinbase
+Exchange first and Kraken second. Alpha Vantage `DIGITAL_CURRENCY_DAILY` is a
+last-resort compatibility fallback only; a healthy crypto run therefore does
+not consume the shared Alpha Vantage equity budget. All candle providers are
+historical research inputs and cannot authorize a paper or live order.
+
+Robinhood MCP is the separate execution-truth source. The native shadow
+collector may read the account onboarding response and current two-sided crypto
+quotes, recording broker receipt time, bid, ask, and spread with the run. It
+does not call preview, place, cancel, or order-status tools. A quote is not
+treated as proof of a tradeable pair: until Robinhood exposes and Kairos
+validates a pair-inventory contract, `broker_tradeable` remains false and every
+candidate is refused. Webull is not a crypto source: its registered MCP role is
+read-only US equity fundamentals/analyst research and it has no verified crypto
+pair, quote, or account-eligibility contract.
+
 `ready_for_review` means the production measurement floor is reviewable; it is
 never deployment or promotion authority. Router readiness requires ten distinct
 fresh passing market sessions. Event-driven programs use an independent run
