@@ -195,6 +195,23 @@ export function computeBenchmarkScorecardRow(args: {
     };
   }
 
+  // A common window can have enough historical rows while still ending before
+  // the session this scorecard claims to describe.  Reporting that row as OK
+  // made a comparator stranded in the past look like current performance and
+  // silently truncated the portfolio return to the stale endpoint.
+  const lastJoinedDate = joined[joined.length - 1]?.date ?? null;
+  if (lastJoinedDate !== args.asOf) {
+    return {
+      ...empty("stale_series", `Benchmark/portfolio common window ends ${lastJoinedDate ?? "before any comparable session"}; expected ${args.asOf}`),
+      n_observations: nObservations,
+      n_return_days: nReturnDays,
+      coverage_pct: coveragePct,
+      confidence,
+      window_start: joined[0]?.date ?? null,
+      window_end: lastJoinedDate,
+    };
+  }
+
   const first = joined[0];
   const last = joined[joined.length - 1];
   const portfolioReturnPct = (last.portfolio / first.portfolio - 1) * 100;

@@ -106,6 +106,15 @@ describe("runA2Selection", () => {
     expect(f.reason).toContain("independent observations");
   });
 
+  it("does not report a naïve date-count t-statistic for overlapping forward labels", () => {
+    const f = runA2Selection("us", series(60, 8, i => i * 0.01), 20, 10);
+    // The fixture has 28 deduplicated dates (its date generator cycles); at
+    // h20 they represent only 1.4 independent windows, not 28 observations.
+    expect(f.metrics.effectiveObservations).toBeCloseTo(1.4, 8);
+    expect(f.metrics.rankIcT).toBeNull();
+    expect(f.status).toBe("insufficient_evidence");
+  });
+
   // A positive IC with a flat spread is a ranking that cannot be traded.
   it("separates a correlating ranking from a payable one", () => {
     // Monotonic in score but the payoff is concentrated in one bucket, so the

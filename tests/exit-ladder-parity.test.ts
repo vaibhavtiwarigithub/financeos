@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { decideExitLadder, trailAnchorPct, type ExitLadderInput } from "@/lib/trading/exit-ladder";
+import { decideExitLadder, paperStopFillPrice, trailAnchorPct, type ExitLadderInput } from "@/lib/trading/exit-ladder";
 import { paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
 
 // THE DEFECT THIS GUARDS.
@@ -161,6 +161,16 @@ describe("stop labelling distinguishes an intraday touch from a close", () => {
     expect(win.outcome).toBe("win");
     const loss = decideExitLadder({ ...base, price: 90, stopCheckPrice: 90 });
     expect(loss.outcome).toBe("loss");
+  });
+});
+
+describe("paper stop fills", () => {
+  it("does not credit an unavailable stop price through a downside gap", () => {
+    expect(paperStopFillPrice(88, 93)).toBe(88);
+  });
+
+  it("keeps the resting stop price when an intraday low recovered by the mark", () => {
+    expect(paperStopFillPrice(100, 93)).toBe(93);
   });
 });
 

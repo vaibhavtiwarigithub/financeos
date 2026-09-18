@@ -5,13 +5,13 @@ const route = readFileSync("app/api/analytics/alpha-diagnostics/route.ts", "utf8
 
 describe("Alpha Diagnostic Lab route integrity contract", () => {
   it("runs the eligible-long selection cohort and labels all-scored as context", () => {
-    expect(route).toContain('selectionRowsFromObservations(observationRows, A2_HORIZON, "eligible_long")');
+    expect(route).toContain('selectionRowsFromObservations(selectionObservationRows, A2_HORIZON, "eligible_long")');
     expect(route).toContain('allScored.testId = "A2_ALL_SCORED"');
-    expect(route).toContain('cohortDefinition: "all_scored_context"');
+    expect(route).toContain('cohortDefinition: "all_scored_executable_context"');
   });
 
   it("queries entry eligibility, excursions, initial stops, and persisted mark quantity", () => {
-    expect(route).toContain("analyst_score, entry_eligible, direction, decision_context, discovery_source");
+    expect(route).toContain("signal_id, score_source, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source");
     expect(route).toContain("max_adverse_excursion, max_favorable_excursion");
     expect(route).toContain('.select("session_date, symbol, qty, mark_price")');
     expect(route).toContain("initial_stop_loss, stop_loss, price_target");
@@ -33,6 +33,14 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
       route.indexOf('// A6 inputs.'),
     );
     expect(observationQuery).not.toContain(".limit(");
+  });
+
+  it("fails closed unless source signals were executable deterministic equity research", () => {
+    expect(route).toContain("async function loadExecutableSignalIds");
+    expect(route).toContain("session_validated === true");
+    expect(route).toContain('score_source === "deterministic_v1"');
+    expect(route).toContain('asset_class !== "crypto"');
+    expect(route).toContain("executableSignalIds.has(String(row.signal_id))");
   });
 
   it("starts A6 only from a canonical mark with an untainted performance row", () => {

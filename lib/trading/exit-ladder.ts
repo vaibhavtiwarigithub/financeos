@@ -97,6 +97,15 @@ export interface ExitLadderDecision {
   outcome?: "win" | "loss";
 }
 
+/**
+ * Conservative paper-stop fill contract. A session low through a resting stop
+ * does not prove the stop filled at the bar low, but an opening/mark gap below
+ * the stop cannot honestly be filled at the unavailable stop price either.
+ */
+export function paperStopFillPrice(currentPrice: number, stopPrice: number): number {
+  return Math.min(currentPrice, stopPrice);
+}
+
 /** Fraction of the high-water mark the trail sits at, from the position's own stop distance. */
 export function trailAnchorPct(initialStopLoss: number | null, avgEntry: number): number {
   if (initialStopLoss == null || !(avgEntry > 0)) return 0.93;

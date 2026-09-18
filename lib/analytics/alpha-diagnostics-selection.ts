@@ -22,6 +22,7 @@ import {
   type DiagnosticSample,
   sampleStatus,
 } from "./alpha-diagnostic-contract";
+import { effectiveObservations, tStatistic } from "@/lib/learning/dimension-diagnostics";
 
 /**
  * One row per (symbol, date) — earliest of the day.
@@ -76,15 +77,16 @@ export function selectionRowsFromObservations(
     });
 }
 
-/** Mean of per-date statistics, with the date-clustered t. */
-function clustered(values: number[]): { mean: number | null; t: number | null; n: number } {
+/** Mean of per-date statistics with a horizon-aware effective sample size. */
+function clustered(values: number[], horizonDays: number): { mean: number | null; t: number | null; n: number; nEffective: number } {
   const n = values.length;
-  if (n === 0) return { mean: null, t: null, n: 0 };
+  const nEffective = effectiveObservations(n, horizonDays);
+  if (n === 0) return { mean: null, t: null, n: 0, nEffective };
   const mean = values.reduce((a, b) => a + b, 0) / n;
-  if (n < 2) return { mean, t: null, n };
+  if (n < 2) return { mean, t: null, n, nEffective };
   const varc = values.reduce((a, v) => a + (v - mean) ** 2, 0) / (n - 1);
-  const se = Math.sqrt(varc / n);
-  return { mean, t: se === 0 ? null : mean / se, n };
+  const sd = Math.sqrt(varc);
+  return { mean, t: tStatistic(mean, sd, nEffective), n, nEffective };
 }
 
 export interface DailySelectionStatistic {
@@ -108,7 +110,7 @@ export function dailyRankIcStatistic(
     const ic = spearman(dayRows.map(r => r.score), dayRows.map(r => r.forwardReturn));
     if (ic != null && Number.isFinite(ic)) values.push({ date, value: ic });
   }
-  const stat = clustered(values.map(v => v.value));
+  const stat = clustered(values.map(v => v.value), 1);
   return { mean: stat.mean, t: stat.t, nDates: stat.n, values };
 }
 
@@ -136,8 +138,12 @@ export function runA2Selection(
   }
 
   const exactIc = dailyRankIcStatistic(deduped, minCrossSection);
-  const icStat = { mean: exactIc.mean, t: exactIc.t, n: exactIc.nDates };
-  const spreadStat = clustered(sessionSpreads);
+  const icEffectiveObservations = effectiveObservations(exactIc.nDates, horizonDays);
+  const icValues = exactIc.values.map(v => v.value);
+  const icMean = exactIc.mean;
+  const icSd = icValues.length < 2 ? null : Math.sqrt(icValues.reduce((sum, value) => sum + (value - (icMean ?? 0)) ** 2, 0) / (icValues.length - 1));
+  const icStat = { mean: icMean, t: tStatistic(icMean, icSd, icEffectiveObservations), n: exactIc.nDates, nEffective: icEffectiveObservations };
+  const spreadStat = clustered(sessionSpreads, horizonDays);
 
   const sample: DiagnosticSample = {
     nRows: deduped.length,
@@ -170,9 +176,11 @@ export function runA2Selection(
       horizonDays,
       rankIc: icStat.mean,
       rankIcT: icStat.t,
+      effectiveObservations: icStat.nEffective,
       qualifyingSessions: icStat.n,
       meanQuintileSpread: spreadStat.mean,
       quintileSpreadT: spreadStat.t,
+      quintileSpreadEffectiveObservations: spreadStat.nEffective,
       pooledQuintileSpread: pooled.spread,
       pooledPerBucket: pooled.perBucket,
       // Monotonic buckets are the shape a usable ranking has. A non-monotonic

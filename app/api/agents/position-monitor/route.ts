@@ -20,7 +20,7 @@ import { isHoldingExitSignal, isPaperScoreFresh, marketSessionsSince, paperPosit
 import { loadTimeReviewReplacements, recordTimeReviewObservation } from "@/lib/trading/time-review-shadow";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { decideDirectionFlip, armedFlag, parseArmedSession, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-import { decideExitLadder } from "@/lib/trading/exit-ladder";
+import { decideExitLadder, paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import { admitMarketLocalSlot } from "@/lib/trading/market-calendar";
 import {
   buildPositionMark, MARK_CROSSCHECK_TOLERANCE_PCT, MARK_DISPUTE_REFUSE_PCT, markLedgerRow, navFromMarks, reconcilePersistedNav, summariseMarkCoverage,
@@ -733,10 +733,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     }
 
     if (exitReason && outcome) {
-      // Stop exits: fill at trailingStop (the stop order level), not currentPrice.
-      // An intraday or gap stop may have triggered at a price above current close.
+      // A low through the stop is filled at the stop level, but a mark already
+      // below it is a gap and cannot receive the unavailable stop price.
       const fillPrice = exitReason === "stop_hit" || exitReason === "stop_hit_intraday"
-        ? trailingStop : currentPrice;
+        ? paperStopFillPrice(currentPrice, trailingStop) : currentPrice;
       await closePosition(pos, fillPrice, exitReason, outcome, exitQtyOverride, partialStopOverride);
     } else {
       // Still open — refresh current_price + trailing-stop anchor. This is

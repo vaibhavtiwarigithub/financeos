@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       loadAllRows<any>((from, to) => svc.from("decision_observations")
-        .select("id, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
+        .select("id, signal_id, score_source, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
         .not("analyst_score", "is", null)
         .order("ts", { ascending: true })
@@ -220,6 +220,17 @@ export async function POST(req: NextRequest) {
 
     const perfRows = (perfRes.data ?? []) as any[];
     const allLotRows = (tradesRes.data ?? []) as any[];
+    const executableSignalIds = await loadExecutableSignalIds(
+      svc,
+      observationRows.map((row: any) => row.signal_id),
+      market,
+    );
+    // Unknown, staged, advisory, and crypto source signals remain evidence in
+    // the immutable ledger but cannot answer whether the equity entry selector
+    // would have outperformed.
+    const selectionObservationRows = observationRows.filter((row: any) =>
+      row.score_source === "deterministic_v1" && executableSignalIds.has(String(row.signal_id)),
+    );
     // Closed-lot cohorts. A3/A4/A5/A7 are all realized-outcome metrics and must
     // not see an open position, whose P&L has not happened yet.
     const tradeRows = allLotRows.filter((r: any) => r.closed_at != null);
@@ -268,13 +279,17 @@ export async function POST(req: NextRequest) {
       // = 10). Grading a 10-day policy on 2-day moves measures noise; grading it
       // on 20-day moves measures what happens after the position is already gone.
       const A2_HORIZON = 10;
-      const allScoredSelectionRows = selectionRowsFromObservations(observationRows, A2_HORIZON, "all_scored");
-      const eligibleSelectionRows = selectionRowsFromObservations(observationRows, A2_HORIZON, "eligible_long");
+      const allScoredSelectionRows = selectionRowsFromObservations(selectionObservationRows, A2_HORIZON, "all_scored");
+      const eligibleSelectionRows = selectionRowsFromObservations(selectionObservationRows, A2_HORIZON, "eligible_long");
       findings.push(runA2Selection(market, eligibleSelectionRows, A2_HORIZON, MIN_REVIEW_DATES));
       const allScored = runA2Selection(market, allScoredSelectionRows, A2_HORIZON, MIN_REVIEW_DATES);
       allScored.testId = "A2_ALL_SCORED";
-      allScored.reason = `Context only — all scored observations, not the eligible entry cohort. ${allScored.reason}`;
-      allScored.metrics = { ...allScored.metrics, cohortDefinition: "all_scored_context" };
+      allScored.reason = `Context only — all executable deterministic-equity scores, not the eligible entry cohort. ${allScored.reason}`;
+      allScored.metrics = {
+        ...allScored.metrics,
+        cohortDefinition: "all_scored_executable_context",
+        sourceRows: selectionObservationRows.length,
+      };
       findings.push(allScored);
       findings.push(runA3Payoff(market, learningLots));
       findings.push(runA4ExitPaths(market, learningLotPairs.map(({ trade, lot }) => toExitPathLot(trade, lot))));
@@ -533,6 +548,31 @@ function pctFromFill(level: unknown, fill: unknown, direction: "target" | "stop"
   if (!Number.isFinite(pct)) return null;
   if (direction === "target") return pct > 0 ? pct : null;
   return pct < 0 ? -pct : null;
+}
+
+/**
+ * `decision_observations.signal_id` has no database FK. A selection study must
+ * therefore prove its source was a current-session, deterministic equity signal
+ * instead of treating every historical score as an executable opportunity.
+ */
+async function loadExecutableSignalIds(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<Set<string>> {
+  const ids = [...new Set(signalIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+  const executable = new Set<string>();
+  for (let start = 0; start < ids.length; start += 200) {
+    const { data, error } = await svc.from("agent_signals")
+      .select("id,market,asset_class,score_source,session_validated")
+      .in("id", ids.slice(start, start + 200));
+    if (error) throw new Error(`selection signal provenance read failed: ${error.message}`);
+    for (const signal of data ?? []) {
+      if (
+        String((signal as any).market ?? "us") === market
+        && (signal as any).asset_class !== "crypto"
+        && (signal as any).score_source === "deterministic_v1"
+        && (signal as any).session_validated === true
+      ) executable.add(String((signal as any).id));
+    }
+  }
+  return executable;
 }
 
 function toExitPathLot(r: any, l: ClosedLot): ExitPathLot {

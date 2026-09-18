@@ -21,6 +21,14 @@ daily rollup, using Massive-first/Yahoo-fallback for US and Yahoo daily bars for
 India. Portfolio and benchmark rows join only on exact dates; missing sessions
 remain missing rather than being forward-filled.
 
+### 2026-09-18 freshness hardening
+
+A scorecard now fails closed as `stale_series` when its common portfolio/
+benchmark return window ends before the session it claims to represent. This
+prevents a stale comparator from being rendered as `OK` and silently truncating
+the portfolio comparison to an old endpoint. It is a display and diagnostic
+truth repair only; it does not fill missing market data or alter a benchmark.
+
 ## Data and API
 
 - Migration: `20260824213000_portfolio_benchmark_choices.sql`.

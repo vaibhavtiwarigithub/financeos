@@ -43,16 +43,18 @@ export async function getGlobalMaeMfePercentiles(
     // the path distribution and can manufacture inappropriate stop/target levels.
     const ids = await entryCandidateObservationIds(supabase, market);
     if (ids.length === 0) return null;
-    const { data: labels } = await supabase
+    const labels = await fetchAllRows<any>((from, to) => supabase
       .from("observation_labels")
       .select("max_adverse_excursion, max_favorable_excursion")
       .eq("horizon_days", horizonDays)
       .in("observation_id", ids)
-      .limit(5000);
-    const valid = (labels ?? []).map((l: any) => ({
-      mae: Number(l.max_adverse_excursion),
-      mfe: Number(l.max_favorable_excursion),
-    })).filter((l: any) => Number.isFinite(l.mae) && Number.isFinite(l.mfe));
+      .order("id", { ascending: true })
+      .range(from, to), "MAE/MFE labels");
+    const finite = (value: unknown): number | null => value == null ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
+    const valid = labels.map((l: any) => ({
+      mae: finite(l.max_adverse_excursion),
+      mfe: finite(l.max_favorable_excursion),
+    })).filter((l: any): l is { mae: number; mfe: number } => l.mae != null && l.mfe != null);
     if (valid.length < 60) return null;
 
     const maes = valid.map((l: any) => l.mae).sort((a: number, b: number) => a - b);
@@ -92,12 +94,13 @@ export async function getMaeMfeReadinessByHorizons(
       for (const day of requested) result[day] = { n: 0, required: 60, ready: false, available: true };
       return result;
     }
-    const { data: labels, error: labelError } = await supabase.from("observation_labels")
+    const labels = await fetchAllRows<any>((from, to) => supabase.from("observation_labels")
       .select("horizon_days,max_adverse_excursion,max_favorable_excursion")
-      .in("horizon_days", requested).in("observation_id", ids).limit(5000);
-    if (labelError) return result;
+      .in("horizon_days", requested).in("observation_id", ids)
+      .order("id", { ascending: true }).range(from, to), "MAE/MFE readiness labels");
     for (const day of requested) {
-      const n = (labels ?? []).filter((label: any) => Number(label.horizon_days) === day
+      const n = labels.filter((label: any) => Number(label.horizon_days) === day
+        && label.max_adverse_excursion != null && label.max_favorable_excursion != null
         && Number.isFinite(Number(label.max_adverse_excursion))
         && Number.isFinite(Number(label.max_favorable_excursion))).length;
       result[day] = { n, required: 60, ready: n >= 60, available: true };

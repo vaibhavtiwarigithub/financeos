@@ -94,6 +94,23 @@ describe("benchmark-alpha math", () => {
     expect(row.info_ratio).toBeNull();
   });
 
+  it("refuses a stale common endpoint instead of calling an old comparison current", () => {
+    const row = computeBenchmarkScorecardRow({
+      market: "us",
+      currency: "USD",
+      book: "paper",
+      bookScope: "market_paper_pool",
+      benchmark,
+      horizon: "1M",
+      asOf: "2026-03-10",
+      portfolio: series("2026-01-01", 70, 100, 1),
+      benchmarkLevels: series("2026-01-01", 62, 100, 1),
+    });
+    expect(row.status).toBe("stale_series");
+    expect(row.window_end).toBe("2026-03-03");
+    expect(row.excess_return_pct).toBeNull();
+  });
+
   it("rejects currency mismatches instead of computing cross-currency alpha", () => {
     const indiaBench = { ...benchmark, market: "india" as const, currency: "INR" as const, label: "NIFTY", symbol: "^NSEI", provider_symbol: "^NSEI" };
     const row = computeBenchmarkScorecardRow({

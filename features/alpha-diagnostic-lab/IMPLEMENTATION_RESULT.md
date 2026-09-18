@@ -33,6 +33,15 @@ No migration and no package were added. No scoring, eligibility, sizing,
 volatility, stop, target, horizon, exit, paper/live state, proposal, order, or
 broker behavior changed.
 
+### 2026-09-18 evidence hardening
+
+A2's selection cohort is now explicitly limited to current-session-validated,
+deterministic, non-crypto equity signals that remain in the executable signal
+ledger; advisory/staged/holding-only rows cannot be used to claim entry
+selection evidence. Its reported t-statistic uses the project-standard
+horizon-adjusted effective sample size, not the raw count of overlapping
+forward-return dates. These changes can only make a verdict more conservative.
+
 ## Production-flow proof
 
 The owner/cron POST route was executed locally against the production ledgers.
