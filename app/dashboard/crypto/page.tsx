@@ -59,8 +59,8 @@ export default async function CryptoPage() {
       ]}
     />
     <main style={{ padding: "0 28px 32px" }}>
-      <div style={{ background: "#2D1B00", border: "1px solid #FBBF2444", color: "#FBBF24", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13, lineHeight: 1.5 }}>
-        <strong>Live crypto is deliberately disabled.</strong> Robinhood broker capability, quote freshness, order acknowledgement, and protective-order reconciliation must be evidenced before preview or live execution can be enabled.
+      <div style={{ background: "#062B22", border: "1px solid #34D39944", color: T.green, borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13, lineHeight: 1.5 }}>
+        <strong>Crypto paper trading is active.</strong> Kairos evaluates deterministic crypto research daily and records simulated entries, stops, targets and exits in this separate paper book. No live Robinhood crypto order is sent from this page.
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
@@ -69,7 +69,7 @@ export default async function CryptoPage() {
         <Card label="Closed outcomes" value={String(closed.length)} detail={closed.length ? `${winners}/${closed.length} wins` : "Evidence still accumulating"} color={closed.length ? T.amber : T.muted} />
         <Card label="Realized P&L" value={usd(realizedPnl)} detail="Closed paper trades only" color={realizedPnl >= 0 ? T.green : T.red} />
         <Card label="Latest paper return" value={performance ? pct(performance.total_pnl_pct) : "—"} detail={performance ? `As of ${performance.date}` : "No performance snapshot yet"} />
-        <Card label="Universe readiness" value={latestUniverse ? latestUniverse.status : "Not run"} detail={readiness} color={latestUniverse?.status === "done" ? T.green : T.amber} />
+        <Card label="Research coverage" value={latestUniverse ? latestUniverse.status : "Not run"} detail={readiness} color={latestUniverse?.status === "done" ? T.green : T.amber} />
       </div>
 
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16, marginBottom: 16 }}>
@@ -83,18 +83,18 @@ export default async function CryptoPage() {
           )}
         </div>
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 18 }}>
-          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Broker universe and native research</h2>
-          {(members ?? []).length === 0 ? <p style={{ color: T.muted, fontSize: 13 }}>Awaiting the first broker-universe collection.</p> : (members ?? []).map((member: any) => {
+          <h2 style={{ margin: "0 0 12px", color: T.text, fontSize: 15 }}>Crypto research candidates</h2>
+          {(members ?? []).length === 0 ? <p style={{ color: T.muted, fontSize: 13 }}>Awaiting the first crypto research collection.</p> : (members ?? []).map((member: any) => {
             const symbol = member.symbol;
             const shadow = latestShadowBySymbol.get(symbol);
             const score = shadow?.geometry?.score;
             const evidence = shadow?.geometry?.evidence;
             const detail = member.admitted
-              ? `Eligible research observation · ${member.history_days} daily bars · spread ${pct(member.spread_pct)}`
-              : member.refusal_reason ?? "Not eligible";
-            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{detail}{evidence?.sessionDate ? ` · session ${evidence.sessionDate}` : ""}</span><span style={{ color: member.admitted && score?.ok ? T.green : T.amber, fontWeight: 700 }}>{member.admitted && score?.ok ? Number(score.score).toFixed(1) : member.admitted ? "Eligible" : "Refused"}</span></div>;
+              ? `Ready for paper evaluation · ${member.history_days} daily bars · spread ${pct(member.spread_pct)}`
+              : `Not ready: ${member.refusal_reason ?? "research data incomplete"}`;
+            return <div key={symbol} style={{ padding: "10px 0", borderTop: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "90px 1fr auto", gap: 8, alignItems: "center" }}><strong>{symbol}</strong><span style={{ fontSize: 12, color: T.textSub }}>{detail}{evidence?.sessionDate ? ` · session ${evidence.sessionDate}` : ""}</span><span style={{ color: member.admitted && score?.ok ? T.green : T.amber, fontWeight: 700 }}>{member.admitted && score?.ok ? Number(score.score).toFixed(1) : member.admitted ? "Ready" : "Waiting"}</span></div>;
           })}
-          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Daily research is recorded independently of equities. Eligible means valid for measurement only—not paper or live trading. Deferred pairs stay visible with the exact reason.</p>
+          <p style={{ margin: "12px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.45 }}>Research is separate from equities. This list explains coverage and data readiness; the paper trader evaluates eligible crypto signals automatically. Live orders remain off.</p>
         </div>
       </section>
 
