@@ -32,6 +32,87 @@ OHLCV means open/high/low/close/volume. A signal is a dated research decision, a
 entry is a buy fill, a position is open inventory, and a lot is an accounting slice
 of an entry or partial exit.
 
+## How to use this document
+
+This book is deliberately comprehensive, but it is not meant to be read from
+line 1 to the end in one sitting. Use the path that matches your question:
+
+### If you are a finance or trading reader
+
+1. Read **Part I** for the one-page system model and the current US, India and
+   crypto books.
+2. Read the sections on **Research**, **Scoring**, **Portfolio construction**,
+   **Exit geometry**, and **Benchmarks** in the current-system reference.
+3. Use the feature entries in Part II to understand why a proposed change exists,
+   what evidence it records, and what would be required before promotion.
+
+### If you are an engineer or reviewer
+
+1. Start with the current-system reference, which is the present-state authority.
+2. Follow the data path below from provider evidence to learning.
+3. Use the source labels and status vocabulary to distinguish deployed behavior,
+   paper behavior, shadow measurements, and architecture that is only proposed.
+4. Treat historical source documents as decision records, not as an additional
+   runtime specification.
+
+### The system in one picture
+
+```text
+Market and broker providers
+        ↓
+Point-in-time evidence, freshness and quota checks
+        ↓
+Market-local research and deterministic dimensions
+        ↓
+Composite signal + eligibility and broker-tradability gates
+        ↓
+Paper portfolio construction and conservative exit geometry
+        ↓
+Fills, lots, marks, benchmarks and reconciliation
+        ↓
+Mature labels → diagnostics, IC/t-stat and shadow evaluation
+        ↓
+Only evidence-backed, explicitly approved changes can be promoted
+```
+
+The LLM is an assistant around this pipeline: it can summarize evidence and
+explain a result, but it is not an unrestricted source of prices, scores, risk
+limits, targets, stops, or orders.
+
+### What each detailed feature entry tells you
+
+When reading a feature section, look for five questions: **why** the feature
+exists, **what** it changes, **where** it connects to the application, **how** it
+is measured, and **what gate** prevents it from silently affecting money-path
+behavior. A feature can collect data for months without being ready for promotion.
+That is intentional: measurement is not proof.
+
+## Document map
+
+- **Part I — Current system orientation:** the present-state narrative and the
+  current-system reference. Start here.
+- **Part II — Detailed feature and operational documents:** the preserved source
+  material, grouped by the original feature or architecture path. Each block is
+  labelled with its source file so it can be traced back to the repository.
+- **Status and evidence language:** repeated terms such as *active*, *shadow*,
+  *collecting*, *blocked*, and *proposed* retain their precise meaning from the
+  status vocabulary above.
+- **Intentional omissions:** cron tables, environment-variable inventories,
+  database-schema dumps, and coding-convention material are omitted from this
+  friend-facing edition at the owner's request. Their absence is intentional;
+  this document explains behavior and design rather than exposing deployment
+  internals or secrets.
+
+### Quick glossary
+
+**Agent** means a bounded application worker, not an autonomous account owner.
+**Dimension** means one scored evidence family, such as technical or fundamental.
+**Shadow** means an isolated counterfactual measurement. **Promotion** means a
+versioned, reviewed decision to let a measured change affect a downstream path.
+**Money path** means any code that can create, change, or close a position or
+move cash. **Taint** means a data-quality condition that disqualifies an outcome
+from learning or attribution.
+
 ## Part I — Current system orientation
 
 The canonical current-state explanation is included first. It describes the product
