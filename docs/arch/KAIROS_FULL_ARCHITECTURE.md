@@ -695,21 +695,39 @@ navigation idiom.
 # Kairos — Tech Stack
 > **Current provider-cache contract:** fallback evidence retains the original fetch timestamp, so freshness limits are measured from the real observation rather than from the time a failed request copied it into a same-day cache slot. Failed calls are logged without URLs or credentials. This is an implementation detail supporting the evidence-freshness rules described in the current-system reference; the dated incident history remains in the source audit record.
 >
-> 2026-08-08: **Property market data uses three keyless official US sources**, added as small native adapters rather than any third-party scraping framework or unvetted GitHub package — FHFA HPI (`hpi_master.json`, quarterly metro price index), FRED `MORTGAGE30US` (public graph CSV, weekly 30-year rate), and BLS LAUS (keyless public API, monthly metro unemployment). The official HUD FMR adapter is also implemented but remains `contract_pending` until a free HUD User bearer token is configured server-side. It collects annual Austin/Phoenix **metro affordability references by bedroom count only**, never a property rent estimate, comparable, valuation, forecast, or underwriting input. Required attribution is rendered on the Markets page: *"This product uses FHFA Data but is neither endorsed nor certified by FHFA."* Census ACS remains `contract_pending`. Redfin bulk files, listing scrapers, and the DealLens/RealVest/HomeHarvest/`fred-mcp`/`rhud` packages were reviewed and **rejected** as production runtime dependencies: none improves the security, licensing or provenance boundary over a native adapter against the official release.
->
-> Ingestion carries a **per-invocation fetch cache** (`beginPropertyCollectionRun()` in `lib/property/sources.ts`). FHFA's multi-megabyte master JSON and FRED's full history were previously downloaded once *per market* with `cache: "no-store"`, costing nine upstream calls for a three-market run; it is now four, and four is correct because BLS legitimately needs one request per metro. The cache is deliberately per-invocation rather than TTL-based — a TTL would serve a stale national file into a later scheduled run.
->
-> Property parcel evidence has a separate GitHub Actions implementation lane (`.github/workflows/property-evidence.yml`), never a Vercel request, but **collection is disabled**. The Maricopa Sales Affidavits and TCAD export contracts are `contract_pending`: the worker exits before credentials, scopes, or downloads, and the workflow performs parser/self-disable checks only. Historical evidence is retained, but no new parcel or sale record is collected until each source has a documented, permitted machine-use contract. Generic GitHub scrapers remain excluded from the trusted runtime.
->
-> Owner-private property values use `lib/property/crypto.ts`: AES-256-GCM, versioned envelope, authentication tag, fail-closed when `PROPERTY_DATA_ENCRYPTION_KEY` is absent or is not a base64-encoded 32-byte key. **Local development, Vercel, and the Property evidence GitHub Action must carry the SAME key**, because the same master also derives domain-separated parcel/event HMACs. A mismatch renders encrypted payloads unreadable and creates unjoinable parcel identities. Plain SHA-256 address/parcel hashes are forbidden.
-> 2026-07-31: **Daily scoring now has a provider-independent completed-session boundary.** Yahoo is the current primary US daily-candle source and the India fallback behind Upstox; after normalization, ResearchAgent removes the current market-local bar until 16:00 ET / 15:30 IST. The separate Yahoo deep-history adapter remains an offline/replay input and does not authorize strategy promotion.
->
-> 2026-07-31: **Reported fundamentals are event-aware and ADR-safe.** ResearchAgent batch-reads `earnings_calendar` before provider work: a report in the prior 3 or next 14 days uses a 1-day cache; otherwise or when unknown it uses 7 days. Finnhub issuer profiles use 30 days. Theme Scout validates candidates with a quote, never a full fundamentals fetch. Reviewed exchange-listed ADRs use Yahoo ADS-basis fundamentals only; an unavailable ADR response cannot fall through to a provider that resolves the foreign ordinary share.
-> 2026-07-28: Yahoo daily candles became market-agnostic in `lib/data/yahoo-candles.ts` (`fetchYahooCandles` + `yahooRange`). Measured five-year depth: AAPL 1254 bars and RELIANCE.NS 1239 bars. This is the free keyless deep-history fallback when Massive's entitlement rejects older US history. Range boundaries guarantee the returned window is not shorter than requested.
-> Last updated: 2026-09-21 (**Python Lane A removed from Vercel** — Functions Storage cap); 2026-09-02 (**reasoning-model budget floor** — every LLM failure in 14 days was truncated reasoning; see "Reasoning models need a budget floor"); 2026-07-22 (Yahoo Finance v8 chart promoted to **primary US candle** source; recency guard added to `fetchUsCandles`; `minCandles` default raised 15→60; Massive/EODHD/TwelveData demoted to fallback)
-> Prior: 2026-07-19 (`webull_trade` signed sender restored behind database-backed preflight and nine-gate one-shot permits; adapter and activation remain DISABLED; read-only Cloud MCP remains query-only)
-> Prior: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
-> Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-08: **Property market data uses three keyless official US sources**, added as small native adapters rather than any third-party scraping framework or unvetted GitHub package — FHFA HPI (`hpi_master.json`, quarterly metro price index), FRED `MORTGAGE30US` (public graph CSV, weekly 30-year rate), and BLS LAUS (keyless public API, monthly metro unemployment). The official HUD FMR adapter is also implemented but remains `contract_pending` until a free HUD User bearer token is configured server-side. It collects annual Austin/Phoenix **metro affordability references by bedroom count only**, never a property rent estimate, comparable, valuation, forecast, or underwriting input. Required attribution is rendered on the Markets page: *"This product uses FHFA Data but is neither endorsed nor certified by FHFA."* Census ACS remains `contract_pending`. Redfin bulk files, listing scrapers, and the DealLens/RealVest/HomeHarvest/`fred-mcp`/`rhud` packages were reviewed and **rejected** as production runtime dependencies: none improves the security, licensing or provenance boundary over a native adapter against the official release.
+
+
+</details>
+
+Ingestion carries a **per-invocation fetch cache** (`beginPropertyCollectionRun()` in `lib/property/sources.ts`). FHFA's multi-megabyte master JSON and FRED's full history were previously downloaded once *per market* with `cache: "no-store"`, costing nine upstream calls for a three-market run; it is now four, and four is correct because BLS legitimately needs one request per metro. The cache is deliberately per-invocation rather than TTL-based — a TTL would serve a stale national file into a later scheduled run.
+
+Property parcel evidence has a separate GitHub Actions implementation lane (`.github/workflows/property-evidence.yml`), never a Vercel request, but **collection is disabled**. The Maricopa Sales Affidavits and TCAD export contracts are `contract_pending`: the worker exits before credentials, scopes, or downloads, and the workflow performs parser/self-disable checks only. Historical evidence is retained, but no new parcel or sale record is collected until each source has a documented, permitted machine-use contract. Generic GitHub scrapers remain excluded from the trusted runtime.
+
+Owner-private property values use `lib/property/crypto.ts`: AES-256-GCM, versioned envelope, authentication tag, fail-closed when `PROPERTY_DATA_ENCRYPTION_KEY` is absent or is not a base64-encoded 32-byte key. **Local development, Vercel, and the Property evidence GitHub Action must carry the SAME key**, because the same master also derives domain-separated parcel/event HMACs. A mismatch renders encrypted payloads unreadable and creates unjoinable parcel identities. Plain SHA-256 address/parcel hashes are forbidden.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-07-31: **Daily scoring now has a provider-independent completed-session boundary.** Yahoo is the current primary US daily-candle source and the India fallback behind Upstox; after normalization, ResearchAgent removes the current market-local bar until 16:00 ET / 15:30 IST. The separate Yahoo deep-history adapter remains an offline/replay input and does not authorize strategy promotion.
+
+2026-07-31: **Reported fundamentals are event-aware and ADR-safe.** ResearchAgent batch-reads `earnings_calendar` before provider work: a report in the prior 3 or next 14 days uses a 1-day cache; otherwise or when unknown it uses 7 days. Finnhub issuer profiles use 30 days. Theme Scout validates candidates with a quote, never a full fundamentals fetch. Reviewed exchange-listed ADRs use Yahoo ADS-basis fundamentals only; an unavailable ADR response cannot fall through to a provider that resolves the foreign ordinary share.
+2026-07-28: Yahoo daily candles became market-agnostic in `lib/data/yahoo-candles.ts` (`fetchYahooCandles` + `yahooRange`). Measured five-year depth: AAPL 1254 bars and RELIANCE.NS 1239 bars. This is the free keyless deep-history fallback when Massive's entitlement rejects older US history. Range boundaries guarantee the returned window is not shorter than requested.
+Last updated: 2026-09-21 (**Python Lane A removed from Vercel** — Functions Storage cap); 2026-09-02 (**reasoning-model budget floor** — every LLM failure in 14 days was truncated reasoning; see "Reasoning models need a budget floor"); 2026-07-22 (Yahoo Finance v8 chart promoted to **primary US candle** source; recency guard added to `fetchUsCandles`; `minCandles` default raised 15→60; Massive/EODHD/TwelveData demoted to fallback)
+Prior: 2026-07-19 (`webull_trade` signed sender restored behind database-backed preflight and nine-gate one-shot permits; adapter and activation remain DISABLED; read-only Cloud MCP remains query-only)
+Prior: 2026-07-16 (House Stock Watcher congressional feed retired — upstream bucket went private; no licence-clean free replacement qualified)
+
+</details>
+
+Update this file when: a new library is added, a provider changes, a new adapter is added, the framework is upgraded, or any layer in the table below changes.
+
+
+</details>
 
 ---
 
@@ -1047,149 +1065,215 @@ SMTP rejection is caught and the `messageId` is retained.
 | `lib/validators/backtest.ts` | Validation Engine (deterministic replay) |
 | `lib/evaluation/run-evaluation.ts` | Performance Truth Layer evaluation runner |
 | `lib/robinhood-mcp-client.ts` | Robinhood MCP JSON-RPC client + token refresh CAS |
-> 2026-08-08: **Property owner-address resolution.** Owner-entered US addresses
-> travel only through the owner-gated server route to the official Census
-> Geocoding Services API, then remain in the AES-256-GCM property payload with
-> the returned ZIP/county resolution state. Census geography is not a parcel
-> match, valuation, tax lookup, or insurance quote. Bengaluru address/locality
-> remains encrypted owner input with no automated resolver.
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
 
-> 2026-09-08: **Property address verification (USPS).** A second, separate
-> provider answers "is this address real": the official USPS Addresses API v3
-> (`lib/property/address-verify.ts`), OAuth2 client-credentials via
-> `USPS_CONSUMER_KEY`/`USPS_CONSUMER_SECRET`, free developer account at
-> developers.usps.com. Keyless until configured: with no credential the adapter
-> makes no network call and returns `not_configured` — never a pass and never a
-> false failure. A USPS 200 without a standardized street and ZIP is treated as
-> `not_found` (fail closed). US only; Bengaluru returns `no_validator` because no
-> free Indian address validator has been vetted. An unverified address is flagged
-> on the record, never blocked from saving. Persistent outages open the single
-> System Health key `property-address-verify:usps`.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-08: **Property owner-address resolution.** Owner-entered US addresses
+
+</details>
+
+travel only through the owner-gated server route to the official Census
+Geocoding Services API, then remain in the AES-256-GCM property payload with
+the returned ZIP/county resolution state. Census geography is not a parcel
+match, valuation, tax lookup, or insurance quote. Bengaluru address/locality
+remains encrypted owner input with no automated resolver.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-08: **Property address verification (USPS).** A second, separate
+
+</details>
+
+provider answers "is this address real": the official USPS Addresses API v3
+(`lib/property/address-verify.ts`), OAuth2 client-credentials via
+`USPS_CONSUMER_KEY`/`USPS_CONSUMER_SECRET`, free developer account at
+developers.usps.com. Keyless until configured: with no credential the adapter
+makes no network call and returns `not_configured` — never a pass and never a
+false failure. A USPS 200 without a standardized street and ZIP is treated as
+`not_found` (fail closed). US only; Bengaluru returns `no_validator` because no
+free Indian address validator has been vetted. An unverified address is flagged
+on the record, never blocked from saving. Persistent outages open the single
+System Health key `property-address-verify:usps`.
+
+
+</details>
 
 ---
 
 # Source: docs\arch\03-agents.md
 # Kairos — Agents
 > Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). This chapter documents responsibilities; it is not permission to enable proposed paths.
-> 2026-09-18: **Short interest wired into the risk-tier shadow** — item #2 (short interest) of the
-> `achaljhawar/1rok` gap-analysis plan. Yahoo's `defaultKeyStatistics` module (`shortPercentOfFloat`,
-> `shortRatio`) was already fetched for every US symbol via `fetchUsOverview`'s Finnhub-gap-fill pass
-> (`lib/india-data.ts`) but never parsed. Added a `BONUS_COPY_ONLY` list in `lib/data/fundamentals.ts`
-> — deliberately separate from the `FILLABLE` gap-trigger list, since Finnhub can never supply these
-> fields and adding them there would have silently forced an extra Yahoo call on every US symbol, even
-> ones with full Finnhub coverage. Coverage is therefore partial (only when Yahoo is already being
-> called for some other reason), not universal — same honest-unavailable convention as everything
-> else. Folded into risk-tier's existing `specialRisk` component as a squeeze-setup signal (>20% of
-> float short + >5 days to cover). See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md` §5.
->
-> 2026-09-18: **CatalystScout shadow (measure-only)** — `lib/scoring/catalyst-scout.ts`, item #1 of
-> the `achaljhawar/1rok` gap-analysis plan (their Catalyst agent's prompt discloses an adaptable
-> scoring shape; theirs is LLM-judged, this is deterministic). Closes the "earnings handled only
-> defensively, never scored for upside" gap. Zero new fetches — built entirely from data already in
-> scope at the `decision_observations` write: `daysToEarnings`, the Finnhub analyst consensus
-> (`lib/data/analyst.ts`, previously logged-only, still not scored live), `insider_score` gated on its
-> own real availability flag, Webull's already-fetched 5-day capital-flow sign, and the existing
-> breakdown veto. Written to `decision_observations.features.catalyst_shadow`; not read by
-> scoring/sizing/gate/order. Same `coverage`-tracked additive-asymmetry discipline as risk-tier-gate.
-> See `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
->
-> 2026-09-18: **Risk-tier shadow (measure-only)** — `lib/risk/risk-tier.ts`, adapted from
-> `github.com/achaljhawar/1rok`'s disclosed (LLM-judged there, deterministic here) risk-agent scoring
-> shape: 5-component additive composite (volatility/fragility/concentration/macro/special) off data
-> ResearchAgent already fetches — no new provider, no LLM. Written to
-> `decision_observations.features.risk_tier_shadow` on every scored candidate. Not read by
-> scoring/sizing/gate/order — same measure-only discipline as instrument-family evidence and oil
-> exposure. Ships with a stated, unresolved asymmetry (missing evidence contributes zero risk points,
-> not a neutral default — opposite bias from `analyst_score`'s abstain-on-thin-evidence convention),
-> tracked via a `coverage` field, not silently fixed. See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md`.
->
-> 2026-09-16: **Crypto Stage 3 — paper trading live (owner-approved evidence-gate override).**
-> `lib/scoring/instrument-taxonomy.ts` crypto `scoreMode` `measure_only` → `legacy_v1`. Two new small
-> agents, `CryptoPaperTrader` and `CryptoPositionMonitor` (registry entries below), deliberately NOT
-> threaded into the equity/India `paper-trade`/`position-monitor` routers. New pool: a third `market`
-> value, `'crypto'`, scoped to the 4 paper-ledger tables only (no CHECK constraint on any of them,
-> verified) — see "Crypto paper pool isolation" below. `decision_journal`'s market CHECK widened
-> (blocking bug found by reading `execute_paper_exit`'s SQL body before shipping) and
-> `lib/market-controls.ts`'s `Mkt`/`norm()` widened (previously coerced any unrecognized market to
-> `"us"`, which would have let a crypto kill-switch trip disable US equity trading). Trading page's
-> Crypto Watch section now shows pool NAV/positions/trades; `/dashboard/symbol/<coin>` gained a
-> technical+macro composite view in place of stock fundamentals. Evidence gate
-> (`MIN_PREDICTIVE_DATES=20`) was NOT met (~12/20 sessions at approval) — owner directed the override
-> explicitly; see `features/robinhood-crypto/FEATURE_ARCHITECTURE.md` and `PROJECT_DECISIONS.md`.
->
-> 2026-09-15: **ResearchAgent family evidence repaired + oil exposure pack (measure-only).**
-> `lib/scoring/instrument-family-evidence.ts`: metal price features labelled "20bars" were
-> really ~100-row returns (GLD recorded -7.17% vs real -0.05%); now exactly 20 settled bars,
-> version `instrument-family-features.v2` (v1 rows immutable, evaluate separately). FRED
-> staleness is per series (DFII10 7d, DTWEXBGS 10d, crude 10d) and a stale/missing series
-> raises System Health `family-evidence-fred-stale:<series>`. New
-> `decision_observations.features.oil_exposure_evidence` for a curated US/India oil map
-> (WTI/Brent % change from FRED, settled USO returns); unmapped symbols get nothing and no
-> expected sign is stored. No score, eligibility, paper, live, exit or broker consumer.
-> Details and the read-only oil counterfactual: `features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md` §11.
->
-> 2026-09-09: **`scoreFundamentals` gained REIT awareness (`lib/data/scores.ts`,
-> `isReitSector`).** A REIT's net income is structurally suppressed by mandatory
-> real-estate depreciation, so P/E, profit margin, ROE, and EPS-sign all mean
-> something different for a REIT than a normal company. Verified in production:
-> the one REIT ever scored (`O`) fell through `FINNHUB_INDUSTRY_TO_SECTOR`'s
-> exact-key crosswalk (Finnhub's raw industry string, e.g. "REIT - Retail",
-> never matches the generic "real estate" key) and landed unscored by accident.
-> Fixing only the crosswalk would have been worse — it would then hit
-> `SECTOR_PE_NORM["real estate"] = 30`, a tech-level norm that flags a normal
-> ~45-50x REIT P/E as "rich". `isReitSector` matches by substring
-> (`"reit"`/`"real estate"`) rather than an exact key, since Finnhub's REIT
-> sub-industry strings vary. Same treatment as the existing ETF branch: an
-> honest neutral 55 baseline instead of scoring on a distorted number. No
-> corrected numeric norm was derived or applied — only n=1 production
-> observation exists, nowhere near enough evidence per this project's Scoring
-> Data-Truth protocol to validate a formula. Revisit once a real FFO/AFFO data
-> source exists. Enabled research on 4 REITs this session (`AMT DLR EQIX
-> INVH`) — they will now score with this honest baseline instead of a
-> distorted one.
->
-> 2026-09-04 crypto basket Stage 2b: ResearchAgent now always feeds BTC-USD/ETH-USD/SOL-USD
-> via `crypto_basket` discovery source (parallel to `metals_basket`). `scoreMode="measure_only"` —
-> no paper trades, no order path. Evidence accumulates in `instrument_family_observations` with
-> technical+macro+sentiment features. Trading page shows a "Crypto Watch" section (US-only)
-> with per-coin evidence progress toward MIN_PREDICTIVE_DATES=20. Stage 3 (paper pool) unlocks
-> after 20 qualifying sessions. No `market` CHECK constraint changed — crypto is `market="us"`,
-> `InstrumentFamily="crypto"`. `CRYPTO_SESSION_CUTOFF_UTC=0` (UTC midnight) is the declared
-> aggregation convention, not a real market close. India has no crypto path.
->
-> 2026-08-24 instrument-family measurement: ResearchAgent now stamps a versioned
-> market/family/exposure classification on every decision, records dated metals
-> drivers in a separate append-only measurement ledger, and writes an uncapped
-> family shadow comparison for structurally special funds. None of these fields
-> changes v1 scoring, paper/live eligibility, sizing, exits, or orders.
-> 2026-08-02 earnings-date validation normalized: all earnings collectors (the
-> `earnings_calendar` cache, Finnhub/Yahoo-India base, Webull, Robinhood, and
-> `fetchIndiaEarningsDate`) now route through the one shared parser
-> `normalizeRealIsoDate` in `lib/date-only.ts`. Malformed, impossible, or
-> out-of-range provider dates fail closed to no observation instead of being
-> coerced. `tradingSessionsBetween` keeps its load-bearing validate-before-shortcut
-> ordering. Shadow mode and every score/eligibility/sizing path are unchanged.
->
-> 2026-08-01 documentation truth audit: reconciled the ResearchAgent screener,
-> five scoring dimensions, provider order, exact formulas, availability rules,
-> weight resolution, and breakdown veto against production code. Added a
-> plain-English report-card explanation beside the exact quantitative contract.
->
-> 2026-07-31 event-aware/ADR correction: ResearchAgent batch-annotates company symbols from `earnings_calendar` before fetching fundamentals (1-day cache inside -3/+14 report window; otherwise/unknown 7 days; Finnhub profile 30 days). Theme Scout only proves a ticker with quote data. Reviewed US exchange ADRs persist `asset_class='adr'`, skip structurally inapplicable Form 4 evidence, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. `SKHY` is the reviewed Nasdaq SK hynix ADS; `SKHYV`, `HXSCL`, and `HXSCF` are blocked substitutes.
->
-> 2026-07-31 scoring data-truth correction: ResearchAgent is the sole authoritative
-> scorer; the legacy Supabase `research-agent` function is a 410 tombstone. Provider
-> sector taxonomies are explicit. Finnhub industries are crosswalked only when
-> unambiguous, unknown sectors omit relative-P/E scoring, and P/E outside `(0, 200]`
-> is unavailable for valuation. Fundamental, sentiment, macro, and insider inclusion
-> requires explicit availability. A weak close remains evidence, but only ATR-scaled
-> or high-volume declines can hard-veto. See
-> `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
-> Last updated: 2026-07-22 (contract layer fix: macro.regime_inputs marked US-only in INTENT_CATALOG, INTENT_CLASSIFICATION, and SCORER_FIELD_CONTRACTS — contracts now match the pipeline reality that fetchMacroScore/applicableDimensions/persistObservedResearchEvidence have always enforced; shadow resolver no longer reports 0% India macro starvation; ETF analyst_score capped at 65 in ResearchAgent + archetypes; lane-comparison API added; Monte Carlo in BacktestPage; capital-rotation trigger unblocked — see history below)
-> Prior: 2026-07-17 (the asset allocator is now market-scoped too — India no longer inherits the US FRED regime for sleeve weights, and macro UNAVAILABLE means NO allocation rather than an untilted config echo; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; India SEBI PIT evaluated as the India insider analog and REJECTED on live evidence — 0/34 India symbols clear the US open-market bar at 90d, ~70% of PIT rows are non-open-market (ESOP allotments marked "Buy"); India insider stays honestly UNAVAILABLE, pinned by tests/india-insider-not-wired.test.ts; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; Macro read (Agent Mind Phase 3) documented for the first time and scoped **US-only** — the India read is killed, not faked: BOTH its macro inputs (`macro_regime` AND the `category='macro'` `learning_priors`) are US-only and unmarket-tagged, and the priors were the live leak in prod row id=6, so gating only the regime would not have fixed it; the route now refuses `market=india` on both verbs before any LLM call or DB write, and `MacroReadCard` states the gap instead of vanishing. Also fixed the 4-day silent outage of that agent — `deepseek-reasoner` burned the whole `maxTokens: 600` budget on chain-of-thought and returned empty content (`finish_reason=length`) from 2026-07-13 onward, so nothing was written while both crons reported success; 600 → 1500. Corrected the stale "looks back up to 3 weeks" macro line that contradicted this chapter's own 10-day consumer contract; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; CPI Inflation now actually loads — MacroSentinel advertised 8 indicators and shipped 7 on every run since the FRED cutover because it fetched exactly 13 CPI readings and required 13, while FRED writes "." for a missing month (2025-10) that the adapter drops; YoY now aligns on the paired MONTH via fredSeriesDated + observationMonthsBefore rather than array index, since a gap-collapsed array makes vals[12] 13 months back — a wrong number, not just an absent one)
-> Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
 
-> 2026-09-14 (Per-User Broker & Risk Phase 2): **`UserHoldingRisk`** — `POST /api/agents/user-holding-risk?market=us|india`, cron-gated, weekdays 11:15 UTC (India) / 21:45 UTC (US), 15 minutes after the owner's own `holding-risk` job so a guest fan-out never delays the owner's book. Input: one connected guest's OWN holdings, fetched with their own read-only credential. Output: `user_account_snapshots` + `user_holding_risk_runs` + `user_holding_risk_snapshots`, all scoped to that user. It reuses `computeRiskMetrics` / `computeCorrelationClusters` unchanged but on a **different data budget** — `lib/risk/guest-risk.ts` imports only the keyless Yahoo candle endpoint, never the metered fallback chain (`fetchUsCandles` → Massive/EODHD/TwelveData/Alpha Vantage), and no LLM. A held symbol Yahoo cannot serve is recorded as UNCOVERED with its correlation reported *unknown*, never escalated to a paid provider and never treated as zero correlation. Every user it cannot compute is recorded `skipped` **with a reason** (expired Zerodha token, disconnected, revoked). Advisory-only and read-only: writes no owner table and touches no order path — the guest client has no order method to call.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-18: **Short interest wired into the risk-tier shadow** — item #2 (short interest) of the
+
+</details>
+
+`achaljhawar/1rok` gap-analysis plan. Yahoo's `defaultKeyStatistics` module (`shortPercentOfFloat`,
+`shortRatio`) was already fetched for every US symbol via `fetchUsOverview`'s Finnhub-gap-fill pass
+(`lib/india-data.ts`) but never parsed. Added a `BONUS_COPY_ONLY` list in `lib/data/fundamentals.ts`
+— deliberately separate from the `FILLABLE` gap-trigger list, since Finnhub can never supply these
+fields and adding them there would have silently forced an extra Yahoo call on every US symbol, even
+ones with full Finnhub coverage. Coverage is therefore partial (only when Yahoo is already being
+called for some other reason), not universal — same honest-unavailable convention as everything
+else. Folded into risk-tier's existing `specialRisk` component as a squeeze-setup signal (>20% of
+float short + >5 days to cover). See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md` §5.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-18: **CatalystScout shadow (measure-only)** — `lib/scoring/catalyst-scout.ts`, item #1 of
+
+</details>
+
+the `achaljhawar/1rok` gap-analysis plan (their Catalyst agent's prompt discloses an adaptable
+scoring shape; theirs is LLM-judged, this is deterministic). Closes the "earnings handled only
+defensively, never scored for upside" gap. Zero new fetches — built entirely from data already in
+scope at the `decision_observations` write: `daysToEarnings`, the Finnhub analyst consensus
+(`lib/data/analyst.ts`, previously logged-only, still not scored live), `insider_score` gated on its
+own real availability flag, Webull's already-fetched 5-day capital-flow sign, and the existing
+breakdown veto. Written to `decision_observations.features.catalyst_shadow`; not read by
+scoring/sizing/gate/order. Same `coverage`-tracked additive-asymmetry discipline as risk-tier-gate.
+See `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-18: **Risk-tier shadow (measure-only)** — `lib/risk/risk-tier.ts`, adapted from
+
+</details>
+
+`github.com/achaljhawar/1rok`'s disclosed (LLM-judged there, deterministic here) risk-agent scoring
+shape: 5-component additive composite (volatility/fragility/concentration/macro/special) off data
+ResearchAgent already fetches — no new provider, no LLM. Written to
+`decision_observations.features.risk_tier_shadow` on every scored candidate. Not read by
+scoring/sizing/gate/order — same measure-only discipline as instrument-family evidence and oil
+exposure. Ships with a stated, unresolved asymmetry (missing evidence contributes zero risk points,
+not a neutral default — opposite bias from `analyst_score`'s abstain-on-thin-evidence convention),
+tracked via a `coverage` field, not silently fixed. See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-16: **Crypto Stage 3 — paper trading live (owner-approved evidence-gate override).**
+
+</details>
+
+`lib/scoring/instrument-taxonomy.ts` crypto `scoreMode` `measure_only` → `legacy_v1`. Two new small
+agents, `CryptoPaperTrader` and `CryptoPositionMonitor` (registry entries below), deliberately NOT
+threaded into the equity/India `paper-trade`/`position-monitor` routers. New pool: a third `market`
+value, `'crypto'`, scoped to the 4 paper-ledger tables only (no CHECK constraint on any of them,
+verified) — see "Crypto paper pool isolation" below. `decision_journal`'s market CHECK widened
+(blocking bug found by reading `execute_paper_exit`'s SQL body before shipping) and
+`lib/market-controls.ts`'s `Mkt`/`norm()` widened (previously coerced any unrecognized market to
+`"us"`, which would have let a crypto kill-switch trip disable US equity trading). Trading page's
+Crypto Watch section now shows pool NAV/positions/trades; `/dashboard/symbol/<coin>` gained a
+technical+macro composite view in place of stock fundamentals. Evidence gate
+(`MIN_PREDICTIVE_DATES=20`) was NOT met (~12/20 sessions at approval) — owner directed the override
+explicitly; see `features/robinhood-crypto/FEATURE_ARCHITECTURE.md` and `PROJECT_DECISIONS.md`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-15: **ResearchAgent family evidence repaired + oil exposure pack (measure-only).**
+
+</details>
+
+`lib/scoring/instrument-family-evidence.ts`: metal price features labelled "20bars" were
+really ~100-row returns (GLD recorded -7.17% vs real -0.05%); now exactly 20 settled bars,
+version `instrument-family-features.v2` (v1 rows immutable, evaluate separately). FRED
+staleness is per series (DFII10 7d, DTWEXBGS 10d, crude 10d) and a stale/missing series
+raises System Health `family-evidence-fred-stale:<series>`. New
+`decision_observations.features.oil_exposure_evidence` for a curated US/India oil map
+(WTI/Brent % change from FRED, settled USO returns); unmapped symbols get nothing and no
+expected sign is stored. No score, eligibility, paper, live, exit or broker consumer.
+Details and the read-only oil counterfactual: `features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md` §11.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-09: **`scoreFundamentals` gained REIT awareness (`lib/data/scores.ts`,
+
+</details>
+
+`isReitSector`).** A REIT's net income is structurally suppressed by mandatory
+real-estate depreciation, so P/E, profit margin, ROE, and EPS-sign all mean
+something different for a REIT than a normal company. Verified in production:
+the one REIT ever scored (`O`) fell through `FINNHUB_INDUSTRY_TO_SECTOR`'s
+exact-key crosswalk (Finnhub's raw industry string, e.g. "REIT - Retail",
+never matches the generic "real estate" key) and landed unscored by accident.
+Fixing only the crosswalk would have been worse — it would then hit
+`SECTOR_PE_NORM["real estate"] = 30`, a tech-level norm that flags a normal
+~45-50x REIT P/E as "rich". `isReitSector` matches by substring
+(`"reit"`/`"real estate"`) rather than an exact key, since Finnhub's REIT
+sub-industry strings vary. Same treatment as the existing ETF branch: an
+honest neutral 55 baseline instead of scoring on a distorted number. No
+corrected numeric norm was derived or applied — only n=1 production
+observation exists, nowhere near enough evidence per this project's Scoring
+Data-Truth protocol to validate a formula. Revisit once a real FFO/AFFO data
+source exists. Enabled research on 4 REITs this session (`AMT DLR EQIX
+INVH`) — they will now score with this honest baseline instead of a
+distorted one.
+
+2026-09-04 crypto basket Stage 2b: ResearchAgent now always feeds BTC-USD/ETH-USD/SOL-USD
+via `crypto_basket` discovery source (parallel to `metals_basket`). `scoreMode="measure_only"` —
+no paper trades, no order path. Evidence accumulates in `instrument_family_observations` with
+technical+macro+sentiment features. Trading page shows a "Crypto Watch" section (US-only)
+with per-coin evidence progress toward MIN_PREDICTIVE_DATES=20. Stage 3 (paper pool) unlocks
+after 20 qualifying sessions. No `market` CHECK constraint changed — crypto is `market="us"`,
+`InstrumentFamily="crypto"`. `CRYPTO_SESSION_CUTOFF_UTC=0` (UTC midnight) is the declared
+aggregation convention, not a real market close. India has no crypto path.
+
+2026-08-24 instrument-family measurement: ResearchAgent now stamps a versioned
+market/family/exposure classification on every decision, records dated metals
+drivers in a separate append-only measurement ledger, and writes an uncapped
+family shadow comparison for structurally special funds. None of these fields
+changes v1 scoring, paper/live eligibility, sizing, exits, or orders.
+2026-08-02 earnings-date validation normalized: all earnings collectors (the
+`earnings_calendar` cache, Finnhub/Yahoo-India base, Webull, Robinhood, and
+`fetchIndiaEarningsDate`) now route through the one shared parser
+`normalizeRealIsoDate` in `lib/date-only.ts`. Malformed, impossible, or
+out-of-range provider dates fail closed to no observation instead of being
+coerced. `tradingSessionsBetween` keeps its load-bearing validate-before-shortcut
+ordering. Shadow mode and every score/eligibility/sizing path are unchanged.
+
+2026-08-01 documentation truth audit: reconciled the ResearchAgent screener,
+five scoring dimensions, provider order, exact formulas, availability rules,
+weight resolution, and breakdown veto against production code. Added a
+plain-English report-card explanation beside the exact quantitative contract.
+
+2026-07-31 event-aware/ADR correction: ResearchAgent batch-annotates company symbols from `earnings_calendar` before fetching fundamentals (1-day cache inside -3/+14 report window; otherwise/unknown 7 days; Finnhub profile 30 days). Theme Scout only proves a ticker with quote data. Reviewed US exchange ADRs persist `asset_class='adr'`, skip structurally inapplicable Form 4 evidence, and use ADS-compatible Yahoo fundamentals without foreign-underlying fallthrough. `SKHY` is the reviewed Nasdaq SK hynix ADS; `SKHYV`, `HXSCL`, and `HXSCF` are blocked substitutes.
+
+2026-07-31 scoring data-truth correction: ResearchAgent is the sole authoritative
+scorer; the legacy Supabase `research-agent` function is a 410 tombstone. Provider
+sector taxonomies are explicit. Finnhub industries are crosswalked only when
+unambiguous, unknown sectors omit relative-P/E scoring, and P/E outside `(0, 200]`
+is unavailable for valuation. Fundamental, sentiment, macro, and insider inclusion
+requires explicit availability. A weak close remains evidence, but only ATR-scaled
+or high-volume declines can hard-veto. See
+`features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+Last updated: 2026-07-22 (contract layer fix: macro.regime_inputs marked US-only in INTENT_CATALOG, INTENT_CLASSIFICATION, and SCORER_FIELD_CONTRACTS — contracts now match the pipeline reality that fetchMacroScore/applicableDimensions/persistObservedResearchEvidence have always enforced; shadow resolver no longer reports 0% India macro starvation; ETF analyst_score capped at 65 in ResearchAgent + archetypes; lane-comparison API added; Monte Carlo in BacktestPage; capital-rotation trigger unblocked — see history below)
+Prior: 2026-07-17 (the asset allocator is now market-scoped too — India no longer inherits the US FRED regime for sleeve weights, and macro UNAVAILABLE means NO allocation rather than an untilted config echo; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; India SEBI PIT evaluated as the India insider analog and REJECTED on live evidence — 0/34 India symbols clear the US open-market bar at 90d, ~70% of PIT rows are non-open-market (ESOP allotments marked "Buy"); India insider stays honestly UNAVAILABLE, pinned by tests/india-insider-not-wired.test.ts; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; Macro read (Agent Mind Phase 3) documented for the first time and scoped **US-only** — the India read is killed, not faked: BOTH its macro inputs (`macro_regime` AND the `category='macro'` `learning_priors`) are US-only and unmarket-tagged, and the priors were the live leak in prod row id=6, so gating only the regime would not have fixed it; the route now refuses `market=india` on both verbs before any LLM call or DB write, and `MacroReadCard` states the gap instead of vanishing. Also fixed the 4-day silent outage of that agent — `deepseek-reasoner` burned the whole `maxTokens: 600` budget on chain-of-thought and returned empty content (`finish_reason=length`) from 2026-07-13 onward, so nothing was written while both crons reported success; 600 → 1500. Corrected the stale "looks back up to 3 weeks" macro line that contradicted this chapter's own 10-day consumer contract; macro_score is US-only — India macro now honestly UNAVAILABLE instead of inheriting the US FRED regime; macro_regime reads are age-bounded (10d) + indicator-backed, fail-safe to UNAVAILABLE never to calm; SEC Form 4 URL fixed — US insider data had never resolved; insider availability now recovered from `decision_observations.availability_mask` at the smart-money boundary; insider symbol universe unioned across all broker accounts; ResearchAgent holdings: staleness-ordered rotation under the wall-clock budget + fail-loud holdings fetch, both markets; per-flow LLM from Settings; India GDELT news sentiment + live NSE FII/DII macro inputs; low-confidence-research quality alert; Trading Style presets govern the time-stop before a champion is promoted; CPI Inflation now actually loads — MacroSentinel advertised 8 indicators and shipped 7 on every run since the FRED cutover because it fetched exactly 13 CPI readings and required 13, while FRED writes "." for a missing month (2025-10) that the adapter drops; YoY now aligns on the paired MONTH via fredSeriesDated + observationMonthsBefore rather than array index, since a gap-collapsed array makes vals[12] 13 months back — a wrong number, not just an absent one)
+
+</details>
+
+Update this file when: a new agent is added or removed, an agent's schedule changes, an agent's inputs or outputs change, or an agent's key behavior changes.
+
+2026-09-14 (Per-User Broker & Risk Phase 2): **`UserHoldingRisk`** — `POST /api/agents/user-holding-risk?market=us|india`, cron-gated, weekdays 11:15 UTC (India) / 21:45 UTC (US), 15 minutes after the owner's own `holding-risk` job so a guest fan-out never delays the owner's book. Input: one connected guest's OWN holdings, fetched with their own read-only credential. Output: `user_account_snapshots` + `user_holding_risk_runs` + `user_holding_risk_snapshots`, all scoped to that user. It reuses `computeRiskMetrics` / `computeCorrelationClusters` unchanged but on a **different data budget** — `lib/risk/guest-risk.ts` imports only the keyless Yahoo candle endpoint, never the metered fallback chain (`fetchUsCandles` → Massive/EODHD/TwelveData/Alpha Vantage), and no LLM. A held symbol Yahoo cannot serve is recorded as UNCOVERED with its correlation reported *unknown*, never escalated to a paid provider and never treated as zero correlation. Every user it cannot compute is recorded `skipped` **with a reason** (expired Zerodha token, disconnected, revoked). Advisory-only and read-only: writes no owner table and touches no order path — the guest client has no order method to call.
+
+
+</details>
 
 **Adding an agent:** create `app/api/agents/<name>/route.ts` + add cron entry in `vercel.json` (cloud) or `scripts/run-agents.ps1` (local) + update this file (prose/registry only) + update `public/agent-diagrams/system-map.json` (the node, its edges, and a `history` entry — this is where the topology change lands) + add or update the per-agent diagram `public/agent-diagrams/<agent>.json` (same `agentId`/`agentLabel`/`diagram`/`nodes`/`history` contract; `nodes` is an object keyed by node id, never an array).
 
@@ -2305,457 +2389,643 @@ source is `public/agent-diagrams/deep-dive.json`.
 
 # Source: docs\arch\08-risk-and-safety.md
 # Kairos — Risk & Safety
-> 2026-09-14: **The UI is not a security boundary; RLS is.** `lib/supabase/client.ts` ships `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the browser, so any holder of a valid session can query PostgREST directly, whatever the app renders. Until `20260914140000_viewer_phase0_close_blanket_rls.sql`, 34 tables were reachable by any authenticated session and 7 were writable — including the paper book and the learner's weights. That was never a live breach (only the owner can obtain a session), but it meant the single-email gate in `middleware.ts` / `requireOwner()` was carrying 100% of the isolation, with RLS contributing nothing. Phase 0 closed it. **Standing rule: before any additional identity is admitted to this system, verify no table grants blanket `authenticated` access.** Any feature that adds a login must re-run that check; a UI-level permission is not an isolation control.
->
-> 2026-09-01: **Exit-geometry counterfactual run on all four cohorts. The intuitive fix is refuted; the defect is the STOP, not the target.** Evidence frozen in `docs/audits/2026-09-01-exit-geometry-diagnosis.md`. Nothing changed — the route writes nothing.
->
-> The configured +19.2% target fires **zero times across 965 India observations** and 28 times in 900 US h10 observations. Timeouts run 76-97%. The time stop is not competing with the target; it IS the exit policy, which reproduces the live ledger (132 of 179 closed lots, 73.7%, exit on the clock).
->
-> **Tightening the target lowers mean return in every cohort.** US h10: baseline 0.616% -> 0.398% at a 4% target, while win rate RISES 52.0% -> 61.4%. More frequent small wins, worse expectancy. The widest target ranks first and the tightest last in all four cohorts, so "make the target reachable" is measured and wrong.
->
-> **What beats baseline is a volatility-scaled stop.** `stop 2.8ATR / target 7.3ATR` ranks first in 3 of 4 cohorts, and on US h10 its whole advantage is stop-outs 131 vs 185 (-29%) with timeouts UNCHANGED (706 vs 683). It barely exits on target either.
->
-> Margins are thin outside US h10 (+0.295pp): India h10 +0.073pp, India h5 +0.051pp, and the candidate **loses** US h5 by 0.041pp. With 14 configs x 4 cohorts this is a ranking from a search, not a significance test — no CIs, no t-stats, overlapping windows.
->
-> Proposed follow-up, awaiting approval: `features/atr-exit-stop/FEATURE_ARCHITECTURE.md` — a single-arm shadow testing one predeclared hypothesis (ATR stop reduces premature stop-outs), Sidak-adjusted for the 14-arm search it came from, with the time stop and target held fixed. Expected verdict for months: `insufficient_evidence` (26 dates at h10 = 2.6 effective observations against a floor of 12).
->
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
 
-> 2026-08-28 (same day): **CORRECTION to the India sizing diagnosis — survivorship materially weakens it.** I published the quartile gradient from CLOSED lots only while listing survivorship as an untested confounder, then tested it. Including the 14 open India positions marked to current price, **8 of them fall in the LARGEST quartile** and are outperforming the closed lots. Q4 mean return moves from -0.55% to **+0.07%**, and the win-rate gradient shallows from 60->38% to **57->43%**.
->
-> **No longer supported:** that the largest positions lose money. **Still supported:** size is uncorrelated with conviction (corr with analyst_score -0.128, with cash-at-entry +0.344, 57x notional spread) — measured at ENTRY, so unaffected by survivorship — and win rate still declines with size. The honest claim is that allocation WASTES the edge rather than reversing it.
->
-> The profit-factor pair (percent 1.438 vs currency 0.906) inherits the same bias and should be recomputed on matured outcomes before being leaned on. Method note: the confounder should have been tested before the write-up, not listed inside it as future work.
->
-> 2026-08-28: **India sizing damage diagnosed — cause is cash-path dependence, not volatility.** Full evidence: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
->
-> A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.
->
-> **Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book: allocation is decided by timing, not by the model.
->
-> **CORRECTED 2026-08-28 (same day):** the `h10 rank IC +0.105` originally cited here as India's selection edge is the **all-scored** context cohort. Under the measurement-integrity repair (`f95c3951`) the **eligible-long** cohort — the names that could actually be entered — measures **-0.0083** over 17 dates in India and **-0.0768** over 21 in the US, both below the evidence floor. There is no demonstrated selection edge in the entry cohort, so "allocation throws the edge away" is unsupported; only the sizing mechanism above survives. The US/India split asserted below is also wrong in direction: neither market's eligible cohort ranks.
->
-> **The volatility budget is a separate, real defect and NOT the cause.** Rule 4 has fired zero times in 1,513 constructor events because `maxPortfolioVolPct = 2.0` is unreachable at `DEFAULT_DAILY_VOL = 0.02` — reproducing estPortfolioVol, the worst case across every configuration (5 names, 100% gross, all same sector) is **1.649%**. Breaching 2.0% needs per-symbol vol >= 3.5% daily. The threshold is set above what the model can produce. Fixing it would not fix the sizing damage.
->
-> **No sizing behaviour changed.** This is a diagnosis; changing position_size_pct, maxPortfolioVolPct or the allocation formula is a separate money-path decision. US is a different problem entirely — both its profit factors are below 1 and its rank IC is -0.012 with a negative quintile spread, so sizing is not its binding constraint.
->
-> 2026-08-28: **RESOLVED — why capital rotation was disabled on 2026-08-11.** It was never unexplained; the reason was recorded contemporaneously and I had been reading a later, vaguer label.
->
-> The disable is migration `20260811033335_disable_unqualified_paper_rotation.sql`, shipped in commit `ba20f4ff`. The filename timestamp is exactly the `rotation_config.updated_at` I had been treating as a mystery. Its own comment:
->
-> > "Capital rotation may keep measuring, but paper execution must remain off until benchmark-alpha, friction, turnover, correlation and tax readiness are enforced by the execution path."
->
-> `features/capital-rotation/FEATURE_ARCHITECTURE.md`, updated in the same commit, gives the mechanism: migration `20260723120000` had enabled both paper rows, **but the executor only rechecked score spread, persistence, cooldown and count caps — it never enforced the P1 readiness result and never read `rotation_allow_score_only_paper`.** Four paper rotations executed through that hole. The same commit added the missing gate to `executeCapitalRotationPaper`.
->
-> **It was a MISSING GATE, not bad P&L.** The four negative rotations were the symptom; the doc says explicitly this "is containment, not a claim that the four-trade result proves rotation lacks edge" — which matches the swap-level analysis on 2026-08-25 that found those rotations neutral-to-positive.
->
-> **The "unsafe early P1 behavior" phrase in `lib/shadows/registry.ts` was written 2026-08-24 (`26216cb3`), two weeks after the fact.** It is a retrospective summary, not the contemporaneous record, and searching for it is what made this look unexplained. The precise cause was in the migration filename the whole time.
->
-> **Directly relevant to 2026-08-25.** The flag I flipped that day, `rotation_allow_score_only_paper`, IS the gate this commit added to stop score-only execution. My argument was that `score_to_return_mapping_unvalidated` "can only be validated by running it" — the same reasoning that produced the original incident. The flip was reverted for a different reason (a false claim that rotation had never executed); this is the reason it should have been refused on the merits.
->
-> **The five `p1_blockers` are the reopening criteria**, not incidental noise: `turnover_budget_not_configured`, `exact_tax_lots_unavailable`, `score_to_return_mapping_unvalidated`, `post_swap_gate_unavailable`, `candidate_correlation_unavailable`. They map one-to-one onto the migration's "benchmark-alpha, friction, turnover, correlation and tax readiness". Rotation is re-enableable when those are enforced in the execution path — not before.
->
-> 2026-08-27: **India alpha provenance loosened to admit `upstox(yahoo_disagreed)` (owner decision).**
->
-> `CONFIRMED_BENCHMARK_SOURCES.india` was `["upstox+yahoo"]` — genuine two-vendor agreement only. That rule was written when neither source was trusted over the other. Upstox is now declared authoritative (broker API carrying official exchange data; on a disagreement ITS value is the one stored), so the rule was suppressing alpha on a CORRECT exchange close because the SECONDARY source was wrong. On the 08-19..27 backfill Yahoo disagreed on six of seven sessions by up to 0.67% — and Yahoo was in error every time.
->
-> Now `["upstox+yahoo", "upstox(yahoo_disagreed)"]`.
->
-> **`upstox(unconfirmed)` deliberately stays OUT**, and the distinction is not pedantry: there the second source never resolved the session at all, so nothing corroborates that Upstox returned the right BAR for the right DAY. "The two disagreed and we kept the authoritative one" is a different and stronger claim than "only one source answered". Both directions are mutation-pinned — reverting the loosening fails, and over-loosening to admit `upstox(unconfirmed)` also fails.
->
-> Backfilled `bench_return_pct` across 38 India rows that now qualify. First measurable since-inception alpha for both books, on settled exchange data:
->
-> | market | sessions | NAV | benchmark | alpha |
-> |---|---|---|---|---|
-> | india | 39 | -0.79% | -1.39% (NIFTY 50) | **+0.60pp** |
-> | us | 38 | +1.85% | +2.60% (VOO) | **-0.74pp** |
->
-> India has been BEATING its benchmark since inception and this was invisible until now — the alpha was withheld by provenance rules, not absent from the book. Both figures start 2026-07-06, the first session with a benchmark on both sides.
->
-> 2026-08-27: **The 8 NULL benchmark rows: 7 filled, 1 correctly refused.**
->
-> I had left these alone on the grounds that filling India from a single source would manufacture provenance. Checking rather than assuming resolved it: **Upstox and Yahoo agree to the paisa on all four India sessions**, so `upstox+yahoo` is earned two-source provenance, not a label applied to one opinion.
->
-> | market | date | value | source |
-> |---|---|---|---|
-> | india | 07-06 | 24430.35 | `upstox+yahoo` (exact agreement) |
-> | india | 07-07 | 24398.70 | `upstox+yahoo` (exact agreement) |
-> | india | 07-08 | 23882.05 | `upstox+yahoo` (exact agreement) |
-> | india | 08-17 | 24287.65 | `upstox+yahoo` (exact agreement) |
-> | us | 07-06 | 690.62 | `yahoo(settled)` |
-> | us | 07-07 | 687.08 | `yahoo(settled)` |
-> | us | 07-09 | 690.69 | `yahoo(settled)` |
->
-> **US 2026-06-28 stays NULL. It is a SUNDAY** — the paper book's inception row. No session, no bar, and filling it would invent a price for a closed market. Yahoo returns nothing for that date, which is the correct answer rather than a gap to paper over.
->
-> India now has ZERO null benchmark rows; US has one, and it is the Sunday. Consequence worth noting: `benchmarkReturnPct` baselines off the FIRST non-null `bench_nav`, which is now 2026-07-06 for both markets — India's benchmark series is exactly aligned with its NAV series, and the US benchmark starts one session after its Sunday inception row.
->
-> **Open design question, deliberately not changed here.** The seven India `upstox(yahoo_disagreed)` rows carry the AUTHORITATIVE exchange close, but `CONFIRMED_BENCHMARK_SOURCES.india` admits only `upstox+yahoo`, so they cannot publish alpha. That rule was written when neither source was trusted over the other; now that Upstox is declared authoritative, withholding alpha because YAHOO was wrong may be stricter than intended. Changing it is an owner decision, not a cleanup.
->
-> 2026-08-27: **PaperTrader write path audited after the benchmark work. One latent W4 regression closed.**
->
-> Checked because `confirmBenchmarkSessions` was wired into PositionMonitor only, and PaperTrader is the OTHER `paper_performance` writer. Findings:
->
-> - **The two-writer split is sound.** PaperTrader inserts `snapshot_type='intraday'` and ONLY when no row exists for `(date, market)`; PositionMonitor upserts on `(date, market)` and promotes the row to `eod`, but only once `expectedNewestSession(market) === today`. That is why production holds zero surviving `intraday` rows -- not because the path is dead.
-> - **LATENT REGRESSION, now fixed.** PaperTrader's insert ladder strips `bench_session_date`, `bench_source` and `snapshot_type` *together* on any undefined-column error. But `paper_performance.snapshot_type` is `NOT NULL DEFAULT 'eod'`. So if the missing column was one of the bench ones while `snapshot_type` existed, the stripped insert would stamp a PREMARKET row as the canonical close -- exactly the W4 defect the one-EOD-writer rule exists to prevent, reintroduced through the fallback. Dormant while all three columns exist. PaperTrader now corrects the label after any legacy-ladder insert.
-> - **Confirmation pass no longer filters `snapshot_type='eod'`.** A past session's benchmark is settled regardless of how the NAV row was labelled, and the filter would have permanently stranded any row left `intraday` because PositionMonitor did not run that day.
->
-> Not changed: 8 old rows (US 06-28, 07-06/07/09; India 07-06/07/08, 08-17) carry NULL `bench_nav`. They predate the provenance work and India's policy deliberately requires a stored Yahoo value before claiming `upstox+yahoo` — filling them from a single source would manufacture provenance rather than recover it.
->
-> 2026-08-27: **US benchmark — the CONFIRMED rows were the wrong ones.** Same deferred-confirmation fix as India, plus a provenance correction.
->
-> Measured against settled VOO closes:
->
-> | date | stored | source | settled | verdict |
-> |---|---|---|---|---|
-> | 08-19 | NULL | - | 706.91 | never resolved |
-> | 08-20 | NULL | - | 701.01 | never resolved |
-> | 08-21 | 703.71 | `yahoo_quote(provisional)` | 703.71 | **exact** |
-> | 08-24 | 701.83 | `yahoo_quote(provisional)` | 701.83 | **exact** |
-> | 08-25 | 702.74 | **`yahoo`** | 704.02 | **0.18% WRONG** |
-> | 08-26 | 704.20 | `yahoo_quote(provisional)` | 704.20 | **exact** |
->
-> The rows humbly labelled provisional were exact; the rows labelled plain `yahoo` — which `CONFIRMED_BENCHMARK_SOURCES` listed as confirmed, authorising an alpha claim — were the inaccurate ones. A Yahoo DAILY BAR read at 16:15 ET is an IN-PROGRESS bar for the session that has just closed: it carries the correct date and an unsettled value, so the exact-session rule cannot catch it. The W5 guard validates the DATE; nothing validated that the value had finished settling.
->
-> Two changes. Bare `yahoo` is removed from `CONFIRMED_BENCHMARK_SOURCES.us` and replaced by `yahoo(settled)`, which only the confirmation pass writes. `confirmBenchmarkSessions` is now market-aware and runs for BOTH markets in PositionMonitor: it upgrades provisional rows and FILLS rows that never resolved. A fill reports `storedClose: null` and `deltaPct: null` rather than a fabricated 0%, which would read as two sources agreeing when only one ever existed.
->
-> Backfilled 08-19..08-26. The two missing sessions now carry alpha of +0.33pp and +1.11pp, previously absent entirely. The US three-session underperformance figure quoted earlier (-1.90pp over 08-21..08-26) is unchanged, because those two endpoints happened to be exact.
->
-> All three US guards mutation-verified: treating plain `yahoo` as settled, fabricating a zero delta for an unresolved row, and letting the US fill rule leak into India each fail a test.
->
-> 2026-08-27: **India benchmark cross-check was never failing — it was structurally impossible.**
->
-> `paper_performance` recorded `yahoo(unconfirmed)` for India every session from 2026-08-19. Root cause: Upstox's `/v3/historical-candle` **never returns the current session**. Verified against every cached payload from 08-19 to 08-27 — the newest bar is always the PREVIOUS trading day. So `selectBenchmarkObservation` was asked for today's session, correctly found no Upstox bar, and fell back to Yahoo alone. The fetch succeeded every day; it simply never contained the bar being requested. The two `upstox` rows (08-14, 08-18) exist only because they were backfilled a day later.
->
-> Not a token, key-mapping, budget or outage problem — all four were checked and healthy (live API returns HTTP 200; `^NSEI` maps correctly; 83 candles cached daily).
->
-> Fix is deferred confirmation, the pattern the code comment at the benchmark write already anticipated ("preserve the observed level for the next-day settle pass") but which was never built. `confirmIndiaBenchmarkSessions` runs in the India PositionMonitor and upgrades earlier provisional rows once Upstox publishes their settled bars. Upstox is authoritative, so the settled exchange close REPLACES the provisional Yahoo value and `bench_return_pct`/`alpha_pct` are cleared rather than left stale. Rows already carrying exchange provenance are never revisited.
->
-> **The disagreement is large and was invisible.** Backfilling 08-19..08-27 changed six of seven sessions to `upstox(yahoo_disagreed)`, with gaps up to **0.67%** in a single day. Corrected daily alpha:
->
-> | date | old bench chg | new bench chg | alpha (pp) |
-> |---|---|---|---|
-> | 08-25 | -0.46% | **+0.48%** | -0.49 |
-> | 08-26 | +0.77% | **-0.52%** | **+0.21** |
-> | 08-27 | — | -0.48% | **+0.26** |
->
-> India was reported as underperforming on 08-26; against the settled NIFTY close it OUTPERFORMED. Any India alpha figure quoted from a `yahoo(unconfirmed)` row is unreliable.
->
-> An earlier draft of the eligibility rule also required the source string to contain "unconfirmed". Mutation testing showed removing that guard changed nothing (every non-Yahoo source is already excluded), and inspection showed it was wrong: it would have permanently stranded a `yahoo_quote(provisional)` row. Rule is now "the stored value came from Yahoo", which is the only case where Upstox is a genuine second source.
->
-> 2026-08-25: **Capital rotation paper execution was enabled and then REVERTED the same hour. Flags are false. Do not re-enable without reading this.**
->
-> The enable was argued for on the claim that rotation "has never moved capital". **That claim was false.** Rotation executed two swaps and four sell lots:
->
-> | date | market | sold | score | bought | score | edge |
-> |---|---|---|---|---|---|---|
-> | 2026-07-24 | us | PLTR | 56 | CB | 74 | 18 |
-> | 2026-07-27 | india | ONGC.NS | 53 | TCS.NS | 100 | 47 |
->
-> Sell legs realized -0.10% (PLTR) and -2.50 / -4.13 / -3.05% (ONGC.NS x3).
->
-> **How the claim went wrong:** `rotation_events.trade_proposal_id` and `.paper_trade_ids` are NULL on every row *including the executed ones*, and that was read as proof of non-execution while `status='paper_executed'` sat in the same rows. `paper_trades.exit_reason='capital_rotation'` was never cross-checked. **Never infer "did not happen" from an unpopulated foreign key — confirm against the table that records the effect.**
->
-> **Do not over-correct either.** "All four rotations lost money" is also wrong framing: rotation sells the weakest holding by design, so losing sell legs are expected. Evaluated as swaps, both were fine — CB returned +0.12% over its hold against PLTR's -0.10%, and TCS.NS returned +6.12% against ONGC.NS's ~-3.2%. The July record is not itself a case against rotation.
->
-> **Nor did rotation cost the PLTR run.** PLTR was held 8 calendar days (~6 market days) of a 10-market-day horizon; the unconditional time stop would have closed it around 2026-07-30 anyway. Rotation removed it ~4 sessions early. The mechanism that forfeits moves like that is the time stop — which is what the horizon-extension shadow (jobs 123/124) now measures.
->
-> **The open question that blocks re-enabling:** the paper flags were set false at 2026-08-11 03:33:35 and the registry gates execution "after unsafe early P1 behavior". That behaviour has NOT been identified, and the swap P&L above does not obviously explain it. Establish the cause first.
->
-> Current state: `rotation_paper_execute_enabled=false`, `rotation_allow_score_only_paper=false` on both paper rows; both live rows false; `rotation_live_proposals_enabled=false` everywhere. The two `book_type='live'` rows were never modified at any point. `CAPITAL_ROTATION_PAPER_ENABLED` exists in Vercel Production (created ~2026-07-23) with a value that is redacted on pull and therefore unverified — inert while the DB flags are false. Journal: id 344 (the enable, containing the false premise) superseded by the correcting entry.
->
-> 2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
->
-> Verified against `rotation_config` on `<production-project-ref>`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.
->
-> | Claimed | Actual |
-> |---|---|
-> | `lib/shadows/registry.ts`: "Paper execution is enabled; live proposals are disabled" | shadow only; paper execution flag is false |
-> | `paper-trade/route.ts`: "Capital-rotation P1 PAPER execution is live (owner-approved 2026-07-23)" | the call is a no-op behind the false flag |
->
-> Both corrected in place. This is the same hazard class as the 2026-08-24 protective-stop entry above, inverted: there a doc said a gate was shut while it was open; here two docs said a path executes while it cannot.
->
-> Surfaced by tracing why a name that passed the research gate on 30 consecutive sessions never entered the book. Since 2026-08-18 the portfolio constructor has admitted **zero** candidates in either market, and US rotation stopped emitting events on 2026-08-11 — because the `portfolio_constructor / rejected` branch `continue`s past the rotation evaluation, so a candidate denied for lack of room never reaches the mechanism that makes room. India takes the name-cap path, which was already repaired, which is why only US went silent. Full trace: `docs/audits/2026-08-25-rotation-unreachable-trace.md`. **The code fix is proposed, not applied — it awaits owner approval.**
->
-> 2026-08-24: **Shadow proposals are evidence, never work items.**
->
-> `runAutonomousShadow` writes a real `trade_proposals` row per signal so the
-> kernel/sizing decision has somewhere to live. Two defects made those rows
-> indistinguishable from real proposals. Both fixed before the run is ever
-> scheduled (it has never executed: zero `execution_mode='autonomous_shadow'`
-> rows, and `/api/agents/autonomous-shadow/cron` is scheduled nowhere).
->
-> 1. The insert used `status='pending_review'` and only narrowed to
->    `kernel.shadow_status` ~80 lines later. Every surface that renders an
->    approve control keys off `pending_review`, so that window — permanent if
->    the run threw in between — put a working approve button on synthetic
->    evidence. Now inserts as `manual_review_required`.
-> 2. Four consumers read `trade_proposals` without filtering `execution_mode`.
->    The money-path one is `agents/trader`'s 24h "already proposed" dedup set:
->    unfiltered, shadow rows would enter it and **starve the real queue of the
->    exact signals that scored best**. Also `agents/trader` GET (approve
->    queue), `markets/smart-money` (visible queue), and `DashboardShell`
->    (desktop notification).
->
-> Excluded by `execution_mode`, not by status — a shadow row legitimately
-> carries the same terminal statuses a real proposal does.
-> `EXCLUDE_SHADOW_FILTER` (`lib/trading/proposal-status.ts`) keeps an explicit
-> `IS NULL` arm: the column is nullable (default `'manual'`) and a bare
-> `<> 'autonomous_shadow'` evaluates to NULL — excluding the row — for NULL
-> modes, silently hiding legitimate proposals. Mutation-verified.
->
-> **Scheduling the cron remains a separate, un-taken step.**
->
-> 2026-08-24: **CORRECTION — both protective-stop gates are OPEN in production. The "Part E (not yet done)" note below is inverted.**
->
-> Verified against `<production-project-ref>` on 2026-08-24:
->
-> | Gate | This chapter says | Production |
-> |---|---|---|
-> | `strategy_config.protective_orders_enabled` | "false-by-default … STAYS FALSE" | **true** |
-> | `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (`lib/protective/coverage.ts:134`) | "flip … to true" as a pending Part E step | **already true** |
->
-> `protective_orders` holds **0 rows**, so no broker stop has been placed. But the placement worker is no longer gated shut. This is the inverse of the usual stale-doc hazard: an agent reading this chapter would conclude placement is impossible when it is enabled, and could ship a change on that false assumption.
->
-> **RESOLVED same day — owner confirmed the activation was unintentional and directed both gates closed.** `strategy_config.protective_orders_enabled` set to `false`; `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` set back to `false` (its own docstring already said "deliberately false" while the value was `true`). Pre-flip verification showed nothing to orphan: `protective_orders` 0 rows / 0 active, `protective_order_events` 0, `broker_orders` with a `kite_gtt_id` 0. Journaled to `decision_journal` as a risk-reducing `config_change`. Other flags re-verified unchanged and OFF: `live_auto_enabled`, `webull_trade_orders_enabled`, `allocation_enabled`. **Part E is once again closed and reopening it needs explicit owner approval of touch semantics, floor distance, and post-fill policy — not a code edit.**
->
-> Also corrected: this chapter and `WORK_LOG.md` both described migration `20260718000000_protective_orders_shadow.sql` as "written as a PROPOSAL and NOT applied to prod". The `protective_orders` table exists, so it HAS been applied. See the reconciliation table at the top of `WORK_LOG.md` for the full set of stale migration blockers cleared on 2026-08-24.
-> 2026-08-20: **US benchmark resolves the just-closed session from a guarded QUOTE.** `bench_nav` was NULL for two consecutive US sessions while NAV itself was correct: at 16:15 ET no vendor has published VOO's settled bar (Yahoo's chart endpoint lacks it, Massive grouped publishes next-day, Massive `/range` still ends yesterday). The marks path was fixed to use Yahoo QUOTES; the benchmark path was left on the chart endpoint, so alpha stayed uncomputable.
->
-> **This does not break the "a benchmark observation is a DAILY BAR, not a quote" rule — it respects why that rule exists.** The original defect was an UNSESSION-IDENTIFIED quote stamped with the cron run date. The quote was never the problem; the missing session identity was. There is also a consistency argument: NAV is now marked from the same 16:15 print, so a 16:15 benchmark is LIKE-FOR-LIKE, and pairing a 16:15 NAV against a settled close is the greater inconsistency.
->
-> **Four guards keep it honest.** (1) It fires ONLY on `benchmark_session_mismatch` — a working provider missing one session — never on `benchmark_bars_unavailable`, because with no series at all we cannot tell the data is sane. (2) It fires ONLY when the requested session IS the one that just closed (`expectedNewestSession("us") === expectedSessionDate`), so a quote can never backfill history. (3) A stale quote is refused rather than dated to today. (4) The source reads `yahoo_quote(provisional)` so the settle pass knows to revisit it. A real daily bar always wins; the quote is last resort.
->
-> **Detector:** `tests/benchmark-session-alignment.test.ts` — quote used on a genuine session miss, backfill of an older session refused WITHOUT even calling the quote, stale quote refused, a real bar preferred over the quote, total outage NOT rescued, and a quote-source throw not breaking the path. **Mutation-verified** (dropping the session guard fails). Fixtures use the production shape — a healthy series ending at the previous session — because an empty-series fixture tested a different branch entirely and passed for the wrong reason.
-> 2026-08-20: **Settle pass — US marks finally get a second opinion, one day late.**
->
-> The US monitor marks at 16:15 ET from Yahoo, the only vendor carrying the just-closed session at that hour, and Yahoo cannot corroborate Yahoo — so those marks ship `uncorroborated`. The grouped feed (12,549 tickers, ONE entitled call) publishes the following morning and IS independent. `kairos-settle-check-us` (`0 13 * * 1-5`, 09:00 ET) compares yesterday's live marks against it.
->
-> **It writes no money state.** No NAV, no `paper_positions.current_price`, no trade. A drift beyond `SETTLE_TOLERANCE_PCT` (0.25%) TAINTS that session's `paper_performance` row with the measured per-symbol drift and net NAV impact, and raises a critical — but `nav` is left exactly as recorded. The exits for that session already filled at the marked price; restating NAV afterwards would re-decide a closed session, which the frozen-history rule forbids. Labelling it untrustworthy is honest; silently replacing it is not.
->
-> **Tolerance is looser than the intraday cross-check (0.1%) on purpose.** Yahoo's 16:15 print is near-final rather than fully settled. Measured 2026-08-19: exact on NVDA and XAR, 0.07% out on KGC. 0.25% catches a real mismarking — the AV-stale case was 1.00–9.36% — without firing on ordinary settlement revision.
->
-> **`nothing_to_compare` neither raises nor resolves.** An unpublished feed is not evidence the marks were right, and "nothing to compare" must never collapse into "everything agreed" — the same failure mode as the W6 liveness checks that could only report green. Marks already labelled `carry_forward` or `entry_cost` are skipped rather than double-reported.
->
-> **Detector:** `tests/settle-check.test.ts` — corroboration, the measured KGC revision tolerated, the AV-stale drift flagged with its NAV impact, stale marks not re-flagged, missing closes counted UNVERIFIABLE not agreed, an empty feed not reading as corroborated, and opposite drifts netting to zero while both stay flagged. Route-shaped assertions pin that it never touches `paper_positions`/`paper_trades`/`nav`. **Mutation-verified twice.**
-> 2026-08-20: **Yahoo is now the PRIMARY source for US settled marks — the data was never missing at 16:15 ET, the route was asking the wrong vendor.**
->
-> The 2026-08-19 entry below concluded that no vendor publishes the current session's close at 16:15 ET, and proposed moving the US monitor later. **That conclusion was wrong.** Checking the settled 2026-08-19 closes against what each vendor returned during that 20:15 run: Yahoo gave NVDA 217.56 and XAR 284.10 — exact — and KGC 29.92 against a settled 29.90 (0.07%). Alpha Vantage gave 219.74 / 294.87 / 27.12: the PREVIOUS session throughout. Yahoo had it; the chain preferred AV.
->
-> **Cause.** `getSettledDailyQuotes` tried the grouped feed (which publishes NEXT-DAY, so empty at 16:15) and then fell straight to the ordinary chain — Massive snapshot (403), `price_cache` (stale), Alpha Vantage (previous session). Yahoo was relegated to the unresolved tail, which never ran because AV had already answered. Yahoo now sits between grouped and the ordinary chain. It is keyless and unbudgeted, so preferring it costs no quota, and the schedule is unchanged: exits still run at 16:15, now on correct prices.
->
-> **Consequence, stated plainly: US marks lose their second opinion.** Yahoo cannot corroborate Yahoo — that circularity is exactly what let the ^NSEI provisional value pass as "verified". The cross-check filter now excludes any Yahoo-sourced primary, so US marks are labelled `uncorroborated` rather than falsely confirmed. Real US corroboration needs the next-day grouped feed via a settle pass; Massive `/prev` is per-symbol and paced at 12.5s (13 symbols ≈ 162s > the 120s route ceiling). NOT built.
->
-> **Also rejected on evidence:** moving the US monitor past 20:00 ET would cross 00:00 UTC, and the route derives `today` from the UTC date — NAV would be written under the following session.
-> 2026-09-02: **The dispute gate refused a price for seven days because it never checked which SESSION each price came from.**
->
-> The 2026-08-19 fix above is sound and stands: a disputed symbol leaves `priceMap` before the exit loop, so no stop, target or time-stop can fill on it. The defect was in deciding what counts as a dispute. The comparison ran on two prices whose sessions were never checked, so a cross feed one session behind was refused as a vendor disagreement — permanently, because the lag recurred every run.
->
-> **Production evidence.** `position-monitor-quote-disputed:india` was raised 2026-08-26 and re-reported every run to 2026-09-01: `INDUSTOWER.NS (yahoo_india 375 vs upstox 388.8, 3.549%)`. Yahoo's own closes were **375 on 2026-09-01** and **388.79998779296875 on 2026-08-31** — the "disagreeing vendor price" was the primary's OWN previous session, to four significant figures. The vendors never disagreed about a price; they disagreed about which day it was. Two open positions (`INDUSTOWER.NS` qty 27, `KAMATHOTEL.NS`) ran **seven days with no exit evaluation at all**.
->
-> **Both sides already carried the session and both discarded it.** `fetchUpstoxCandles` parses a `date` per candle and the cross-check dropped it; the Yahoo quote's `retrievedAt` is `regularMarketTime` — the exchange timestamp of the quote, not our fetch time. `buildPositionMark`'s own input type had documented `crossPrice` as "for the SAME session" since it was written. The contract was stated and never enforced.
->
-> **Fix (`lib/paper/quote-crosscheck.ts`).** Session gate BEFORE any price comparison, using exchange-local dates (IST/ET, never UTC — an India quote at 01:00 IST is the previous UTC day, which would reintroduce the same off-by-one). Same session → compare exactly as before. Different or unknown session → `session_mismatch`: **uncorroborated, still priced, exits still evaluated**, reported as a `warn` naming which side lags. Unknown sessions count as a mismatch rather than being waved through, because failing open would restore the bug for exactly the rows whose provenance cannot be established. The mark builder reads the same verdict, so the mark ledger and the exit gate cannot disagree.
->
-> **The same alert carried a second symbol with the OPPOSITE cause, and a fix that only aligned sessions would have been wrong to rescue it.** `KAMATHOTEL.NS (yahoo_india 233.89 vs upstox 225.09)` — Upstox matched the 2026-09-01 close of 225.05 and the PRIMARY was the outlier. That is a genuine same-session disagreement and is still refused. Both cases are pinned in `tests/quote-crosscheck.test.ts` with their real production numbers; removing the session gate fails three of them.
->
-> **Escalation.** Refusing a doubtful price is right for one run and wrong forever — nothing distinguished "refused once" from "refused every run for a week", and the second is worse than either vendor being wrong. A dispute unresolved for `DISPUTE_ESCALATION_RUNS` (3) raises `position-monitor-quote-dispute-persists:<market>`, stating how long the position has been unguarded. Days proxy for runs (one run per market per day); a skipped run counts as elapsed, which errs toward escalating sooner.
->
-> **Contributing factor, deliberately NOT bundled:** `isYahooQuoteStale` accepts an India quote up to **4 days** old as fresh, which makes primary/cross session mismatch likely by construction. Changing it affects every India read path and needs its own decision.
->
-> 2026-08-19: **CORRECTION — the mark cross-check did not protect exits, and four positions closed on stale prices before it was fixed.**
->
-> The entry below claims a disputed quote is "REFUSED for marking AND for stop/target evaluation". That was **false as shipped**. The guard lived only in `buildPositionMark`, which runs AFTER the exit loop; the exit loop reads `priceMap` directly. The 20:15 run corrected the marks and exited anyway.
->
-> **What it cost.** The US chain fell through to Alpha Vantage — which served the PREVIOUS session's close — while Yahoo carried the current one. Six of ten marks were flagged disputed (KGC 9.36%, XAR 3.79%, OXY 2.86%, TSM 2.38%, BAC 1.43%, NVDA 1.00%), and four positions still closed: LULU at ~119.55 (the 2026-08-14 price; the 08-18 close was 119.01) and MSFT at ~487.65 (a carried 08-17 value; 08-18 close 481.63), plus MA and SMCI. Eight lots, now `tainted` + `excluded_from_learning`; `realized_pnl` left intact to preserve the cash-ledger identity.
->
-> **Fix.** The gate now sits on `priceMap` itself, before any exit is evaluated: a disputed symbol is deleted from the map and reported UNPRICED, so no stop, target or time-stop can fill on it, and a critical names every refused symbol. A price too doubtful to record is too doubtful to sell on. Pinned positionally in `tests/paper-nav-writer-contract.test.ts` — the gate must precede both the exit loop and `buildPositionMark` — and mutation-verified.
->
-> **Confirmed by the same run (these DID work):** the per-position isolation fix and the MSFT residual-lot reconstruction — the run completed `done`, 14/14 succeeded, `exit_failures=0`, where the previous two runs aborted entirely. India wrote `bench_source=yahoo(unconfirmed)`, exactly the honest label the cross-check contract specifies when only one vendor resolves.
->
-> **Still unresolved:** no vendor publishes the current session's settled close at 16:15 ET. Massive `/prev` returned 2026-08-18 closes when queried at 20:16 UTC on 2026-08-19, and grouped publishes next-day. So the US monitor cannot mark the session it just watched close. US `bench_nav` for 2026-08-19 is NULL for the same reason — correctly refused rather than mislabelled. This needs a run-timing decision (move the US monitor later, or add a next-morning settle pass); it is NOT a code bug and is not built.
-> 2026-08-19: **Position marks are now corroborated by an independent vendor, and a DISPUTED quote fails closed.**
->
-> A mark is not a display number — it prices the stop and target checks. Yahoo demonstrably serves PROVISIONAL values it later retracts (the 2026-08-18 ^NSEI case wrote a 0.375% error into `paper_performance`), and the exact-session rule validates the DATE, never the VALUE. So each live mark is compared against a DIFFERENT vendor: US → Yahoo per-symbol (primary chain is Massive-based), India → Upstox (primary is Yahoo). Both keyless and unbudgeted.
->
-> **Contract.** Agreement within `MARK_CROSSCHECK_TOLERANCE_PCT` (0.1% — wider than the index's 5bps because equity feeds differ on adjustment, far below the 0.375% error that motivated this) → `live_quote`, reason names the corroborating vendor. Disagreement → the quote is REFUSED for marking and for stop/target evaluation, the mark falls back to the carried price (or entry cost), and the reason preserves BOTH numbers. No second source → still `live_quote`, but the reason says `uncorroborated` rather than implying it was checked.
->
-> **Fail-closed is affordable because agreement is the norm.** Measured 2026-08-18: Massive `/prev` and Yahoo matched to the cent on every US holding — MSFT 481.63/481.63, NVDA 219.74/219.74, XAR 290.43/290.43.
->
-> **Detector:** `tests/mark-crosscheck.test.ts` — corroborated accepted; disputed refused with the carried mark kept and both values recorded; rounding tolerated; uncorroborated labelled honestly; a cross-source outage cannot demote a good mark; a disputed quote with no carried mark falls to entry cost and never to the disputed price. **Mutation-verified** (removing the guard fails 2).
->
-> **UNRESOLVED — the grouped-daily fix probably does not fire at 16:15 ET.** Measured 2026-08-19 ~00:55 UTC, roughly five hours after the US close: `/v2/aggs/grouped/.../2026-08-18` returned **0 rows**, while `/v2/aggs/ticker/{sym}/prev` and Yahoo both already carried the 2026-08-18 close. Grouped publishes next-day. The US PositionMonitor runs fifteen minutes after the close, so `getSettledDailyQuotes` will most likely get nothing from grouped and fall through — meaning US marks stay `carry_forward` and there is nothing to corroborate. `/prev` has the data but is per-symbol and Massive is paced at 12.5s (13 symbols ≈ 162s > the 120s route ceiling). Candidate fixes: move the US monitor later, or add a next-morning settle pass that re-marks the prior session. NOT built — it needs a decision about run timing.
-> 2026-08-19: **India benchmark is now cross-checked against the exchange, because the exact-session rule validates the DATE and never the VALUE.**
->
-> **The hole W5 could not see.** Yahoo's ^NSEI series carries bars whose close is NULL — 2026-01-15, 05-01, 05-28, 06-26, 07-21, 07-22, 07-31, 08-18 in the 1y window — and briefly serves a PROVISIONAL number on those sessions before dropping it. On 2026-08-18 that put **24245.699** into `paper_performance` when the settled NIFTY 50 close was **24154.9**: 0.375% wrong, written by a code path behaving exactly as designed. W5's exact-session match proved the bar was dated 2026-08-18; nothing proved the number was the close. India had no second source (Massive is US-equities-only), so Yahoo agreeing with itself was the only available "verification".
->
-> **Method note, recorded because it nearly hid the bug.** The India series was first checked by re-fetching from Yahoo and comparing — 24/24 matched, and that proved nothing. Comparing a value against the source that produced it tests self-consistency, not correctness. Only an independent provider could settle it.
->
-> **Second source: Upstox.** A broker API carrying official exchange data, already integrated and unbudgeted. Indices are absent from `upstox_instruments` (the master is filtered to `instrument_type=EQ`/`segment=NSE_EQ`), so `fetchUpstoxIndexCandles` uses the static key — exact: `NSE_INDEX|Nifty 50` resolves, `NSE_INDEX|NIFTY 50` returns UDAPI100011.
->
-> **Contract.** Upstox is AUTHORITATIVE; Yahoo is the check. Agreement within `BENCHMARK_CROSSCHECK_TOLERANCE_PCT` (5bps — an index close is one published number, so a real gap is a fault, not rounding) → `source=upstox+yahoo`. Disagreement → the exchange value is used and the label says `upstox(yahoo_disagreed)`; the fact is recorded, never hidden. One provider only → `upstox(unconfirmed)` / `yahoo(unconfirmed)` — a single-source benchmark beats none, but it must say so. A cross-check outage cannot break the path.
->
-> **Data corrected:** 2026-08-18 India → 24154.9 (`source=upstox`). The three rows Yahoo could not corroborate (07-21, 07-22, 07-31) are CONFIRMED correct by Upstox to the paisa and are now stamped — they were never wrong, Yahoo simply could not prove them.
->
-> **Detector:** `tests/benchmark-session-alignment.test.ts` — agreement, the real 2026-08-18 disagreement (exchange value wins, label states it), rounding tolerance, single-provider labelling both ways, both-missing refusal, and a cross-check throw not breaking the path. **Mutation-verified** (neutering it fails 4). One older test asserted `source==="yahoo"` for India; its premise is now obsolete, so it was updated to pin the invariant it actually existed for — India never spends the US fallback call.
->
-> **Still one-sided:** the US benchmark has Yahoo→Massive, and India now has Upstox+Yahoo. Neither market cross-checks its per-SYMBOL marks; only the benchmark is corroborated.
-> 2026-08-18: **One position's exit failure was blanking the whole book.** The 20:15 US run died on `execute_paper_exit denied (MSFT): position_lot_qty_mismatch`. `closePosition` throws on a denial, the throw escaped the per-position loop, and the run aborted BEFORE the mark/NAV block — so no marks, no NAV, and the other 12 US positions never had their stops or targets checked. The 2026-08-14 run died identically on LNC (`existing_open_position`). Two runs, same shape, two weeks apart.
->
-> **The RPC denial is CORRECT and stays.** MSFT's only lot closed on 2026-08-03 (`outcome=win`) while its `paper_positions` row survived, so the parity check refuses to close 0.472499 that no open lot backs. Suppressing that guard would double-count a realized trade. The fix isolates the failure, it does not silence the guard: each position's evaluation is wrapped, a failure is recorded and alerted (`position-monitor-exit-failed:<scope>`, critical, naming the symbols whose stops went unchecked), and counted as a **failed** unit in the W6 envelope — so the run is `error`, not healthy, while still completing its other work.
->
-> **Open data defect, NOT auto-repaired:** one orphaned position — MSFT, qty 0.472499, **$230.41 of phantom value carried in NAV since 2026-08-03**. `paper_positions` is current-state that "may be removed/closed only through the transactional exit path", so it is surfaced for owner reconciliation rather than deleted. Every other position reconciles exactly (1 of 27 drifts).
->
-> **Detector:** `tests/paper-nav-writer-contract.test.ts` — the loop body is wrapped; NAV/marks are reached AFTER a failure (positional); failures count as `failed`; the alert key appears in BOTH the report and resolve paths; the RPC denial still throws. Mutation-verified twice — and the first version of the alert assertion was decorative (a bare `toContain` passed even with the reportIssue key renamed, because the resolveIssue occurrence satisfied it), so it was strengthened to count occurrences.
-> 2026-08-18: **W5 US benchmark was never written — the provider ladder's recency guard is too weak for an EXACT session.**
->
-> **W5 itself works.** India recorded `bench_nav` 24245.70 / `bench_session_date` 2026-08-18 / `bench_source` yahoo on the 11:15 UTC run. The migration and both write paths are correct. Only US was null, on every row since the migration.
->
-> **The defect.** `fetchUsCandles` accepts the FIRST provider whose newest bar is inside a generic `MAX_BAR_AGE_DAYS = 4` guard. The US PositionMonitor runs 16:15 ET — fifteen minutes after the close — and Yahoo has not published the settled VOO daily bar that soon. Its newest bar was 2026-08-14: three days old, therefore "fresh", so the ladder returned it and **never tried Massive, which DID have 2026-08-17 (close 710.27)**. `selectBenchmarkObservation` then correctly refused to store a non-matching session, so the US book recorded no benchmark at all. India was unaffected because its cron runs 1h15m after the NSE close, by which time Yahoo has published. Proof in `av_cache`: `YAHOO_CANDLES:VOO` at `cache_date` 2026-08-17 has `newest_bar` 2026-08-14, while `YAHOO_CANDLES:^NSEI` at the same cache_date has 2026-08-17.
->
-> **A generic age guard cannot answer an exact-session question.** "Newest bar is under 4 days old" and "there is a bar for session X" are different predicates, and only the second is what a benchmark observation needs. The fix stays inside `benchmark-observation.ts`: on `benchmark_session_mismatch` — and ONLY that reason — ask the next provider directly. A `benchmark_bars_stale` result means the provider is stranded and is not retried. `fetchUsCandles` is untouched, because its other caller (label maturation) legitimately wants a long series rather than one date.
->
-> **Rejection reasons stay honest.** When neither provider supplies the session, the ORIGINAL rejection is reported — it names the provider the ladder actually chose, not the fallback.
->
-> **Detector:** `tests/benchmark-session-alignment.test.ts` — the fallback resolves the session; no second call is spent when the primary already has it; a stranded provider is NOT retried; both-miss still refuses; India spends no fallback call. **Mutation-verified** (neutering the fallback fails). Dates are RELATIVE, per the note at the top of that file: the stale guard is wall-clock, so pinned literals would drift into the `stale` branch and start asserting the wrong thing.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
 
-> 2026-08-18: **A market-scoped PositionMonitor run was writing the OTHER market's book.**
->
-> Both crons are correctly scoped (`?market=us`, `?market=india`), yet the India run at 11:15 UTC wrote 13 US marks and a US `paper_performance` row stamped `snapshot_type='eod'` at **07:15 ET — before the US session opened**. The W4 "ONE canonical EOD writer per market" invariant was broken from a direction W4 did not anticipate: not a second writer racing the same market, but the *other market's schedule* reaching across.
->
-> **Scoping was defeated inside the route, not at the schedule.** Two reads ignored `marketScope`: the `stillOpen` re-read of `paper_positions` (unfiltered `select`), and `poolByMarket`, built from **every** `paper_portfolio` row. The mark/NAV write loop iterates `poolByMarket`, so it processed both books regardless of scope. Fixed by scoping the re-read and skipping non-scoped markets in the loop before any write.
->
-> **`snapshot_type` is no longer an unconditional literal.** Even a legitimate unscoped or manual run must not stamp `eod` on a row built from carry-forward marks hours before the close — the same lie in a different costume. It is now `expectedNewestSession(market) === today ? "eod" : "intraday"`, reusing the post-close predicate added with the grouped-daily work.
->
-> **Detector:** `tests/paper-nav-writer-contract.test.ts` — the guard must sit inside the pool loop *before* the `paper_performance` upsert (positional assertion, not mere presence); the re-read must acquire its market filter before it is awaited; the bare `snapshot_type: "eod"` literal is banned. **Mutation-verified** — removing the loop guard fails the suite. The pre-existing "PositionMonitor is the EOD writer" pin was updated rather than deleted: its intent (PositionMonitor, never PaperTrader, owns the `eod` row) is preserved and now also asserts the post-close condition.
+2026-09-14: **The UI is not a security boundary; RLS is.** `lib/supabase/client.ts` ships `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the browser, so any holder of a valid session can query PostgREST directly, whatever the app renders. Until `20260914140000_viewer_phase0_close_blanket_rls.sql`, 34 tables were reachable by any authenticated session and 7 were writable — including the paper book and the learner's weights. That was never a live breach (only the owner can obtain a session), but it meant the single-email gate in `middleware.ts` / `requireOwner()` was carrying 100% of the isolation, with RLS contributing nothing. Phase 0 closed it. **Standing rule: before any additional identity is admitted to this system, verify no table grants blanket `authenticated` access.** Any feature that adds a login must re-run that check; a UI-level permission is not an isolation control.
 
-> 2026-08-18: **The US quote path had no working live source — the Massive key is not entitled to `/v2/snapshot`.**
->
-> **What was broken.** `fetchMassiveBatchQuotes`, described in code as "the primary batch path", was returning **zero US quotes on every call**: the deployed `MASSIVE_API_KEY` gets `403 NOT_AUTHORIZED` on every `/v2/snapshot` endpoint and on `/v2/last/trade`. `if (!res.ok) continue;` swallowed it. The `/markets/etfs` second pass was also dead — that endpoint returns **404** and had never resolved a single ETF. With Massive silent, AV's 25/day budget exhausted since 2026-07-23, and `price_cache` holding only symbols the *research* path scores (never the holdings), the chain collapsed to a stale cached bar — which the pre-2026-08-17 adapter then relabelled fresh.
->
-> **Cost, measured not estimated.** On 2026-08-17 all 13 US holdings were marked at the **2026-08-14** close. Marked position value 7,725.11 vs true 7,667.32 against that session's real closes: NAV overstated **$57.79**. The reported **+0.239%** was in truth **−0.339%** — *the sign flips, the entire gain was mismarking*. Per-name drift reached **−3.92%** (SMCI), **−3.89%** (INFY), **−3.04%** (MSFT); against a 7% stop that is over half the stop distance, so stop and target evaluation were affected, not merely NAV display.
->
-> **The fix.** The key IS entitled to `/v2/aggs/grouped/locale/us/market/stocks/{date}` — **12,549 tickers, settled OHLCV, one call** — verified against the live API. New `fetchMassiveGroupedDaily` + `getSettledDailyQuotes` (`lib/data/quotes.ts`); PositionMonitor's US path now uses it. It includes ETFs (XAR, VOO), so the dead `/etfs` pass is deleted rather than repaired, and it carries OHLC so the `dayLow` intraday-stop check survives the move.
->
-> **Deliberately NOT a blanket swap.** Grouped daily is settled/EOD and marked DELAYED. That is correct for a post-close consumer (PositionMonitor runs 16:15 ET) and WRONG for intraday callers — `live-portfolio` and `lib/market-data.ts` keep the existing chain. Hence a separate function, not a replacement inside `getBatchQuotes`.
->
-> **An entitlement failure is now loud.** A non-OK snapshot response logs the status and says whether the key is unentitled; a grouped 200-with-zero-rows is reported as "session not published", never as "these symbols have no price".
->
-> **Detector:** `tests/massive-grouped-daily.test.ts` — a 403 must yield no quotes AND log; zero rows must not read as no-price; non-positive closes are refused rather than marking a position at zero; ETFs resolve. `tests/agent-source-pipeline-remediation.test.ts` re-pinned to the settled path.
->
-> **History annotated, not rewritten.** `paper_performance` 2026-08-17 US is `tainted=true` with the full quantified reason and the corrected reading. **`nav` is left as recorded** — the frozen-history rule in the Scoring Data-Truth Review Protocol forbids re-deciding the past. Earlier US rows (2026-08-10..14) were already tainted by the prior remediation.
->
-> **Open, unresolved:** an unscoped PositionMonitor run wrote a US row tagged `snapshot_type='eod'` at 11:15 UTC (07:15 ET, pre-open) on 2026-08-18, which breaks the W4 "one canonical EOD writer per market" invariant from the other market's schedule. Not fixed here.
-
-> 2026-08-17: **Codex composite/data-truth audit remediation — a stale bar could drive live exit decisions.**
->
-> **P0-1 (money path).** At 16:15 ET Monday 2026-08-17 all 13 US positions were marked, **stop-checked and target-checked** against Friday's close. `priceMap` in `position-monitor` feeds `priceForStopCheck`, the `currentPrice >= priceTarget` partial/target branch, the time-stop fill price AND the W4 mark ledger — one stale number reached every exit decision, not merely NAV display. The monitor's own `!q.stale` guard was correct; the **adapter lied**. Two defects in `lib/data/quotes.ts`: (a) `isStale()` asked "under 4 CALENDAR days old" — Friday's bar is 3.01d on Monday afternoon, so it passed; (b) `parseTickers` stamped `stale:false` unconditionally even when the price fell through to Massive's `prevDay.c`, i.e. last session's close wearing this run's timestamp. Both fixed at the adapter, so every caller inherits the correction.
->
-> **W9's rule was NOT sufficient and reusing it was wrong.** `isFreshSessionDate` delegates to `lastCompletedMarketSession`, which always steps back at least one calendar day and therefore *still* names Friday at 16:15 ET Monday. That leniency is correct for its EOD-cache callers mid-session (today's bar may legitimately not exist yet) and wrong after the close. New `expectedNewestSession(market, now)` in `lib/data/completed-candles.ts` — which already owned the session-close constants — returns TODAY after a trading day's close, else the previous completed session. Callers compare with `>=` so a provisional running-session bar still passes; only the post-close case tightens.
->
-> **Detector:** `tests/quote-session-freshness.test.ts` pins the exact production case (Friday bar refused Monday 16:15 ET; accepted Sat/Sun when it genuinely IS the last completed session). **Mutation-verified** — restoring `lastCompletedMarketSession` fails 2 of 4.
->
-> **P0-2.** `v_decision_quality` recomputed confidence from a hardcoded per-market applicability list and reported India 0.7333 while the scorer had frozen `evidence_confidence = 1.0`. Both numbers described the same decision, and the paper-fill RPC, `/api/kite/order`, `execute-order` and Decision Review all read the view. Migration `20260817200000` makes the **observation the source of truth** (it is the contract the decision was actually made under and cannot drift when a market policy is later edited); the recomputed figure survives as diagnostic-only `structural_coverage`, and `confidence_source` records which rule produced each row. Verified behaviour-preserving BEFORE writing: across 4,628 joined rows **0 cross the 0.5 gate in either direction**; 837 change value, none change an outcome. 210 legacy rows with NULL stored confidence fall back to the derived value — without that fallback a usable number becomes NULL → `unknown` → live BUY fails closed, silently TIGHTENING a gate.
->
-> **P1-3.** The deterministic breakdown veto capped technical score at 20 but the composite renormalised around it, so a strong fundamental could still clear threshold on a confirmed high-volume breakdown. Production carried 7 rows `vetoed=true` AND `entry_eligible=true` (CPCAP.NS, SIMO, APP, EXEL, MUTHOOTFIN.NS). **None reached a fill** — unrelated downstream caps caught them, which is luck, not a gate. `entryEligible` now includes `!breakdownVetoed`. **New long entries only**; PositionMonitor exits never read the flag, so a breakdown can never block getting OUT.
->
-> **P1-5 (measurement only).** US macro took full 15% weight on 3-of-8 FRED indicators with `evidence_confidence=1.0`. `coverage`/`coverage_pct`/`indicators_expected` are now persisted so a partial read cannot present as complete. The weight and the `MIN_MACRO_INDICATORS=3` floor are **unchanged** — discounting or raising the floor is a live scoring change and needs a frozen shadow counterfactual first.
->
-> **P1-4 deliberately NOT fixed.** Admitting weak technicals (BANKBARODA.NS composite 65 / technical 24) may be real, but the sample is small and hard-coding a technical cutoff now would be tuning on noise. Needs the same date-clustered frozen counterfactual discipline as the exit-policy work.
->
-> **P2-6.** `query_learner_config` returned `strategy_config.score_threshold` (52) while the money path uses per-market `trading_mandates` (60/7%/8%) — the learner could describe and optimise a policy the system does not run. It now returns `activeMandates`; the legacy field is relabelled `legacy_score_threshold_NOT_USED`.
-
-> 2026-08-17: **Price target retargeted — +8% (was +20%).** The +20% swing-mandate target was structurally dead: 0/135 firings, max MFE ever 18.44% (India h10), target above p90 MFE for both markets across 1,885 matured labels. Fix is justified on reachability grounds (a target that never fires is not a target), NOT on return-improvement evidence (ATR counterfactual max t=1.35 — insufficient per predeclared `nEffective≥12` floor). New value **8%** sits at approximately p75 MFE for both markets, between average (~6%) and p90 (~12%). Three touch points updated atomically: `HORIZON_PRESETS.swing.target_pct` (`lib/trading-mandate.ts`), `resolveExecutionRiskReward` fallback (`lib/trading/trade-plan.ts`), and both `trading_mandates` DB rows + `strategy_config` display row. W2-full partial exits (restored 2026-08-17) now have a reachable trigger. Evidence frozen read-only in `docs/audits/2026-08-17-exit-policy-counterfactual.md`.
-
-> 2026-08-16: **W9 — the remaining `price_cache` consumers now derive freshness from the BAR'S MARKET DATE.** W1 (`lib/data/quote-freshness.ts` → `assertFreshQuote`) closed the fill and live-order boundaries. W9 closes the consumers that read `price_cache` rows directly and so never went through `getQuote` at all. One new module, `lib/data/price-cache-freshness.ts`, holds the rule for a cached BAR and **delegates the verdict to `assertFreshQuote`** — there is no second rejection taxonomy. A bar is fresh iff its date is at least `lastCompletedMarketSession(market)`; `cached_at` is never consulted, because a row re-read today is not fresh data.
->
-> - **`lib/portfolio/inputs.ts` (PaperTrader position SIZING).** `estimateDailyVolPct` read 21 `price_cache` closes with no coverage or staleness check. For the 101/140 symbols frozen at 2026-07-22 that was not merely stale but **permanently fixed** — the same Jun–Jul dispersion priced into every future trade forever. It now requires coverage (≥15 usable closes) AND freshness, and falls back to `DEFAULT_DAILY_VOL` **explicitly and observably** (`basis:"default"` + a reason + the fossil `asOf`, logged) via the new `estimateDailyVolPctDetailed`. A zero-dispersion window is also refused — 0 vol reads as infinite position size. `estimateDailyVolPct`'s bare-number signature is unchanged; `paper-trade/route.ts` was not touched. The India branch fetches Yahoo live per call and was never affected.
-> - **`rescore-check`** publishes LEARNER FEEDBACK, so a wrong price here corrupts the evaluation layer scoring is calibrated against. It treated the newest cached row as "current" with no as-of check, and when no bar existed at or before the signal date it fell back to the **oldest** row in the window — measuring a window that is not the one being judged. Both now skip with a counted reason; the response carries `skipped`, `stale_symbols`, and a `degraded` flag, and `evaluated` now means "actually measurable" rather than "had any row at all".
-> - **`lib/data/benchmark-series.ts`** (beta / RS) had no recency check. SPY kept filling so it kept working, but a frozen SPY would have produced a beta that looks measured and is a fossil. It now returns `{bars, asOf, stale, reason}` via `getBenchmarkSeriesStatus`; `getBenchmarkSeries` resolves to `[]` when stale or under-covered, which downstream already reads as "beta unmeasurable" — so the gate lives at the source and no caller needed changing.
-> - **`supabase/functions/_shared/quotes.ts` DELETED.** It carried a divergent, weaker rule: staleness off `cached_at` (when a row was written) and `stale:false` for **all** off-hours cache. It had no importer; leaving a second rule available for reuse was the hazard.
-> - **Display/LLM surfaces labelled**: `/api/markets/quote` emits `asOf`/`stale`/`staleNote`; `deep-dive` carries `asOf`/`stale` into the LLM bundle with an explicit "do not treat as today's price" instruction; the briefing prompt appends a STALE MARKS warning naming each fossil-marked position, since it reports P&L "now".
->
-> **Detectors** (`tests/price-cache-freshness.test.ts`, 17 tests): a dense-but-frozen 21-close window must NOT yield a confident vol; a frozen benchmark must report stale and yield `[]`; the deleted Deno file must stay deleted; today's provisional bar must NOT be false-rejected as future-dated. Mutation-verified — neutering the rule fails 6 of them. No migration, no schema change, no production writes.
+2026-09-01: **Exit-geometry counterfactual run on all four cohorts. The intuitive fix is refuted; the defect is the STOP, not the target.** Evidence frozen in `docs/audits/2026-09-01-exit-geometry-diagnosis.md`. Nothing changed — the route writes nothing.
 
 
-> 2026-08-16: **W4/W5 — the NAV invariant now has teeth, and benchmark levels carry their session.** Part of the evaluation-pipeline-integrity remediation; the governing principle is that every fix ships with a check that FAILS when the fix regresses.
->
-> **W4 — the invariant was a no-op.** `position-monitor/route.ts` computed `newNav` and `invariantExpected` from the SAME reduce over the SAME array and compared them: `invariantDiff` was structurally zero and the violation branch unreachable. It was one of five checks in this incident that could only ever report green. It is replaced by `reconcilePersistedNav` (`lib/paper/marks.ts`), which re-reads `paper_portfolio.nav`, `paper_portfolio.cash_balance` and `paper_performance.nav` **out of the database after the write** and compares them against a NAV computed locally from cash plus the mark set, plus the cash-ledger identity and a mark-coverage contract. Both sides are independently sourced, so a dropped write, a rejected column, a partial upsert or a mark missing from NAV now produces a failing check. **A failed reconciliation marks the run `error`, not `done`,** and raises a critical `paper-nav-reconcile:<market>` System Health issue.
->
-> **W4 — marks now carry provenance.** Positions were only re-priced when a fresh quote existed, so NAV silently blended marks of different ages. Every open qty now resolves exactly one mark tagged `live_quote` / `carry_forward` / `entry_cost` with its source and the provider's own observation time; mixed-age NAV raises a `paper-nav-stale-marks:<market>` warning naming the symbols and the stale share of position value; and every mark is written to the append-only `paper_position_marks` ledger. **The 2026-08-12 +2.70%/−2.97% NAV round trip stays permanently unattributable** — the ledger prevents a repeat, it cannot recover the past.
->
-> **W4 — one canonical EOD writer per market.** `PaperTrader` ran a second same-day mark and upsert on the same `(date, market)` key `PositionMonitor` writes after the close, so an intraday snapshot could overwrite the EOD row. PaperTrader may now only CREATE today's row when none exists (tagged `snapshot_type='intraday'`); a `23505` conflict is treated as the EOD writer winning, never as a reason to clobber.
->
-> **W5 — benchmark session mislabelling.** Both writers accepted any positive benchmark *quote*, ignoring `stale`/source/session, and stamped it with the cron run date: `bench_nav` 708.42 is VOO's **2026-08-11** close, stored under both 2026-08-12 and 2026-08-13. Benchmark levels now come from session-dated daily bars (`lib/paper/benchmark-observation.ts`, reusing the existing `newestBarIsStale` recency guard); the bar's own date and provider are persisted; and a level is written **only** when the bar's session equals the row's date — a gap is honest, a mislabelled number is not. `benchmark-scorecard` marks a proven mismatch `source_status='session_mismatch'` (so `loadBenchmarkLevels`, which reads only `'ok'`, excludes it) and clamps displayed coverage to 100% (US 1M reported 104.5%).
->
-> **Detectors:** `tests/paper-mark-provenance.test.ts` (the reconciliation MUST fail on a disagreeing persisted NAV — the old self-comparison could not), `tests/benchmark-session-alignment.test.ts` (the previous session's close MUST be refused under today's date), `tests/paper-nav-writer-contract.test.ts` (route-shaped: no `invariantExpected`, no second EOD upsert, no benchmark-from-quote, coverage clamped).
->
-> **Migration `20260816180000_paper_mark_and_benchmark_provenance.sql` APPLIED 2026-08-17.** `paper_position_marks` table live; `bench_session_date`, `bench_source`, `snapshot_type` columns on `paper_performance` live. US relative-performance figures now have session provenance.
->
-> 2026-08-13: **Hybrid protective-stop PLACEMENT WORKER — Parts A–D shipped; Part E (activation) is owner-gated.** The shadow scaffold from 2026-07-18 now has a full broker-placement path, still behind the same two false-by-default gates:
->
-> **Part A — paper OHLC stop check**: `lib/data/quotes.ts` now parses `day.l`/`day.h` from Massive snapshots into `DeterministicQuote.dayLow/dayHigh`. The position-monitor (`app/api/agents/position-monitor/route.ts`) builds a `dayLowMap` and uses `priceForStopCheck = min(currentPrice, sessionLow)` — a stop touched intraday is real even if price recovers by close. Exit reason is `stop_hit_intraday` (fill at `trailingStop`).
->
-> **Part B — RH capability file** (`lib/protective/robinhood-capabilities.ts`): declares `stop_market` with `timeInForce:["gtc"]`, `sessions:["regular"]`, `updateMode:"cancel_replace"`, no lifetime cap. Comments explain: RH GTC stop-market ONLY triggers in the regular session (9:30–16:00 ET); does NOT fire pre-market or after-hours; converts to market order on trigger (no limit floor, but you ARE out).
->
-> **Part C — broker placement functions**: `placeRobinhoodGtcStop()` added to `lib/robinhood-mcp.ts` — same MCP session pattern as `submitRobinhoodOrder`, `timeInForce:gtc`, `type:stop`, returns `{ok,brokerOrderId}` with `needsReconcile` on ambiguous outcomes. `placeKiteStopGtt()` added to `lib/kite.ts` — single-leg GTT (`type:"single"`) SELL CNC LIMIT at stopPrice (weaker: can fail to fill on a gap). `lib/protective/kite-placement.ts` is a thin wrapper.
->
-> **Part D — entry/exit wiring**: `lib/protective/placement-worker.ts` is the placement + cancel worker. It reads both gates, derives `stopPrice = entryPrice × (1 − stop_loss_pct%)` from the mandate, evaluates broker eligibility via `evaluateProtection()`, inserts a `protective_orders` row at `status='placing'`, places at broker, moves to `status='active'` (or `'failed'`). `execute-order.ts` fires `placeProtectiveStop()` fire-and-forget after every confirmed live BUY ACK. `live-exit-monitor.ts` calls `cancelProtectiveStop()` before submitting a SELL proposal — cancels the resting broker stop to prevent double-sell after the GTC stop independently triggers.
->
-> **Part E (not yet done)**: flip `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = true` in `lib/protective/coverage.ts` and set `protective_orders_enabled = true` in `strategy_config`. Both gates must be opened by owner before any broker stop is placed.
->
-> 2026-08-13: **Intraday gap protection**: both the position-monitor paper check (Part A above) and the PositionMonitor now catch stops touched at any point during the session (via `day.l` from Massive snapshot), not only at the most recent quote. The overnight gap risk for paper trades is narrowed to the gap between last Massive snapshot and session open — true overnight gap is still not covered by paper (and not expected to be; paper has no broker-level orders).
+</details>
 
-> 2026-08-07: **Property/Investing isolation is an invariant, stated here so it is testable.** No property table, adapter, scenario, forecast or decision-journal row is read by any securities score, eligibility gate, position sizing rule, order path, exit, promotion gate or broker call. The dependency runs one way only: Property consumes the shared auth, ownership, System Health and source-provenance conventions, and exports nothing into the investing money path.
->
-> Property forecasts are **shadow decision support**. They are written `state = 'shadow'`, are never a promise, and are scored only against values observed after the horizon elapsed. The Forecasts workspace **withholds a calibration rate below 10 matured outcomes** per market-and-metric cohort (`lib/property/calibration.ts`) and shows `n` regardless — at n=3 an interval-coverage percentage can only read 0, 33, 67 or 100 and would be arithmetic noise presented as evidence.
->
-> Property parcel Stage 1 is evidence-only and **collection is disabled** until each county source's machine-use contract is verified. Historical Phoenix deed observations and Austin county `appraised`/`assessed` references remain preserved as evidence; the latter are tax references, never public comparable sales or Kairos market-price estimates. The worker exits before credentials, scopes, or downloads, while the UI/API reject new scope activation. Bulk evidence persists no addresses or party names and uses keyed HMAC parcel identities. The UI hard-disables every AVM/market-price/value-range claim. Repeat-sales or hedonic work remains blocked until permitted collection, multiple snapshots, correction handling, temporal validation, market-local sample floors, and measured calibration exist.
->
-> Market-local honesty is enforced rather than assumed: the three active sources are US-only, so adapters declare `supportsMarket()` and the collector records `not_applicable` for Bengaluru instead of `success, 0 rows`. **No US value is ever substituted into an India market card.** Private data handling: no plaintext address, mortgage account number, owner name or uploaded document is stored; payloads are encrypted server-side and owner routes never trust a caller-supplied `owner_id`.
+The configured +19.2% target fires **zero times across 965 India observations** and 28 times in 900 US h10 observations. Timeouts run 76-97%. The time stop is not competing with the target; it IS the exit policy, which reproduces the live ledger (132 of 179 closed lots, 73.7%, exit on the clock).
 
-> 2026-08-01 documentation truth audit: the technical breakdown guard is a hard
-> cap only for an ATR-scaled fall or a 7% high-volume fall. A bottom-quartile weak
-> close is warning-only. This chapter now matches the exact scoring contract in
-> chapter 03 and `lib/data/technicals.ts`.
->
-> 2026-07-31 scoring input safety: unknown provider taxonomy cannot receive a
-> fabricated P/E benchmark; implausible P/E is omitted; missing availability metadata
-> cannot include a dimension; malformed macro/insider payloads remain unavailable;
-> and ordinary weak closes cannot hard-veto without ATR or volume/move confirmation.
-> Only the Next.js ResearchAgent writes authoritative scores. See
-> `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
+**Tightening the target lowers mean return in every cohort.** US h10: baseline 0.616% -> 0.398% at a 4% target, while win rate RISES 52.0% -> 61.4%. More frequent small wins, worse expectancy. The widest target ranks first and the tightest last in all four cohorts, so "make the target reachable" is measured and wrong.
 
-> Last updated: 2026-07-25 (**ETF allocation cap** — new `strategy_config.etf_allocation_cap_pct NUMERIC DEFAULT 30` (migration `20260725130000`). Soft guardrail: `executeApprovedOrder` checks BUY orders for US ETF symbols (`isEtfSymbol`) and refuses if current ETF portfolio % + this order's notional / NAV would exceed the cap. Fail-open: any DB read error warns and allows through (unlike symbol blocking which fails closed). India market skipped. SELL always allowed. Configurable 0–100 via Settings → Trading → Risk Profile → ETF Allocation Cap.)
-> Prior: 2026-07-20 (**Guarded kill-switch reset + fail-closed risk reads.** Settings now reads the real `market_controls` latch and can reset it only through owner-only `POST /api/settings/kill-switch`: explicit market/book + acknowledgement, originating-book match, current breaker recheck with alert resolution suppressed, durable decision-journal audit, then latch write and matching-alert resolution. Failed config/NAV/history reads block risk increase; the legacy unscoped paper-query retry is removed, so schema/read failure cannot mix US and India risk truth. Trip reason and issue key include `paper|live`; the conservative per-market latch remains shared across books.)
-> Last updated: 2026-07-19 (**Webull Trading API transport restored** — `lib/brokers/webull-trade/` is now a fully wired, permit-backed broker adapter. Key safety properties: (1) **Nine-gate ladder** (`gates.ts`) — every Webull order must clear global_trading_enabled, market_control_enabled, circuit_breakers_clear, autonomy_mode_satisfied, single_allowlisted_account (account `605420606` exclusively), orders_feature_flag (`webull_trade_orders_enabled=false` by default), credential_and_token, risk_checks, quantity_within_mandate; (2) **Permit system** — two permit kinds, `preflight` (DB flag check only) and `order` (full 9-gate evaluation); each permit is single-use and expires after 30 s; the transport refuses any request whose path/method is not on the permit's allowlist; (3) **Token preflight** — `preflight.ts` calls `POST /openapi/auth/token/check` before gate 7 to resolve live token status (`PENDING/NORMAL/INVALID/EXPIRED`) and idle-age; `assertTokenUsableForOrder()` blocks on PENDING (now explicit in types), INVALID, EXPIRED, and idle > 15 days; (4) **Single fetch locus** — `liveWebullTransport()` is the only function in the codebase that calls `fetch()` to `api.webull.com`; (5) **Signing** — HMAC-SHA1 over path + sorted params + MD5 body hash, `${appSecret}&` key, `x-access-token` header alongside HMAC headers, timestamp freshness enforced; (6) All flags remain false: `webull_trade_orders_enabled=false`, `global_trading_enabled`, and account allowlist require explicit owner activation before any order is possible. Constraint migration `20260718130000` applied: `protective_orders.mode` locked to `'wider_disaster_floor'`, `currency NOT NULL`, five new DB-enforced invariants on market/currency/broker-id/floor/order-kind/learning-provenance — zero rows in table at time of apply, all constraints verified safe.)
-> Prior: 2026-07-18 (**Hybrid protective-stop SHADOW SCAFFOLD — built UP TO the placement line, no live order ever.** New pure module set under `lib/protective/`: (1) a broker-neutral `BrokerProtectiveCapabilities` matrix (`capabilities.ts`) — protection is capability-driven per order-type/TIF/session/account, never a flat broker boolean; an adapter with no eligible MULTI-DAY order for the exact position is `unprotected-by-broker`, never silently protected; (2) Kite's declared capability (`kite-capabilities.ts`) filled from the PROVEN GTT code — Kite protects via the WEAKER `gtt_limit` (LIMIT child, unfilled-trigger risk surfaced), and its DAY-only regular SL-M is declared and correctly REJECTED as a multi-day floor; (3) a pure disaster-floor calculator (`disaster-floor.ts`) parameterized by `(mode, distance)` — Q1 unanswered so `mode` defaults to `wider_disaster_floor` (outage + catastrophic-loss mitigation, NOT touch-at-analytical-stop) and the distance is a CONFIG input with no hardcoded value; monotonic ratchet so a falling high-water mark can never lower the floor; (4) a pure reconciliation loop (`reconcile.ts`) detecting out-of-band triggers, partial fills, cancels, expiry, broker edits, and corporate-action qty drift — unknown state is always `needs_reconcile`, a trigger without a confirmed fill never closes the book, a gap through a limit child is reported unprotected (not filled), expired protection is critical; (5) the state model (`state.ts`) — the `protective_order` record shape + status machine + long-only/cancel-before-replace invariants (total executable SELL never exceeds reconciled held qty; a competing SELL is blocked until cancellation is CONFIRMED). **Exit provenance (Codex's correction):** a disaster-floor fill records `exit_reason = protective_disaster_floor` and `learning_scope = risk_policy_only` — the loss STAYS in P&L, NAV, drawdown, mandate and risk-policy evaluation (real money); ONLY the Learner's signal-weight attribution + genome promotion exclude it, so broker capability can't contaminate weight learning (a generic `excluded_from_learning=true` is insufficient because the evaluation engine also filters that field). **THE MONEY LINE:** `placement-gate.ts` — a false-by-default `strategy_config.protective_orders_enabled` flag gates ALL placement and STAYS FALSE; `planProtectivePlacement()` produces the intended broker action as a plain object and NEVER calls a broker. Deterministic, NO LLM on the money path. US/India never cross (per-market capability scope). Migration `20260718000000_protective_orders_shadow.sql` written as a PROPOSAL and **NOT applied to prod** (creates `protective_orders` + append-only `protective_order_events`, adds the flag + `learning_scope` columns). 32 acceptance/unit tests in `tests/protective-hybrid-stop.test.ts` (all 14 spec acceptance tests, each falsifiable — mutation-verified: breaking the ratchet fails AT3, breaking the cancel-guard fails AT1). Gated behind owner approval of touch semantics (Q1), floor distance, and post-fill policy before anything goes live. See "Hybrid protective-stop shadow scaffold" below + `features/hybrid-stop/FEATURE_ARCHITECTURE.md`.)
-> Prior: 2026-07-17 (**Research visibility on the risk surface — a DISPLAY JOIN, coupled to nothing.** `GET /api/portfolio/risk-daily` now attaches a nullable per-holding `research` block (score, direction, `scored_at`, `sessions_since`, `days_since`, `state`, `scored_as_holding`) joined from the latest `agent_signals` row per **`(symbol, market)`** — never symbol alone. **Invariant R1: no field of it is read by `computeHoldingRisk`, `sba-v1`, `constructPortfolio`, the execution kernel, or any gate** — the risk engine stays research-free BY DESIGN, because a sector is over-cap *because* research liked that sector and letting `analyst_score` also veto the cap double-counts the same signal. **Why it exists: on 2026-07-16 AVGO was 6 days unscored while this panel said "trim", and nothing on screen said so — the AGE is the feature, not the score.** Staleness is measured in market-local **SESSIONS** (reusing `marketSessionsSince`; a Friday score read Monday is 3 days but ONE session — a calendar-day rule would paint the book stale every Monday) and displayed in days. Four non-collapsed states: `fresh` (≤ 2 sessions) · `stale` (warning + day count; annotates the SCORE only, never the action) · `never` (no signal ever — deliberately NOT a link) · `unavailable` (abstained — never rendered as a number). Every annotated row is labelled a screener **candidate** score: `is_holding` is false in **463/463** prod rows, so a `neutral` there does not mean "no exit signal" — the exit question was never asked. Fail-soft: an `agent_signals` error still renders the risk table with an explicit "research unavailable". R1 is pinned behaviorally AND architecturally by `tests/risk-research-annotation.test.ts`, whose coupling detector is itself falsification-tested. Supersedes the unmerged `features/risk-research-integration` (research *ordering* trim absorption — not pursued). No schema change, no migration, no new cron, no LLM. See "Daily Per-Holding Risk Analytics" below + `features/risk-research-visibility/FEATURE_ARCHITECTURE.md`.)
-> Prior: 2026-07-16 (**Sector-cap breach ALLOCATOR** — `hr-v1` → `hr-v2`. Defect fixed: a sector-cap breach is a property of the SECTOR, so `sectorUtil >= 1` was the identical number for every holding in the sector and hr-v1 handed EVERY Technology name the identical `trim` (the live AVGO advice: "Trim your position because Technology holdings exceed the 30% sector cap (at 65.6%)") without ever deciding WHICH names absorb the breach or HOW MUCH each gives up — arbitrary and unactionable. New pure module `lib/risk/sector-breach.ts` (`sba-v1`) allocates the breach deterministically by **water-fill**: trim the largest names in the sector down to a common level `L` where `Σ min(wᵢ,L) = cap`. Justified over pro-rata (which re-ships the same blanket verdict and leaves the name-cap breach untouched) and over "marginal contribution" (for a sector-weight cap, a name's marginal contribution IS its weight — the same rule with extra abstraction). NAV basis, because `live-portfolio-gate` enforces the owner's cap as `value/NAV` — the invested basis would make the advice ~43% wrong. Safety properties: **(1) exits untouched** — the `exit_review` branch is first and unconditional; no allocation, and no absence of one, can delay or suppress a protective-stop/thesis-break exit; **(2) risk-internal** — a function of weights and one owner-set cap, ZERO research/`analyst_score` coupling; **(3) defaults to honest** — a sector breach with no usable allocation yields `review` + `missing_inputs:["sector_breach_allocation"]`, NOT a fallback to the old blanket trim; **(4) sector-unknown degrades honestly** — excluded from every sector total, never bucketed into a synthetic sector, never assumed cap-compliant; **(5) LLM still prose-only** — `parseStrategyNotes` (`lib/risk/strategy-notes.ts`) can only emit `Map<requestedSymbol, string>`, proven by test. Non-selected names now say `hold` **with the reason they weren't selected**. Read-only accounts (everything but `<agentic-account-id>`) are labelled advisory-informational. No migration. See "Daily Per-Holding Risk Analytics" below + `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.)
-> 2026-07-21 router proof hardening: cohort evaluation is cache-only and cannot lease, call, or enqueue provider work. ResearchAgent copies already-fetched deterministic score inputs into the canonical cache through an internal read-only adapter. Activation now requires separate `safety_pass` and `quality_pass`, a fresh selected proof, and ten distinct validated ResearchAgent `as_of_session` values in a 45-day window for the exact market/policy/code/strategy tuple. Weekend/holiday staged rows do not count. Existing rows default false and cannot authorize cutover. Router remains shadow-only, `router_enabled=false` both markets.
+**What beats baseline is a volatility-scaled stop.** `stop 2.8ATR / target 7.3ATR` ranks first in 3 of 4 cohorts, and on US h10 its whole advantage is stop-outs 131 vs 185 (-29%) with timeouts UNCHANGED (706 vs 683). It barely exits on target either.
 
-> 2026-07-31 ADR safety: reviewed ADR identity is explicit, never inferred. `SKHY` uses the Nasdaq ADS and ADS-basis Yahoo fundamentals; retired/OTC proxies (`SKHYV`, `HXSCL`, `HXSCF`) are rejected by the shared paper/live symbol policy. A thin ADS source becomes unavailable rather than falling through to foreign-underlying per-share data. ADR support adds no live-trading permission and does not bypass broker review or any existing market/account/risk gate.
->
-> Prior: 2026-07-16 (**Runtime evidence-degradation guard** — a NEW safety gate on the research entry path, shipped **measure-only**. Problem it solves: scoring renormalizes weights across *available* dimensions, so a dimension dropping out (provider outage OR a routing change) could push a symbol from ineligible→eligible on **missing data rather than new information**. The guard compares each symbol's current availability/quality mask against the last accepted market-local baseline; if a REQUIRED field degrades (fresh→stale beyond ceiling, available→missing, valid→conflict/quarantined) it abstains from any NEW long whose eligibility depends on renormalizing around that degradation. Safety properties, all enforced: **(1) strictly subtractive** — the only transformation is `long → neutral`; **`short` passes untouched in every mode**, checked before the mode branch AND enforced by a schema CHECK, so no code path can persist a guard event that *created* an entry; **(2) never suppresses an exit** — existing holdings continue through PositionMonitor's normal risk/exit logic, an evidence outage cannot block a stop or mandatory exit; **(3) defaults to abstain** (no baseline + unusable required field ⇒ abstain), and **only clean runs re-baseline**, so a persistent outage never normalizes itself; **(4) fail-safe config** — `EVIDENCE_DEGRADATION_GUARD_MODE` defaults to `measure_only` and an unparseable value ALSO falls back to measure_only, so a broken config can neither silently enforce nor silently stop recording; **(5) one aggregated health event per run**, not one alert per symbol. Modes: `off | measure_only | enforce`. **Shipped in `measure_only`** — it records what it *would* abstain and changes no direction. Flipping to `enforce` is an owner decision after observing its logged would-abstain rate. Also: `analyst.consensus` is classified narrative-only (US) / unsupported (India) and excluded from gated intents, so it can never block a cutover. Router itself remains shadow-only, `router_enabled=false` both markets.)
+Margins are thin outside US h10 (+0.295pp): India h10 +0.073pp, India h5 +0.051pp, and the candidate **loses** US h5 by 0.041pp. With 14 configs x 4 cohorts this is a ranking from a search, not a significance test — no CIs, no t-stats, overlapping windows.
 
-> Last updated: 2026-07-15 (LLM-discretion exit hole CLOSED — the last place LLM output could move money. Research direction gate extracted to pure `lib/signal-direction.ts` (unit-tested, `tests/signal-direction.test.ts`): held-position exit ("short") is now DETERMINISTIC — `isHeld && analystScore < mandate threshold` — the LLM's direction field NEVER sets an executable direction (previously an LLM "short" on a held name became an exit signal stored as `deterministic_v1`, and could teach the learner from LLM-created outcomes). SELL capability on holdings preserved per locked rule, now evidence-driven; LLM opinion kept advisory-only in `research_packets.raw_data._original_direction`. LearnerAgent's reassess flag renamed `llm_exit`→`score_reassess_exit` (score-only trigger); PositionMonitor honors both (legacy drain). Historical contamination verified ZERO (no closed trade ever exited via `llm_exit` or a long→short LLM flip). Entries were already deterministic; paper/live consumers already require `score_source="deterministic_v1"`.)
-> Prior: 2026-07-15 (Supabase Security Advisor remediation — `20260715120000_security_rls_and_rpc_lockdown.sql`: the public anon API key could read 16 RLS-disabled `public` tables (incl. `agent_config`/`learner_config`) and call SECURITY DEFINER RPCs (`kairos_call_agent`, `activate_evidence_policy`, …) because they carried the default `GRANT EXECUTE TO PUBLIC`. Fix: RLS deny-all on 15 agent-internal tables + `authenticated`-read on `newsletters` (service_role bypasses, so agents/crons unaffected); `REVOKE EXECUTE … FROM PUBLIC` on the anon-callable definer RPCs (keeping `service_role`, and `authenticated` for the owner's `get_daily_ai_count`); pinned `search_path=public` on 15 definer/trigger fns. Verified via `get_advisors`: 0 ERROR, 0 anon-executable definer functions. Deferred WARNs: 7 always-true policies tighten at multi-tenant, `pg_net` schema move, Auth leaked-password toggle.)
-> Prior: 2026-07-11 (Proactive broker-token health check — `checkRobinhoodTokenHealth` attempts a CAS refresh on the short-lived RH access token from the status route + health-triage cron (6h), reporting `broker-token:robinhood` only on a genuinely failed/absent refresh; Settings badge shows "Reconnect required" only on a real dead-refresh, else "Connected — valid until <access-token TTL>". See "Proactive broker-token health check" section. Prior: Daily Per-Holding Risk Analytics advisory surface.)
-> Prior: 2026-07-11 (Codex Phase-B re-review remediation: (Codex#2/#3) the Kite identity gate no longer trusts allowlist *text* alone — `verifyKiteTradingIdentity()` (`lib/kite.ts`) now fetches Kite `/user/profile` and requires the CONNECTED token's `user_id` to equal `strategy_config.active_account_india` AND an allowlisted `broker_accounts{broker=kite,market=india,role=trading}` row. It is enforced at the single `placeEquityOrder()` choke point, so the canonical/autonomous/exit paths (via `kiteAdapter.submitOrder`) get the same check as the standalone route — not just the route. Fail-closed: config read err ⇒ 500, unset/absent/view_only ⇒ 403, profile unfetchable / user_id mismatch ⇒ 502/403. (Codex#1) the v2 budget advisory lock DROPS broker from its key (now `local_date:market:env`) so it matches the market-wide cap it guards — two brokers in one market can no longer take different locks and jointly exceed the cap. (Codex#4) migration 153 rejects non-finite (Infinity/NaN) qty/notional/cap and validates side/env/broker/symbol/order_type enums+identifiers, fail-closed. Migration 153 additive over 152 (never edited).)
-> Prior: 2026-07-11 (Phase B residuals of 07_08_FULL_APP_REVIEW: A2 the standalone India Kite order route (`app/api/kite/order`) now enforces a fail-closed identity/allowlist gate — it requires `strategy_config.active_account_india` to match a `broker_accounts{broker=kite,market=india,role=trading}` row before reserving budget; unset/absent/view_only ⇒ 403 (no silent fallback), so India live is blocked until an allowlisted Kite trading row is inserted. Canonical-path *unification* still deferred. A4 read-only NAV reconciliation report `GET /api/paper/nav-reconcile` (owner-gated, zero writes) re-derives `nav == cash + Σ qty·price` per pool. A5 v2 daily-BUY budget window is market-local (America/New_York / Asia/Kolkata), not UTC; advisory lock keyed by local_date:market:broker:env. Dead edge-fn kill-switch copy deleted.)
-> Prior: 2026-07-11 (Phase A P0 remediation of 07_08_FULL_APP_REVIEW: A1 kill switches take explicit `{book,accountId}` context — mode no longer inferred from live_auto_enabled; live baseline = account's own snapshot peak not START_NAV; new `sellAllowed` separates risk-increase from risk-reduction so a trip blocks BUY but not a verified SELL; `no_baseline`/`stale_snapshot` fail-close BUY only. A3 durable broker ACK (bounded DB retry → 202 needs_reconcile, never {ok:true}). A4 PositionMonitor NAV write errors now fatal. A5 budget-RPC v1/v2 EXECUTE revoked from public/anon/authenticated.)
-> Prior: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; Codex P0/P1: breakdown veto, calibration OOS gate, promotion governance.)
-> Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
+Proposed follow-up, awaiting approval: `features/atr-exit-stop/FEATURE_ARCHITECTURE.md` — a single-arm shadow testing one predeclared hypothesis (ATR stop reduces premature stop-outs), Sidak-adjusted for the 14-arm search it came from, with the time stop and target held fixed. Expected verdict for months: `insufficient_evidence` (26 dates at h10 = 2.6 effective observations against a floor of 12).
 
-> 2026-08-24 instrument-family safety boundary: taxonomy and metals drivers are
-> measurement-only. The actionable ETF cap and every existing paper/live gate
-> remain unchanged. `instrument_family_observations`, the owner diagnostics route,
-> and `family_uncapped_v1:*` shadow rows have no execution consumer. Unknown or
-> leveraged/inverse classification cannot silently enter a special model. Any
-> future family score requires market-local forward evidence, isolated paper,
-> explicit owner promotion, and the same shared money-path controls. The family
-> ledger blocks UPDATE, DELETE and TRUNCATE by grants plus triggers.
 
-> 2026-07-26 policy-event ledger: US FOMC schedule, official target-range outcomes, and post-event return observations are display/measurement-only. Missing market expectations render unavailable; they never become a neutral or zero surprise. The ledger has no scorer, sizing, paper, live, exit, broker, or India reader. Post-event impacts use only frozen daily-return evidence and are append-only.
+2026-08-28 (same day): **CORRECTION to the India sizing diagnosis — survivorship materially weakens it.** I published the quartile gradient from CLOSED lots only while listing survivorship as an untested confounder, then tested it. Including the 14 open India positions marked to current price, **8 of them fall in the LARGEST quartile** and are outperforming the closed lots. Q4 mean return moves from -0.55% to **+0.07%**, and the win-rate gradient shallows from 60->38% to **57->43%**.
+
+**No longer supported:** that the largest positions lose money. **Still supported:** size is uncorrelated with conviction (corr with analyst_score -0.128, with cash-at-entry +0.344, 57x notional spread) — measured at ENTRY, so unaffected by survivorship — and win rate still declines with size. The honest claim is that allocation WASTES the edge rather than reversing it.
+
+The profit-factor pair (percent 1.438 vs currency 0.906) inherits the same bias and should be recomputed on matured outcomes before being leaned on. Method note: the confounder should have been tested before the write-up, not listed inside it as future work.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-28: **India sizing damage diagnosed — cause is cash-path dependence, not volatility.** Full evidence: `docs/audits/2026-08-28-sizing-damage-diagnosis.md`.
+
+
+</details>
+
+A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.
+
+**Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book: allocation is decided by timing, not by the model.
+
+**CORRECTED 2026-08-28 (same day):** the `h10 rank IC +0.105` originally cited here as India's selection edge is the **all-scored** context cohort. Under the measurement-integrity repair (`f95c3951`) the **eligible-long** cohort — the names that could actually be entered — measures **-0.0083** over 17 dates in India and **-0.0768** over 21 in the US, both below the evidence floor. There is no demonstrated selection edge in the entry cohort, so "allocation throws the edge away" is unsupported; only the sizing mechanism above survives. The US/India split asserted below is also wrong in direction: neither market's eligible cohort ranks.
+
+**The volatility budget is a separate, real defect and NOT the cause.** Rule 4 has fired zero times in 1,513 constructor events because `maxPortfolioVolPct = 2.0` is unreachable at `DEFAULT_DAILY_VOL = 0.02` — reproducing estPortfolioVol, the worst case across every configuration (5 names, 100% gross, all same sector) is **1.649%**. Breaching 2.0% needs per-symbol vol >= 3.5% daily. The threshold is set above what the model can produce. Fixing it would not fix the sizing damage.
+
+**No sizing behaviour changed.** This is a diagnosis; changing position_size_pct, maxPortfolioVolPct or the allocation formula is a separate money-path decision. US is a different problem entirely — both its profit factors are below 1 and its rank IC is -0.012 with a negative quintile spread, so sizing is not its binding constraint.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-28: **RESOLVED — why capital rotation was disabled on 2026-08-11.** It was never unexplained; the reason was recorded contemporaneously and I had been reading a later, vaguer label.
+
+
+</details>
+
+The disable is migration `20260811033335_disable_unqualified_paper_rotation.sql`, shipped in commit `ba20f4ff`. The filename timestamp is exactly the `rotation_config.updated_at` I had been treating as a mystery. Its own comment:
+
+> "Capital rotation may keep measuring, but paper execution must remain off until benchmark-alpha, friction, turnover, correlation and tax readiness are enforced by the execution path."
+
+`features/capital-rotation/FEATURE_ARCHITECTURE.md`, updated in the same commit, gives the mechanism: migration `20260723120000` had enabled both paper rows, **but the executor only rechecked score spread, persistence, cooldown and count caps — it never enforced the P1 readiness result and never read `rotation_allow_score_only_paper`.** Four paper rotations executed through that hole. The same commit added the missing gate to `executeCapitalRotationPaper`.
+
+**It was a MISSING GATE, not bad P&L.** The four negative rotations were the symptom; the doc says explicitly this "is containment, not a claim that the four-trade result proves rotation lacks edge" — which matches the swap-level analysis on 2026-08-25 that found those rotations neutral-to-positive.
+
+**The "unsafe early P1 behavior" phrase in `lib/shadows/registry.ts` was written 2026-08-24 (`26216cb3`), two weeks after the fact.** It is a retrospective summary, not the contemporaneous record, and searching for it is what made this look unexplained. The precise cause was in the migration filename the whole time.
+
+**Directly relevant to 2026-08-25.** The flag I flipped that day, `rotation_allow_score_only_paper`, IS the gate this commit added to stop score-only execution. My argument was that `score_to_return_mapping_unvalidated` "can only be validated by running it" — the same reasoning that produced the original incident. The flip was reverted for a different reason (a false claim that rotation had never executed); this is the reason it should have been refused on the merits.
+
+**The five `p1_blockers` are the reopening criteria**, not incidental noise: `turnover_budget_not_configured`, `exact_tax_lots_unavailable`, `score_to_return_mapping_unvalidated`, `post_swap_gate_unavailable`, `candidate_correlation_unavailable`. They map one-to-one onto the migration's "benchmark-alpha, friction, turnover, correlation and tax readiness". Rotation is re-enableable when those are enforced in the execution path — not before.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-27: **India alpha provenance loosened to admit `upstox(yahoo_disagreed)` (owner decision).**
+
+
+</details>
+
+`CONFIRMED_BENCHMARK_SOURCES.india` was `["upstox+yahoo"]` — genuine two-vendor agreement only. That rule was written when neither source was trusted over the other. Upstox is now declared authoritative (broker API carrying official exchange data; on a disagreement ITS value is the one stored), so the rule was suppressing alpha on a CORRECT exchange close because the SECONDARY source was wrong. On the 08-19..27 backfill Yahoo disagreed on six of seven sessions by up to 0.67% — and Yahoo was in error every time.
+
+Now `["upstox+yahoo", "upstox(yahoo_disagreed)"]`.
+
+**`upstox(unconfirmed)` deliberately stays OUT**, and the distinction is not pedantry: there the second source never resolved the session at all, so nothing corroborates that Upstox returned the right BAR for the right DAY. "The two disagreed and we kept the authoritative one" is a different and stronger claim than "only one source answered". Both directions are mutation-pinned — reverting the loosening fails, and over-loosening to admit `upstox(unconfirmed)` also fails.
+
+Backfilled `bench_return_pct` across 38 India rows that now qualify. First measurable since-inception alpha for both books, on settled exchange data:
+
+| market | sessions | NAV | benchmark | alpha |
+|---|---|---|---|---|
+| india | 39 | -0.79% | -1.39% (NIFTY 50) | **+0.60pp** |
+| us | 38 | +1.85% | +2.60% (VOO) | **-0.74pp** |
+
+India has been BEATING its benchmark since inception and this was invisible until now — the alpha was withheld by provenance rules, not absent from the book. Both figures start 2026-07-06, the first session with a benchmark on both sides.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-27: **The 8 NULL benchmark rows: 7 filled, 1 correctly refused.**
+
+
+</details>
+
+I had left these alone on the grounds that filling India from a single source would manufacture provenance. Checking rather than assuming resolved it: **Upstox and Yahoo agree to the paisa on all four India sessions**, so `upstox+yahoo` is earned two-source provenance, not a label applied to one opinion.
+
+| market | date | value | source |
+|---|---|---|---|
+| india | 07-06 | 24430.35 | `upstox+yahoo` (exact agreement) |
+| india | 07-07 | 24398.70 | `upstox+yahoo` (exact agreement) |
+| india | 07-08 | 23882.05 | `upstox+yahoo` (exact agreement) |
+| india | 08-17 | 24287.65 | `upstox+yahoo` (exact agreement) |
+| us | 07-06 | 690.62 | `yahoo(settled)` |
+| us | 07-07 | 687.08 | `yahoo(settled)` |
+| us | 07-09 | 690.69 | `yahoo(settled)` |
+
+**US 2026-06-28 stays NULL. It is a SUNDAY** — the paper book's inception row. No session, no bar, and filling it would invent a price for a closed market. Yahoo returns nothing for that date, which is the correct answer rather than a gap to paper over.
+
+India now has ZERO null benchmark rows; US has one, and it is the Sunday. Consequence worth noting: `benchmarkReturnPct` baselines off the FIRST non-null `bench_nav`, which is now 2026-07-06 for both markets — India's benchmark series is exactly aligned with its NAV series, and the US benchmark starts one session after its Sunday inception row.
+
+**Open design question, deliberately not changed here.** The seven India `upstox(yahoo_disagreed)` rows carry the AUTHORITATIVE exchange close, but `CONFIRMED_BENCHMARK_SOURCES.india` admits only `upstox+yahoo`, so they cannot publish alpha. That rule was written when neither source was trusted over the other; now that Upstox is declared authoritative, withholding alpha because YAHOO was wrong may be stricter than intended. Changing it is an owner decision, not a cleanup.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-27: **PaperTrader write path audited after the benchmark work. One latent W4 regression closed.**
+
+
+</details>
+
+Checked because `confirmBenchmarkSessions` was wired into PositionMonitor only, and PaperTrader is the OTHER `paper_performance` writer. Findings:
+
+- **The two-writer split is sound.** PaperTrader inserts `snapshot_type='intraday'` and ONLY when no row exists for `(date, market)`; PositionMonitor upserts on `(date, market)` and promotes the row to `eod`, but only once `expectedNewestSession(market) === today`. That is why production holds zero surviving `intraday` rows -- not because the path is dead.
+- **LATENT REGRESSION, now fixed.** PaperTrader's insert ladder strips `bench_session_date`, `bench_source` and `snapshot_type` *together* on any undefined-column error. But `paper_performance.snapshot_type` is `NOT NULL DEFAULT 'eod'`. So if the missing column was one of the bench ones while `snapshot_type` existed, the stripped insert would stamp a PREMARKET row as the canonical close -- exactly the W4 defect the one-EOD-writer rule exists to prevent, reintroduced through the fallback. Dormant while all three columns exist. PaperTrader now corrects the label after any legacy-ladder insert.
+- **Confirmation pass no longer filters `snapshot_type='eod'`.** A past session's benchmark is settled regardless of how the NAV row was labelled, and the filter would have permanently stranded any row left `intraday` because PositionMonitor did not run that day.
+
+Not changed: 8 old rows (US 06-28, 07-06/07/09; India 07-06/07/08, 08-17) carry NULL `bench_nav`. They predate the provenance work and India's policy deliberately requires a stored Yahoo value before claiming `upstox+yahoo` — filling them from a single source would manufacture provenance rather than recover it.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-27: **US benchmark — the CONFIRMED rows were the wrong ones.** Same deferred-confirmation fix as India, plus a provenance correction.
+
+
+</details>
+
+Measured against settled VOO closes:
+
+| date | stored | source | settled | verdict |
+|---|---|---|---|---|
+| 08-19 | NULL | - | 706.91 | never resolved |
+| 08-20 | NULL | - | 701.01 | never resolved |
+| 08-21 | 703.71 | `yahoo_quote(provisional)` | 703.71 | **exact** |
+| 08-24 | 701.83 | `yahoo_quote(provisional)` | 701.83 | **exact** |
+| 08-25 | 702.74 | **`yahoo`** | 704.02 | **0.18% WRONG** |
+| 08-26 | 704.20 | `yahoo_quote(provisional)` | 704.20 | **exact** |
+
+The rows humbly labelled provisional were exact; the rows labelled plain `yahoo` — which `CONFIRMED_BENCHMARK_SOURCES` listed as confirmed, authorising an alpha claim — were the inaccurate ones. A Yahoo DAILY BAR read at 16:15 ET is an IN-PROGRESS bar for the session that has just closed: it carries the correct date and an unsettled value, so the exact-session rule cannot catch it. The W5 guard validates the DATE; nothing validated that the value had finished settling.
+
+Two changes. Bare `yahoo` is removed from `CONFIRMED_BENCHMARK_SOURCES.us` and replaced by `yahoo(settled)`, which only the confirmation pass writes. `confirmBenchmarkSessions` is now market-aware and runs for BOTH markets in PositionMonitor: it upgrades provisional rows and FILLS rows that never resolved. A fill reports `storedClose: null` and `deltaPct: null` rather than a fabricated 0%, which would read as two sources agreeing when only one ever existed.
+
+Backfilled 08-19..08-26. The two missing sessions now carry alpha of +0.33pp and +1.11pp, previously absent entirely. The US three-session underperformance figure quoted earlier (-1.90pp over 08-21..08-26) is unchanged, because those two endpoints happened to be exact.
+
+All three US guards mutation-verified: treating plain `yahoo` as settled, fabricating a zero delta for an unresolved row, and letting the US fill rule leak into India each fail a test.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-27: **India benchmark cross-check was never failing — it was structurally impossible.**
+
+
+</details>
+
+`paper_performance` recorded `yahoo(unconfirmed)` for India every session from 2026-08-19. Root cause: Upstox's `/v3/historical-candle` **never returns the current session**. Verified against every cached payload from 08-19 to 08-27 — the newest bar is always the PREVIOUS trading day. So `selectBenchmarkObservation` was asked for today's session, correctly found no Upstox bar, and fell back to Yahoo alone. The fetch succeeded every day; it simply never contained the bar being requested. The two `upstox` rows (08-14, 08-18) exist only because they were backfilled a day later.
+
+Not a token, key-mapping, budget or outage problem — all four were checked and healthy (live API returns HTTP 200; `^NSEI` maps correctly; 83 candles cached daily).
+
+Fix is deferred confirmation, the pattern the code comment at the benchmark write already anticipated ("preserve the observed level for the next-day settle pass") but which was never built. `confirmIndiaBenchmarkSessions` runs in the India PositionMonitor and upgrades earlier provisional rows once Upstox publishes their settled bars. Upstox is authoritative, so the settled exchange close REPLACES the provisional Yahoo value and `bench_return_pct`/`alpha_pct` are cleared rather than left stale. Rows already carrying exchange provenance are never revisited.
+
+**The disagreement is large and was invisible.** Backfilling 08-19..08-27 changed six of seven sessions to `upstox(yahoo_disagreed)`, with gaps up to **0.67%** in a single day. Corrected daily alpha:
+
+| date | old bench chg | new bench chg | alpha (pp) |
+|---|---|---|---|
+| 08-25 | -0.46% | **+0.48%** | -0.49 |
+| 08-26 | +0.77% | **-0.52%** | **+0.21** |
+| 08-27 | — | -0.48% | **+0.26** |
+
+India was reported as underperforming on 08-26; against the settled NIFTY close it OUTPERFORMED. Any India alpha figure quoted from a `yahoo(unconfirmed)` row is unreliable.
+
+An earlier draft of the eligibility rule also required the source string to contain "unconfirmed". Mutation testing showed removing that guard changed nothing (every non-Yahoo source is already excluded), and inspection showed it was wrong: it would have permanently stranded a `yahoo_quote(provisional)` row. Rule is now "the stored value came from Yahoo", which is the only case where Upstox is a genuine second source.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-25: **Capital rotation paper execution was enabled and then REVERTED the same hour. Flags are false. Do not re-enable without reading this.**
+
+
+</details>
+
+The enable was argued for on the claim that rotation "has never moved capital". **That claim was false.** Rotation executed two swaps and four sell lots:
+
+| date | market | sold | score | bought | score | edge |
+|---|---|---|---|---|---|---|
+| 2026-07-24 | us | PLTR | 56 | CB | 74 | 18 |
+| 2026-07-27 | india | ONGC.NS | 53 | TCS.NS | 100 | 47 |
+
+Sell legs realized -0.10% (PLTR) and -2.50 / -4.13 / -3.05% (ONGC.NS x3).
+
+**How the claim went wrong:** `rotation_events.trade_proposal_id` and `.paper_trade_ids` are NULL on every row *including the executed ones*, and that was read as proof of non-execution while `status='paper_executed'` sat in the same rows. `paper_trades.exit_reason='capital_rotation'` was never cross-checked. **Never infer "did not happen" from an unpopulated foreign key — confirm against the table that records the effect.**
+
+**Do not over-correct either.** "All four rotations lost money" is also wrong framing: rotation sells the weakest holding by design, so losing sell legs are expected. Evaluated as swaps, both were fine — CB returned +0.12% over its hold against PLTR's -0.10%, and TCS.NS returned +6.12% against ONGC.NS's ~-3.2%. The July record is not itself a case against rotation.
+
+**Nor did rotation cost the PLTR run.** PLTR was held 8 calendar days (~6 market days) of a 10-market-day horizon; the unconditional time stop would have closed it around 2026-07-30 anyway. Rotation removed it ~4 sessions early. The mechanism that forfeits moves like that is the time stop — which is what the horizon-extension shadow (jobs 123/124) now measures.
+
+**The open question that blocks re-enabling:** the paper flags were set false at 2026-08-11 03:33:35 and the registry gates execution "after unsafe early P1 behavior". That behaviour has NOT been identified, and the swap P&L above does not obviously explain it. Establish the cause first.
+
+Current state: `rotation_paper_execute_enabled=false`, `rotation_allow_score_only_paper=false` on both paper rows; both live rows false; `rotation_live_proposals_enabled=false` everywhere. The two `book_type='live'` rows were never modified at any point. `CAPITAL_ROTATION_PAPER_ENABLED` exists in Vercel Production (created ~2026-07-23) with a value that is redacted on pull and therefore unverified — inert while the DB flags are false. Journal: id 344 (the enable, containing the false premise) superseded by the correcting entry.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
+
+
+</details>
+
+Verified against `rotation_config` on `<production-project-ref>`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.
+
+| Claimed | Actual |
+|---|---|
+| `lib/shadows/registry.ts`: "Paper execution is enabled; live proposals are disabled" | shadow only; paper execution flag is false |
+| `paper-trade/route.ts`: "Capital-rotation P1 PAPER execution is live (owner-approved 2026-07-23)" | the call is a no-op behind the false flag |
+
+Both corrected in place. This is the same hazard class as the 2026-08-24 protective-stop entry above, inverted: there a doc said a gate was shut while it was open; here two docs said a path executes while it cannot.
+
+Surfaced by tracing why a name that passed the research gate on 30 consecutive sessions never entered the book. Since 2026-08-18 the portfolio constructor has admitted **zero** candidates in either market, and US rotation stopped emitting events on 2026-08-11 — because the `portfolio_constructor / rejected` branch `continue`s past the rotation evaluation, so a candidate denied for lack of room never reaches the mechanism that makes room. India takes the name-cap path, which was already repaired, which is why only US went silent. Full trace: `docs/audits/2026-08-25-rotation-unreachable-trace.md`. **The code fix is proposed, not applied — it awaits owner approval.**
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-24: **Shadow proposals are evidence, never work items.**
+
+
+</details>
+
+`runAutonomousShadow` writes a real `trade_proposals` row per signal so the
+kernel/sizing decision has somewhere to live. Two defects made those rows
+indistinguishable from real proposals. Both fixed before the run is ever
+scheduled (it has never executed: zero `execution_mode='autonomous_shadow'`
+rows, and `/api/agents/autonomous-shadow/cron` is scheduled nowhere).
+
+1. The insert used `status='pending_review'` and only narrowed to
+   `kernel.shadow_status` ~80 lines later. Every surface that renders an
+   approve control keys off `pending_review`, so that window — permanent if
+   the run threw in between — put a working approve button on synthetic
+   evidence. Now inserts as `manual_review_required`.
+2. Four consumers read `trade_proposals` without filtering `execution_mode`.
+   The money-path one is `agents/trader`'s 24h "already proposed" dedup set:
+   unfiltered, shadow rows would enter it and **starve the real queue of the
+   exact signals that scored best**. Also `agents/trader` GET (approve
+   queue), `markets/smart-money` (visible queue), and `DashboardShell`
+   (desktop notification).
+
+Excluded by `execution_mode`, not by status — a shadow row legitimately
+carries the same terminal statuses a real proposal does.
+`EXCLUDE_SHADOW_FILTER` (`lib/trading/proposal-status.ts`) keeps an explicit
+`IS NULL` arm: the column is nullable (default `'manual'`) and a bare
+`<> 'autonomous_shadow'` evaluates to NULL — excluding the row — for NULL
+modes, silently hiding legitimate proposals. Mutation-verified.
+
+**Scheduling the cron remains a separate, un-taken step.**
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-24: **CORRECTION — both protective-stop gates are OPEN in production. The "Part E (not yet done)" note below is inverted.**
+
+
+</details>
+
+Verified against `<production-project-ref>` on 2026-08-24:
+
+| Gate | This chapter says | Production |
+|---|---|---|
+| `strategy_config.protective_orders_enabled` | "false-by-default … STAYS FALSE" | **true** |
+| `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (`lib/protective/coverage.ts:134`) | "flip … to true" as a pending Part E step | **already true** |
+
+`protective_orders` holds **0 rows**, so no broker stop has been placed. But the placement worker is no longer gated shut. This is the inverse of the usual stale-doc hazard: an agent reading this chapter would conclude placement is impossible when it is enabled, and could ship a change on that false assumption.
+
+**RESOLVED same day — owner confirmed the activation was unintentional and directed both gates closed.** `strategy_config.protective_orders_enabled` set to `false`; `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` set back to `false` (its own docstring already said "deliberately false" while the value was `true`). Pre-flip verification showed nothing to orphan: `protective_orders` 0 rows / 0 active, `protective_order_events` 0, `broker_orders` with a `kite_gtt_id` 0. Journaled to `decision_journal` as a risk-reducing `config_change`. Other flags re-verified unchanged and OFF: `live_auto_enabled`, `webull_trade_orders_enabled`, `allocation_enabled`. **Part E is once again closed and reopening it needs explicit owner approval of touch semantics, floor distance, and post-fill policy — not a code edit.**
+
+Also corrected: this chapter and `WORK_LOG.md` both described migration `20260718000000_protective_orders_shadow.sql` as "written as a PROPOSAL and NOT applied to prod". The `protective_orders` table exists, so it HAS been applied. See the reconciliation table at the top of `WORK_LOG.md` for the full set of stale migration blockers cleared on 2026-08-24.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-20: **US benchmark resolves the just-closed session from a guarded QUOTE.** `bench_nav` was NULL for two consecutive US sessions while NAV itself was correct: at 16:15 ET no vendor has published VOO's settled bar (Yahoo's chart endpoint lacks it, Massive grouped publishes next-day, Massive `/range` still ends yesterday). The marks path was fixed to use Yahoo QUOTES; the benchmark path was left on the chart endpoint, so alpha stayed uncomputable.
+
+
+</details>
+
+**This does not break the "a benchmark observation is a DAILY BAR, not a quote" rule — it respects why that rule exists.** The original defect was an UNSESSION-IDENTIFIED quote stamped with the cron run date. The quote was never the problem; the missing session identity was. There is also a consistency argument: NAV is now marked from the same 16:15 print, so a 16:15 benchmark is LIKE-FOR-LIKE, and pairing a 16:15 NAV against a settled close is the greater inconsistency.
+
+**Four guards keep it honest.** (1) It fires ONLY on `benchmark_session_mismatch` — a working provider missing one session — never on `benchmark_bars_unavailable`, because with no series at all we cannot tell the data is sane. (2) It fires ONLY when the requested session IS the one that just closed (`expectedNewestSession("us") === expectedSessionDate`), so a quote can never backfill history. (3) A stale quote is refused rather than dated to today. (4) The source reads `yahoo_quote(provisional)` so the settle pass knows to revisit it. A real daily bar always wins; the quote is last resort.
+
+**Detector:** `tests/benchmark-session-alignment.test.ts` — quote used on a genuine session miss, backfill of an older session refused WITHOUT even calling the quote, stale quote refused, a real bar preferred over the quote, total outage NOT rescued, and a quote-source throw not breaking the path. **Mutation-verified** (dropping the session guard fails). Fixtures use the production shape — a healthy series ending at the previous session — because an empty-series fixture tested a different branch entirely and passed for the wrong reason.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-20: **Settle pass — US marks finally get a second opinion, one day late.**
+
+
+</details>
+
+The US monitor marks at 16:15 ET from Yahoo, the only vendor carrying the just-closed session at that hour, and Yahoo cannot corroborate Yahoo — so those marks ship `uncorroborated`. The grouped feed (12,549 tickers, ONE entitled call) publishes the following morning and IS independent. `kairos-settle-check-us` (`0 13 * * 1-5`, 09:00 ET) compares yesterday's live marks against it.
+
+**It writes no money state.** No NAV, no `paper_positions.current_price`, no trade. A drift beyond `SETTLE_TOLERANCE_PCT` (0.25%) TAINTS that session's `paper_performance` row with the measured per-symbol drift and net NAV impact, and raises a critical — but `nav` is left exactly as recorded. The exits for that session already filled at the marked price; restating NAV afterwards would re-decide a closed session, which the frozen-history rule forbids. Labelling it untrustworthy is honest; silently replacing it is not.
+
+**Tolerance is looser than the intraday cross-check (0.1%) on purpose.** Yahoo's 16:15 print is near-final rather than fully settled. Measured 2026-08-19: exact on NVDA and XAR, 0.07% out on KGC. 0.25% catches a real mismarking — the AV-stale case was 1.00–9.36% — without firing on ordinary settlement revision.
+
+**`nothing_to_compare` neither raises nor resolves.** An unpublished feed is not evidence the marks were right, and "nothing to compare" must never collapse into "everything agreed" — the same failure mode as the W6 liveness checks that could only report green. Marks already labelled `carry_forward` or `entry_cost` are skipped rather than double-reported.
+
+**Detector:** `tests/settle-check.test.ts` — corroboration, the measured KGC revision tolerated, the AV-stale drift flagged with its NAV impact, stale marks not re-flagged, missing closes counted UNVERIFIABLE not agreed, an empty feed not reading as corroborated, and opposite drifts netting to zero while both stay flagged. Route-shaped assertions pin that it never touches `paper_positions`/`paper_trades`/`nav`. **Mutation-verified twice.**
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-20: **Yahoo is now the PRIMARY source for US settled marks — the data was never missing at 16:15 ET, the route was asking the wrong vendor.**
+
+
+</details>
+
+The 2026-08-19 entry below concluded that no vendor publishes the current session's close at 16:15 ET, and proposed moving the US monitor later. **That conclusion was wrong.** Checking the settled 2026-08-19 closes against what each vendor returned during that 20:15 run: Yahoo gave NVDA 217.56 and XAR 284.10 — exact — and KGC 29.92 against a settled 29.90 (0.07%). Alpha Vantage gave 219.74 / 294.87 / 27.12: the PREVIOUS session throughout. Yahoo had it; the chain preferred AV.
+
+**Cause.** `getSettledDailyQuotes` tried the grouped feed (which publishes NEXT-DAY, so empty at 16:15) and then fell straight to the ordinary chain — Massive snapshot (403), `price_cache` (stale), Alpha Vantage (previous session). Yahoo was relegated to the unresolved tail, which never ran because AV had already answered. Yahoo now sits between grouped and the ordinary chain. It is keyless and unbudgeted, so preferring it costs no quota, and the schedule is unchanged: exits still run at 16:15, now on correct prices.
+
+**Consequence, stated plainly: US marks lose their second opinion.** Yahoo cannot corroborate Yahoo — that circularity is exactly what let the ^NSEI provisional value pass as "verified". The cross-check filter now excludes any Yahoo-sourced primary, so US marks are labelled `uncorroborated` rather than falsely confirmed. Real US corroboration needs the next-day grouped feed via a settle pass; Massive `/prev` is per-symbol and paced at 12.5s (13 symbols ≈ 162s > the 120s route ceiling). NOT built.
+
+**Also rejected on evidence:** moving the US monitor past 20:00 ET would cross 00:00 UTC, and the route derives `today` from the UTC date — NAV would be written under the following session.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-02: **The dispute gate refused a price for seven days because it never checked which SESSION each price came from.**
+
+
+</details>
+
+The 2026-08-19 fix above is sound and stands: a disputed symbol leaves `priceMap` before the exit loop, so no stop, target or time-stop can fill on it. The defect was in deciding what counts as a dispute. The comparison ran on two prices whose sessions were never checked, so a cross feed one session behind was refused as a vendor disagreement — permanently, because the lag recurred every run.
+
+**Production evidence.** `position-monitor-quote-disputed:india` was raised 2026-08-26 and re-reported every run to 2026-09-01: `INDUSTOWER.NS (yahoo_india 375 vs upstox 388.8, 3.549%)`. Yahoo's own closes were **375 on 2026-09-01** and **388.79998779296875 on 2026-08-31** — the "disagreeing vendor price" was the primary's OWN previous session, to four significant figures. The vendors never disagreed about a price; they disagreed about which day it was. Two open positions (`INDUSTOWER.NS` qty 27, `KAMATHOTEL.NS`) ran **seven days with no exit evaluation at all**.
+
+**Both sides already carried the session and both discarded it.** `fetchUpstoxCandles` parses a `date` per candle and the cross-check dropped it; the Yahoo quote's `retrievedAt` is `regularMarketTime` — the exchange timestamp of the quote, not our fetch time. `buildPositionMark`'s own input type had documented `crossPrice` as "for the SAME session" since it was written. The contract was stated and never enforced.
+
+**Fix (`lib/paper/quote-crosscheck.ts`).** Session gate BEFORE any price comparison, using exchange-local dates (IST/ET, never UTC — an India quote at 01:00 IST is the previous UTC day, which would reintroduce the same off-by-one). Same session → compare exactly as before. Different or unknown session → `session_mismatch`: **uncorroborated, still priced, exits still evaluated**, reported as a `warn` naming which side lags. Unknown sessions count as a mismatch rather than being waved through, because failing open would restore the bug for exactly the rows whose provenance cannot be established. The mark builder reads the same verdict, so the mark ledger and the exit gate cannot disagree.
+
+**The same alert carried a second symbol with the OPPOSITE cause, and a fix that only aligned sessions would have been wrong to rescue it.** `KAMATHOTEL.NS (yahoo_india 233.89 vs upstox 225.09)` — Upstox matched the 2026-09-01 close of 225.05 and the PRIMARY was the outlier. That is a genuine same-session disagreement and is still refused. Both cases are pinned in `tests/quote-crosscheck.test.ts` with their real production numbers; removing the session gate fails three of them.
+
+**Escalation.** Refusing a doubtful price is right for one run and wrong forever — nothing distinguished "refused once" from "refused every run for a week", and the second is worse than either vendor being wrong. A dispute unresolved for `DISPUTE_ESCALATION_RUNS` (3) raises `position-monitor-quote-dispute-persists:<market>`, stating how long the position has been unguarded. Days proxy for runs (one run per market per day); a skipped run counts as elapsed, which errs toward escalating sooner.
+
+**Contributing factor, deliberately NOT bundled:** `isYahooQuoteStale` accepts an India quote up to **4 days** old as fresh, which makes primary/cross session mismatch likely by construction. Changing it affects every India read path and needs its own decision.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-19: **CORRECTION — the mark cross-check did not protect exits, and four positions closed on stale prices before it was fixed.**
+
+
+</details>
+
+The entry below claims a disputed quote is "REFUSED for marking AND for stop/target evaluation". That was **false as shipped**. The guard lived only in `buildPositionMark`, which runs AFTER the exit loop; the exit loop reads `priceMap` directly. The 20:15 run corrected the marks and exited anyway.
+
+**What it cost.** The US chain fell through to Alpha Vantage — which served the PREVIOUS session's close — while Yahoo carried the current one. Six of ten marks were flagged disputed (KGC 9.36%, XAR 3.79%, OXY 2.86%, TSM 2.38%, BAC 1.43%, NVDA 1.00%), and four positions still closed: LULU at ~119.55 (the 2026-08-14 price; the 08-18 close was 119.01) and MSFT at ~487.65 (a carried 08-17 value; 08-18 close 481.63), plus MA and SMCI. Eight lots, now `tainted` + `excluded_from_learning`; `realized_pnl` left intact to preserve the cash-ledger identity.
+
+**Fix.** The gate now sits on `priceMap` itself, before any exit is evaluated: a disputed symbol is deleted from the map and reported UNPRICED, so no stop, target or time-stop can fill on it, and a critical names every refused symbol. A price too doubtful to record is too doubtful to sell on. Pinned positionally in `tests/paper-nav-writer-contract.test.ts` — the gate must precede both the exit loop and `buildPositionMark` — and mutation-verified.
+
+**Confirmed by the same run (these DID work):** the per-position isolation fix and the MSFT residual-lot reconstruction — the run completed `done`, 14/14 succeeded, `exit_failures=0`, where the previous two runs aborted entirely. India wrote `bench_source=yahoo(unconfirmed)`, exactly the honest label the cross-check contract specifies when only one vendor resolves.
+
+**Still unresolved:** no vendor publishes the current session's settled close at 16:15 ET. Massive `/prev` returned 2026-08-18 closes when queried at 20:16 UTC on 2026-08-19, and grouped publishes next-day. So the US monitor cannot mark the session it just watched close. US `bench_nav` for 2026-08-19 is NULL for the same reason — correctly refused rather than mislabelled. This needs a run-timing decision (move the US monitor later, or add a next-morning settle pass); it is NOT a code bug and is not built.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-19: **Position marks are now corroborated by an independent vendor, and a DISPUTED quote fails closed.**
+
+
+</details>
+
+A mark is not a display number — it prices the stop and target checks. Yahoo demonstrably serves PROVISIONAL values it later retracts (the 2026-08-18 ^NSEI case wrote a 0.375% error into `paper_performance`), and the exact-session rule validates the DATE, never the VALUE. So each live mark is compared against a DIFFERENT vendor: US → Yahoo per-symbol (primary chain is Massive-based), India → Upstox (primary is Yahoo). Both keyless and unbudgeted.
+
+**Contract.** Agreement within `MARK_CROSSCHECK_TOLERANCE_PCT` (0.1% — wider than the index's 5bps because equity feeds differ on adjustment, far below the 0.375% error that motivated this) → `live_quote`, reason names the corroborating vendor. Disagreement → the quote is REFUSED for marking and for stop/target evaluation, the mark falls back to the carried price (or entry cost), and the reason preserves BOTH numbers. No second source → still `live_quote`, but the reason says `uncorroborated` rather than implying it was checked.
+
+**Fail-closed is affordable because agreement is the norm.** Measured 2026-08-18: Massive `/prev` and Yahoo matched to the cent on every US holding — MSFT 481.63/481.63, NVDA 219.74/219.74, XAR 290.43/290.43.
+
+**Detector:** `tests/mark-crosscheck.test.ts` — corroborated accepted; disputed refused with the carried mark kept and both values recorded; rounding tolerated; uncorroborated labelled honestly; a cross-source outage cannot demote a good mark; a disputed quote with no carried mark falls to entry cost and never to the disputed price. **Mutation-verified** (removing the guard fails 2).
+
+**UNRESOLVED — the grouped-daily fix probably does not fire at 16:15 ET.** Measured 2026-08-19 ~00:55 UTC, roughly five hours after the US close: `/v2/aggs/grouped/.../2026-08-18` returned **0 rows**, while `/v2/aggs/ticker/{sym}/prev` and Yahoo both already carried the 2026-08-18 close. Grouped publishes next-day. The US PositionMonitor runs fifteen minutes after the close, so `getSettledDailyQuotes` will most likely get nothing from grouped and fall through — meaning US marks stay `carry_forward` and there is nothing to corroborate. `/prev` has the data but is per-symbol and Massive is paced at 12.5s (13 symbols ≈ 162s > the 120s route ceiling). Candidate fixes: move the US monitor later, or add a next-morning settle pass that re-marks the prior session. NOT built — it needs a decision about run timing.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-19: **India benchmark is now cross-checked against the exchange, because the exact-session rule validates the DATE and never the VALUE.**
+
+
+</details>
+
+**The hole W5 could not see.** Yahoo's ^NSEI series carries bars whose close is NULL — 2026-01-15, 05-01, 05-28, 06-26, 07-21, 07-22, 07-31, 08-18 in the 1y window — and briefly serves a PROVISIONAL number on those sessions before dropping it. On 2026-08-18 that put **24245.699** into `paper_performance` when the settled NIFTY 50 close was **24154.9**: 0.375% wrong, written by a code path behaving exactly as designed. W5's exact-session match proved the bar was dated 2026-08-18; nothing proved the number was the close. India had no second source (Massive is US-equities-only), so Yahoo agreeing with itself was the only available "verification".
+
+**Method note, recorded because it nearly hid the bug.** The India series was first checked by re-fetching from Yahoo and comparing — 24/24 matched, and that proved nothing. Comparing a value against the source that produced it tests self-consistency, not correctness. Only an independent provider could settle it.
+
+**Second source: Upstox.** A broker API carrying official exchange data, already integrated and unbudgeted. Indices are absent from `upstox_instruments` (the master is filtered to `instrument_type=EQ`/`segment=NSE_EQ`), so `fetchUpstoxIndexCandles` uses the static key — exact: `NSE_INDEX|Nifty 50` resolves, `NSE_INDEX|NIFTY 50` returns UDAPI100011.
+
+**Contract.** Upstox is AUTHORITATIVE; Yahoo is the check. Agreement within `BENCHMARK_CROSSCHECK_TOLERANCE_PCT` (5bps — an index close is one published number, so a real gap is a fault, not rounding) → `source=upstox+yahoo`. Disagreement → the exchange value is used and the label says `upstox(yahoo_disagreed)`; the fact is recorded, never hidden. One provider only → `upstox(unconfirmed)` / `yahoo(unconfirmed)` — a single-source benchmark beats none, but it must say so. A cross-check outage cannot break the path.
+
+**Data corrected:** 2026-08-18 India → 24154.9 (`source=upstox`). The three rows Yahoo could not corroborate (07-21, 07-22, 07-31) are CONFIRMED correct by Upstox to the paisa and are now stamped — they were never wrong, Yahoo simply could not prove them.
+
+**Detector:** `tests/benchmark-session-alignment.test.ts` — agreement, the real 2026-08-18 disagreement (exchange value wins, label states it), rounding tolerance, single-provider labelling both ways, both-missing refusal, and a cross-check throw not breaking the path. **Mutation-verified** (neutering it fails 4). One older test asserted `source==="yahoo"` for India; its premise is now obsolete, so it was updated to pin the invariant it actually existed for — India never spends the US fallback call.
+
+**Still one-sided:** the US benchmark has Yahoo→Massive, and India now has Upstox+Yahoo. Neither market cross-checks its per-SYMBOL marks; only the benchmark is corroborated.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **One position's exit failure was blanking the whole book.** The 20:15 US run died on `execute_paper_exit denied (MSFT): position_lot_qty_mismatch`. `closePosition` throws on a denial, the throw escaped the per-position loop, and the run aborted BEFORE the mark/NAV block — so no marks, no NAV, and the other 12 US positions never had their stops or targets checked. The 2026-08-14 run died identically on LNC (`existing_open_position`). Two runs, same shape, two weeks apart.
+
+
+</details>
+
+**The RPC denial is CORRECT and stays.** MSFT's only lot closed on 2026-08-03 (`outcome=win`) while its `paper_positions` row survived, so the parity check refuses to close 0.472499 that no open lot backs. Suppressing that guard would double-count a realized trade. The fix isolates the failure, it does not silence the guard: each position's evaluation is wrapped, a failure is recorded and alerted (`position-monitor-exit-failed:<scope>`, critical, naming the symbols whose stops went unchecked), and counted as a **failed** unit in the W6 envelope — so the run is `error`, not healthy, while still completing its other work.
+
+**Open data defect, NOT auto-repaired:** one orphaned position — MSFT, qty 0.472499, **$230.41 of phantom value carried in NAV since 2026-08-03**. `paper_positions` is current-state that "may be removed/closed only through the transactional exit path", so it is surfaced for owner reconciliation rather than deleted. Every other position reconciles exactly (1 of 27 drifts).
+
+**Detector:** `tests/paper-nav-writer-contract.test.ts` — the loop body is wrapped; NAV/marks are reached AFTER a failure (positional); failures count as `failed`; the alert key appears in BOTH the report and resolve paths; the RPC denial still throws. Mutation-verified twice — and the first version of the alert assertion was decorative (a bare `toContain` passed even with the reportIssue key renamed, because the resolveIssue occurrence satisfied it), so it was strengthened to count occurrences.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **W5 US benchmark was never written — the provider ladder's recency guard is too weak for an EXACT session.**
+
+
+</details>
+
+**W5 itself works.** India recorded `bench_nav` 24245.70 / `bench_session_date` 2026-08-18 / `bench_source` yahoo on the 11:15 UTC run. The migration and both write paths are correct. Only US was null, on every row since the migration.
+
+**The defect.** `fetchUsCandles` accepts the FIRST provider whose newest bar is inside a generic `MAX_BAR_AGE_DAYS = 4` guard. The US PositionMonitor runs 16:15 ET — fifteen minutes after the close — and Yahoo has not published the settled VOO daily bar that soon. Its newest bar was 2026-08-14: three days old, therefore "fresh", so the ladder returned it and **never tried Massive, which DID have 2026-08-17 (close 710.27)**. `selectBenchmarkObservation` then correctly refused to store a non-matching session, so the US book recorded no benchmark at all. India was unaffected because its cron runs 1h15m after the NSE close, by which time Yahoo has published. Proof in `av_cache`: `YAHOO_CANDLES:VOO` at `cache_date` 2026-08-17 has `newest_bar` 2026-08-14, while `YAHOO_CANDLES:^NSEI` at the same cache_date has 2026-08-17.
+
+**A generic age guard cannot answer an exact-session question.** "Newest bar is under 4 days old" and "there is a bar for session X" are different predicates, and only the second is what a benchmark observation needs. The fix stays inside `benchmark-observation.ts`: on `benchmark_session_mismatch` — and ONLY that reason — ask the next provider directly. A `benchmark_bars_stale` result means the provider is stranded and is not retried. `fetchUsCandles` is untouched, because its other caller (label maturation) legitimately wants a long series rather than one date.
+
+**Rejection reasons stay honest.** When neither provider supplies the session, the ORIGINAL rejection is reported — it names the provider the ladder actually chose, not the fallback.
+
+**Detector:** `tests/benchmark-session-alignment.test.ts` — the fallback resolves the session; no second call is spent when the primary already has it; a stranded provider is NOT retried; both-miss still refuses; India spends no fallback call. **Mutation-verified** (neutering the fallback fails). Dates are RELATIVE, per the note at the top of that file: the stale guard is wall-clock, so pinned literals would drift into the `stale` branch and start asserting the wrong thing.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **A market-scoped PositionMonitor run was writing the OTHER market's book.**
+
+
+</details>
+
+Both crons are correctly scoped (`?market=us`, `?market=india`), yet the India run at 11:15 UTC wrote 13 US marks and a US `paper_performance` row stamped `snapshot_type='eod'` at **07:15 ET — before the US session opened**. The W4 "ONE canonical EOD writer per market" invariant was broken from a direction W4 did not anticipate: not a second writer racing the same market, but the *other market's schedule* reaching across.
+
+**Scoping was defeated inside the route, not at the schedule.** Two reads ignored `marketScope`: the `stillOpen` re-read of `paper_positions` (unfiltered `select`), and `poolByMarket`, built from **every** `paper_portfolio` row. The mark/NAV write loop iterates `poolByMarket`, so it processed both books regardless of scope. Fixed by scoping the re-read and skipping non-scoped markets in the loop before any write.
+
+**`snapshot_type` is no longer an unconditional literal.** Even a legitimate unscoped or manual run must not stamp `eod` on a row built from carry-forward marks hours before the close — the same lie in a different costume. It is now `expectedNewestSession(market) === today ? "eod" : "intraday"`, reusing the post-close predicate added with the grouped-daily work.
+
+**Detector:** `tests/paper-nav-writer-contract.test.ts` — the guard must sit inside the pool loop *before* the `paper_performance` upsert (positional assertion, not mere presence); the re-read must acquire its market filter before it is awaited; the bare `snapshot_type: "eod"` literal is banned. **Mutation-verified** — removing the loop guard fails the suite. The pre-existing "PositionMonitor is the EOD writer" pin was updated rather than deleted: its intent (PositionMonitor, never PaperTrader, owns the `eod` row) is preserved and now also asserts the post-close condition.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **The US quote path had no working live source — the Massive key is not entitled to `/v2/snapshot`.**
+
+
+</details>
+
+**What was broken.** `fetchMassiveBatchQuotes`, described in code as "the primary batch path", was returning **zero US quotes on every call**: the deployed `MASSIVE_API_KEY` gets `403 NOT_AUTHORIZED` on every `/v2/snapshot` endpoint and on `/v2/last/trade`. `if (!res.ok) continue;` swallowed it. The `/markets/etfs` second pass was also dead — that endpoint returns **404** and had never resolved a single ETF. With Massive silent, AV's 25/day budget exhausted since 2026-07-23, and `price_cache` holding only symbols the *research* path scores (never the holdings), the chain collapsed to a stale cached bar — which the pre-2026-08-17 adapter then relabelled fresh.
+
+**Cost, measured not estimated.** On 2026-08-17 all 13 US holdings were marked at the **2026-08-14** close. Marked position value 7,725.11 vs true 7,667.32 against that session's real closes: NAV overstated **$57.79**. The reported **+0.239%** was in truth **−0.339%** — *the sign flips, the entire gain was mismarking*. Per-name drift reached **−3.92%** (SMCI), **−3.89%** (INFY), **−3.04%** (MSFT); against a 7% stop that is over half the stop distance, so stop and target evaluation were affected, not merely NAV display.
+
+**The fix.** The key IS entitled to `/v2/aggs/grouped/locale/us/market/stocks/{date}` — **12,549 tickers, settled OHLCV, one call** — verified against the live API. New `fetchMassiveGroupedDaily` + `getSettledDailyQuotes` (`lib/data/quotes.ts`); PositionMonitor's US path now uses it. It includes ETFs (XAR, VOO), so the dead `/etfs` pass is deleted rather than repaired, and it carries OHLC so the `dayLow` intraday-stop check survives the move.
+
+**Deliberately NOT a blanket swap.** Grouped daily is settled/EOD and marked DELAYED. That is correct for a post-close consumer (PositionMonitor runs 16:15 ET) and WRONG for intraday callers — `live-portfolio` and `lib/market-data.ts` keep the existing chain. Hence a separate function, not a replacement inside `getBatchQuotes`.
+
+**An entitlement failure is now loud.** A non-OK snapshot response logs the status and says whether the key is unentitled; a grouped 200-with-zero-rows is reported as "session not published", never as "these symbols have no price".
+
+**Detector:** `tests/massive-grouped-daily.test.ts` — a 403 must yield no quotes AND log; zero rows must not read as no-price; non-positive closes are refused rather than marking a position at zero; ETFs resolve. `tests/agent-source-pipeline-remediation.test.ts` re-pinned to the settled path.
+
+**History annotated, not rewritten.** `paper_performance` 2026-08-17 US is `tainted=true` with the full quantified reason and the corrected reading. **`nav` is left as recorded** — the frozen-history rule in the Scoring Data-Truth Review Protocol forbids re-deciding the past. Earlier US rows (2026-08-10..14) were already tainted by the prior remediation.
+
+**Open, unresolved:** an unscoped PositionMonitor run wrote a US row tagged `snapshot_type='eod'` at 11:15 UTC (07:15 ET, pre-open) on 2026-08-18, which breaks the W4 "one canonical EOD writer per market" invariant from the other market's schedule. Not fixed here.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-17: **Codex composite/data-truth audit remediation — a stale bar could drive live exit decisions.**
+
+
+</details>
+
+**P0-1 (money path).** At 16:15 ET Monday 2026-08-17 all 13 US positions were marked, **stop-checked and target-checked** against Friday's close. `priceMap` in `position-monitor` feeds `priceForStopCheck`, the `currentPrice >= priceTarget` partial/target branch, the time-stop fill price AND the W4 mark ledger — one stale number reached every exit decision, not merely NAV display. The monitor's own `!q.stale` guard was correct; the **adapter lied**. Two defects in `lib/data/quotes.ts`: (a) `isStale()` asked "under 4 CALENDAR days old" — Friday's bar is 3.01d on Monday afternoon, so it passed; (b) `parseTickers` stamped `stale:false` unconditionally even when the price fell through to Massive's `prevDay.c`, i.e. last session's close wearing this run's timestamp. Both fixed at the adapter, so every caller inherits the correction.
+
+**W9's rule was NOT sufficient and reusing it was wrong.** `isFreshSessionDate` delegates to `lastCompletedMarketSession`, which always steps back at least one calendar day and therefore *still* names Friday at 16:15 ET Monday. That leniency is correct for its EOD-cache callers mid-session (today's bar may legitimately not exist yet) and wrong after the close. New `expectedNewestSession(market, now)` in `lib/data/completed-candles.ts` — which already owned the session-close constants — returns TODAY after a trading day's close, else the previous completed session. Callers compare with `>=` so a provisional running-session bar still passes; only the post-close case tightens.
+
+**Detector:** `tests/quote-session-freshness.test.ts` pins the exact production case (Friday bar refused Monday 16:15 ET; accepted Sat/Sun when it genuinely IS the last completed session). **Mutation-verified** — restoring `lastCompletedMarketSession` fails 2 of 4.
+
+**P0-2.** `v_decision_quality` recomputed confidence from a hardcoded per-market applicability list and reported India 0.7333 while the scorer had frozen `evidence_confidence = 1.0`. Both numbers described the same decision, and the paper-fill RPC, `/api/kite/order`, `execute-order` and Decision Review all read the view. Migration `20260817200000` makes the **observation the source of truth** (it is the contract the decision was actually made under and cannot drift when a market policy is later edited); the recomputed figure survives as diagnostic-only `structural_coverage`, and `confidence_source` records which rule produced each row. Verified behaviour-preserving BEFORE writing: across 4,628 joined rows **0 cross the 0.5 gate in either direction**; 837 change value, none change an outcome. 210 legacy rows with NULL stored confidence fall back to the derived value — without that fallback a usable number becomes NULL → `unknown` → live BUY fails closed, silently TIGHTENING a gate.
+
+**P1-3.** The deterministic breakdown veto capped technical score at 20 but the composite renormalised around it, so a strong fundamental could still clear threshold on a confirmed high-volume breakdown. Production carried 7 rows `vetoed=true` AND `entry_eligible=true` (CPCAP.NS, SIMO, APP, EXEL, MUTHOOTFIN.NS). **None reached a fill** — unrelated downstream caps caught them, which is luck, not a gate. `entryEligible` now includes `!breakdownVetoed`. **New long entries only**; PositionMonitor exits never read the flag, so a breakdown can never block getting OUT.
+
+**P1-5 (measurement only).** US macro took full 15% weight on 3-of-8 FRED indicators with `evidence_confidence=1.0`. `coverage`/`coverage_pct`/`indicators_expected` are now persisted so a partial read cannot present as complete. The weight and the `MIN_MACRO_INDICATORS=3` floor are **unchanged** — discounting or raising the floor is a live scoring change and needs a frozen shadow counterfactual first.
+
+**P1-4 deliberately NOT fixed.** Admitting weak technicals (BANKBARODA.NS composite 65 / technical 24) may be real, but the sample is small and hard-coding a technical cutoff now would be tuning on noise. Needs the same date-clustered frozen counterfactual discipline as the exit-policy work.
+
+**P2-6.** `query_learner_config` returned `strategy_config.score_threshold` (52) while the money path uses per-market `trading_mandates` (60/7%/8%) — the learner could describe and optimise a policy the system does not run. It now returns `activeMandates`; the legacy field is relabelled `legacy_score_threshold_NOT_USED`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-17: **Price target retargeted — +8% (was +20%).** The +20% swing-mandate target was structurally dead: 0/135 firings, max MFE ever 18.44% (India h10), target above p90 MFE for both markets across 1,885 matured labels. Fix is justified on reachability grounds (a target that never fires is not a target), NOT on return-improvement evidence (ATR counterfactual max t=1.35 — insufficient per predeclared `nEffective≥12` floor). New value **8%** sits at approximately p75 MFE for both markets, between average (~6%) and p90 (~12%). Three touch points updated atomically: `HORIZON_PRESETS.swing.target_pct` (`lib/trading-mandate.ts`), `resolveExecutionRiskReward` fallback (`lib/trading/trade-plan.ts`), and both `trading_mandates` DB rows + `strategy_config` display row. W2-full partial exits (restored 2026-08-17) now have a reachable trigger. Evidence frozen read-only in `docs/audits/2026-08-17-exit-policy-counterfactual.md`.
+
+2026-08-16: **W9 — the remaining `price_cache` consumers now derive freshness from the BAR'S MARKET DATE.** W1 (`lib/data/quote-freshness.ts` → `assertFreshQuote`) closed the fill and live-order boundaries. W9 closes the consumers that read `price_cache` rows directly and so never went through `getQuote` at all. One new module, `lib/data/price-cache-freshness.ts`, holds the rule for a cached BAR and **delegates the verdict to `assertFreshQuote`** — there is no second rejection taxonomy. A bar is fresh iff its date is at least `lastCompletedMarketSession(market)`; `cached_at` is never consulted, because a row re-read today is not fresh data.
+
+
+</details>
+
+- **`lib/portfolio/inputs.ts` (PaperTrader position SIZING).** `estimateDailyVolPct` read 21 `price_cache` closes with no coverage or staleness check. For the 101/140 symbols frozen at 2026-07-22 that was not merely stale but **permanently fixed** — the same Jun–Jul dispersion priced into every future trade forever. It now requires coverage (≥15 usable closes) AND freshness, and falls back to `DEFAULT_DAILY_VOL` **explicitly and observably** (`basis:"default"` + a reason + the fossil `asOf`, logged) via the new `estimateDailyVolPctDetailed`. A zero-dispersion window is also refused — 0 vol reads as infinite position size. `estimateDailyVolPct`'s bare-number signature is unchanged; `paper-trade/route.ts` was not touched. The India branch fetches Yahoo live per call and was never affected.
+- **`rescore-check`** publishes LEARNER FEEDBACK, so a wrong price here corrupts the evaluation layer scoring is calibrated against. It treated the newest cached row as "current" with no as-of check, and when no bar existed at or before the signal date it fell back to the **oldest** row in the window — measuring a window that is not the one being judged. Both now skip with a counted reason; the response carries `skipped`, `stale_symbols`, and a `degraded` flag, and `evaluated` now means "actually measurable" rather than "had any row at all".
+- **`lib/data/benchmark-series.ts`** (beta / RS) had no recency check. SPY kept filling so it kept working, but a frozen SPY would have produced a beta that looks measured and is a fossil. It now returns `{bars, asOf, stale, reason}` via `getBenchmarkSeriesStatus`; `getBenchmarkSeries` resolves to `[]` when stale or under-covered, which downstream already reads as "beta unmeasurable" — so the gate lives at the source and no caller needed changing.
+- **`supabase/functions/_shared/quotes.ts` DELETED.** It carried a divergent, weaker rule: staleness off `cached_at` (when a row was written) and `stale:false` for **all** off-hours cache. It had no importer; leaving a second rule available for reuse was the hazard.
+- **Display/LLM surfaces labelled**: `/api/markets/quote` emits `asOf`/`stale`/`staleNote`; `deep-dive` carries `asOf`/`stale` into the LLM bundle with an explicit "do not treat as today's price" instruction; the briefing prompt appends a STALE MARKS warning naming each fossil-marked position, since it reports P&L "now".
+
+**Detectors** (`tests/price-cache-freshness.test.ts`, 17 tests): a dense-but-frozen 21-close window must NOT yield a confident vol; a frozen benchmark must report stale and yield `[]`; the deleted Deno file must stay deleted; today's provisional bar must NOT be false-rejected as future-dated. Mutation-verified — neutering the rule fails 6 of them. No migration, no schema change, no production writes.
+
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-16: **W4/W5 — the NAV invariant now has teeth, and benchmark levels carry their session.** Part of the evaluation-pipeline-integrity remediation; the governing principle is that every fix ships with a check that FAILS when the fix regresses.
+
+
+</details>
+
+**W4 — the invariant was a no-op.** `position-monitor/route.ts` computed `newNav` and `invariantExpected` from the SAME reduce over the SAME array and compared them: `invariantDiff` was structurally zero and the violation branch unreachable. It was one of five checks in this incident that could only ever report green. It is replaced by `reconcilePersistedNav` (`lib/paper/marks.ts`), which re-reads `paper_portfolio.nav`, `paper_portfolio.cash_balance` and `paper_performance.nav` **out of the database after the write** and compares them against a NAV computed locally from cash plus the mark set, plus the cash-ledger identity and a mark-coverage contract. Both sides are independently sourced, so a dropped write, a rejected column, a partial upsert or a mark missing from NAV now produces a failing check. **A failed reconciliation marks the run `error`, not `done`,** and raises a critical `paper-nav-reconcile:<market>` System Health issue.
+
+**W4 — marks now carry provenance.** Positions were only re-priced when a fresh quote existed, so NAV silently blended marks of different ages. Every open qty now resolves exactly one mark tagged `live_quote` / `carry_forward` / `entry_cost` with its source and the provider's own observation time; mixed-age NAV raises a `paper-nav-stale-marks:<market>` warning naming the symbols and the stale share of position value; and every mark is written to the append-only `paper_position_marks` ledger. **The 2026-08-12 +2.70%/−2.97% NAV round trip stays permanently unattributable** — the ledger prevents a repeat, it cannot recover the past.
+
+**W4 — one canonical EOD writer per market.** `PaperTrader` ran a second same-day mark and upsert on the same `(date, market)` key `PositionMonitor` writes after the close, so an intraday snapshot could overwrite the EOD row. PaperTrader may now only CREATE today's row when none exists (tagged `snapshot_type='intraday'`); a `23505` conflict is treated as the EOD writer winning, never as a reason to clobber.
+
+**W5 — benchmark session mislabelling.** Both writers accepted any positive benchmark *quote*, ignoring `stale`/source/session, and stamped it with the cron run date: `bench_nav` 708.42 is VOO's **2026-08-11** close, stored under both 2026-08-12 and 2026-08-13. Benchmark levels now come from session-dated daily bars (`lib/paper/benchmark-observation.ts`, reusing the existing `newestBarIsStale` recency guard); the bar's own date and provider are persisted; and a level is written **only** when the bar's session equals the row's date — a gap is honest, a mislabelled number is not. `benchmark-scorecard` marks a proven mismatch `source_status='session_mismatch'` (so `loadBenchmarkLevels`, which reads only `'ok'`, excludes it) and clamps displayed coverage to 100% (US 1M reported 104.5%).
+
+**Detectors:** `tests/paper-mark-provenance.test.ts` (the reconciliation MUST fail on a disagreeing persisted NAV — the old self-comparison could not), `tests/benchmark-session-alignment.test.ts` (the previous session's close MUST be refused under today's date), `tests/paper-nav-writer-contract.test.ts` (route-shaped: no `invariantExpected`, no second EOD upsert, no benchmark-from-quote, coverage clamped).
+
+**Migration `20260816180000_paper_mark_and_benchmark_provenance.sql` APPLIED 2026-08-17.** `paper_position_marks` table live; `bench_session_date`, `bench_source`, `snapshot_type` columns on `paper_performance` live. US relative-performance figures now have session provenance.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-13: **Hybrid protective-stop PLACEMENT WORKER — Parts A–D shipped; Part E (activation) is owner-gated.** The shadow scaffold from 2026-07-18 now has a full broker-placement path, still behind the same two false-by-default gates:
+
+
+</details>
+
+**Part A — paper OHLC stop check**: `lib/data/quotes.ts` now parses `day.l`/`day.h` from Massive snapshots into `DeterministicQuote.dayLow/dayHigh`. The position-monitor (`app/api/agents/position-monitor/route.ts`) builds a `dayLowMap` and uses `priceForStopCheck = min(currentPrice, sessionLow)` — a stop touched intraday is real even if price recovers by close. Exit reason is `stop_hit_intraday` (fill at `trailingStop`).
+
+**Part B — RH capability file** (`lib/protective/robinhood-capabilities.ts`): declares `stop_market` with `timeInForce:["gtc"]`, `sessions:["regular"]`, `updateMode:"cancel_replace"`, no lifetime cap. Comments explain: RH GTC stop-market ONLY triggers in the regular session (9:30–16:00 ET); does NOT fire pre-market or after-hours; converts to market order on trigger (no limit floor, but you ARE out).
+
+**Part C — broker placement functions**: `placeRobinhoodGtcStop()` added to `lib/robinhood-mcp.ts` — same MCP session pattern as `submitRobinhoodOrder`, `timeInForce:gtc`, `type:stop`, returns `{ok,brokerOrderId}` with `needsReconcile` on ambiguous outcomes. `placeKiteStopGtt()` added to `lib/kite.ts` — single-leg GTT (`type:"single"`) SELL CNC LIMIT at stopPrice (weaker: can fail to fill on a gap). `lib/protective/kite-placement.ts` is a thin wrapper.
+
+**Part D — entry/exit wiring**: `lib/protective/placement-worker.ts` is the placement + cancel worker. It reads both gates, derives `stopPrice = entryPrice × (1 − stop_loss_pct%)` from the mandate, evaluates broker eligibility via `evaluateProtection()`, inserts a `protective_orders` row at `status='placing'`, places at broker, moves to `status='active'` (or `'failed'`). `execute-order.ts` fires `placeProtectiveStop()` fire-and-forget after every confirmed live BUY ACK. `live-exit-monitor.ts` calls `cancelProtectiveStop()` before submitting a SELL proposal — cancels the resting broker stop to prevent double-sell after the GTC stop independently triggers.
+
+**Part E (not yet done)**: flip `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE = true` in `lib/protective/coverage.ts` and set `protective_orders_enabled = true` in `strategy_config`. Both gates must be opened by owner before any broker stop is placed.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-13: **Intraday gap protection**: both the position-monitor paper check (Part A above) and the PositionMonitor now catch stops touched at any point during the session (via `day.l` from Massive snapshot), not only at the most recent quote. The overnight gap risk for paper trades is narrowed to the gap between last Massive snapshot and session open — true overnight gap is still not covered by paper (and not expected to be; paper has no broker-level orders).
+
+2026-08-07: **Property/Investing isolation is an invariant, stated here so it is testable.** No property table, adapter, scenario, forecast or decision-journal row is read by any securities score, eligibility gate, position sizing rule, order path, exit, promotion gate or broker call. The dependency runs one way only: Property consumes the shared auth, ownership, System Health and source-provenance conventions, and exports nothing into the investing money path.
+
+
+</details>
+
+Property forecasts are **shadow decision support**. They are written `state = 'shadow'`, are never a promise, and are scored only against values observed after the horizon elapsed. The Forecasts workspace **withholds a calibration rate below 10 matured outcomes** per market-and-metric cohort (`lib/property/calibration.ts`) and shows `n` regardless — at n=3 an interval-coverage percentage can only read 0, 33, 67 or 100 and would be arithmetic noise presented as evidence.
+
+Property parcel Stage 1 is evidence-only and **collection is disabled** until each county source's machine-use contract is verified. Historical Phoenix deed observations and Austin county `appraised`/`assessed` references remain preserved as evidence; the latter are tax references, never public comparable sales or Kairos market-price estimates. The worker exits before credentials, scopes, or downloads, while the UI/API reject new scope activation. Bulk evidence persists no addresses or party names and uses keyed HMAC parcel identities. The UI hard-disables every AVM/market-price/value-range claim. Repeat-sales or hedonic work remains blocked until permitted collection, multiple snapshots, correction handling, temporal validation, market-local sample floors, and measured calibration exist.
+
+Market-local honesty is enforced rather than assumed: the three active sources are US-only, so adapters declare `supportsMarket()` and the collector records `not_applicable` for Bengaluru instead of `success, 0 rows`. **No US value is ever substituted into an India market card.** Private data handling: no plaintext address, mortgage account number, owner name or uploaded document is stored; payloads are encrypted server-side and owner routes never trust a caller-supplied `owner_id`.
+
+2026-08-01 documentation truth audit: the technical breakdown guard is a hard
+cap only for an ATR-scaled fall or a 7% high-volume fall. A bottom-quartile weak
+close is warning-only. This chapter now matches the exact scoring contract in
+chapter 03 and `lib/data/technicals.ts`.
+
+2026-07-31 scoring input safety: unknown provider taxonomy cannot receive a
+fabricated P/E benchmark; implausible P/E is omitted; missing availability metadata
+cannot include a dimension; malformed macro/insider payloads remain unavailable;
+and ordinary weak closes cannot hard-veto without ATR or volume/move confirmation.
+Only the Next.js ResearchAgent writes authoritative scores. See
+`features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+Last updated: 2026-07-25 (**ETF allocation cap** — new `strategy_config.etf_allocation_cap_pct NUMERIC DEFAULT 30` (migration `20260725130000`). Soft guardrail: `executeApprovedOrder` checks BUY orders for US ETF symbols (`isEtfSymbol`) and refuses if current ETF portfolio % + this order's notional / NAV would exceed the cap. Fail-open: any DB read error warns and allows through (unlike symbol blocking which fails closed). India market skipped. SELL always allowed. Configurable 0–100 via Settings → Trading → Risk Profile → ETF Allocation Cap.)
+Prior: 2026-07-20 (**Guarded kill-switch reset + fail-closed risk reads.** Settings now reads the real `market_controls` latch and can reset it only through owner-only `POST /api/settings/kill-switch`: explicit market/book + acknowledgement, originating-book match, current breaker recheck with alert resolution suppressed, durable decision-journal audit, then latch write and matching-alert resolution. Failed config/NAV/history reads block risk increase; the legacy unscoped paper-query retry is removed, so schema/read failure cannot mix US and India risk truth. Trip reason and issue key include `paper|live`; the conservative per-market latch remains shared across books.)
+Last updated: 2026-07-19 (**Webull Trading API transport restored** — `lib/brokers/webull-trade/` is now a fully wired, permit-backed broker adapter. Key safety properties: (1) **Nine-gate ladder** (`gates.ts`) — every Webull order must clear global_trading_enabled, market_control_enabled, circuit_breakers_clear, autonomy_mode_satisfied, single_allowlisted_account (account `605420606` exclusively), orders_feature_flag (`webull_trade_orders_enabled=false` by default), credential_and_token, risk_checks, quantity_within_mandate; (2) **Permit system** — two permit kinds, `preflight` (DB flag check only) and `order` (full 9-gate evaluation); each permit is single-use and expires after 30 s; the transport refuses any request whose path/method is not on the permit's allowlist; (3) **Token preflight** — `preflight.ts` calls `POST /openapi/auth/token/check` before gate 7 to resolve live token status (`PENDING/NORMAL/INVALID/EXPIRED`) and idle-age; `assertTokenUsableForOrder()` blocks on PENDING (now explicit in types), INVALID, EXPIRED, and idle > 15 days; (4) **Single fetch locus** — `liveWebullTransport()` is the only function in the codebase that calls `fetch()` to `api.webull.com`; (5) **Signing** — HMAC-SHA1 over path + sorted params + MD5 body hash, `${appSecret}&` key, `x-access-token` header alongside HMAC headers, timestamp freshness enforced; (6) All flags remain false: `webull_trade_orders_enabled=false`, `global_trading_enabled`, and account allowlist require explicit owner activation before any order is possible. Constraint migration `20260718130000` applied: `protective_orders.mode` locked to `'wider_disaster_floor'`, `currency NOT NULL`, five new DB-enforced invariants on market/currency/broker-id/floor/order-kind/learning-provenance — zero rows in table at time of apply, all constraints verified safe.)
+Prior: 2026-07-18 (**Hybrid protective-stop SHADOW SCAFFOLD — built UP TO the placement line, no live order ever.** New pure module set under `lib/protective/`: (1) a broker-neutral `BrokerProtectiveCapabilities` matrix (`capabilities.ts`) — protection is capability-driven per order-type/TIF/session/account, never a flat broker boolean; an adapter with no eligible MULTI-DAY order for the exact position is `unprotected-by-broker`, never silently protected; (2) Kite's declared capability (`kite-capabilities.ts`) filled from the PROVEN GTT code — Kite protects via the WEAKER `gtt_limit` (LIMIT child, unfilled-trigger risk surfaced), and its DAY-only regular SL-M is declared and correctly REJECTED as a multi-day floor; (3) a pure disaster-floor calculator (`disaster-floor.ts`) parameterized by `(mode, distance)` — Q1 unanswered so `mode` defaults to `wider_disaster_floor` (outage + catastrophic-loss mitigation, NOT touch-at-analytical-stop) and the distance is a CONFIG input with no hardcoded value; monotonic ratchet so a falling high-water mark can never lower the floor; (4) a pure reconciliation loop (`reconcile.ts`) detecting out-of-band triggers, partial fills, cancels, expiry, broker edits, and corporate-action qty drift — unknown state is always `needs_reconcile`, a trigger without a confirmed fill never closes the book, a gap through a limit child is reported unprotected (not filled), expired protection is critical; (5) the state model (`state.ts`) — the `protective_order` record shape + status machine + long-only/cancel-before-replace invariants (total executable SELL never exceeds reconciled held qty; a competing SELL is blocked until cancellation is CONFIRMED). **Exit provenance (Codex's correction):** a disaster-floor fill records `exit_reason = protective_disaster_floor` and `learning_scope = risk_policy_only` — the loss STAYS in P&L, NAV, drawdown, mandate and risk-policy evaluation (real money); ONLY the Learner's signal-weight attribution + genome promotion exclude it, so broker capability can't contaminate weight learning (a generic `excluded_from_learning=true` is insufficient because the evaluation engine also filters that field). **THE MONEY LINE:** `placement-gate.ts` — a false-by-default `strategy_config.protective_orders_enabled` flag gates ALL placement and STAYS FALSE; `planProtectivePlacement()` produces the intended broker action as a plain object and NEVER calls a broker. Deterministic, NO LLM on the money path. US/India never cross (per-market capability scope). Migration `20260718000000_protective_orders_shadow.sql` written as a PROPOSAL and **NOT applied to prod** (creates `protective_orders` + append-only `protective_order_events`, adds the flag + `learning_scope` columns). 32 acceptance/unit tests in `tests/protective-hybrid-stop.test.ts` (all 14 spec acceptance tests, each falsifiable — mutation-verified: breaking the ratchet fails AT3, breaking the cancel-guard fails AT1). Gated behind owner approval of touch semantics (Q1), floor distance, and post-fill policy before anything goes live. See "Hybrid protective-stop shadow scaffold" below + `features/hybrid-stop/FEATURE_ARCHITECTURE.md`.)
+Prior: 2026-07-17 (**Research visibility on the risk surface — a DISPLAY JOIN, coupled to nothing.** `GET /api/portfolio/risk-daily` now attaches a nullable per-holding `research` block (score, direction, `scored_at`, `sessions_since`, `days_since`, `state`, `scored_as_holding`) joined from the latest `agent_signals` row per **`(symbol, market)`** — never symbol alone. **Invariant R1: no field of it is read by `computeHoldingRisk`, `sba-v1`, `constructPortfolio`, the execution kernel, or any gate** — the risk engine stays research-free BY DESIGN, because a sector is over-cap *because* research liked that sector and letting `analyst_score` also veto the cap double-counts the same signal. **Why it exists: on 2026-07-16 AVGO was 6 days unscored while this panel said "trim", and nothing on screen said so — the AGE is the feature, not the score.** Staleness is measured in market-local **SESSIONS** (reusing `marketSessionsSince`; a Friday score read Monday is 3 days but ONE session — a calendar-day rule would paint the book stale every Monday) and displayed in days. Four non-collapsed states: `fresh` (≤ 2 sessions) · `stale` (warning + day count; annotates the SCORE only, never the action) · `never` (no signal ever — deliberately NOT a link) · `unavailable` (abstained — never rendered as a number). Every annotated row is labelled a screener **candidate** score: `is_holding` is false in **463/463** prod rows, so a `neutral` there does not mean "no exit signal" — the exit question was never asked. Fail-soft: an `agent_signals` error still renders the risk table with an explicit "research unavailable". R1 is pinned behaviorally AND architecturally by `tests/risk-research-annotation.test.ts`, whose coupling detector is itself falsification-tested. Supersedes the unmerged `features/risk-research-integration` (research *ordering* trim absorption — not pursued). No schema change, no migration, no new cron, no LLM. See "Daily Per-Holding Risk Analytics" below + `features/risk-research-visibility/FEATURE_ARCHITECTURE.md`.)
+Prior: 2026-07-16 (**Sector-cap breach ALLOCATOR** — `hr-v1` → `hr-v2`. Defect fixed: a sector-cap breach is a property of the SECTOR, so `sectorUtil >= 1` was the identical number for every holding in the sector and hr-v1 handed EVERY Technology name the identical `trim` (the live AVGO advice: "Trim your position because Technology holdings exceed the 30% sector cap (at 65.6%)") without ever deciding WHICH names absorb the breach or HOW MUCH each gives up — arbitrary and unactionable. New pure module `lib/risk/sector-breach.ts` (`sba-v1`) allocates the breach deterministically by **water-fill**: trim the largest names in the sector down to a common level `L` where `Σ min(wᵢ,L) = cap`. Justified over pro-rata (which re-ships the same blanket verdict and leaves the name-cap breach untouched) and over "marginal contribution" (for a sector-weight cap, a name's marginal contribution IS its weight — the same rule with extra abstraction). NAV basis, because `live-portfolio-gate` enforces the owner's cap as `value/NAV` — the invested basis would make the advice ~43% wrong. Safety properties: **(1) exits untouched** — the `exit_review` branch is first and unconditional; no allocation, and no absence of one, can delay or suppress a protective-stop/thesis-break exit; **(2) risk-internal** — a function of weights and one owner-set cap, ZERO research/`analyst_score` coupling; **(3) defaults to honest** — a sector breach with no usable allocation yields `review` + `missing_inputs:["sector_breach_allocation"]`, NOT a fallback to the old blanket trim; **(4) sector-unknown degrades honestly** — excluded from every sector total, never bucketed into a synthetic sector, never assumed cap-compliant; **(5) LLM still prose-only** — `parseStrategyNotes` (`lib/risk/strategy-notes.ts`) can only emit `Map<requestedSymbol, string>`, proven by test. Non-selected names now say `hold` **with the reason they weren't selected**. Read-only accounts (everything but `<agentic-account-id>`) are labelled advisory-informational. No migration. See "Daily Per-Holding Risk Analytics" below + `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.)
+
+</details>
+
+2026-07-21 router proof hardening: cohort evaluation is cache-only and cannot lease, call, or enqueue provider work. ResearchAgent copies already-fetched deterministic score inputs into the canonical cache through an internal read-only adapter. Activation now requires separate `safety_pass` and `quality_pass`, a fresh selected proof, and ten distinct validated ResearchAgent `as_of_session` values in a 45-day window for the exact market/policy/code/strategy tuple. Weekend/holiday staged rows do not count. Existing rows default false and cannot authorize cutover. Router remains shadow-only, `router_enabled=false` both markets.
+
+2026-07-31 ADR safety: reviewed ADR identity is explicit, never inferred. `SKHY` uses the Nasdaq ADS and ADS-basis Yahoo fundamentals; retired/OTC proxies (`SKHYV`, `HXSCL`, `HXSCF`) are rejected by the shared paper/live symbol policy. A thin ADS source becomes unavailable rather than falling through to foreign-underlying per-share data. ADR support adds no live-trading permission and does not bypass broker review or any existing market/account/risk gate.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+Prior: 2026-07-16 (**Runtime evidence-degradation guard** — a NEW safety gate on the research entry path, shipped **measure-only**. Problem it solves: scoring renormalizes weights across *available* dimensions, so a dimension dropping out (provider outage OR a routing change) could push a symbol from ineligible→eligible on **missing data rather than new information**. The guard compares each symbol's current availability/quality mask against the last accepted market-local baseline; if a REQUIRED field degrades (fresh→stale beyond ceiling, available→missing, valid→conflict/quarantined) it abstains from any NEW long whose eligibility depends on renormalizing around that degradation. Safety properties, all enforced: **(1) strictly subtractive** — the only transformation is `long → neutral`; **`short` passes untouched in every mode**, checked before the mode branch AND enforced by a schema CHECK, so no code path can persist a guard event that *created* an entry; **(2) never suppresses an exit** — existing holdings continue through PositionMonitor's normal risk/exit logic, an evidence outage cannot block a stop or mandatory exit; **(3) defaults to abstain** (no baseline + unusable required field ⇒ abstain), and **only clean runs re-baseline**, so a persistent outage never normalizes itself; **(4) fail-safe config** — `EVIDENCE_DEGRADATION_GUARD_MODE` defaults to `measure_only` and an unparseable value ALSO falls back to measure_only, so a broken config can neither silently enforce nor silently stop recording; **(5) one aggregated health event per run**, not one alert per symbol. Modes: `off | measure_only | enforce`. **Shipped in `measure_only`** — it records what it *would* abstain and changes no direction. Flipping to `enforce` is an owner decision after observing its logged would-abstain rate. Also: `analyst.consensus` is classified narrative-only (US) / unsupported (India) and excluded from gated intents, so it can never block a cutover. Router itself remains shadow-only, `router_enabled=false` both markets.)
+
+Last updated: 2026-07-15 (LLM-discretion exit hole CLOSED — the last place LLM output could move money. Research direction gate extracted to pure `lib/signal-direction.ts` (unit-tested, `tests/signal-direction.test.ts`): held-position exit ("short") is now DETERMINISTIC — `isHeld && analystScore < mandate threshold` — the LLM's direction field NEVER sets an executable direction (previously an LLM "short" on a held name became an exit signal stored as `deterministic_v1`, and could teach the learner from LLM-created outcomes). SELL capability on holdings preserved per locked rule, now evidence-driven; LLM opinion kept advisory-only in `research_packets.raw_data._original_direction`. LearnerAgent's reassess flag renamed `llm_exit`→`score_reassess_exit` (score-only trigger); PositionMonitor honors both (legacy drain). Historical contamination verified ZERO (no closed trade ever exited via `llm_exit` or a long→short LLM flip). Entries were already deterministic; paper/live consumers already require `score_source="deterministic_v1"`.)
+Prior: 2026-07-15 (Supabase Security Advisor remediation — `20260715120000_security_rls_and_rpc_lockdown.sql`: the public anon API key could read 16 RLS-disabled `public` tables (incl. `agent_config`/`learner_config`) and call SECURITY DEFINER RPCs (`kairos_call_agent`, `activate_evidence_policy`, …) because they carried the default `GRANT EXECUTE TO PUBLIC`. Fix: RLS deny-all on 15 agent-internal tables + `authenticated`-read on `newsletters` (service_role bypasses, so agents/crons unaffected); `REVOKE EXECUTE … FROM PUBLIC` on the anon-callable definer RPCs (keeping `service_role`, and `authenticated` for the owner's `get_daily_ai_count`); pinned `search_path=public` on 15 definer/trigger fns. Verified via `get_advisors`: 0 ERROR, 0 anon-executable definer functions. Deferred WARNs: 7 always-true policies tighten at multi-tenant, `pg_net` schema move, Auth leaked-password toggle.)
+Prior: 2026-07-11 (Proactive broker-token health check — `checkRobinhoodTokenHealth` attempts a CAS refresh on the short-lived RH access token from the status route + health-triage cron (6h), reporting `broker-token:robinhood` only on a genuinely failed/absent refresh; Settings badge shows "Reconnect required" only on a real dead-refresh, else "Connected — valid until <access-token TTL>". See "Proactive broker-token health check" section. Prior: Daily Per-Holding Risk Analytics advisory surface.)
+Prior: 2026-07-11 (Codex Phase-B re-review remediation: (Codex#2/#3) the Kite identity gate no longer trusts allowlist *text* alone — `verifyKiteTradingIdentity()` (`lib/kite.ts`) now fetches Kite `/user/profile` and requires the CONNECTED token's `user_id` to equal `strategy_config.active_account_india` AND an allowlisted `broker_accounts{broker=kite,market=india,role=trading}` row. It is enforced at the single `placeEquityOrder()` choke point, so the canonical/autonomous/exit paths (via `kiteAdapter.submitOrder`) get the same check as the standalone route — not just the route. Fail-closed: config read err ⇒ 500, unset/absent/view_only ⇒ 403, profile unfetchable / user_id mismatch ⇒ 502/403. (Codex#1) the v2 budget advisory lock DROPS broker from its key (now `local_date:market:env`) so it matches the market-wide cap it guards — two brokers in one market can no longer take different locks and jointly exceed the cap. (Codex#4) migration 153 rejects non-finite (Infinity/NaN) qty/notional/cap and validates side/env/broker/symbol/order_type enums+identifiers, fail-closed. Migration 153 additive over 152 (never edited).)
+Prior: 2026-07-11 (Phase B residuals of 07_08_FULL_APP_REVIEW: A2 the standalone India Kite order route (`app/api/kite/order`) now enforces a fail-closed identity/allowlist gate — it requires `strategy_config.active_account_india` to match a `broker_accounts{broker=kite,market=india,role=trading}` row before reserving budget; unset/absent/view_only ⇒ 403 (no silent fallback), so India live is blocked until an allowlisted Kite trading row is inserted. Canonical-path *unification* still deferred. A4 read-only NAV reconciliation report `GET /api/paper/nav-reconcile` (owner-gated, zero writes) re-derives `nav == cash + Σ qty·price` per pool. A5 v2 daily-BUY budget window is market-local (America/New_York / Asia/Kolkata), not UTC; advisory lock keyed by local_date:market:broker:env. Dead edge-fn kill-switch copy deleted.)
+Prior: 2026-07-11 (Phase A P0 remediation of 07_08_FULL_APP_REVIEW: A1 kill switches take explicit `{book,accountId}` context — mode no longer inferred from live_auto_enabled; live baseline = account's own snapshot peak not START_NAV; new `sellAllowed` separates risk-increase from risk-reduction so a trip blocks BUY but not a verified SELL; `no_baseline`/`stale_snapshot` fail-close BUY only. A3 durable broker ACK (bounded DB retry → 202 needs_reconcile, never {ok:true}). A4 PositionMonitor NAV write errors now fatal. A5 budget-RPC v1/v2 EXECUTE revoked from public/anon/authenticated.)
+Prior: 2026-07-10 (Phase 1 P0: L4 enforcement, conviction normalization, India currency, duplicate SELL, cancel-on-kill BUY-only; Codex P0/P1: breakdown veto, calibration OOS gate, promotion governance.)
+
+</details>
+
+Update when any authorization, scoring eligibility, limit, account, order, reconciliation, exit, or kill-switch behavior changes.
+
+2026-08-24 instrument-family safety boundary: taxonomy and metals drivers are
+measurement-only. The actionable ETF cap and every existing paper/live gate
+remain unchanged. `instrument_family_observations`, the owner diagnostics route,
+and `family_uncapped_v1:*` shadow rows have no execution consumer. Unknown or
+leveraged/inverse classification cannot silently enter a special model. Any
+future family score requires market-local forward evidence, isolated paper,
+explicit owner promotion, and the same shared money-path controls. The family
+ledger blocks UPDATE, DELETE and TRUNCATE by grants plus triggers.
+
+2026-07-26 policy-event ledger: US FOMC schedule, official target-range outcomes, and post-event return observations are display/measurement-only. Missing market expectations render unavailable; they never become a neutral or zero surprise. The ledger has no scorer, sizing, paper, live, exit, broker, or India reader. Post-event impacts use only frozen daily-return evidence and are append-only.
+
+
+</details>
 
 ---
 
@@ -3612,14 +3882,26 @@ qualifying post-event bar exists; it does not silently expire after seven calend
 days. All earnings collectors share one real ISO-date validator, so impossible
 provider dates cannot normalize into another session. Normal scoring resumes on
 the first post-report daily bar.
-> 2026-08-08: **Property address and carrying-cost boundary.** Exact addresses,
-> loan terms, tax, insurance, and maintenance values remain owner-only encrypted. Owner-provided tax notices and insurance quotes use the same AES-256-GCM vault through `/api/property/owner-evidence`; the UI retains metadata only and does not perform OCR, extraction, automated quote comparison, or automatic cost mutation.
-> data and never enter an LLM or investing flow. API inputs are size/range
-> bounded. US geocoding fails honestly to `no_match`, `ambiguous`, or
-> `unavailable`; it never invents a parcel. Monthly cost uses the shared
-> deterministic mortgage engine, while tax/insurance/maintenance stay labelled
-> owner inputs until an official bill or quote is connected. USD and INR remain
-> independent.
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-08: **Property address and carrying-cost boundary.** Exact addresses,
+
+</details>
+
+loan terms, tax, insurance, and maintenance values remain owner-only encrypted. Owner-provided tax notices and insurance quotes use the same AES-256-GCM vault through `/api/property/owner-evidence`; the UI retains metadata only and does not perform OCR, extraction, automated quote comparison, or automatic cost mutation.
+data and never enter an LLM or investing flow. API inputs are size/range
+bounded. US geocoding fails honestly to `no_match`, `ambiguous`, or
+`unavailable`; it never invents a parcel. Monthly cost uses the shared
+deterministic mortgage engine, while tax/insurance/maintenance stay labelled
+owner inputs until an official bill or quote is connected. USD and INR remain
+independent.
+
+
+</details>
 
 ## Capital Plan boundary (2026-08-08)
 
@@ -3659,172 +3941,232 @@ excluded from readiness.
 
 # Source: docs\arch\09-learning-loop.md
 # Kairos — Learning Loop
-> 2026-09-08: **Score-return IC drift detector shipped (Stage A, detection only).**
-> Owner asked how to know which shipped feature made the score/return
-> correlation better or worse. `lib/learning/code-version-ic.ts` groups
-> `decision_observations` x `observation_labels` by `code_version` and calls
-> the EXISTING `buildDimensionFindings()` once per group — no second
-> correlation implementation, so it cannot drift from what the Dimension Rank
-> IC panel or the learner report on the same rows. `benchmark_neutral_return`
-> falls back to `fwd_return` per row (production has real fwd_return-only
-> rows: US h10 11/2633, India h5 64/934, h10 53/786, h20 91/515 — measured
-> 2026-09-08).
->
-> **This is DETECTION, not causal attribution — and never claims otherwise.**
-> Every surface (alert text, UI copy) states a dimension's IC "changed AFTER"
-> a code_version shipped, never that the version "caused" it: deploys ship
-> weeks apart and the market regime moves between them, so a before/after
-> split on code_version is confounded by construction. A real causal claim
-> needs a paired replay (Stage B, not built here).
->
-> `lib/learning/ic-regression-alert.ts::detectRegressions` flags the latest
-> code_version only when it has >=5 prior `measured_descriptive` versions to
-> compare against AND its mean IC sits more than 2 (warn) / 3 (critical)
-> **historical standard deviations** of those prior versions below their
-> mean — the threshold is derived from each dimension's own observed
-> variance, never a picked absolute IC constant. Fires via the existing
-> `lib/system-health.ts` `reportIssue`/`reconcileIssues` into `agent_alerts`
-> (no migration needed).
->
-> `applyMultipleComparisonsControl` (Benjamini-Hochberg) runs only over cells
-> that already cleared their own n/CI floor; up to ~50 code_versions x 6
-> dimensions is ~300 comparisons, and uncontrolled that would manufacture
-> roughly 15 "significant" cells by chance alone — the same trap that parked
-> "Systematic Pattern Discovery" (WORK_LOG.md 2026-09-05). ~33-37% of
-> `decision_observations` carry no `code_version` (US 2355/6298, India
-> 599/1788, measured 2026-09-08); those rows are bucketed under
-> `UNKNOWN_CODE_VERSION` and never anchor a regression boundary.
->
-> `app/api/agents/ic-regression-ledger/route.ts` (GET read-only, POST
-> cron/owner-triggered reconcile) and `components/dashboard/IcRegressionPanel.tsx`
-> (mounted on `/dashboard/learning`, below Dimension Rank IC) are new. No new
-> table: the ledger computes on read from existing evidence. The POST route
-> was NOT wired into an actual external cron trigger — this repo's dispatch
-> mechanism for `dimension-diagnostics`'s identical contract was not located
-> in `vercel.json` or `.github/workflows/` during this change; see
-> `features/score-correlation-drift/FEATURE_ARCHITECTURE.md`.
->
-> 2026-09-01: **`walkForwardFolds` purged in CALENDAR days while claiming market-horizon purge — labels leaked.** `lib/learning/dataset.ts` computed `purgeCutoffMs = testStart - horizonDays * 86400_000`. The horizon is a MARKET-session count (h2/h5/h10/h20/h60/h120), so a nominal 10-day purge spanned only ~6-7 trading sessions and training rows whose label windows still reached into the test window survived it. Every walk-forward result computed with it was optimistically biased.
->
-> Now indexed by SESSION, using the observed trading calendar derived from the distinct decision dates in the data — holidays handled without a separate calendar source. Legacy `testDays`/`horizonDays`/`embargoDays` option names are kept as aliases because they always MEANT sessions; only the arithmetic was wrong. Callers updated to the explicit `*Sessions` names.
->
-> **The old test could not have caught it:** its fixture emitted one row per consecutive CALENDAR day, weekends included, so sessions and calendar days were identical by construction — the fixture encoded the same assumption as the bug. New tests use a weekday-only calendar plus a simulated holiday gap; restoring the calendar-day arithmetic fails 4 of them.
->
-> **Blast radius: none recorded.** `validation_experiments` and `strategy_evaluations` are both empty, and the 5 `backtest_experiments` rows come from `lib/edges/oos-runner`, which does not call this function. No stored result needs annotating.
->
-> 2026-08-28/29: **Silent PostgREST truncation swept, and archetype arms now refuse instead of vanishing.** Commits `3aa3753f`, `ae17fad2`.
->
-> `.limit(n)` above PostgREST's server maximum is IGNORED, not an error — the response is capped at 1,000 rows and returns success. Four call sites were actively truncating:
->
-> | site | rows | actually read |
-> |---|---:|---:|
-> | `lib/learning/dataset.ts` | 5,223 | 1,000 — **the learner, oldest fifth of the US cohort** |
-> | `app/api/admin/readiness` | 5,223 | 1,000 — gates the `autonomous` tier |
-> | `app/api/analytics/atr-exit-evidence` | 2,976 | 1,000 |
-> | `app/api/agents/exit-geometry-shadow` | 2,412 | 1,000 |
->
-> The dimension loader was the same defect, found first: US h5 had 2,445 rows across 30 dates and read 1,000 across 16, so **every US dimension IC recorded before `3aa3753f` used ~40% of the evidence and half the calendar**. India sat under the cap, which is why a cross-market read never exposed it. Dimension plan version `v4` → `v5`; the truncated v4 rows are kept as recorded and superseded.
->
-> `lib/supabase/paginate.ts` (`fetchAllRows`) is now the single reader: orders by a unique column, treats a short page as the last page, requests one more page when the total is an exact multiple, and refuses past 200 pages rather than return a partial result. Four latent sites were converted too. `lib/chart-data.ts` is the documented exception — a cache-freshness probe where truncation fails safe by re-fetching.
->
-> `lib/learning/dataset.ts` also stopped swallowing read failures into an empty dataset. The old `if (obsErr || !rows?.length) return []` made a broken query indistinguishable from a quiet day.
->
-> **Archetype arms no longer disappear.** `loadRows` inner-joins matured labels, so an arm whose observations have not matured was dropped before grouping and never reached the eligible-rows check — in production that erased 6 of 8 US arms and all 3 India arms, reading in the ledger as "never ran". The route now enumerates every arm that has recorded a shadow score and emits an explicit refusal, distinguishing `no_matured_labels` ("Not a negative result") from `no_eligible_rows`. `archetype_ic_runs.cohort` records the population (migration `20260828163000`, applied and verified).
->
-> Post-fix state, `as_of_date` 2026-08-29, all rows `cohort = eligible_long`:
->
-> | market | arms | rows | refusals (no matured labels) | rows with an IC |
-> |---|---:|---:|---:|---:|
-> | us | 8/8 | 16 | 12 | 2 |
-> | india | 3/3 | 6 | 6 | 0 |
->
-> The only graded arm is `etf_trend`: h10 +0.024 vs champion +0.056, h20 +0.048 vs champion +0.109, on 8-10 sessions against a 20-session floor. `insufficient_evidence`, not a result. **18 of 22 rows are refusals for want of matured labels** — that is the honest state of the learning loop, and it is strictly better than the silence it replaced.
->
-> 2026-08-28: **Every predictive headline now measures the eligible-long cohort.** `lib/learning/entry-cohort.ts` is the single definition (`entry_eligible = true AND direction = 'long'`), shared by the Alpha Diagnostic Lab's A2, the dimension diagnostics, and the archetype grader so the three cannot drift apart.
->
-> The bug: dimension IC (`lib/learning/dimension-diagnostics.ts`) and archetype IC (`app/api/agents/archetype-ic/route.ts`) both computed rank IC over ALL scored observations, including `neutral` and `short` rows the book could never buy. `entryEligible` was loaded but only fed a mean-return summary field, never the IC itself; the archetype select carried no cohort filter at all. Production: 4,075 of 6,592 observations are eligible-long, so roughly 38% of every IC ever reported came from names that were not purchasable.
->
-> | h10 rank IC | all-scored | eligible-long |
-> |---|---|---|
-> | us | -0.0101 | **-0.0768** (21 dates) |
-> | india | **+0.1046** | **-0.0083** (17 dates) |
->
-> Both are `insufficient_evidence` against the 60-date floor. **The India "+0.105 selection edge" cited throughout this chapter was the all-scored number.** Two published diagnoses were retracted for it on the same day (`docs/audits/2026-08-28-sizing-damage-diagnosis.md`, both CORRECTION sections).
->
-> What changed, all measure-only — no score, weight, threshold, sizing, stop, target, eligibility or trading behaviour was touched:
-> - Dimension `predictive` and agent `contribution` findings compute the headline on the eligible cohort and nest the all-scored figures under `all_scored_context` with an explicit "never cite this" interpretation string. No migration: `finding_type` stays inside its existing CHECK constraint.
-> - Plan version `dimension_diagnostics_p0_v3` → `**_v4**`. The metric changed meaning, so v3 rows are not reinterpreted or compared against v4 ones (frozen-history rule).
-> - `diagnosticFingerprint` now includes the cohort flag, so an eligibility-rule correction cannot reuse a recorded run.
-> - The archetype grader filters before grading. An arm with no eligible rows (`etf_trend` scores only ETFs) records `emptyArchetypeResult` — an explicit refusal — rather than vanishing from the ledger and reading as "not run yet". `archetype_ic_runs` has no cohort column, so it stores the eligible-long grade only and says so in `reason`.
-> - Four mutation-verified detectors: replacing the predicate with `return true` fails all four.
->
-> **Still unverified:** the per-dimension figures that motivated the archetype instrument (`us fundamental +0.076 t=2.40`, `india technical +0.173 t=2.51`) are all-scored and have NOT been re-derived. The header comment in `lib/learning/archetype-ic.ts` now says so. `lib/edges/*` also computes IC and was not audited here.
->
-> 2026-08-28: **Alpha Diagnostic Lab P0 shipped** (`features/alpha-diagnostic-lab/`). Read-only funnel diagnosis per market, weekly. A0 data truth gates everything; the strongest verdict is `owner_review` and no money path reads it. Full record incl. the seven defects found by running it: `features/alpha-diagnostic-lab/IMPLEMENTATION_RESULT.md`.
->
-> First production run, both markets `A0 pass`, verdict `collect_more` (nothing clears the 60-date review floor):
->
-> | | us | india |
-> |---|---|---|
-> | A2 rank IC h10 | **-0.012** (t -0.22, 17 dates) | **+0.105** (t 2.24, 22 dates) |
-> | A2 mean quintile spread | **-0.006** | +0.010 |
-> | A3 percent profit factor | 0.969 | **1.438** |
-> | A3 currency profit factor | 0.735 | **0.906** |
-> | A3 sizing damage | no | **YES** |
->
-> **SUPERSEDED 2026-08-28 (see the entry at the top of this chapter).** The A2 figures in the table above are the ALL-SCORED cohort. On the eligible-long cohort India is -0.0083 and the US -0.0768, so "India picks winners and the sizing destroys them" is not supported — there is no demonstrated selection edge in either entry cohort. The original claim, left here as the record: India picks winners and the sizing destroys them; the US selection does not rank and its quintile spread is negative. The "independent reproduction" of +0.105 against the +0.106 measured on 2026-08-25 was two runs of the same cohort error, not a confirmation.
->
-> 2026-08-25: **The weighting arms are now graded, and a `fundamental_only` arm was added.**
->
-> Seven archetype weight sets record a score for every observation in `shadow_decisions`, and until today nothing evaluated them: the only consumer computed the share of shadow rows that were bullish, and its own comment admits that is not a comparison to the champion. `/api/agents/archetype-ic` (weekly, per market) now grades each `setup_type` by Spearman rank IC against `benchmark_neutral_return`, next to the champion composite measured on the SAME observations - `etf_trend` only ever scores ETFs, so a whole-market champion baseline would compare different universes.
->
-> Guards carried over from the dimension-diagnostics work, each mutation-verified: dedupe to one row per (market, symbol, date, setup_type) because the research cron writes 2-3x daily; rank IC rather than Pearson; and the overlap-corrected floor `n / horizonDays >= 12` on top of the 20-date floor.
->
-> **Why the `fundamental_only` arm exists.** Measured h10 rank IC, deduped, single stocks:
->
-> | market | best single dimension | champion composite |
-> |---|---|---|
-> | us | fundamental **+0.076** (t=2.40) | +0.051 (t=0.93) |
-> | india | technical **+0.173** (t=2.51) | +0.106 (t=2.04) |
->
-> Both composites rank worse than their own best dimension. `value_inflection` (fundamental 0.45) only half-tests that; the new arm isolates it. It runs in BOTH markets deliberately - India's edge is technical, so the arm is expected to score poorly there, and an arm that only ever runs where it is expected to win proves nothing.
->
-> **Caller contract, and it is load-bearing:** the arm is skipped unless `included.fundamental === true`. `computeWeightedAnalystScore` equal-splits across included dimensions when every included dimension has weight zero, so scoring a `{fundamental: 1.0}` set on a symbol with no fundamental evidence would silently yield an equal-weight technical/sentiment/macro blend - an arm labelled `fundamental_only` containing no fundamental at all.
->
-> **Timeline.** Four of the seven arms only began writing on 2026-08-25 (the multi-expert uniqueness index landed 08-24; before it, only the first archetype in each routing array survived, which is why just `etf_trend` and `quality_momentum` existed). Their h10 labels mature ~2026-09-08; >=20 decision dates lands ~late October. Every read before then returns `insufficient_evidence`, by design.
->
+<details>
+<summary>Historical implementation note (source-preserved)</summary>
 
-> 2026-08-18: **Promotion gate segments IC evidence by PROVIDER REGIME.** Same-day companion to the Yahoo-first candle move below. `edge_ic_history` now contains rows computed on two different data sources, and `app/api/agents/backtest/promote` reads a 1000-day window — so without segmentation the cross-window stability check would compare a Yahoo latest window against a Massive earliest window and report the difference as "stability". `providerRegimeKey()` derives a regime from each row's `provider_report.providerCounts` using the DOMINANT provider (not the exact count map: `{eodhd:20,massive:6}` and `{eodhd:19,massive:7}` are one regime, and keying on counts would over-segment on run jitter and starve the gate). `evaluateGate` then evaluates ONLY the trailing run of windows sharing the latest regime and drops older ones — never blends them.
->
-> **It fails closed straight after a provider change**, with `insufficient_windows_in_provider_regime:n<3:<regime>`. That is the intended answer: after switching candle sources the honest state is "not enough clean evidence yet", not a promotion computed on mixed measurements. A window whose `providerCounts` is missing or empty yields `provider_regime_unknown` and also fails — a window that cannot name the data it was computed on cannot be shown to be like-for-like. Passing no `providerRegimes` preserves the previous behaviour exactly, so existing callers and tests are unaffected.
->
-> **This route remains DORMANT/measure-only and must not write a policy** — the change hardens the gate for whenever promotion is re-enabled; it does not alter live behaviour today. Mutation-verified: neutering the segmentation fails 5 tests. No historical row was rewritten.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
 
-> 2026-08-18: **Edge/IC candles route Yahoo-first for BOTH markets** (`lib/edges/data.ts::resolveCandles`, owner-approved, build-order step 4 of `features/walk-forward-ic-folds/`). Massive is plan-capped at a 2-year lookback, which held US IC history to ~12 usable non-overlapping h20 as-of dates — below the 12/fold floor, so walk-forward IC folds were unbuildable on US. Yahoo serves 5y (~50 dates), keyless and unpaced. It also ends the EODHD exhaustion: Massive per-symbol candles are paced at 12.5s (5/min), so a ~300-symbol EdgeScout run cascaded into EODHD's 20/day free tier (measured 2026-08-17: Massive 12, EODHD 20 = its cap, TwelveData 24, remainder unavailable).
->
-> **`fetchUsCandles` — the main research path — is untouched.** It has its own local 1y Yahoo fetcher; live ResearchAgent scoring inputs did not move. Two files carried a comment claiming otherwise; both were false and are corrected. `resolveCandles` is reached only from `edges/compute.ts` and `edges/ic.ts`, both measure-only, and `research-agent.ts` imports nothing from `lib/edges`.
->
-> **Discontinuity, stated because a promotion gate reads this table.** `edge_ic_history` rows from 2026-08-18 are computed on Yahoo bars where earlier rows used Massive/EODHD/TwelveData. Per-run `providerCounts` records which, so it is attributable rather than silent — but rows either side are NOT like-for-like. `lib/gates/promotion-gate.ts` reads a 1000-day window, so a promotion evaluated across the boundary mixes sources; segment by `providerCounts` before reading an IC change as signal. No historical row was rewritten.
-> **2026-08-01 weight-resolution correction:** live ResearchAgent scoring reads
-> the market champion, then the static risk-profile baseline. `learning_priors`
-> and global `signal_weights` are learner configuration/proposal inputs, not
-> hidden live-score fallbacks; challengers remain inert until validation and
-> explicit promotion.
->
-> **2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
-> **2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
-> **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
-> Last updated: 2026-09-02 (per-session IC series + t-stat + Learning-page panel; h60/h120 evaluation horizons — see "Evaluation
-> horizons are decoupled from holding period"; 2026-08-16 label-maturation
-> coverage + starvation W7/W8 — see
-> "Label maturation: coverage, budgets and skip accounting"). Prior note
-> 2026-07-27: The deterministic promotion route is implemented
-> but is governance scaffolding only: production has zero policies, its rolling
-> IC windows are not OOS, its current-universe history is not PIT, its
-> trial-adjusted t margin is not DSR, and supersede/insert is not atomic. The
-> revised `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is a blocking
-> prerequisite before policy promotion or consumption.
-> Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
+2026-09-08: **Score-return IC drift detector shipped (Stage A, detection only).**
+
+</details>
+
+Owner asked how to know which shipped feature made the score/return
+correlation better or worse. `lib/learning/code-version-ic.ts` groups
+`decision_observations` x `observation_labels` by `code_version` and calls
+the EXISTING `buildDimensionFindings()` once per group — no second
+correlation implementation, so it cannot drift from what the Dimension Rank
+IC panel or the learner report on the same rows. `benchmark_neutral_return`
+falls back to `fwd_return` per row (production has real fwd_return-only
+rows: US h10 11/2633, India h5 64/934, h10 53/786, h20 91/515 — measured
+2026-09-08).
+
+**This is DETECTION, not causal attribution — and never claims otherwise.**
+Every surface (alert text, UI copy) states a dimension's IC "changed AFTER"
+a code_version shipped, never that the version "caused" it: deploys ship
+weeks apart and the market regime moves between them, so a before/after
+split on code_version is confounded by construction. A real causal claim
+needs a paired replay (Stage B, not built here).
+
+`lib/learning/ic-regression-alert.ts::detectRegressions` flags the latest
+code_version only when it has >=5 prior `measured_descriptive` versions to
+compare against AND its mean IC sits more than 2 (warn) / 3 (critical)
+**historical standard deviations** of those prior versions below their
+mean — the threshold is derived from each dimension's own observed
+variance, never a picked absolute IC constant. Fires via the existing
+`lib/system-health.ts` `reportIssue`/`reconcileIssues` into `agent_alerts`
+(no migration needed).
+
+`applyMultipleComparisonsControl` (Benjamini-Hochberg) runs only over cells
+that already cleared their own n/CI floor; up to ~50 code_versions x 6
+dimensions is ~300 comparisons, and uncontrolled that would manufacture
+roughly 15 "significant" cells by chance alone — the same trap that parked
+"Systematic Pattern Discovery" (WORK_LOG.md 2026-09-05). ~33-37% of
+`decision_observations` carry no `code_version` (US 2355/6298, India
+599/1788, measured 2026-09-08); those rows are bucketed under
+`UNKNOWN_CODE_VERSION` and never anchor a regression boundary.
+
+`app/api/agents/ic-regression-ledger/route.ts` (GET read-only, POST
+cron/owner-triggered reconcile) and `components/dashboard/IcRegressionPanel.tsx`
+(mounted on `/dashboard/learning`, below Dimension Rank IC) are new. No new
+table: the ledger computes on read from existing evidence. The POST route
+was NOT wired into an actual external cron trigger — this repo's dispatch
+mechanism for `dimension-diagnostics`'s identical contract was not located
+in `vercel.json` or `.github/workflows/` during this change; see
+`features/score-correlation-drift/FEATURE_ARCHITECTURE.md`.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-09-01: **`walkForwardFolds` purged in CALENDAR days while claiming market-horizon purge — labels leaked.** `lib/learning/dataset.ts` computed `purgeCutoffMs = testStart - horizonDays * 86400_000`. The horizon is a MARKET-session count (h2/h5/h10/h20/h60/h120), so a nominal 10-day purge spanned only ~6-7 trading sessions and training rows whose label windows still reached into the test window survived it. Every walk-forward result computed with it was optimistically biased.
+
+
+</details>
+
+Now indexed by SESSION, using the observed trading calendar derived from the distinct decision dates in the data — holidays handled without a separate calendar source. Legacy `testDays`/`horizonDays`/`embargoDays` option names are kept as aliases because they always MEANT sessions; only the arithmetic was wrong. Callers updated to the explicit `*Sessions` names.
+
+**The old test could not have caught it:** its fixture emitted one row per consecutive CALENDAR day, weekends included, so sessions and calendar days were identical by construction — the fixture encoded the same assumption as the bug. New tests use a weekday-only calendar plus a simulated holiday gap; restoring the calendar-day arithmetic fails 4 of them.
+
+**Blast radius: none recorded.** `validation_experiments` and `strategy_evaluations` are both empty, and the 5 `backtest_experiments` rows come from `lib/edges/oos-runner`, which does not call this function. No stored result needs annotating.
+
+2026-08-28/29: **Silent PostgREST truncation swept, and archetype arms now refuse instead of vanishing.** Commits `3aa3753f`, `ae17fad2`.
+
+`.limit(n)` above PostgREST's server maximum is IGNORED, not an error — the response is capped at 1,000 rows and returns success. Four call sites were actively truncating:
+
+| site | rows | actually read |
+|---|---:|---:|
+| `lib/learning/dataset.ts` | 5,223 | 1,000 — **the learner, oldest fifth of the US cohort** |
+| `app/api/admin/readiness` | 5,223 | 1,000 — gates the `autonomous` tier |
+| `app/api/analytics/atr-exit-evidence` | 2,976 | 1,000 |
+| `app/api/agents/exit-geometry-shadow` | 2,412 | 1,000 |
+
+The dimension loader was the same defect, found first: US h5 had 2,445 rows across 30 dates and read 1,000 across 16, so **every US dimension IC recorded before `3aa3753f` used ~40% of the evidence and half the calendar**. India sat under the cap, which is why a cross-market read never exposed it. Dimension plan version `v4` → `v5`; the truncated v4 rows are kept as recorded and superseded.
+
+`lib/supabase/paginate.ts` (`fetchAllRows`) is now the single reader: orders by a unique column, treats a short page as the last page, requests one more page when the total is an exact multiple, and refuses past 200 pages rather than return a partial result. Four latent sites were converted too. `lib/chart-data.ts` is the documented exception — a cache-freshness probe where truncation fails safe by re-fetching.
+
+`lib/learning/dataset.ts` also stopped swallowing read failures into an empty dataset. The old `if (obsErr || !rows?.length) return []` made a broken query indistinguishable from a quiet day.
+
+**Archetype arms no longer disappear.** `loadRows` inner-joins matured labels, so an arm whose observations have not matured was dropped before grouping and never reached the eligible-rows check — in production that erased 6 of 8 US arms and all 3 India arms, reading in the ledger as "never ran". The route now enumerates every arm that has recorded a shadow score and emits an explicit refusal, distinguishing `no_matured_labels` ("Not a negative result") from `no_eligible_rows`. `archetype_ic_runs.cohort` records the population (migration `20260828163000`, applied and verified).
+
+Post-fix state, `as_of_date` 2026-08-29, all rows `cohort = eligible_long`:
+
+| market | arms | rows | refusals (no matured labels) | rows with an IC |
+|---|---:|---:|---:|---:|
+| us | 8/8 | 16 | 12 | 2 |
+| india | 3/3 | 6 | 6 | 0 |
+
+The only graded arm is `etf_trend`: h10 +0.024 vs champion +0.056, h20 +0.048 vs champion +0.109, on 8-10 sessions against a 20-session floor. `insufficient_evidence`, not a result. **18 of 22 rows are refusals for want of matured labels** — that is the honest state of the learning loop, and it is strictly better than the silence it replaced.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-28: **Every predictive headline now measures the eligible-long cohort.** `lib/learning/entry-cohort.ts` is the single definition (`entry_eligible = true AND direction = 'long'`), shared by the Alpha Diagnostic Lab's A2, the dimension diagnostics, and the archetype grader so the three cannot drift apart.
+
+
+</details>
+
+The bug: dimension IC (`lib/learning/dimension-diagnostics.ts`) and archetype IC (`app/api/agents/archetype-ic/route.ts`) both computed rank IC over ALL scored observations, including `neutral` and `short` rows the book could never buy. `entryEligible` was loaded but only fed a mean-return summary field, never the IC itself; the archetype select carried no cohort filter at all. Production: 4,075 of 6,592 observations are eligible-long, so roughly 38% of every IC ever reported came from names that were not purchasable.
+
+| h10 rank IC | all-scored | eligible-long |
+|---|---|---|
+| us | -0.0101 | **-0.0768** (21 dates) |
+| india | **+0.1046** | **-0.0083** (17 dates) |
+
+Both are `insufficient_evidence` against the 60-date floor. **The India "+0.105 selection edge" cited throughout this chapter was the all-scored number.** Two published diagnoses were retracted for it on the same day (`docs/audits/2026-08-28-sizing-damage-diagnosis.md`, both CORRECTION sections).
+
+What changed, all measure-only — no score, weight, threshold, sizing, stop, target, eligibility or trading behaviour was touched:
+- Dimension `predictive` and agent `contribution` findings compute the headline on the eligible cohort and nest the all-scored figures under `all_scored_context` with an explicit "never cite this" interpretation string. No migration: `finding_type` stays inside its existing CHECK constraint.
+- Plan version `dimension_diagnostics_p0_v3` → `**_v4**`. The metric changed meaning, so v3 rows are not reinterpreted or compared against v4 ones (frozen-history rule).
+- `diagnosticFingerprint` now includes the cohort flag, so an eligibility-rule correction cannot reuse a recorded run.
+- The archetype grader filters before grading. An arm with no eligible rows (`etf_trend` scores only ETFs) records `emptyArchetypeResult` — an explicit refusal — rather than vanishing from the ledger and reading as "not run yet". `archetype_ic_runs` has no cohort column, so it stores the eligible-long grade only and says so in `reason`.
+- Four mutation-verified detectors: replacing the predicate with `return true` fails all four.
+
+**Still unverified:** the per-dimension figures that motivated the archetype instrument (`us fundamental +0.076 t=2.40`, `india technical +0.173 t=2.51`) are all-scored and have NOT been re-derived. The header comment in `lib/learning/archetype-ic.ts` now says so. `lib/edges/*` also computes IC and was not audited here.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-28: **Alpha Diagnostic Lab P0 shipped** (`features/alpha-diagnostic-lab/`). Read-only funnel diagnosis per market, weekly. A0 data truth gates everything; the strongest verdict is `owner_review` and no money path reads it. Full record incl. the seven defects found by running it: `features/alpha-diagnostic-lab/IMPLEMENTATION_RESULT.md`.
+
+
+</details>
+
+First production run, both markets `A0 pass`, verdict `collect_more` (nothing clears the 60-date review floor):
+
+| | us | india |
+|---|---|---|
+| A2 rank IC h10 | **-0.012** (t -0.22, 17 dates) | **+0.105** (t 2.24, 22 dates) |
+| A2 mean quintile spread | **-0.006** | +0.010 |
+| A3 percent profit factor | 0.969 | **1.438** |
+| A3 currency profit factor | 0.735 | **0.906** |
+| A3 sizing damage | no | **YES** |
+
+**SUPERSEDED 2026-08-28 (see the entry at the top of this chapter).** The A2 figures in the table above are the ALL-SCORED cohort. On the eligible-long cohort India is -0.0083 and the US -0.0768, so "India picks winners and the sizing destroys them" is not supported — there is no demonstrated selection edge in either entry cohort. The original claim, left here as the record: India picks winners and the sizing destroys them; the US selection does not rank and its quintile spread is negative. The "independent reproduction" of +0.105 against the +0.106 measured on 2026-08-25 was two runs of the same cohort error, not a confirmation.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-25: **The weighting arms are now graded, and a `fundamental_only` arm was added.**
+
+
+</details>
+
+Seven archetype weight sets record a score for every observation in `shadow_decisions`, and until today nothing evaluated them: the only consumer computed the share of shadow rows that were bullish, and its own comment admits that is not a comparison to the champion. `/api/agents/archetype-ic` (weekly, per market) now grades each `setup_type` by Spearman rank IC against `benchmark_neutral_return`, next to the champion composite measured on the SAME observations - `etf_trend` only ever scores ETFs, so a whole-market champion baseline would compare different universes.
+
+Guards carried over from the dimension-diagnostics work, each mutation-verified: dedupe to one row per (market, symbol, date, setup_type) because the research cron writes 2-3x daily; rank IC rather than Pearson; and the overlap-corrected floor `n / horizonDays >= 12` on top of the 20-date floor.
+
+**Why the `fundamental_only` arm exists.** Measured h10 rank IC, deduped, single stocks:
+
+| market | best single dimension | champion composite |
+|---|---|---|
+| us | fundamental **+0.076** (t=2.40) | +0.051 (t=0.93) |
+| india | technical **+0.173** (t=2.51) | +0.106 (t=2.04) |
+
+Both composites rank worse than their own best dimension. `value_inflection` (fundamental 0.45) only half-tests that; the new arm isolates it. It runs in BOTH markets deliberately - India's edge is technical, so the arm is expected to score poorly there, and an arm that only ever runs where it is expected to win proves nothing.
+
+**Caller contract, and it is load-bearing:** the arm is skipped unless `included.fundamental === true`. `computeWeightedAnalystScore` equal-splits across included dimensions when every included dimension has weight zero, so scoring a `{fundamental: 1.0}` set on a symbol with no fundamental evidence would silently yield an equal-weight technical/sentiment/macro blend - an arm labelled `fundamental_only` containing no fundamental at all.
+
+**Timeline.** Four of the seven arms only began writing on 2026-08-25 (the multi-expert uniqueness index landed 08-24; before it, only the first archetype in each routing array survived, which is why just `etf_trend` and `quality_momentum` existed). Their h10 labels mature ~2026-09-08; >=20 decision dates lands ~late October. Every read before then returns `insufficient_evidence`, by design.
+
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **Promotion gate segments IC evidence by PROVIDER REGIME.** Same-day companion to the Yahoo-first candle move below. `edge_ic_history` now contains rows computed on two different data sources, and `app/api/agents/backtest/promote` reads a 1000-day window — so without segmentation the cross-window stability check would compare a Yahoo latest window against a Massive earliest window and report the difference as "stability". `providerRegimeKey()` derives a regime from each row's `provider_report.providerCounts` using the DOMINANT provider (not the exact count map: `{eodhd:20,massive:6}` and `{eodhd:19,massive:7}` are one regime, and keying on counts would over-segment on run jitter and starve the gate). `evaluateGate` then evaluates ONLY the trailing run of windows sharing the latest regime and drops older ones — never blends them.
+
+
+</details>
+
+**It fails closed straight after a provider change**, with `insufficient_windows_in_provider_regime:n<3:<regime>`. That is the intended answer: after switching candle sources the honest state is "not enough clean evidence yet", not a promotion computed on mixed measurements. A window whose `providerCounts` is missing or empty yields `provider_regime_unknown` and also fails — a window that cannot name the data it was computed on cannot be shown to be like-for-like. Passing no `providerRegimes` preserves the previous behaviour exactly, so existing callers and tests are unaffected.
+
+**This route remains DORMANT/measure-only and must not write a policy** — the change hardens the gate for whenever promotion is re-enabled; it does not alter live behaviour today. Mutation-verified: neutering the segmentation fails 5 tests. No historical row was rewritten.
+
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-08-18: **Edge/IC candles route Yahoo-first for BOTH markets** (`lib/edges/data.ts::resolveCandles`, owner-approved, build-order step 4 of `features/walk-forward-ic-folds/`). Massive is plan-capped at a 2-year lookback, which held US IC history to ~12 usable non-overlapping h20 as-of dates — below the 12/fold floor, so walk-forward IC folds were unbuildable on US. Yahoo serves 5y (~50 dates), keyless and unpaced. It also ends the EODHD exhaustion: Massive per-symbol candles are paced at 12.5s (5/min), so a ~300-symbol EdgeScout run cascaded into EODHD's 20/day free tier (measured 2026-08-17: Massive 12, EODHD 20 = its cap, TwelveData 24, remainder unavailable).
+
+
+</details>
+
+**`fetchUsCandles` — the main research path — is untouched.** It has its own local 1y Yahoo fetcher; live ResearchAgent scoring inputs did not move. Two files carried a comment claiming otherwise; both were false and are corrected. `resolveCandles` is reached only from `edges/compute.ts` and `edges/ic.ts`, both measure-only, and `research-agent.ts` imports nothing from `lib/edges`.
+
+**Discontinuity, stated because a promotion gate reads this table.** `edge_ic_history` rows from 2026-08-18 are computed on Yahoo bars where earlier rows used Massive/EODHD/TwelveData. Per-run `providerCounts` records which, so it is attributable rather than silent — but rows either side are NOT like-for-like. `lib/gates/promotion-gate.ts` reads a 1000-day window, so a promotion evaluated across the boundary mixes sources; segment by `providerCounts` before reading an IC change as signal. No historical row was rewritten.
+**2026-08-01 weight-resolution correction:** live ResearchAgent scoring reads
+the market champion, then the static risk-profile baseline. `learning_priors`
+and global `signal_weights` are learner configuration/proposal inputs, not
+hidden live-score fallbacks; challengers remain inert until validation and
+explicit promotion.
+
+**2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
+**2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
+**PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+Last updated: 2026-09-02 (per-session IC series + t-stat + Learning-page panel; h60/h120 evaluation horizons — see "Evaluation
+
+</details>
+
+horizons are decoupled from holding period"; 2026-08-16 label-maturation
+coverage + starvation W7/W8 — see
+"Label maturation: coverage, budgets and skip accounting"). Prior note
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
+2026-07-27: The deterministic promotion route is implemented
+
+</details>
+
+but is governance scaffolding only: production has zero policies, its rolling
+IC windows are not OOS, its current-universe history is not PIT, its
+trial-adjusted t margin is not DSR, and supersede/insert is not atomic. The
+revised `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is a blocking
+prerequisite before policy promotion or consumption.
+Update this file when: the learning flow changes, new guardrails are added to weight mutation, genome parameters change, Phase 1 unlocks, the RAG pipeline changes, or Performance Truth Layer evaluation logic changes.
+
+
+</details>
 
 ---
 
@@ -3903,7 +4245,13 @@ nothing.
 
 Fixed by `20260824170000_shadow_decisions_multi_expert_uniqueness.sql`, which
 re-keys the NULL-policy index to `(observation_id, setup_type)`. Verified on
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 2026-08-25: all six archetypes plus `family_uncapped_v1:*` now write in both
+
+</details>
+
 markets. No code change was needed; P0b (India coverage) and P0c (missing
 archetypes) were both this one index.
 
@@ -20065,7 +20413,13 @@ new experiment binding.
 > `features/local-historical-replay/FEATURE_ARCHITECTURE.md` and extend the existing
 > immutable `backtest_experiments` ledger.
 
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-29
+
+</details>
+
 Owner: Vaibhav
 Requirement: `CLAUDE_CODE_POST_UPGRADE_FIX_PROMPT.md` — Required test **15**.
 
@@ -25637,7 +25991,13 @@ MetaLearner), `05-crons-and-scheduling.md` (per-user fan-out),
 # Source: features\nav-restructure\FEATURE_ARCHITECTURE.md
 # Feature: Left-nav restructure (funnel order + surface LLM config)
 
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-12
+
+</details>
+
 Update this file when: NAV_SECTIONS changes, a route is added/removed/renamed, or the
 LLM-config entry point moves.
 
@@ -26284,7 +26644,13 @@ The projection is assembled on the server. The client receives only display data
   (dropped the hardcoded US VOO/QQQ fetch — fixed the US-index-on-India leak).
 - LiveHoldingsTab is market-aware: US → Robinhood ($), India → Zerodha Kite (₹) via
   new owner-gated `/api/kite/holdings` (read-only). Fixes the Robinhood-on-India leak.
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-08
+
+
+</details>
 
 ## Why
 
@@ -26810,7 +27176,13 @@ trim drivers only.
 # Source: features\performance-truth\FEATURE_ARCHITECTURE.md
 # Performance Truth Layer — Feature Architecture
 
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-09 (v2 — post Codex BLOCKER/HIGH review)  
+
+</details>
+
 Status: **P0 — awaiting approval before any implementation**
 
 ---
@@ -27459,7 +27831,13 @@ flowchart LR
 STATUS: DRAFT — awaiting owner approval
 Owner: —
 Author: architecture proposal (deep-audit P1 remediation)
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-10
+
+
+</details>
 
 ---
 
@@ -34319,7 +34697,13 @@ routing; deepseek A/B stays deepseek). Part 2 — `lib/llm-keys.ts` (`getProvide
 vault-first/env-fallback + status/set/clear), owner-gated `app/api/agents/provider-keys`,
 router + guards + model-check made vault-aware, Providers card in the LLM Config tab
 (write-only, masked, clear-to-revert-to-env).
+<details>
+<summary>Historical implementation notes (source-preserved)</summary>
+
 Last updated: 2026-07-08
+
+
+</details>
 
 ## Goal (user ask)
 "I should be able to choose the LLM and its API through Settings, so the app can
