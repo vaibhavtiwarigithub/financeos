@@ -58,6 +58,8 @@ export interface ExitLadderInput {
   avgEntry: number;
   /** Latest price. */
   price: number;
+  /** Highest traded price observed in this session, when an OHLC mark exists. */
+  targetCheckPrice?: number;
   /**
    * Lowest price to consider for a stop touch this session. Paper passes
    * min(close, session low) so an intraday touch that recovered by close still
@@ -155,7 +157,8 @@ export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
   const trailingStop = Math.max(priorTrailingStop, highestPrice * anchorPct);
   const base = { trailingStop, highestPrice };
 
-  if (!input.isHedge && input.priceTarget != null && input.price >= input.priceTarget) {
+  const targetCheckPrice = input.targetCheckPrice ?? input.price;
+  if (!input.isHedge && input.priceTarget != null && targetCheckPrice >= input.priceTarget) {
     if (input.partialTaken) {
       // Already banked half. The remainder is managed by the trail above —
       // re-selling here every run is exactly the bleed this flag prevents.
@@ -167,7 +170,7 @@ export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
       return {
         ...base,
         action: "partial_target",
-        reason: `target: ${input.price.toFixed(2)} >= ${input.priceTarget.toFixed(2)} — banking ${partialQty}, runner protected at ${runnerStop.toFixed(2)}`,
+        reason: `target: ${targetCheckPrice.toFixed(2)} >= ${input.priceTarget.toFixed(2)} — banking ${partialQty}, runner protected at ${runnerStop.toFixed(2)}`,
         exitQty: partialQty,
         runnerStop,
         outcome: "win",
@@ -176,7 +179,7 @@ export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
     return {
       ...base,
       action: "target_full",
-      reason: `target: ${input.price.toFixed(2)} >= ${input.priceTarget.toFixed(2)} — position too small to split`,
+      reason: `target: ${targetCheckPrice.toFixed(2)} >= ${input.priceTarget.toFixed(2)} — position too small to split`,
       exitQty: input.qty,
       outcome: "win",
     };

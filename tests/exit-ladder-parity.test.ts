@@ -79,6 +79,12 @@ describe("the trail ratchets and never loosens", () => {
 });
 
 describe("partial target — the behavior live never had", () => {
+  it("recognizes a target reached intraday even when the close has recovered", () => {
+    const d = decideExitLadder({ ...base, price: 103, targetCheckPrice: 111 });
+    expect(d.action).toBe("partial_target");
+    expect(d.reason).toContain("111.00");
+  });
+
   it("supports a fractional US holding rather than silently skipping it", () => {
     const d = decideExitLadder({ ...base, qty: 0.75, price: 111 });
     expect(d.action).toBe("partial_target");

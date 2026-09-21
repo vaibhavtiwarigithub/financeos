@@ -156,6 +156,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // dayLowMap: session low from Massive snapshot. Used to detect intraday stop
   // touches — a stop hit during the session is real even if price recovered by close.
   const dayLowMap: Record<string, number> = {};
+  const dayHighMap: Record<string, number> = {};
   // W4: keep the accepted quote's source and its OWN observation time, not just
   // the price. Every mark written below is attributable because of this map.
   const quoteMeta: Record<string, QuoteProvenance> = {};
@@ -166,6 +167,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       quoteMeta[sym] = { source: q.source, observedAt: q.retrievedAt ?? null };
     }
     if (q?.dayLow != null && q.dayLow > 0) dayLowMap[sym] = q.dayLow;
+    if (q?.dayHigh != null && q.dayHigh > 0) dayHighMap[sym] = q.dayHigh;
   }
   for (const sym of indiaSymbols) {
     const q = indiaQuotes[sym.toUpperCase()];
@@ -700,6 +702,11 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       qty: Number(pos.qty),
       avgEntry: Number(pos.avg_cost),
       price: currentPrice,
+      // A settled OHLC bar can reach the target and recover before the close.
+      // Use its high for target detection, while retaining the close as the
+      // conservative mark/fill input. The shared ladder still gives a stop
+      // precedence when both barriers were touched.
+      targetCheckPrice: market === "us" ? dayHighMap[pos.symbol] : undefined,
       stopCheckPrice: priceForStopCheck,
       priceTarget: pos.price_target == null ? null : Number(pos.price_target),
       initialStopLoss: pos.initial_stop_loss == null ? null : Number(pos.initial_stop_loss),
