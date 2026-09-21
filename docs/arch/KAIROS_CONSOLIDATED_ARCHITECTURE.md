@@ -425,3 +425,53 @@ capital.
 | Shadow | Non-authoritative alternative collecting evidence only |
 | Champion | Currently approved strategy configuration |
 | Kill switch | Control blocking new risk while allowing risk reduction |
+
+## 17. Abbreviations
+
+| Abbreviation | Expansion | Meaning in Kairos |
+|---|---|---|
+| API | Application Programming Interface | A machine-readable endpoint used by Kairos or a provider |
+| ATR | Average True Range | Volatility measure used in crypto/exit-geometry research |
+| AV | Alpha Vantage | A market-data provider; its quota is centrally enforced |
+| BO | Bombay Stock Exchange | Exchange suffix used by some Indian symbols |
+| DB | Database | Supabase Postgres persistence layer |
+| DDL | Data Definition Language | SQL that creates or changes tables, indexes or functions |
+| DQ | Data Quality | Completeness, freshness and validity checks on evidence |
+| EOD | End of Day | Completed market-session data, not an intraday partial bar |
+| EMA | Exponential Moving Average | Price trend indicator used by technical research |
+| ETF | Exchange-Traded Fund | A listed fund traded like a stock; it has different applicable dimensions |
+| ET | Eastern Time | US market clock used for NYSE/Nasdaq schedules |
+| FDR | False Discovery Rate | Multiple-testing control for research findings |
+| GDELT | Global Database of Events, Language and Tone | News/event source used in bounded evidence collection |
+| HAC | Heteroskedasticity and Autocorrelation Consistent | Robust uncertainty adjustment for dependent returns |
+| IC | Information Coefficient | Rank correlation between a signal and later return |
+| ID | Identifier | Stable key linking a signal, event, lot or run |
+| INR | Indian Rupee | Currency of the India paper/live book |
+| IST | India Standard Time | India market clock |
+| JSON | JavaScript Object Notation | Structured payload format used in APIs and evidence fields |
+| JWT | JSON Web Token | Auth token used by Supabase sessions |
+| LLM | Large Language Model | Model used for evidence summaries or controlled agent prose |
+| MACD | Moving Average Convergence Divergence | Technical momentum indicator; currently measure-only unless gated |
+| MAE | Maximum Adverse Excursion | Worst excursion against an entry before exit |
+| MCP | Model Context Protocol | Tool bridge used for broker capability and account operations |
+| MFE | Maximum Favorable Excursion | Best excursion in favor of an entry before exit |
+| NAV | Net Asset Value | Cash plus marked value of an isolated portfolio |
+| NSE | National Stock Exchange of India | Primary exchange/calendar context for the India book |
+| NIFTY | NSE Nifty 50 | India benchmark index used in market-local comparisons |
+| OCO | One-Cancels-the-Other | Paired protective orders; never assumed available without broker proof |
+| OHLCV | Open, High, Low, Close, Volume | Standard candle/bar fields |
+| OOS | Out of Sample | Data not used to fit or choose a strategy |
+| P&L | Profit and Loss | Realized or unrealized financial result |
+| PIT | Point in Time | Evidence available no later than the decision timestamp |
+| PKCE | Proof Key for Code Exchange | OAuth authorization protection used in broker connection flows |
+| R:R | Risk-to-Reward | Relationship between stop distance and target distance |
+| RLS | Row Level Security | Postgres policies limiting which users can read/write rows |
+| RPC | Remote Procedure Call | Database function invoked atomically by an API route |
+| RSI | Relative Strength Index | Bounded momentum indicator used in technical research |
+| SQL | Structured Query Language | Database query language |
+| T-stat | t-statistic | Estimate divided by its uncertainty; used to qualify evidence |
+| UI | User Interface | Visible dashboard/page layer |
+| USD | United States Dollar | Currency of the US and crypto paper books |
+| UTC | Coordinated Universal Time | Canonical scheduler and crypto-session clock |
+| Vercel | Vercel deployment platform | Hosts the deployed Next.js application |
+| W/L/BE | Win / Loss / Breakeven | Closed-trade outcome categories |
