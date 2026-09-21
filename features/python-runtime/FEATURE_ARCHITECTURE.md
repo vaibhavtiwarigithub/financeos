@@ -1,7 +1,7 @@
 # Python Runtime — Feature Architecture
 
 Status: **Implemented (measure-only). Not wired into any decision path.**
-Shipped 2026-08-03. Related: `docs/arch/02-tech-stack.md`, `lib/edges/ic.ts`.
+Shipped 2026-08-03. **Lane A retired from Vercel 2026-09-21** — see the note below; only Lane B (GitHub Actions) and the local `scripts/python/ic.py` cross-check remain. Related: `docs/arch/02-tech-stack.md`, `lib/edges/ic.ts`.
 
 ---
 
@@ -36,7 +36,9 @@ Choosing between them is a latency question, not a taste question. If the caller
 is waiting, Lane A. If nothing is waiting, Lane B — it has no timeout pressure
 and no bundle limit.
 
-### Lane A — `api/py/ic.py`
+> **RETIRED 2026-09-21.** The Vercel Python Function bundled statsmodels+scipy+numpy+pandas at 243.83 MB per deployment (measured in the build log). With ~9 retained deployments plus ~330 Next.js functions, team Functions Storage reached 17.08 GB against the 10 GB Hobby cap. Nothing called the endpoint. `api/py/ic.py` moved to `scripts/python/ic.py` (run locally: `python scripts/python/ic.py`), `requirements.txt` moved to `scripts/python/requirements.txt`, and the `functions` block was removed from `vercel.json`. Do not re-add Python under `api/`. Sections 2 (Lane A column), 4 and the Lane A description below are historical.
+
+### Lane A — `api/py/ic.py` (historical; now `scripts/python/ic.py`)
 
 `POST /api/py/ic`. Spearman rank IC per cross-section, then a Newey-West HAC
 standard error over the IC series.

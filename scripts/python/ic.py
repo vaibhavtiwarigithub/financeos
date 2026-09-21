@@ -8,7 +8,8 @@ Newey-West SE in TypeScript. This endpoint does the same maths with
 scipy/statsmodels so the TS implementation can be cross-checked against a
 reference library instead of against itself.
 
-Route (Vercel): POST /api/py/ic
+Retired from Vercel 2026-09-21 (244MB bundle x every deploy blew the 10GB Functions
+Storage cap; nothing called it). Run locally: `python scripts/python/ic.py` (self-check).
 Auth: same contract as the TS crons — `x-cron-secret` must equal `CRON_SECRET`,
 compared timing-safely, failing closed when CRON_SECRET is unset.
 

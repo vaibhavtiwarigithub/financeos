@@ -1,0 +1,6 @@
+# Lane B (GitHub Actions) + local scripts/python/ic.py ONLY. Keep any .py out of api/:
+# Vercel builds each into a ~244MB function with these deps on every deploy.
+# statsmodels transitively pulls numpy, scipy, pandas and patsy.
+statsmodels==0.14.6
+scipy==1.17.1
+numpy==2.4.6

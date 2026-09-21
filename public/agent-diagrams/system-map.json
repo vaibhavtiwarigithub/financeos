@@ -828,6 +828,13 @@
   },
   "history": [
     {
+      "date": "2026-09-21",
+      "event": "removed",
+      "nodeId": "RESEARCH",
+      "label": "Vercel Python Function (Lane A) retired",
+      "reason": "api/py/ic.py bundled statsmodels+scipy+numpy+pandas at 243.83 MB per deployment, driving team Functions Storage to 17.08 GB against the 10 GB cap. Nothing called the endpoint. Moved to scripts/python/ic.py (local cross-check of lib/edges/ic.ts); Lane B GitHub Actions unchanged. No agent-to-agent data flow changed."
+    },
+    {
       "date": "2026-09-16",
       "event": "added",
       "nodeId": "CRYPTOPAPER",
