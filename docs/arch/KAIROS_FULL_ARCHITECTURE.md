@@ -39,13 +39,12 @@ purpose, workspaces, data flow, agents, scoring, portfolio construction, exits,
 benchmarks, learning, brokers, crypto, health and documentation governance.
 
 
-## Part II — Detailed source documents
 
+## Part II — Detailed feature and operational documents
 
 ---
 
 # Source: docs/arch/10-current-system-reference.md
-
 # Kairos current system reference
 
 > Last reviewed: 2026-09-21
@@ -248,13 +247,14 @@ next documentation pass rather than treating its proposal as runtime behavior.
 ---
 
 # Source: docs\arch\00-index.md
-
 # Kairos Architecture Chapter Index
 
 > Last reviewed: 2026-09-21 (current system reference and evidence-status audit)
 
 For a single comprehensive reading path, start with
 [KAIROS_CONSOLIDATED_ARCHITECTURE.md](KAIROS_CONSOLIDATED_ARCHITECTURE.md).
+For the complete feature-by-feature encyclopedia, use
+[KAIROS_FULL_ARCHITECTURE.md](KAIROS_FULL_ARCHITECTURE.md).
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
@@ -328,7 +328,6 @@ not replace this documentation structure.
 ---
 
 # Source: docs\arch\01-what-is-kairos.md
-
 # Kairos — What Is This?
 > Last updated: 2026-09-08
 > Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md).
@@ -520,7 +519,6 @@ navigation idiom.
 ---
 
 # Source: docs\arch\02-tech-stack.md
-
 # Kairos — Tech Stack
 > 2026-09-15: **Provider cache fallback ages from the real fetch (`lib/data/provider-fetch.ts`).** On a failed or throttled call, today-only callers copy the last cached payload into today's `av_cache` slot to stop same-day retry storms. That copy used to get a fresh slot date, so the 7-day fallback bound was measured from the copy and never expired: production FRED `DFII10` served one observation for nine days. The copy now keeps the original `fetched_at`, the bound is measured from `fetched_at`, and a successful fetch stamps `fetched_at` explicitly. Every failed call logs `[provider-fetch] <provider> <cacheKey>: <HTTP status or error>` (never the URL, which can hold an API key). No schema change; `av_cache.fetched_at` already existed.
 >
@@ -898,7 +896,6 @@ SMTP rejection is caught and the `messageId` is retained.
 ---
 
 # Source: docs\arch\03-agents.md
-
 # Kairos — Agents
 > Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). This chapter documents responsibilities; it is not permission to enable proposed paths.
 > 2026-09-18: **Short interest wired into the risk-tier shadow** — item #2 (short interest) of the
@@ -2133,2126 +2130,7 @@ source is `public/agent-diagrams/deep-dive.json`.
 
 ---
 
-# Source: docs\arch\04-database-schema.md
-
-# Kairos — Database Schema
-> 2026-09-15 (`20260916000000_user_watchlist_and_prefs.sql`, **applied and verified in production** via `db query --linked`): Two new per-user tables. `user_watchlist` (id uuid PK, user_id FK→auth.users, symbol text, market check('us'|'india'), added_at; UNIQUE(user_id,symbol,market)) — viewer's own saved symbols enriched with last `agent_signals` score on read. `user_notification_prefs` (user_id PK FK→auth.users, newsletter_opted_in boolean default false, updated_at) — newsletter and email digest opt-in state. Both tables have `FOR ALL TO authenticated USING (user_id = auth.uid())` RLS. Neither stores owner data: the shared `agent_signals` table is queried by symbol only, not filtered by user_id.
->
-> 2026-09-15 (`20260915220000_access_email_notices.sql`, **applied and verified in production** with the Supabase CLI `db query --linked` while the MCP connector was failing; recorded in `supabase_migrations.schema_migrations`): new `access_email_notices` — one row per access email (`kind` invite / resend / revoked / deleted) keyed by Resend's message id, with `status` accepted → delivered | bounced | complained written by the Resend webhook (update only). RLS on with **no policies**: service role only, read by the owner through `/api/admin/access`. A separate table because `app_user_roles` cascades away when an account is deleted, which is exactly when a deletion notice goes out. `complained` means the recipient clicked Report spam; a message silently filed in a spam folder shows as `delivered` because no provider can see it. Display only — never gates access.
->
-> 2026-09-15 (`20260915000000_invite_delivery_state.sql`, **applied and verified in production**): Invite delivery state on `app_user_roles` — `invite_email_id`, `invite_sent_at`, `undeliverable_at`, `undeliverable_kind` ('bounced' | 'complained'), `undeliverable_note`, plus a partial index on `invite_email_id`. **Why**: the invite route wrote the grant as soon as Resend ACCEPTED the message and the access page rendered every un-revoked grant as green "Active" — but `generateLink` creates an `auth.users` row for any syntactically valid address without checking the mailbox exists, and Resend returns success on acceptance while a dead mailbox bounces asynchronously by webhook. A typo'd address therefore left an orphan auth user and a grant the owner's own screen claimed was active. **Acceptance is NOT stored here**: it is `auth.users.confirmed_at`, read by the GET handler, never mirrored — one authority, no drift. **Deliverability never gates access**: these columns are display state only, written solely by the signature-verified `/api/webhooks/resend` endpoint, which can update no other column and cannot insert. A bounce after acceptance leaves the person's access intact; revocation remains the owner's deliberate `revoked_at`. Rollback-verified in production before applying.
->
-> 2026-09-14 (`20260914170000_per_user_broker_risk_phase0.sql`, **applied and verified in production**): Per-User Broker & Risk Phase 0 — five tables, all shipping EMPTY: `user_broker_credentials` (PK user_id+broker; `scope` check-constrained to the single value `read_only`, so no value exists meaning "can trade"), `user_account_snapshots`, `user_holding_risk_runs` (status ok/skipped/error with a mandatory `skip_reason` — a money-adjacent report never fails silently), `user_holding_risk_snapshots`, `user_risk_email_prefs` (`enabled` defaults FALSE; an invitation to view is not consent to be emailed). **New tables rather than `user_id` columns on the owner's tables**: guest rows inside `live_account_snapshots` / `holding_risk_snapshots` would be one missed filter away from entering an owner money-path calculation (kill-switch NAV baseline, Guardian, paper book), so the separation makes that class of bug impossible rather than tested-for. RLS: self-read (`user_id = auth.uid()`) on four tables; **`user_broker_credentials` has NO select policy at all** — nothing legitimate reads ciphertext from a browser, the server decrypts it, and connection state is served from the non-secret columns by an API route. Verified in production inside a rolled-back transaction with a real JWT: the credential row returns 0 rows even to its own user, while `user_risk_email_prefs` self-read returns 1. There is deliberately no owner read policy on any of these: the owner administers ACCESS, not POSITIONS. Credentials are encrypted by `lib/security/credential-cipher.ts` (AES-256-GCM, per-record IV, versioned envelope) with `BROKER_CREDENTIAL_KEY`.
->
-> 2026-09-14 (`20260914160000_market_overview_daily_snapshot.sql`, **applied and verified in production**): `market_overview_snapshots` (market, session_date, payload jsonb, fetched_at; PK market+session_date) is a durable per-session cache of the `/api/markets/overview` payload. The route served DAILY values (close vs prior close, immutable once published) behind a 5-minute route cache plus a 5-minute PER-INSTANCE memory cache — up to ~288 refresh windows a day multiplied by warm instances, for numbers that move once. It now stores the resolved payload and serves it for the rest of that session with no provider contact. Keyed by the RESOLVED session date and compared against `expectedLatestSessionDate()`, so a stored payload cannot outlive the session it describes. Degraded payloads are never stored. Owner-pinned read; service-role writes. **The data source is unchanged**: reading `price_cache` instead was tried and rejected on production evidence (recorded in `tests/markets-overview.test.ts`, 2026-07-17) because a ragged cache head makes its newest aligned session staler than grouped and re-opens cross-session mixing.
->
-> 2026-09-14 (`20260914150000_viewer_phase1_roles.sql` + `viewer_phase1_roles_self_read`, **applied and verified in production**): Shared Viewer Access Phase 1. New `app_user_roles` (user_id PK -> auth.users, email, role check ('viewer'), granted_at/by, revoked_at/by, note) is the ONLY authority for a non-owner role; owner identity is never stored there. Service-role writes only. Two read policies: owner reads all, and a viewer reads only their own row (`user_id = auth.uid()`) — without that self-read, middleware runs on the caller's session and would resolve no grant, signing the viewer straight back out. Revocation sets `revoked_at` rather than deleting, so grant history survives. Also adds trigger `profiles_role_immutable_from_client`: `profiles` RLS is `FOR ALL USING (auth.uid() = id)` with no WITH CHECK, so any signed-in user could UPDATE their own `role`, and `middleware.ts` gated `/admin` on exactly that column — a self-promotion path once a second account existed. A column-level `REVOKE UPDATE (role)` does NOT work here (`authenticated` holds a table-level UPDATE grant and Postgres will not subtract one column; verified — the revoke ran without error and left both grants), so the trigger is the enforcement, keyed on `current_user` rather than `auth.role()` which is NULL in some contexts and would fail open. Verified in production inside a rolled-back transaction as role `authenticated` with `request.jwt.claims` set: role change raises P0001, a benign non-role update still writes 1 row.
->
-> 2026-09-14 (`20260914140000_viewer_phase0_close_blanket_rls.sql`, **applied and verified in production**): Shared Viewer Access Phase 0 closed every blanket-authenticated RLS policy. 34 tables were readable by ANY authenticated session, and 7 of them — `paper_portfolio`, `paper_positions`, `paper_performance`, `agent_signals`, `research_packets`, `learning_log`, `signal_weights` — were WRITABLE, via `FOR ALL ... USING (auth.role() = 'authenticated')`. Each is replaced by the canonical owner-pinned read policy `<table>_owner_read`: `FOR SELECT TO authenticated USING (((select auth.jwt()) ->> 'email') = '<owner>')`. Writes are not re-granted; all writes are service-role, which has `rolbypassrls=true` (verified), so none of the 266 service-role call sites are affected. Five policies were already NAMED `<table>_owner_read` while their `USING` clause was literally `true` (`agentic_position_ledger`, `live_exit_ladder_shadow`, `live_position_state`, `readiness_controls`, `readiness_runs`) — the name claimed a scoping the predicate never implemented. Post-state: 0 blanket-authenticated policies, 91 owner-pinned, RLS on 213/213 tables. The only remaining `ALL`-to-non-service_role policies (`strategy_policies`, `backtest_experiments`) gate on `auth.role() = 'service_role'` and are benign. Rollback-verified: the full statement set ran inside a transaction and was rolled back, leaving the pre-state intact, before being applied. No table, column, index, trigger, or row changed — policies only. This is defence-in-depth, not the delivery path: dashboard pages read through the service-role client, so the owner's UI is unaffected.
->
-> 2026-09-11 (`20260911153405_capture_closed_trade_high_water.sql`, **written and rollback-verified; not applied**): `execute_paper_exit` will atomically copy `paper_positions.highest_price` into every closed lot and any residual partial-exit lot before deleting/updating the position. Production verification exercised the real RPC inside a transaction, then rolled back; the stored function remained unchanged and zero `ZZTEST_HIGH_WATER` rows persisted. Existing closed `paper_trades.highest_price` values remain NULL because deleted position history cannot be reconstructed honestly. Deployment awaits reconciliation of the linked project's migration history with this checkout.
->
-> 2026-09-09 (`20260909190000_listing_discovery_p0_p1.sql`, **applied and verified**): evidence-only new-listing discovery adds mutable current state in `listing_candidates` and append-only `listing_candidate_events` / `issuer_filings` ledgers. All three have RLS with owner-only browser reads; evidence ledgers reject UPDATE, DELETE and TRUNCATE and service-role can only SELECT+INSERT. The migration also adds `broker_instrument_preflights.purpose`: existing and order-path rows are `execution_attempt`; a future `candidate_probe` cannot satisfy the execution-enforcement shadow gate. SEC daily-index filings are issuer metadata only — they never manufacture ticker, exchange, first-trade date, broker capability, watchlist membership, eligibility, paper positions or orders.
->
-> 2026-09-09 (`20260909153000_guardian_and_broker_preflight_safety.sql`, **applied and rollback-verified**): Manual Trade Guardian evidence is now reproducible from the repository. `agentic_position_ledger` records every quantity transition with `delta_qty`, `transition_side`, aggregate matched order IDs and explicit `source` (`baseline` | `manual` | `agentic` | `unknown`). `agentic_position_scan_state` supplies lease-backed single-run/bootstrap state. Client roles cannot insert/update/delete/truncate; service-role is SELECT+INSERT only on the immutable ledger. `learner_runs.live_trades_closed` remains a display-only SELL-order proxy and no longer enters a learning evidence gate; `live_win_rate` remains NULL until paired realized lots exist. `broker_instrument_preflights` is a separate immutable Stage-0 shadow ledger for exact broker/account/environment/symbol/side/lot/tick capability evidence. `broker_orders.broker_account_id` preserves account provenance. None of these tables enables live trading or preflight enforcement.
->
-> 2026-09-08 (`20260908120000_property_zip_zhvi_observations.sql`, **applied and verified** via `information_schema.columns` and `pg_trigger` against the live Supabase project): Property Stage 3 adds `property_zip_observations` — ZIP-grain area context, deliberately a separate table from the metro-grain `property_market_observations` (same reasoning as the existing county/metro split). Columns: `source_key` (FK `property_sources`), `market_slug` (FK `property_geographies`), `zip` (`^[0-9]{5}$`), `metric_key` (currently only `zhvi_all_homes`), `native_unit` (`USD`), `value`, `as_of`, `source_version`, `collected_at`, unique on `(source_key, market_slug, zip, metric_key, as_of, source_version)` NULLS NOT DISTINCT. RLS enabled, `anon`/`authenticated` revoked, append-only via the existing `prevent_property_evidence_mutation`/`prevent_property_evidence_truncate` triggers (reused, not redefined), and `UPDATE/DELETE/TRUNCATE` revoked from `service_role`. Seeds `property_sources` row `zillow-zhvi-zip` as `active`. This is Zillow's published ZHVI — per Zillow's own ZHVI User Guide, a smoothed/seasonally-adjusted weighted average of the **middle third** of homes in a ZIP. It is rendered as a clearly separate "area context" series next to (never blended into, never used to infer) the owner's own recorded property value. See `features/property-zip-area-context/FEATURE_ARCHITECTURE.md` and `docs/arch/05-crons-and-scheduling.md`.
->
-> 2026-09-01: **`exit_stop_shadow_runs` added** (migration `exit_stop_shadow_runs`, applied and verified via `information_schema`). One paired comparison per `(as_of_date, market, horizon_days)`: live 7.5% stop versus a 2.8 ATR stop, target and time stop identical. Carries `effective_observations`, `trials_considered` and `sidak_alpha` on every row so a reader cannot mistake a nominal p-value for the adjusted threshold, plus `candidate_worst_return` / `baseline_worst_return` because a wider stop can raise the mean while worsening the tail. Measure-only — no money path reads it.
->
-> 2026-08-27 (`execute_paper_exit`, **applied + verified**, migrations `20260827225710` + `20260827231500`): the exit RPC now captures the risk levels it exited on. The closing UPDATE wrote `exit_price/realized_pnl/outcome/exit_reason` and nothing else, then DELETED the position row - and `stop_loss`/`price_target` live only on `paper_positions`. Result: `paper_trades.stop_loss` was NULL on all 171 closed lots while all 22 open positions carried one, so **19 lots labelled `exit_reason='stop_hit'` have no recorded stop and 4 of those realized a GAIN**. NOT backfillable - closed positions are deleted and their levels unrecoverable.
->
-> A follow-up review caught two defects in the first attempt, both now fixed:
-> 1. **The committed migration contained no SQL** - only comments - while production carried the function under a different version. A fresh database would have replayed the OLD function. The migration file now holds the exact applied definition under the matching version `20260827225710`.
-> 2. **Partial-exit stop precedence was inverted.** `coalesce(v_lot.stop_loss, p_partial_stop_loss, ...)` let a lot's existing stop beat the caller's new one - exactly the second-partial-exit case, since the residual lot from the first already has a stop. The surviving position took the new stop while its lot kept the stale one. Corrected to `coalesce(p_partial_stop_loss, v_lot.stop_loss, ...)` in `20260827231500`. The original verification exercised only a FULL exit, which is why it missed this.
->
-> Regression test: `scripts/sql/test-execute-paper-exit.sql` (3 cases, always rolls back). CASE 3 is mutation-verified - restoring the old ordering makes it fail. Replay chain proven in-database: forcing the function to file 1's end state and applying file 2 reproduces the production definition exactly.
->
-> 2026-08-25 (`archetype_ic_runs`, **applied + verified**): per-archetype weighting evidence. `shadow_decisions` has recorded up to seven weight sets per observation since July, and nothing had ever graded them - the sole consumer computed the share of shadow rows that were bullish, which compares nothing to anything. One row per (as_of_date, market, setup_type, horizon_days), carrying `rank_ic`, `rank_ic_t`, `champion_rank_ic` measured on the SAME observations, `ic_delta_vs_champion`, and `effective_observations`. `status` is constrained to `insufficient_evidence | measured` so a thin sample cannot present as a finding. Measure-only: no scoring, sizing, entry or exit path reads it.
->
-> 2026-08-24 (`20260824220000_diagnostic_horizons_60_120.sql`, **applied + verified**): relaxes `dimension_diagnostic_runs_horizon_days_check` from `ARRAY[2,5,10,20]` to `ARRAY[2,5,10,20,60,120]`. `label-maturation` has written observation_labels at h60/h120 since 2026-08-17, but the diagnostics table still rejected them. This had to land BEFORE widening `DIAGNOSTIC_HORIZONS` in code: `runMarket()` rethrows on insert failure, so a single h60 CHECK violation would have aborted the diagnostics run for every other horizon as well. Verified post-apply via `pg_get_constraintdef`. See `docs/arch/09-learning-loop.md` for the overlap-aware evidence floor that ships with it.
->
-> 2026-08-16 (`20260816180000_paper_mark_and_benchmark_provenance.sql`, **WRITTEN, NOT YET APPLIED** — Supabase MCP was disconnected, so this could not be applied or verified): W4/W5 of the evaluation-pipeline-integrity remediation. Adds the append-only `paper_position_marks` ledger and three provenance columns on `paper_performance` (`bench_session_date`, `bench_source`, `snapshot_type`). Every consumer tolerates their absence (PostgREST `PGRST204`/`42P01` retry ladders drop the columns and skip the ledger), so the code ships inert ahead of the migration — but nothing may DEPEND on these objects until an `information_schema` check proves them applied.
->
-> 2026-08-08 (`20260808210000_property_value_intelligence.sql`, applied + verified): `property_value_observations` and `property_value_references` provide encrypted owner-only value evidence and deterministic derived-reference lineage. Both are append-only through row and truncate triggers plus revoked service-role mutation privileges. They are isolated from Investing and do not authorize an AVM; the derived layer is market-index scenario support only.
->
-> 2026-08-08 (`20260808194000_defer_unverified_property_valuation_sources.sql`, applied + verified): `maricopa-sales` and `tcad-appraisal` are now `contract_pending`, and all active valuation scopes for those source keys were deactivated. Historical append-only parcel and sale evidence remains intact. This is a source-contract control, not a data deletion: the API rejects new scopes and the worker exits before it reads credentials, scope rows, or source URLs.
->
-> 2026-08-08 (`20260808180110_property_asset_history.sql`, applied + verified): `property_asset_history` preserves encrypted, append-only valuation and carrying-cost snapshots for each owner property. `property_assets` remains the editable current-state record and now archives instead of deletes. Atomic service-role RPCs write the current record and history snapshot together; the history table has RLS enabled, no `anon`/`authenticated` grants, mutation/truncate triggers, and an `ON DELETE RESTRICT` asset link. Exact addresses remain only in the current encrypted payload, never in the history payload.
->
-> **Three defects were found in review and fixed BEFORE the migration was applied.** (1) *Not idempotent* — `CREATE TRIGGER` has no `IF NOT EXISTS` in any Postgres version, so the original would fail on any re-run; now drop-then-create inside a loop, verified by re-running it. (2) *Append-only was breakable by TRUNCATE* — the migration defended five evidence tables with **BEFORE ROW** triggers only, and a row trigger **does not fire on TRUNCATE** while `service_role` still held the grant, so every "append-only" property ledger was fully erasable. This is the identical hole closed on 2026-08-01 in `20260801160000_exogenous_risk_truncate_guard.sql`. Added statement-level `BEFORE TRUNCATE` triggers on `property_scenarios`, `property_forecasts`, `property_forecast_outcomes`, `property_market_observations` and `property_decision_journal`, and revoked UPDATE/DELETE/TRUNCATE from `service_role` on all five, so grants and triggers are two independent barriers. Verified live: TRUNCATE is rejected and `service_role` holds neither privilege. (3) *Silent duplication* — `property_market_observations`' uniqueness key includes the **nullable** `source_version`, and Postgres treats NULLs as distinct, so two rows with the same source/geography/metric/as_of/revision_state and a NULL version both inserted. Replaced with a unique index using **NULLS NOT DISTINCT** (safe: the table held zero rows).
->
-> Also extends `property_source_runs.outcome` to allow `not_applicable`, so a source that structurally cannot cover a market is distinguishable from a successful run that happened to write nothing.
-
-> 2026-08-08: the `hud-fmr` adapter may add annual bedroom-specific `rent_reference_*` observations for Austin/Phoenix. Each row is a HUD metro affordability reference by bedroom count with its published FMR year/version. It is deliberately separate from `rent_index`: it is never a property rent estimate, comparable, valuation, forecast, or underwriting input. The append-only source-run ledger records missing HUD server credentials as a typed `partial` unavailable outcome rather than fabricating a value.
->
-> 2026-08-07 Property valuation Stage 1 adds `property_valuation_scopes` (mutable configuration), `property_bulk_snapshots`, `property_bulk_snapshot_events`, `property_parcel_snapshots`, and `property_sales` (immutable evidence). Browser grants are revoked and RLS is enabled. Evidence tables, including the previously under-protected `property_source_runs`, block UPDATE, DELETE, and TRUNCATE through both grants and triggers. Parcel and sale-event identities are keyed HMACs; there are no owner-name, grantor/grantee, mailing-address, situs-address, or plaintext parcel-ID columns. Maricopa rows are deed-linked observations per source snapshot so a county correction is not silently overwritten or invented as a second transaction. TCAD appraised and assessed values remain separate exact source fields and are never labelled as market prices.
-> 2026-08-05 (`20260805210000_event_ledger_symbol.sql`, applied + verified): the event ledger gains per-symbol events. `market_events.symbol` is **nullable** because market-wide (tariff) and idiosyncratic (guidance) events share the table; which types *require* a symbol is enforced in `lib/events/vocabulary.ts` (`requiresSymbol`) rather than a DB CHECK, so the rule lives beside the vocabulary and adding a type needs no migration. The step-1 UNIQUE `(event_type, market, occurred_at)` was **wrong once symbols exist** — two companies can cut guidance on the same day, and that is two events, not a duplicate — so it is replaced by a unique index over `(event_type, market, occurred_at, symbol)` **NULLS NOT DISTINCT**; without that clause every market-wide row (`symbol IS NULL`) would compare unequal to every other and the duplicate guard would have silently stopped working. Verified by re-running the backfill: 0 inserted, 19 already present. `market_event_outcomes` gains `entry_date`, `exit_date`, `subject_symbol`, `sessions_used`; `entry_date` is the anti-look-ahead anchor (the first session whose close falls after `occurred_at`), recorded so a stored return can be re-derived rather than trusted. Measure-only: no score, eligibility, sizing, entry, exit, promotion or broker path reads either table.
-
-> 2026-08-01 (applied + verified in production): migration `20260801160000_exogenous_risk_truncate_guard.sql` closes an append-only hole in `20260801150000`. That migration defended `exogenous_observations` and `market_regime_runs` with a **BEFORE ROW UPDATE OR DELETE** trigger only — and a row-level trigger **does not fire on TRUNCATE**, while `service_role` still held the TRUNCATE grant, so the whole evidence ledger was erasable with every stated guarantee apparently intact. Adds statement-level `BEFORE TRUNCATE` triggers on both tables and revokes UPDATE/DELETE/TRUNCATE from `service_role` (the writer only INSERTs), so grants and triggers are now two independent barriers — matching the `earnings_risk_observations` pattern. Verified live: service_role = INSERT,REFERENCES,SELECT,TRIGGER; authenticated = SELECT; anon = none.
-> 2026-07-28 (`20260729021633_pit_snapshot_persistence.sql`, applied + verified): US PIT universe snapshots are now written only through `persist_edge_pit_snapshot()`, a service-role-only SECURITY DEFINER RPC with pinned search path, per-market/date/policy advisory lock, complete-member validation, idempotent exact-match replay, and conflict refusal. PIT rows in `edge_universe_members` are append-only by trigger; legacy non-PIT EdgeScout rows keep their existing update behavior. The resolver policy is `us_pit_adv20_top400_v2`: rank uses a complete 20-session trailing point-in-time dollar-volume window, not one event day, and persists one top-400 superset so n=200/n=400 experiments use deterministic prefixes of the same snapshot. Verification proved insert→existing idempotency, conflict refusal, rollback cleanup, anon/authenticated EXECUTE=false, service_role=true. This remains measure-only and is read by no score or order path.
-> 2026-07-28 (`20260728120000_pit_universe_provenance.sql`, applied + verified): migration extends `edge_universe_members` with point-in-time provenance rather than adding a parallel table — `is_point_in_time` (NOT NULL default **false**, so every pre-existing row correctly declares itself a survivorship-biased current-universe snapshot), `membership_source`, `pit_policy_version`, `active_on_as_of`, `delisted_at`, `adv_value`, `adv_rank`, `snapshot_fingerprint`, plus a partial unique index on (market, as_of_date, pit_policy_version, symbol) WHERE is_point_in_time. The promotion gate must refuse any experiment whose universe rows have `is_point_in_time = false`.
-> 2026-07-29 (`20260729132244_immutable_oos_experiment_manifest.sql`, applied + verified): **OOS experiment identity is committed before provider access.** `backtest_experiments` now binds `edge_id`, formula version, horizon, validation mode, trial family/count, universe policy, fixed data cutoff, exact git SHA, schema-versioned validation spec, and canonical plan hash. The plan and variants are immutable after insert. Start/completion timestamps, result summary, variant count, policy binding, and realized universe/dataset/run hashes are each write-once. `oos_ic` rows cannot exist without the full manifest, and anonymous/authenticated table grants are explicitly revoked.
->
-> 2026-07-28 (`20260728090000_promotion_schema_repair_and_atomic_rpc.sql`, applied + verified): **promotion schema repair, done while both tables were empty.** `strategy_policies.dsr` -> `t_margin_vs_trials` (it never held a Deflated Sharpe Ratio, only `t - E[max t over trials]`); `walk_forward_pass` -> `ic_stability_pass` (the legacy IC windows overlap ~98.4% and are not folds); new `validation_mode` NOT NULL CHECK in (`purged_temporal_oos`,`walk_forward`) so a legacy rolling-window result has no representable value and cannot be promoted; new `experiment_id` NOT NULL FK binding every policy to the frozen experiment that justifies it. The mutation trigger now compares `to_jsonb(old) - 'superseded_at'` against the same for `new` instead of a hand-listed column set that left `dsr`, `pbo`, `walk_forward_pass`, `cost_adjusted_return`, `max_drawdown_pct`, `stability_score` and `notes` silently mutable; `superseded_at` and `backtest_experiments.policy_id` are both write-once. New `promote_strategy_policy()` RPC (SECURITY DEFINER, EXECUTE revoked from public/anon/authenticated, granted to service_role only) does validate -> advisory-lock -> supersede -> insert -> bind in ONE transaction, replacing a two-round-trip supersede-then-insert that could leave a segment with zero active policies.
-> Last updated: 2026-07-27 (migrations `20260727140000_strategy_policies.sql` + `20260727141000_backtest_experiments.sql`): two promotion-layer tables for the deterministic backtest pipeline. `strategy_policies` is the versioned output destination — deterministic gate writes here, LLM never does; core fields are immutable, only `superseded_at` may be updated; one active policy per (market, sector, regime, horizon) at a time via partial unique index; `promoted_by = 'deterministic_gate'` enforced by CHECK. `backtest_experiments` is the lineage table — `variant_budget` committed pre-run (1–20), `hypothesis`/`author`/`budget`/`segment` are immutable after insert; `variants_proposed ≤ variant_budget` and `variants_run ≤ variants_proposed` enforced by DB constraints; `result_summary` is structured JSONB not free text; FK to `strategy_policies` set only on promotion. Both tables: RLS enabled, service-role-only, append-only core fields with trigger guards. Zero behavior change — tables are empty; promotion gate is Phase 2 (after router cutover).
-> Prior: 2026-07-27 (migration `20260727133000_robinhood_mcp_capability_snapshot.sql`): `broker_mcp_capability_snapshots` is an append-only, service-only US/Robinhood contract-observation ledger. It records only `tools/list` names/count and a schema hash; no raw MCP schema, tool result, account, position, market-data, or order payload is persisted. RLS is enabled with browser roles revoked. It is outside the Evidence Router and cannot change scoring, paper, or live execution.
-> Last updated: 2026-07-25 (migration `20260725130000_etf_allocation_cap.sql` applied: `strategy_config.etf_allocation_cap_pct NUMERIC DEFAULT 30` — ETF portfolio allocation cap enforced at the execution gateway for BUY orders on US ETF symbols.)
-> Prior: 2026-07-19 (protective-orders schema hardened via `20260718130000_harden_protective_orders_invariants.sql` — applied 2026-07-19 to zero-row table: (1) `protective_orders.mode` locked to `'wider_disaster_floor'` only (old `touch_at_analytical_stop` branch removed at every layer); (2) `currency NOT NULL`; (3) `protective_orders_market_currency_check` — `(us,USD)` or `(india,INR)` only; (4) `protective_orders_single_broker_id_check` — at most one of `broker_order_id`/`kite_trigger_id` non-null, and exactly one when status is active/triggered/filled/canceling/canceled; (5) `protective_orders_floor_is_wider_check` — `broker_floor < analytical_stop` always; (6) `protective_orders_kind_price_check` — `stop_market` ↔ no limit price, `stop_limit`/`gtt_limit` ↔ limit price required; (7) `protective_orders_learning_provenance_check` — open position has `learning_scope='full'`, disaster-floor exit records `learning_scope='risk_policy_only'`; sequence EXECUTE revoked from anon/authenticated, granted to service_role; trigger functions similarly locked.)
-> Prior: 2026-07-18 (`20260718000000_protective_orders_shadow.sql` — new `protective_orders` table + append-only `protective_order_events` audit log + `learning_scope` column on `paper_trades`/`broker_orders` + `protective_orders_enabled` (false by default) on `strategy_config`. `20260718120000_webull_trade_orders_enabled.sql` — `webull_trade_orders_enabled` boolean (false by default) on `strategy_config`.)
-> Prior: 2026-07-16 (mandate capacity, score freshness, and RLS optimization through `20260716013100`)
-> 2026-08-01 (`20260801120000_discovery_snapshot_members.sql` +
-> `20260801120500_discovery_snapshot_members_search_path.sql`):
-> `discovery_snapshot_members` is an append-only, service-role-only admission
-> ledger keyed to `universe_snapshots`. It records the market-scoped source,
-> held/ETF state, asset class, and screener bucket for every symbol admitted to a
-> ResearchAgent batch before scoring. It deliberately does not store a score,
-> eligibility, position, P&L, or order state: those remain in their canonical
-> ledgers. No scoring, paper, live, or broker path reads it.
-> Migration `20260801130000_add_edge_relative_strength_discovery_source.sql` adds
-> `edge_relative_strength` as a permitted admission source only; no table shape,
-> RLS policy, or money-path behavior changes.
->
-> Update this file when: any migration adds, removes, or modifies a table, column, index, trigger, or RLS policy.
-
-> 2026-09-14 (`20260914200000_user_risk_email_phase3.sql`, **applied and verified in production**): `user_risk_email_sends` — the per-send audit §5 requires, with the hard cap enforced by a UNIQUE INDEX on `(user_id, send_date)` rather than by the sender's own bookkeeping. The sender inserts this row BEFORE handing anything to the email provider, so a retried or duplicated cron loses the unique-insert race and cannot mail twice; relying on `user_risk_email_prefs.last_sent_at` alone would leave the decide-then-record window open. Proven in production inside a rolled-back transaction: a second same-day insert raised `unique_violation`, leaving one row. Self-read RLS only, no owner read policy (the owner administers access, not anyone's mail history). Also indexes `user_risk_email_prefs.unsubscribe_token`, since unsubscribe must resolve without a login and should not scan.
-> Latest schema addition: migration `20260716013000_mandate_capacity_and_score_freshness.sql` adds per-market paper capacity and score-evidence age policy and hardens the fill RPC against caller-side cap loosening.
-> Security (2026-07-15, `20260715120000_security_rls_and_rpc_lockdown.sql`): Supabase Security Advisor flagged 16 public tables with RLS **disabled** (anon-key readable). Enabled RLS deny-all on 15 agent-internal tables (`macro_signals, macro_regime, mentor_dimension_logs, agent_config, learner_config, learning_priors, signal_weights_history, learner_runs, india_screen_cache, observation_labels, shadow_decisions, model_artifacts, feature_registry, validation_experiments, decision_observations`) — service_role bypasses, agents unaffected. `newsletters` got RLS + an `authenticated`-SELECT policy (browser-read on /dashboard/intelligence). Also `REVOKE EXECUTE … FROM PUBLIC` on anon-callable SECURITY DEFINER RPCs (`kairos_call_agent, rls_auto_enable, handle_new_user, activate_evidence_policy, create_evidence_policy_version, claim_provider_refresh_jobs`; `get_daily_ai_count` kept for `authenticated`), and pinned `search_path=public` on 15 definer/trigger fns. Advisor after: 0 ERROR, 0 anon-executable definer RPCs. Remaining WARN (deferred): 7 always-true service/authenticated policies (single-owner; tighten at multi-tenant), `pg_net` in public, Auth leaked-password toggle, 2 pgvector RPCs' search_path.
-
-> Stock Context (2026-07-15, `20260715150000_symbol_profiles.sql`): new `symbol_profiles` display cache — PK `(symbol, market)`, cols `company_name, one_liner, sector, industry, exchange, market_cap_tier, next_earnings_date, peers text[], source, updated_at`. RLS enabled + `authenticated`-SELECT policy `symbol_profiles_authenticated_read` (anon denied, service_role writes via bypass). OFF the money path — display-only (research/symbol pages); nothing in scoring/orders reads it. Filled by `/api/agents/symbol-profiles/backfill` from Finnhub (US) / Yahoo (India). Applied+verified in prod.
-
-> Security (2026-08-06, `20260806183039_restrict_daily_ai_count_to_caller.sql`): browser-callable `get_daily_ai_count(p_user_id)` now requires `auth.uid() = p_user_id` inside its SECURITY DEFINER body. An authenticated caller can no longer query another user's recent `usage_logs` count by substituting a UUID.
->
-> 2026-07-15 batch (all applied+verified in prod, RLS-on):
-> - **Earnings PIT capture** (`20260715210000`, `…210100`, audit hardening `…220000`): `earnings_calendar` gains `eps_actual_first, revenue_actual_first, actual_available_at, announcement_session, eps_basis, actual_currency, actual_source, restated_eps, restated_available_at, restated_source, market`; a trigger freezes first-observed actual fields once set. New `earnings_consensus_snapshots` stores consensus vintages with RLS auth-read and a database UPDATE/DELETE blocker. Consensus captured on/after the US report date is excluded. Finnhub does not prove GAAP versus adjusted basis, so its basis remains null and those observations are measurement-only, not an eligible PEAD cohort. Data-capture only for future PEAD/revision feasibility — no scoring effect. The `post_earnings_drift` archetype was renamed `pre_earnings_proximity_reweight_v1` (it was never real PEAD); `pead_*` reserved.
-> - **India Markets** (`20260715160000` + `…162000` RLS fix): `india_market_snapshot` India-only display cache (separate from US `price_cache`; INR by contract). **NOTE:** the original migration shipped with RLS *disabled* (anon-readable) — corrected to RLS-on + `authenticated`-read; a new public table must always enable RLS.
-> - **Backfill cron** (`20260715150000_symbol_profiles_backfill_cron`): schedules the existing profile backfill.
-
-> Paper autonomy safety (`20260716010000`, corrected by `20260716011000`, lot parity hardened by `20260716012000`, entry uniqueness hardened by `20260806203000`): `execute_paper_fill` atomically enforces the per-market alpha-name cap and entry-time mandate provenance. A database trigger now refuses any second BUY for an open alpha position, while unique indexes bind one buy trade and one immutable fill event to one signal. The migration removed one unreferenced corrupt duplicate projection that shared an existing immutable fill event; it did not alter a position, cash, or event. New service-role-only `execute_paper_exit` atomically realizes FIFO full/partial lots, position state, native-currency cash, and the decision journal. Exits fail closed unless aggregate open lots exactly match the position. Application entry gates separately honor latched per-market pause and trading-enabled controls. No live-order path changed.
-> Mandate capacity/freshness (`20260716013000`): `trading_mandates.max_open_positions` (1-50, default 10) and `max_signal_age_sessions` (0-10, default 2) are per-market owner policy. The fill RPC reads the canonical mandate cap and treats the caller parameter as tighten-only defense in depth. Cap changes are gate-only and never mutate positions. PositionMonitor ignores stale score/direction evidence while continuing every price-based exit.
-> Mandate advisor cleanup (`20260716013100`): the owner-read policy uses an init-plan `(select auth.jwt())` and `updated_by` has a covering partial index. Access semantics are unchanged.
-
-> Watchlist market casing (2026-07-16, `20260716202749_normalize_watchlist_market_casing.sql`): `watchlist.market` held THREE casings — `'us'` (POST writes), `'US'` (column DEFAULT, inherited by theme-scout which omitted the field), and the `'India'` the GET filter looked for but nothing ever wrote. The original `CHECK (market in ('US','India','Global','Crypto'))` from `001_initial_schema.sql:192` **had been dropped from the live table**, which is why all three coexisted silently and the US view returned 7 of 249 rows. Migration normalizes every row to lowercase, **restores a CHECK `market = ANY('{us,india}')`** (verified to actively reject `'US'`), and sets `DEFAULT 'us'`. `'Global'`/`'Crypto'` were queried and had **zero rows, ever** — legacy fiction in the filter list, now unwritable. **Convention: lowercase `us`/`india` everywhere — it matches every agent/query and the rest of the DB.** NOTE: this migration and its code must ship together — after the backfill, the old capitalized filter matches nothing.
-
-> Router cutover prerequisites (2026-07-16, `20260716210000_router_cutover_prerequisites.sql`): 4 new tables backing the **pre-cutover** machinery — the frozen dual-run evaluation cohort, its parity/divergence records, and the degradation-guard event log. All RLS-on with owner-read, anon revoked, `authenticated` SELECT-only, service-role writes; `no_mutate` append-only triggers on the three evidence tables; the activation RPC is `security definer` with `search_path=public` and `service_role`-only EXECUTE, and **binds approval to the exact candidate version + baseline version + evaluation ID + eval code version + strategy version + market + expiry** — a stale evaluation cannot authorize a policy (probed live: unknown/stale evaluation and invalid market are both refused). A schema CHECK additionally makes it impossible to persist a guard event that *created* an entry (guard is subtractive-only). **`router_enabled` remains `false` for BOTH markets** — 1 policy version each, both active, **zero evaluations exist**, so nothing can authorize a cutover even if the RPC were called. Verified in prod.
-
-Migrations in `supabase/migrations/`. Applied via Supabase MCP `apply_migration` or the Supabase SQL editor. **Always verify with `list_migrations` before shipping schema-coupled code.** A migration file existing in the repo does NOT mean it ran against production.
-
-## Property Workspace Foundation
-
-Property P0 is a separate domain. It does not join, read, or write securities
-research, paper portfolios, broker accounts, cash, agent scores, or execution.
-Migration `20260807090000_property_workspace_p0.sql` created only its public
-catalogue and source-run foundation:
-
-| Table | P0 contents | Security contract |
-|---|---|---|
-| `property_geographies` | Austin, Phoenix, and Bengaluru market-pack metadata | RLS enabled; no anon/authenticated grant. |
-| `property_sources` | Approved source candidates and permitted-use metadata | RLS enabled; no anon/authenticated grant. |
-| `property_source_runs` | Future collection outcome ledger | RLS enabled; no anon/authenticated grant; trigger rejects updates and deletes. |
-
-The P0 schema deliberately has no address, property, financing, listing, market
-observation, or forecast record. Those require later privacy and source-contract
-phases. Service-role writes remain behind owner-gated routes/workers.
-
----
-
-## Append-only ledgers (NEVER DELETE)
-
-These tables must never be hard-deleted by any agent, cron, or cleanup job:
-
-- `paper_trades` — financial ledger
-- `paper_order_events` — event sourcing log (trigger blocks UPDATE/DELETE)
-- `decision_observations` — learning fuel (trigger blocks UPDATE/DELETE)
-- `dimension_diagnostic_runs` and `dimension_diagnostic_findings` — P0
-  market-local diagnostic indexes over immutable decision/label evidence
-  (append-only; RLS enabled; service-role-only; no scoring/trading reader)
-- `broker_orders` — live trade audit trail
-- `strategy_evaluations` — evaluation history (trigger blocks UPDATE/DELETE)
-- `evidence_records` — immutable evidence ledger
-- `holding_risk_runs` — daily per-holding risk run header (trigger blocks UPDATE/DELETE)
-- `holding_risk_snapshots` — daily per-holding risk snapshot (trigger blocks UPDATE/DELETE)
-- `account_risk_snapshots` — daily per-account risk snapshot (trigger blocks UPDATE/DELETE)
-- `rotation_events` — capital-rotation shadow/execution audit ledger (trigger blocks UPDATE/DELETE)
-
----
-
-## 8.1 Core user & auth
-
-### `profiles`
-One row per user. Extended from `auth.users`.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | References `auth.users.id` |
-| `email` | text | |
-| `full_name` | text | |
-| `role` | text | `user` \| `admin` \| `superadmin` |
-| `subscription_tier` | text | `free` \| `pro` \| `elite` |
-| `xp` | int | Experience points |
-| `analysis_count` | int | Total AI analysis runs |
-| `market_focus` | text | Comma-separated: `us`, `india` (others removed 2026-07-05) |
-| `created_at` | timestamptz | |
-
-### `api_key_vault`
-Runtime-editable API keys (not in code or env files).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `provider` | text | UNIQUE; e.g. `alpha_vantage`, `kite`, `robinhood_oauth` |
-| `display_name` | text NOT NULL | Human-readable name for UI |
-| `key_value` | text | Encrypted at rest by Supabase |
-| `updated_at` | timestamptz | |
-| `expires_at` | timestamptz | Optional; shown as "expiring soon" in vault UI |
-
----
-
-## 8.2 Strategy & configuration
-
-### `strategy_config`
-Single-row table: the live risk profile + trading parameters.
-
-| Column | Type | Default | Notes |
-|---|---|---|---|
-| `id` | uuid PK | | |
-| `risk_profile` | text | `Balanced` | `Conservative` \| `Balanced` \| `Aggressive` (sizing/thresholds) |
-| `trading_style` | text | `position` | **Migration 167 (2026-07-12).** `swing` \| `position` \| `long_term` — Settings → Trading preset that sets the four knobs below + `target_hold_days`. Orthogonal to `risk_profile` (style = horizon/tempo, profile = sizing). |
-| `target_hold_days` | int | null | **Migration 167.** Holding horizon the PositionMonitor time-stop prefers ONLY before a champion genome is promoted; a promoted champion's learned `horizon_days` always wins. null = let the genome decide. |
-| `score_threshold` | numeric | 60 | Minimum `analyst_score` to open a paper position |
-| `position_size_pct` | numeric | 10 | % of pool NAV per trade (hard cap for genome) |
-| `stop_loss_pct` | numeric | 7 | Default stop-loss % below entry |
-| `target_pct` | numeric | 20 | Default price target % above entry |
-| `autonomy_level` | text | `L3_live_manual` | Master gate for live order autonomy |
-| `robinhood_mcp_enabled` | bool | false | Live US order path via Robinhood MCP |
-| `kite_enabled` | bool | false | Live India order path via Kite |
-| `app_paused` | bool | false | NAV circuit breaker auto-sets true; manual reset |
-| `live_auto_enabled` | bool | false | DB toggle for autonomous shadow path (migration 139) |
-| `live_auto_enabled_until` | timestamptz | null | Owner lease expiry; null = no lease active |
-| `live_auto_policy_version` | int | 1 | Snapshot version stamped on every proposal |
-| `live_auto_daily_cap_usd` | numeric | null | Max USD spend per calendar day (null = uncapped) |
-| `live_auto_max_per_order_usd` | numeric | null | Per-order notional cap |
-| `live_auto_min_evidence_confidence` | numeric | 0.6 | Floor below which proposals fail gate 6 |
-| `live_auto_max_open_positions` | int | null | Max open broker positions |
-| `live_auto_max_orders_per_day` | int | null | Max new proposals per calendar day |
-| `etf_allocation_cap_pct` | numeric | 30 | **Migration 20260725130000.** Max % of US portfolio NAV in regular ETFs. BUY orders breaching this are refused (fail-open on read errors). SELL always allowed. India skipped. |
-
-### `agent_config`
-Per-agent configuration rows.
-
-| Column | Type | Notes |
-|---|---|---|
-| `agent_name` | text PK | e.g. `research`, `learner`, `macro-sentinel` |
-| `enabled` | bool | |
-| `schedule` | text | Human-readable schedule note |
-| `model` | text | LLM model assignment (tier alias preferred) |
-| `params` | jsonb | Agent-specific parameters |
-| `updated_at` | timestamptz | |
-
-### `strategy_versions`
-Champion/Challenger governance table.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `market` | text | `us` \| `india` |
-| `state` | text | Checked (migration `20260904120000_shadow_population_p0_challenger_state`): `draft, testing, rejected, paper_candidate, paper_active, paper_paused, eligible, approved_live, live_paused, retired, shadow_paper, measure_only, live_review_eligible, live_approved, challenger`. TS source of truth: `lib/validation/strategy-states.ts` (`STRATEGY_VERSION_STATES`/`STRATEGY_STATE`) — every call site imports from there rather than repeating the literal. |
-| `is_champion` | bool | True for the one active champion per market. `strategy_versions_one_champion_per_market` (same migration) is a `unique index ... where is_champion = true`, partitioned by `market` — the DB itself now refuses a second champion row per market on any write path, not only through the promotion RPC's advisory lock. |
-| `weights_snapshot` | jsonb | 5-dim weights: `{fundamental, technical, sentiment, macro, insider}` |
-| `genome` | jsonb | `{entry_threshold, exit_stop_pct, exit_target_pct, horizon_days, position_size_pct, sizing_mode}`. **Not yet a live replay contract** — validation and ResearchAgent's shadow replay both read only `weights_snapshot` today; `genomeDiffCount()` (`lib/validation/genome.ts`) has no runtime consumer. Do not treat horizon/exit/sizing/universe genome fields as an executable coordinate-search space until that replay path exists. |
-| `proposed_by` | text | `learner` \| `user` |
-| `backtest_result` | jsonb | Sharpe, Sortino, win_rate, max_dd from Validation Engine |
-| `promoted_at` | timestamptz | Null until promoted |
-| `retired_at` | timestamptz | |
-| `created_at` | timestamptz | |
-
-**2026-09-04 — P0 shadow-population repair (`features/shadow-population/FEATURE_ARCHITECTURE.md`).**
-`state = 'challenger'` was never in this table's CHECK constraint even though LearnerAgent has
-always inserted it and the Friday validation sweep has always queried it — every challenger
-insert failed silently at the DB layer, so `validation_experiments` held 0 rows and no
-`shadow_paper` row had ever existed. Fixed by adding `'challenger'` to the constraint (additive,
-no existing state removed or any row rewritten) and adding the `is_champion` partial-unique index
-above. Verified live in production via a rolled-back transaction: a `state='challenger'` insert
-now persists, and a synthetic second `is_champion=true` row for the same market is correctly
-rejected. A genuine scheduled challenger reaching `shadow_paper` with recorded non-executing
-observations — this table's own P0 acceptance criterion — has not yet happened and is not
-claimed here.
-
-### `strategy_validation_automation` (migration 170)
-Per-market, owner-controlled policy for **automatic** deterministic challenger validation + shadow routing. Fail-closed: a missing row / read error is treated as fully disabled. Owner-email SELECT RLS; writes only via the service client (Settings PATCH) — `authenticated` cannot write. Seeded `us`/`india` both enabled.
-
-| Column | Type | Notes |
-|---|---|---|
-| `market` | text PK | `us` \| `india` |
-| `enabled` | bool | Master switch — off = no auto validation for this market (challengers still created + manually validatable) |
-| `auto_shadow_enabled` | bool | When on AND validation passes, auto-route the challenger into one `shadow_paper` slot |
-| `max_active_shadows` | int | `0`–`1` (checked) — at most one shadow strategy per market |
-| `updated_by` | uuid | FK → `auth.users` (owner who last changed it) |
-| `created_at` / `updated_at` | timestamptz | |
-
-**RPC `activate_strategy_shadow(p_version_id)` — `SECURITY DEFINER`, `service_role` only.** The single automatic lifecycle transition: atomically flips a challenger to `state='shadow_paper'` under a per-market advisory lock, only if the policy is enabled + `auto_shadow_enabled`, the linked `validation_experiments` row `passed=true`, the version is not a champion / terminal state, and the market is under its `max_active_shadows` cap. Returns a typed reason (`strategy_not_found` / `automation_disabled` / `invalid_strategy_state` / `validation_not_passed` / `shadow_capacity_reached` / `already_shadow`) and **cannot** promote a champion, create a fill, move cash, or place an order. Driver: `runAutomatedValidation()` in `lib/validation/automation.ts`, called in-process by LearnerAgent when it creates a challenger (replaced the old fire-and-forget localhost request) and by the Friday `kairos-validation-sweep` recovery cron. Settings API: `GET`/`PATCH /api/settings/validation-automation` (owner-gated).
-
-### `market_controls` (migration 171)
-Per-market pause / trading-enable state. Previously `app_paused` and `trading_enabled` were GLOBAL columns on the single `strategy_config` row, so a market's own circuit breaker (India NAV drawdown, US kill switch) flipped one shared flag and halted BOTH markets — an India phantom drawdown skipped the US research run (2026-07-13). Now one row per market. A market is paused / trading-disabled if **either** the legacy GLOBAL master (`strategy_config.app_paused`/`trading_enabled`) **or** its own row is set — helpers `isPaused(svc, market)` / `isTradingEnabled(svc, market)` in `lib/market-controls.ts` (fail-closed on read error). Writers: kill switch → `setMarketTrading(market,false)`; drawdown breaker → `setMarketPaused(market,true)`. Owner-read RLS; service-role writes. Seeded from the current global flags.
-
-| Column | Type | Notes |
-|---|---|---|
-| `market` | text PK | `us` \| `india` |
-| `paused` | bool | New-entry pause (drawdown breaker / manual) — gates research-scored entries + autonomous-live entries; exits still run |
-| `trading_enabled` | bool | Kill switch — `false` blocks this market's orders |
-| `paused_reason` | text | Why (breaker reason or manual note) |
-| `paused_at` | timestamptz | |
-
-### `investment_mandates`
-Named strategy contexts for attribution and evaluation.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `name` | text | e.g. `Swing US 2-20d` |
-| `market` | text | `us` \| `india` |
-| `benchmark_ticker` | text | `VOO` (US), `^NSEI` (India) |
-| `horizon_days_min` | int | |
-| `horizon_days_max` | int | |
-| `is_default` | bool | Used when no mandate explicitly specified |
-| `created_at` | timestamptz | |
-
-### `learner_config`
-LearnerAgent dimension-level controls.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `dimension` | text | `fundamental` \| `technical` \| `sentiment` \| `macro` \| `insider` |
-| `learn_from` | bool | Whether to include this dimension in learning |
-| `allow_mutation` | bool | Whether LearnerAgent can propose weight changes for this dimension |
-| `updated_at` | timestamptz | |
-
-### `learning_priors`
-Current signal weight priors used by ResearchAgent.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `dimension` | text | |
-| `weight` | numeric | 0–1 |
-| `updated_at` | timestamptz | |
-
-### `learning_priors_history`
-Immutable audit log of every prior weight change.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `dimension` | text | |
-| `old_weight` | numeric | |
-| `new_weight` | numeric | |
-| `reason` | text | |
-| `changed_by` | text | `learner` \| `user` \| `factory_reset` |
-| `created_at` | timestamptz | Pruned >365d by DB cleanup |
-
-### `experiment_runs`
-Backtest / Validation Engine run records.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `strategy_version_id` | uuid | FK → `strategy_versions` |
-| `market` | text | |
-| `sharpe` | numeric | |
-| `sortino` | numeric | |
-| `win_rate` | numeric | |
-| `max_drawdown` | numeric | |
-| `alpha` | numeric | vs benchmark |
-| `trade_count` | int | |
-| `eligibility_passed` | bool | Sharpe ≥ 0.5 and win_rate ≥ 40% |
-| `created_at` | timestamptz | |
-
-### `observation_labels` ATR exit evidence
-
-Migration `20260722110000_atr_exit_evidence_labels.sql` extends the canonical
-future-label table with `entry_atr`, `entry_atr_pct`, ATR-normalized MAE/MFE,
-`atr_exit_outcomes`, and `atr_policy_version`. Entry ATR comes only from the
-immutable decision observation's point-in-time technical evidence; unavailable
-ATR remains null. Outcomes are versioned, deterministic, close-observed,
-measure-only candidate labels. There is no trigger, RPC, or relationship from
-these columns to paper positions, cash, broker orders, or live execution.
-
-### `strategy_evaluations`
-Append-only mandate-aware evaluation snapshots (Performance Truth Layer).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `mandate_id` | uuid | FK → `investment_mandates` |
-| `market` | text | |
-| `trade_count` | int | |
-| `tainted_count` | int | Trades with low data_confidence |
-| `sharpe` | numeric | |
-| `sortino` | numeric | |
-| `max_drawdown` | numeric | |
-| `win_rate` | numeric | |
-| `expectancy` | numeric | |
-| `profit_factor` | numeric | |
-| `alpha` | numeric | |
-| `exec_slip_mean` | numeric | Mean realized slip vs 0.05% modeled |
-| `health_label` | text | `insufficient_sample` \| `negative_or_zero_edge` \| `promising_but_unvalidated` \| `validation_required` |
-| `dataset_hash` | text | Dedup reruns on same trade set |
-| `created_at` | timestamptz | Append-only. Trigger blocks UPDATE/DELETE. |
-
----
-
-## 8.3 Research + signals
-
-### `agent_signals`
-One row per symbol per research run. The "today's score" table.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | Ticker |
-| `agent_label` | text | `claude` \| `deepseek` |
-| `market` | text | `us` \| `india` |
-| `asset_class` | text | Current authoritative values: `us_equity` \| `adr` \| `etf` \| `india` \| `metal`. `adr` is a reviewed US exchange-listed depositary receipt and remains in the US/USD book. |
-| `analyst_score` | numeric | 0–100 composite |
-| `fundamental_score` | numeric | |
-| `technical_score` | numeric | |
-| `sentiment_score` | numeric | |
-| `macro_score` | numeric | |
-| `insider_score` | numeric | |
-| `recommendation` | text | `BUY` \| `SELL` \| `HOLD` \| `WATCH` |
-| `direction` | text | `long` \| `short` \| `neutral` |
-| `signal_breakdown` | jsonb | Per-dimension evidence detail |
-| `thesis` | text | Groq-generated one-paragraph thesis |
-| `data_confidence` | numeric | 0–1; below 0.5 → tainted |
-| `discovery_source` | text | How symbol entered the batch |
-| `mandate_id` | uuid | FK → `investment_mandates` |
-| `status` | text | Includes `pending`, `paper_traded`, `expired`, `claiming`, `rank_rejected`, and non-executable closed-day lifecycle states `weekend_staged` (legacy name), `superseded`, `revalidated` |
-| `session_validated` | boolean | Positive entry/conviction-exit eligibility proof. Weekend catch-up writes false; a weekday re-score writes a new true row. |
-| `as_of_session` | date | Market-local completed session underlying the score. |
-| `staged_at` | timestamptz | Set only for non-executable weekend catch-up rows. |
-| `claim_run_id` | uuid | FK → `agent_runs`; prevents double-fill |
-| `rank_pct` | numeric | Within-comparable-group percentile (migration 151); null until Pass-2 rank runs. Check `[0,1]`. |
-| `rank_rejected` | bool | True when candidate cleared the absolute floor but failed the cross-sectional rank gate (migration 151); default false. |
-| `created_at` | timestamptz | |
-
-`weekend_staged` rows (weekend or verified full exchange holiday) are evidence,
-not orders. PaperTrader and TraderAgent
-require positive session validation, as do the direct recent-signal queries in
-AutonomousShadow and AutonomousLive. CapitalRotation ignores unvalidated scores.
-PositionMonitor applies the same positive validation requirement to
-score/direction exits while its mechanical stop, target, trailing, and time
-exits remain independent. A weekday re-score writes a fresh row and moves the
-old staged row to `revalidated`; the staged row is never mutated into an
-executable decision.
-
-### `signal_score_history`
-Append-only per-symbol score history. Never mutated after insert.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | |
-| `analyst_score` | numeric | |
-| `fundamental` | numeric | |
-| `technical` | numeric | |
-| `sentiment` | numeric | |
-| `macro` | numeric | |
-| `insider` | numeric | |
-| `direction` | text | |
-| `source` | text | `claude` \| `deepseek` |
-| `fundamental_breakdown` | jsonb | Immutable per-run fundamental values, scoring statuses, and evidence availability. |
-| `technical_breakdown` | jsonb | Immutable active and measure-only technical values plus candle basis and availability. |
-| `sentiment_breakdown` | jsonb | Immutable sentiment values, source/sample context, and availability. |
-| `macro_breakdown` | jsonb | Immutable macro verdict basis, freshness, and availability/applicability. |
-| `created_at` | timestamptz | Index: `(symbol, created_at DESC)`. Pruned >180d by DB cleanup. |
-
-### `decision_observations`
-Immutable ledger of EVERY scored candidate (even ones not traded). The learning fuel.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint PK | |
-| `ts` | timestamptz | Point-in-time decision timestamp. |
-| `symbol` | text | |
-| `market` | text | |
-| `mandate_id` | uuid | |
-| `analyst_score` | numeric | |
-| `fundamental_score`…`insider_score` | numeric | Deterministic dimension scores. |
-| `weights_used` | jsonb | Effective weights actually applied. |
-| `availability_mask` | jsonb | Point-in-time evidence availability. |
-| `features` | jsonb | Versioned evidence, quality, mandate, regime and indicative `trade_plan` snapshot. |
-| `evidence_confidence` | numeric | Weighted structural coverage. |
-| `discovery_source` | text | |
-| `direction` | text | Deterministic entry/exit direction. |
-| `entry_eligible` | boolean | Research eligibility, not execution authority. |
-| `action` | text | Recorded research action. |
-| `score_threshold` | numeric | Threshold used for this decision. |
-| `price_at_decision` | numeric | Latest scoring-candle close in native currency; null on unavailable historical rows. |
-| `currency` | text | `USD` or `INR`; markets are never cross-summed. |
-| `signal_id` | uuid | Links the downstream pipeline audit. |
-
-An update/delete trigger makes the table append-only. Research-time
-`features.trade_plan` is indicative only; PaperTrader re-prices from its fill.
-
-### `instrument_family_observations`
-
-Append-only, measure-only family evidence linked one-to-one to a canonical
-`decision_observations` row (migrations `20260824183930`, `20260824185010`,
-`20260824190302`). It is not an alternative decision ledger.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigserial PK | |
-| `observation_id` | bigint UNIQUE FK | References `decision_observations(id)` without a cascading delete. |
-| `market`, `symbol` | text | US and India remain separate. |
-| `instrument_family` | text | Versioned deterministic family, never an LLM label. |
-| `exposure_id` | text | Economic exposure used to collapse substitutes such as GLD/IAU. |
-| `taxonomy_version`, `feature_version` | text | Reproducible classifier/evidence contract. Historical taxonomy-only rows state that explicitly. |
-| `benchmark_symbol` | text nullable | Family comparison reference; null means unavailable, not cash/zero. |
-| `features` | jsonb object | Source/as-of/status/value fields; empty on taxonomy-only backfill. |
-| `lifecycle` | text | DB-constrained to `measure_only`. |
-| `created_at` | timestamptz | Append timestamp. |
-
-RLS permits authenticated read and no browser write. Service-role retains INSERT
-only; UPDATE, DELETE and TRUNCATE are revoked. Row and statement triggers block
-UPDATE/DELETE and TRUNCATE independently. No paper, live, sizing, exit, policy or
-broker path reads this table.
-
-### `research_packets`
-Full research context per run (for debug + audit).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `raw_data` | jsonb | Full scoring inputs + scores |
-| `created_at` | timestamptz | |
-
-### `watchlist`
-Tracked symbols.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | UNIQUE with `user_id` |
-| `market` | text | `US` \| `India` \| `Global` \| `Crypto`, NOT NULL default `US`. **Added migration 165 (2026-07-12)** — the route code (GET filter, POST) had read/written this column for months but no migration ever created it, so GET 500'd (panel showed "0 tracked") and every manual add silently failed. |
-| `source` | text | `manual` \| `llm_theme` \| `tradingview_import` \| `robinhood*` \| `briefing` |
-| `theme` | text | AI-Scout theme label |
-| `reason` | text | why added |
-| `research_enabled` / `alert_on_signal` / `alert_on_earnings` | bool | per-symbol toggles |
-| `created_at` | timestamptz | |
-
-### `edge_signals`
-Factor/edge lab signal rows.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint identity PK | |
-| `edge_id` | text | FK to `edge_catalog.edge_id` |
-| `symbol` | text | |
-| `market` | text | |
-| `date` | date | Signal as-of session |
-| `raw_value` | numeric | Raw factor value |
-| `z_value` | numeric | Cross-sectional z-score |
-| `universe_id` | text | Exact sampled universe reference |
-| `created_at` | timestamptz | Pruned >180d by DB cleanup |
-
-### `edge_ic_history`
-Information Coefficient (IC) history per factor.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint identity PK | |
-| `edge_id` | text | |
-| `market` | text | |
-| `window_end` / `horizon` | date / int | Independent market window and forward-return horizon |
-| `segment_type` / `segment_value` | text / text | Explicit `market/all` or diagnostic `sector/<name>` identity; sector rows never drive market lifecycle |
-| `formula_version` | text | Versioned formula identity; currently the immutable edge ID |
-| `dataset_fingerprint` / `run_fingerprint` | text / text | Frozen OHLCV dataset identity and exact experiment identity; exact reruns deduplicate, changed data/config appends |
-| `ic` / `ic_ir` / `t_stat` | numeric | Rank IC diagnostics |
-| `n_obs` / `universe_size` / `as_of_dates` | int | Confidence and breadth; never inferred from row count |
-| `step_days` / `history_days` | int | Reproducible run configuration |
-| `net_of_fee_ic` / `turnover` | numeric | Null until cost phase; null blocks capital promotion |
-| `evidence_quality` / `provider_report` | text / jsonb | Retrospective/PIT quality and provider coverage |
-| `status_after` | text | Advisory horizon status only |
-| `created_at` | timestamptz | Append-only experiment timestamp; calibration history is retained |
-
-Migration `20260721130000` made this ledger append-only and replaced the old
-market-window overwrite key with a run fingerprint. Historical rows are preserved
-as `market/all` with `legacy_unverified` dataset provenance. The technical
-calibration trial family and sector sample policy are defined in
-`features/technical-factor-calibration/FEATURE_ARCHITECTURE.md`.
-
-### `edge_market_status`
-
-Latest advisory lifecycle state per (`edge_id`,`market`), introduced by
-`20260718140000`. It prevents India and US evaluations from overwriting one
-global catalog label. Includes `latest_window_end`, `n_obs_min`,
-`evidence_quality`, and per-horizon JSON diagnostics. Service-role write;
-authenticated/anon have no table grant. No money-path reader exists.
-
-### `edge_readiness_status`
-
-Latest deterministic readiness projection per (`edge_id`, `market`, `horizon`). It
-stores policy version, independent-window progress, stability diagnostics, future
-cost-validation progress, next action, gate details, and separate first-notified
-timestamps for validation-build and shadow-review milestones. The immutable source
-remains `edge_ic_history`; this projection is service-role only and may be updated by
-the weekly monitor. No score, signal, mandate, position, or order reader exists.
-
-`edge_signal_inputs` records actual `observed_at`, `provenance_mode`, and an
-input fingerprint. Original synthetic next-session rows are retained but marked
-`legacy_unverified`; they cannot prove point-in-time availability.
-
-### `macro_regime`
-Current macro risk regime.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `regime` | text | `GREEN` \| `YELLOW` \| `ORANGE` \| `RED` |
-| `danger_score` | numeric | 0–100 |
-| `computed_at` | timestamptz | Most recent row is the live regime |
-
-### `macro_signals`
-Per-indicator breakdown for the current regime.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `regime_id` | uuid | FK → `macro_regime` |
-| `indicator` | text | `yield_curve` \| `sahm_rule` \| `real_gdp` \| `nonfarm_payroll` \| `cpi` \| `retail_sales` \| `fed_funds` \| `durables` |
-| `raw_value` | numeric | |
-| `contribution` | numeric | Weighted contribution to danger_score |
-| `direction` | text | `positive` \| `negative` \| `neutral` |
-| `computed_at` | timestamptz | Pruned >90d by DB cleanup |
-
-### `policy_rate_events`, `policy_rate_expectation_snapshots`, `policy_event_impacts`
-
-US-only FOMC event evidence (migration `20260726123000_policy_event_ledger`).
-`policy_rate_events` is the mutable official schedule/outcome record. Expectations
-are append-only snapshots captured before the scheduled 2:00 PM New York decision;
-an expectation feed is intentionally unconfigured until a licensed source is
-available. Impacts are append-only 1- and 5-session returns from already-frozen
-`symbol_daily_returns`, with SPY-relative excess only when price bases match.
-All three tables are RLS deny-by-default with no browser grants and service-role
-only writes. They are display/measurement evidence only: no scoring, sizing,
-paper, live, or exit path reads them.
-
-### `india_screen_cache`
-Full NSE universe cache (avoids re-scoring 5000 names each run).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | `.NS` ticker |
-| `analyst_score` | numeric | |
-| `scores_json` | jsonb | 5-dim breakdown |
-| `updated_at` | timestamptz | Pruned >7d by DB cleanup |
-
----
-
-## 8.4 Paper portfolio
-
-### `paper_portfolio`
-NAV state per market (cash + positions = NAV).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `market` | text | `us` \| `india` \| `crypto` (added 2026-09-16 — Stage 3 crypto paper pool, `supabase/migrations/20260916020000_crypto_paper_pool.sql`; no CHECK constraint on this column, so the third value needed no schema change; scoped to this table + `paper_positions`/`paper_trades`/`paper_performance` only — scoring/research still tags crypto `market='us'`) |
-| `cash` | numeric | Starting: US $10,000, India ₹1,000,000, Crypto $10,000 |
-| `nav` | numeric | cash + sum of open position values |
-| `peak_nav` | numeric | All-time high NAV (for drawdown circuit breaker) |
-| `updated_at` | timestamptz | |
-
-### `paper_positions`
-Open pretend-money positions (deleted on close).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | |
-| `qty` | numeric | Shares held |
-| `avg_cost` | numeric | Fill price |
-| `expected_price` | numeric | Pre-slippage decision price |
-| `realized_slip_pct` | numeric | `fill/expected - 1`; execution quality signal |
-| `fill_status` | text | `full` \| `partial` \| `failed` |
-| `price_target` | numeric | Exit at this price |
-| `stop_loss` | numeric | Hard stop (trailing or original) |
-| `highest_price` | numeric | For trailing stop computation |
-| `exit_reason` | text | `stop` \| `target` \| `llm_exit` \| `time_stop` \| `partial_profit` |
-| `mandate_id` | uuid | |
-| `opened_at` | timestamptz | Age used for time stop |
-
-### `paper_trades`
-Closed paper trade ledger (append-only in practice; never hard-deleted).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | |
-| `action` | text | `buy` \| `sell` |
-| `qty` | numeric | |
-| `price` | numeric | Fill price |
-| `expected_price` | numeric | Decision price |
-| `realized_slip_pct` | numeric | |
-| `fill_status` | text | |
-| `exit_price` | numeric | Closing price (on sell) |
-| `realized_pnl` | numeric | |
-| `pnl_pct` | numeric | Canonical realized percent return used by performance and learning. |
-| `realized_pnl_pct` | numeric | Compatibility projection: `pnl_pct` rounded to four decimals for closed rows. |
-| `outcome` | text | `win` \| `loss` \| `break_even` |
-| `exit_reason` | text | |
-| `highest_price` | numeric | Maximum verified position high observed while the lot was open; populated atomically at exit after migration `20260911153405`. Historical NULLs stay NULL. |
-| `data_confidence` | numeric | From the signal that opened the trade |
-| `tainted` | bool | Low data_confidence; excluded from learner training |
-| `excluded_from_learning` | bool | Manually flagged |
-| `mandate_id` | uuid | |
-| `market_regime` | text | `GREEN` \| `YELLOW` \| `ORANGE` \| `RED` at time of trade |
-| `agent_label` | text | `claude` \| `deepseek` (P&L comparison) |
-| `opened_at` | timestamptz | |
-| `closed_at` | timestamptz | |
-
-### `paper_order_events`
-Immutable append-only event log for every paper order state change.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `paper_trade_id` | uuid | FK → `paper_trades` |
-| `event_type` | text | `submitted` \| `filled` \| `partially_filled` \| `cancelled` \| `error` |
-| `price` | numeric | |
-| `qty` | numeric | |
-| `detail` | jsonb | |
-| `created_at` | timestamptz | Trigger blocks UPDATE/DELETE. |
-
-### `paper_performance`
-Daily paper-book truth snapshots per market. `PaperTrader` and `PositionMonitor`
-share the same canonical derivation contract; neither may leave derived fields at
-database defaults. Returns are always measured from the fixed seed for that row's
-market (US $10,000; India ₹10,00,000), never from the first observed row or from
-another market.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `date` | date | |
-| `market` | text | |
-| `nav` | numeric | |
-| `cash_balance` | numeric | Same-market paper pool cash |
-| `positions_value` | numeric | Same-market marked open positions |
-| `daily_pnl` | numeric | NAV change from the prior same-market row; first row = 0 |
-| `total_pnl` | numeric | `nav - market_seed` |
-| `total_pnl_pct` | numeric | Cumulative return from the same-market seed, percentage points |
-| `win_count` / `loss_count` | integer | Cumulative resolved paper outcomes for this market as of `date` |
-| `win_rate` | numeric | Wins / all resolved outcomes (including breakeven), fraction 0..1 |
-| `bench_nav` | numeric | Benchmark (VOO/^NSEI) NAV on this date |
-| `bench_return_pct` | numeric | Benchmark return from its first recorded same-market observation |
-| `alpha_pct` | numeric | `total_pnl_pct - bench_return_pct` |
-| `bench_session_date` | date | **(migration 20260816180000 — applied 2026-08-17)** The market session the benchmark close actually belongs to. A `NOT VALID` CHECK enforces `bench_session_date = date` on new/updated rows. Added because `bench_nav` 708.42 — VOO's 2026-08-11 close — was stored under BOTH 2026-08-12 and 2026-08-13: both writers accepted any positive benchmark *quote* and labelled it with the cron run date. Benchmark levels are now built from session-dated daily bars (`lib/paper/benchmark-observation.ts`); when today's bar does not exist, no benchmark is written for today. |
-| `bench_source` | text | **(applied 2026-08-17)** Provider of the benchmark daily bar (`yahoo`, `massive`, ...). |
-| `snapshot_type` | text | **(applied 2026-08-17)** `eod` \| `intraday`. `PositionMonitor` is the ONE canonical EOD writer per market. `PaperTrader` runs at the open and may now only CREATE today's row when none exists — it never upserts over an EOD row, which it previously could. |
-| UNIQUE | `(date, market)` | One row per day per market |
-
-### `v_decision_quality` (migration 20260817200000 — applied 2026-08-17)
-`data_confidence` now SURFACES `decision_observations.evidence_confidence` — the
-frozen contract the decision was made under — instead of recomputing a rival
-number from a hardcoded per-market applicability list. The old computation
-survives as **`structural_coverage`** (diagnostic only; must never gate an order)
-and **`confidence_source`** is `observation` or `derived` per row. Read by the
-paper-fill RPC, `/api/kite/order`, `execute-order` and Decision Review, so the
-swap was proven gate-neutral first: 0 of 4,628 rows cross the 0.5 threshold in
-either direction. New columns are appended (CREATE OR REPLACE cannot reorder),
-so every existing consumer keeps its column positions.
-
-### `paper_position_marks` (migration 20260816180000 — **applied 2026-08-17**)
-Append-only NAV mark ledger: one row per open position per PositionMonitor run.
-`paper_positions.current_price` is mutated in place and `paper_nav_history` keeps
-aggregates only, so before this table a bad mark was **unrecoverable** the moment
-the next run overwrote it. On 2026-08-12 the US paper NAV moved +2.70% and then
-−2.97% while the nine held positions actually moved −0.48%; that round trip can
-never be attributed, because the provenance to explain it was never written.
-This ledger cannot recover the past — it makes the next such move explicable.
-
-Writes are service-role only; UPDATE/DELETE are blocked by trigger. CHECK
-constraints are the DB-level detector: `qty > 0`, `mark_price > 0`, non-empty
-`source` and `reason`, a `live_quote` mark must carry `observed_at`, and `stale`
-must equal `provenance <> 'live_quote'`.
-
-| Column | Type | Notes |
-|---|---|---|
-| `run_id` | text | `position_monitor:<started_at>` |
-| `session_date` | date | Session the mark set belongs to |
-| `market` | text | `us` \| `india` |
-| `position_id` / `symbol` | text | |
-| `qty` / `mark_price` | numeric | The exact weight this position contributed to NAV |
-| `source` | text | Provider, or the explicit fallback that produced the mark |
-| `observed_at` | timestamptz | The mark's OWN observation time, not when the run read it |
-| `provenance` | text | `live_quote` \| `carry_forward` \| `entry_cost` |
-| `stale` / `age_days` | boolean / numeric | Anything not `live_quote` is stale weight |
-| `reason` | text | Why this mark and not a fresher one |
-
-### `live_performance` (migration 169, RLS tightened 20260713112754)
-Daily equity curve per LIVE account - the live analogue of `paper_performance`, backing the per-account **Live Portfolio vs VOO** chart. Robinhood's MCP exposes NO account-value history (`get_equity_historicals` is per-symbol OHLC; `get_portfolio` is current-only), so this cannot be backfilled - it is **accrued forward**: each account-snapshot refresh (`/api/live-account/refresh-snapshot`, `robinhood_mcp` source plus connected registry MCP brokers such as Webull) upserts one row/account/day with real broker equity + that day's VOO close. Until >=2 real days exist for the selected accounts, `/api/live-portfolio/performance` falls back to a **labeled constant-holdings estimate** (`estimated:true`) reconstructed from current holdings x Massive symbol history. Service-role writes; owner-email authenticated SELECT only.
-
-| Column | Type | Notes |
-|---|---|---|
-| `account_id` | text | Broker account ID; PK part |
-| `date` | date | Calendar day (UTC); PK part |
-| `equity` | numeric | Real broker account value (USD) that day |
-| `bench_nav` | numeric | VOO close the same day (null until a refresh records it) |
-| PK | `(account_id, date)` | One row per account per day |
-
----
-
-## 8.5 Live trading
-
-### `broker_accounts`
-Known broker account references (no passwords or credentials stored here).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | text PK | Internal label, e.g. `rh-trading`, `rh-agentic` |
-| `broker` | text | `robinhood` \| `kite` |
-| `account_role` | text | `trading-read-only` \| `agentic-orders-only` |
-| `market` | text | |
-| `enabled` | bool | |
-| `live_account_source` | bool | Whether this is the source for `live_account_snapshots` |
-| `notional_cap_usd` | numeric | Hard per-order cap |
-
-### `live_account_snapshots`
-One row per account (upserted, not history). Live Robinhood positions.
-
-| Column | Type | Notes |
-|---|---|---|
-| `account_id` | text PK | Robinhood account ID (not human-readable role label) |
-| `equity` | numeric | |
-| `buying_power` | numeric | |
-| `positions_json` | jsonb | Array of `{symbol, qty, avg_cost, current_price}` |
-| `captured_at` | timestamptz | |
-
-### `broker_order_events`
-Append-only event log for every live broker order state transition (migration 139). Protected by `boe_block_mutation()` trigger — UPDATE and DELETE are blocked at the DB level.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `broker_order_id` | uuid | FK → `broker_orders` |
-| `event_type` | text | e.g. `status_change`, `fill`, `cancel`, `reconcile` |
-| `from_status` | text | Prior status |
-| `to_status` | text | New status |
-| `actor` | text | `owner` \| `cron` \| `autonomous_shadow` |
-| `detail` | jsonb | Event-specific payload |
-| `created_at` | timestamptz | |
-
-### `broker_orders`
-Immutable live order ledger. Never deleted.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `broker` | text | |
-| `market` | text | |
-| `symbol` | text | |
-| `action` | text | `buy` \| `sell` |
-| `qty` | numeric | |
-| `order_id` | text | Broker-assigned order ID |
-| `status` | text | `pending` \| `filled` \| `needs_reconcile` \| `failed` |
-| `needs_reconcile` | bool | True when broker order ID is missing |
-| `submitted_at` | timestamptz | |
-| `filled_at` | timestamptz | |
-
-### `trade_proposals`
-TraderAgent / AutonomousShadow proposals. Auto-expire 30 minutes.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | `us` \| `india` |
-| `side` | text | `buy` \| `sell` |
-| `order_type` | text | `market` \| `limit` |
-| `qty` | numeric | |
-| `limit_price` | numeric | |
-| `analyst_score` | numeric | Score at proposal time |
-| `estimated_value` | numeric | Kelly-sized notional (shadow only) |
-| `pct_of_nav` | numeric | Fraction of live NAV (shadow only) |
-| `price_at_proposal` | numeric | Quote price used for sizing (shadow only) |
-| `thesis` | text | |
-| `signal_id` | bigint | FK → `agent_signals` |
-| `status` | text | `pending_review` \| `approved` \| `rejected` \| `expired` \| `queued_auto` \| `manual_review_required` |
-| `execution_mode` | text | `manual` \| `autonomous_shadow` (migration 139) |
-| `policy_snapshot` | jsonb | Full `LiveAutoPolicy` + kernel + sizing result snapshot |
-| `auto_run_id` | text | `runAutonomousShadow` run ID |
-| `auto_decided_at` | timestamptz | When the execution kernel evaluated this proposal |
-| `expires_at` | timestamptz | `created_at + 30m` |
-| `created_at` | timestamptz | |
-
-### `decision_journal`
-Audit log of every trade decision (live or paper).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | CHECK widened 2026-09-16 to `('us','india','crypto')` — `execute_paper_exit` unconditionally inserts a row here on every close using the position's own market; the original `('us','india')` CHECK would have rolled back every crypto paper exit. |
-| `action` | text | |
-| `rationale` | text | |
-| `approved_by` | text | `owner` \| `auto` (auto not used; kept for schema compat) |
-| `created_at` | timestamptz | |
-
----
-
-## 8.6 Learning
-
-### `learning_log`
-LearnerAgent mutation audit log (not the same as trade outcomes).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `event_type` | text | `weight_change` \| `champion_promoted` \| `mutation_blocked` |
-| `market` | text | |
-| `detail` | jsonb | |
-| `created_at` | timestamptz | |
-
-### `signal_weights_history`
-History of every signal weight change (rollback source).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `dimension` | text | |
-| `old_weight` | numeric | |
-| `new_weight` | numeric | |
-| `changed_by` | text | |
-| `created_at` | timestamptz | |
-
-### `trade_memories`
-pgvector store for RAG trade memory.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `paper_trade_id` | uuid | FK → `paper_trades` |
-| `text` | text | Setup description: symbol, scores, outcome |
-| `embedding` | vector(1024) | Jina `jina-embeddings-v3` embedding |
-| `metadata` | jsonb | Symbol, market, outcome, exit_reason, mandate_id |
-| `created_at` | timestamptz | |
-
----
-
-## 8.7 Evidence & enrichment
-
-### `evidence_records`
-Immutable evidence ledger. `payload_hash` deduplicates re-imports.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `source` | text | `edgar_form4` \| `av_insider` \| `av_earnings` \| etc. |
-| `payload` | jsonb | Raw evidence data |
-| `payload_hash` | text | UNIQUE; SHA-256 of payload |
-| `created_at` | timestamptz | Append-only. |
-
-### `fundamental_facts`
-Point-in-time (PIT) fundamentals vintage ledger (migration 150). Append-only: one immutable row per (symbol, market, report_period, restatement vintage). A later restatement of the same `report_period` inserts a NEW row with `restatement_seq = prev+1` and flips the prior row's `is_latest=false` — nothing is mutated in place, so "fundamentals as known on date D" is reconstructable and a restatement can never retroactively change a past as-of read. **OFF by default:** written by the capture-on-fetch hook in `lib/research-agent.ts` (fail-open), read via `lib/data/pit-fundamentals.ts::getFundamentalsAsOf`. Not yet wired into live scoring — `scoreFundamentals` is unchanged. RLS: `ff_service_all` (service_role ALL) + `ff_owner_read` (authenticated, owner email); anon REVOKEd.
-
-The active provider cache is `av_cache`, shared through `providerCachedFetch`; it is not a second fundamental truth table. ResearchAgent derives a request freshness hint from `earnings_calendar` in one batch read: 1 day for report dates in the prior 3/next 14 calendar days and 7 days otherwise or when unknown. The fetched payload is still captured into `fundamental_facts` with source provenance. No schema migration was required for event-aware freshness or `asset_class='adr'` because both are application-level contracts over existing text/cache columns.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `market` | text | `us` \| `india` (CHECK) |
-| `metric_set` | text | Default `ttm_overview` |
-| `report_period` | date | Fiscal period end the values describe (null for TTM rollups) |
-| `fiscal_period` | text | Q1/Q2/Q3/Q4/FY (nullable) |
-| `filing_date` | date | When it became public (nullable → falls back to `captured_at`) |
-| `values` | jsonb | OVERVIEW-shaped field map (`PERatio`, `ProfitMargin`, …) |
-| `source` | text | `fmp` \| `alpha_vantage` \| `yahoo` \| `financialdatasets` |
-| `restatement_seq` | int | 0 = as-first-observed; 1,2,… = later restatements |
-| `is_latest` | bool | Default true; flipped false when a newer vintage of the same period lands |
-| `payload_hash` | text | UNIQUE; dedup key for identical re-fetches |
-| `captured_at` | timestamptz | Kairos vintage clock |
-
-### `corporate_actions`
-Stock splits + dividends from Alpha Vantage.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `action_type` | text | `split` \| `dividend` |
-| `ex_date` | date | |
-| `detail` | jsonb | |
-| `created_at` | timestamptz | |
-
-### `trade_decisions`
-Historical Robinhood trade CSV imports + enrichment.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | |
-| `action` | text | `buy` \| `sell` |
-| `qty` | numeric | |
-| `exec_price` | numeric | |
-| `exec_date` | date | |
-| `price_1d_after` | numeric | AV DAILY price lookup |
-| `price_1w_after` | numeric | |
-| `price_1m_after` | numeric | |
-| `price_3m_after` | numeric | |
-| `outcome_score` | numeric | `(price_1m_after - exec_price) / exec_price * 100` |
-| `macro_market_regime` | text | Hardcoded epoch table |
-| `enrichment_status` | text | `pending` \| `enriched` \| `no_data` |
-| UNIQUE | `(symbol, action, exec_date, exec_price, qty)` | Cross-source dedup |
-
-### `uploaded_trade_files`
-Tracks CSV upload dedup (SHA-256 hash of file content).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `filename` | text | |
-| `file_hash` | text | UNIQUE |
-| `trade_count` | int | |
-| `duplicate_count` | int | |
-| `date_range_start` | date | |
-| `date_range_end` | date | |
-| `broker` | text | |
-| `created_at` | timestamptz | |
-
----
-
-## 8.8 Observability & ops
-
-### `agent_runs`
-One row per agent invocation.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `agent_name` | text | |
-| `market` | text | |
-| `status` | text | `running` \| `completed` \| `error` |
-| `started_at` | timestamptz | |
-| `ended_at` | timestamptz | |
-| `summary` | text | |
-| `error` | text | |
-| `created_at` | timestamptz | Pruned >60d by DB cleanup |
-
-### `agent_alerts`
-Open-issues funnel (System Health).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `issue_key` | text | Stable dedup key, e.g. `model-deprecated:deepseek-reasoner` |
-| `severity` | text | `info` \| `warn` \| `error` \| `critical` |
-| `category` | text | `model` \| `broker` \| `budget` \| `data` \| `ops` |
-| `title` | text | |
-| `detail` | text | |
-| `structured_issues` | jsonb | Machine-readable: `{issue_key, root_cause, blast_radius, suggested_fix}` |
-| `resolved` | bool | |
-| `resolved_at` | timestamptz | |
-| `auto_expire_at` | timestamptz | Self-expiring for budget alerts |
-| `created_at` | timestamptz | |
-| UNIQUE | `(issue_key) WHERE resolved = false` | At most one open row per issue |
-
-### `llm_call_log`
-Every LLM call: model, tokens, cost.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `agent_name` | text | |
-| `model` | text | |
-| `input_tokens` | int | |
-| `output_tokens` | int | |
-| `cost_usd` | numeric | |
-| `created_at` | timestamptz | Pruned >90d by DB cleanup |
-
-### `rag_traces`
-Every vector retrieval — what memory influenced a decision.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `symbol` | text | Symbol being scored |
-| `query_text` | text | |
-| `retrieved_ids` | jsonb | Array of `trade_memories.id` |
-| `reranked_ids` | jsonb | Post-rerank IDs |
-| `summary` | text | "3/5 prior setups were wins" note passed to LLM |
-| `created_at` | timestamptz | Pruned >90d by DB cleanup |
-
-### `briefings`
-Daily briefing records (in-app + email).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `type` | text | `morning` \| `evening` |
-| `content` | text | Full HTML/markdown content |
-| `sent_at` | timestamptz | |
-| `created_at` | timestamptz | Pruned >90d by DB cleanup |
-
-### `newsletters`
-Full email send history (inserted on successful Resend call).
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `subject` | text | |
-| `html_body` | text | |
-| `resend_message_id` | text | |
-| `nav_snapshot` | numeric | |
-| `signals_count` | int | |
-| `positions_count` | int | |
-| `sent_at` | timestamptz | Pruned >90d by DB cleanup |
-
----
-
-## 8.9 Mentor + coaching
-
-### `mentor_insights`
-MentorAgent's coaching notes.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `insight_type` | text | `pattern` \| `lesson` \| `warning` |
-| `content` | text | Plain-English coaching |
-| `market` | text | |
-| `symbols_mentioned` | text[] | |
-| `created_at` | timestamptz | |
-
----
-
-## 8.10 India-specific
-
-### `kite_portfolio_cache`
-NSE/BSE holdings snapshot from Kite API.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | uuid PK | |
-| `holdings` | jsonb | Raw Kite portfolio response |
-| `captured_at` | timestamptz | |
-
----
-
-## 8.11 Historical replay harness (measure-only, OFF)
-
-### Local bulk experiment lineage (2026-07-29)
-
-`backtest_experiments` also accepts `historical_replay` plans for the local
-bulk-evidence worker. A plan binds formula, horizon, validation mode, trial
-family/count, local PIT universe policy, data cutoff, exact git SHA,
-schema-versioned spec, unique plan fingerprint, and predeclared variants.
-Completion reuses the existing write-once result and universe/dataset/run
-fingerprints. RLS and grants remain service-role-only. Raw historical rows remain
-outside Supabase and are never returned to the browser.
-
-`backtest_experiment_quality_reviews` is a one-row-per-experiment, append-only
-operator review. It records `accepted_diagnostic` or `invalidated`, a bounded
-reason/detail, and an optional replacement experiment. It never edits the
-immutable result. RLS is enabled; browser roles have no grants; service role can
-select/insert but cannot update/delete.
-
-Four additive tables (migration 149) backing `features/historical-replay-harness`. Internal, server-side/offline analyst tooling — RLS enabled with **no policy** (service_role bypasses RLS; all other roles denied). The P0–P4 harness code (`lib/replay/*`) runs on in-memory fixtures and does **not** depend on these tables; they persist frozen point-in-time eligibility runs when the harness is wired to persist. `replay_packets`/`replay_packet_items` are write-once by convention (assembler deep-freezes in memory).
-
-### `replay_packets`
-One row per (cohort, symbol, as-of date); immutable after write. `manifest_hash` = sha256 over the frozen item set. UNIQUE `(cohort, symbol, as_of)`.
-
-### `replay_packet_items`
-The frozen inputs for a packet. `item_type ∈ {ohlcv, fundamental, news, universe, macro, corporate_action}` (macro/action extension: `20260729160000`). Macro vintages use the source `realtime_start` as `knowable_at`; corporate actions use the announcement timestamp or a conservative ex-date fallback. Invariant `knowable_at <= packet.as_of` (sealed accessor enforces at read; a backfill test asserts at write). FK → `replay_packets` ON DELETE CASCADE.
-
-### `replay_eligibility_runs`
-One row per replay execution. `packet_manifest_hash` + `code_git_sha` make a run reproducible from its frozen inputs and the gate code version. `model_kind` e.g. `pwin_logistic`.
-
-### `replay_eligibility_events`
-Per (run, scope, as-of) gate verdict. `gate ∈ {calibration_oos, thin_evidence, ic, validation, breakdown_veto}`; `passed` boolean. The reporter's `first_eligible_asof` is `MIN(as_of) WHERE passed` over this table. FK → `replay_eligibility_runs` ON DELETE CASCADE.
-
-### Exogenous-risk P0 ledgers
-
-Migration `20260801150000_exogenous_risk_p0` adds two append-only, record-only
-tables. `exogenous_observations` stores source facts with market (`us`, `india`, or
-`global`), domestic/global-spillover scope, observed/published/available times, source
-URL, source revision, and a SHA-256 payload fingerprint. `market_regime_runs` stores a
-market-local deterministic shadow result with separate domestic and global-spillover
-states. Both have owner-read RLS, service-only writes, mutation-blocking triggers, and
-no current scorer, paper, live, exit, sizing, broker, or Router reader. Empty is
-unavailable, never neutral.
-
-### `universe_snapshot_scores` (columns added — migration 151)
-Cross-sectional rank provenance added to the migration-137 table: `rank_quality` (`ok` \| `degraded` \| `excluded_*`), `comparable_group_key` (`market:asset-type:sector`; ETFs never grouped with single names), `group_n` (eligible names in the final group that day), `rank_eligible` (passed §4.1 data-quality gates). All nullable/additive.
-
----
-
-## 8.12 Benchmark Alpha + Capital Rotation Shadow
-
-Migration `20260713143000_benchmark_alpha_rotation_shadow.sql` adds the Phase-1 benchmark-alpha measurement layer and the P0 capital-rotation shadow ledger. Both are deterministic. Benchmark-alpha writes analytics only; capital rotation records shadow opportunities only.
-
-### `benchmarks`
-Config rows for market-local benchmark definitions. One enabled primary benchmark per market is enforced by partial unique index. Seeded primaries: US `VOO` (USD) and India `^NSEI`/NIFTY 50 (INR). Owner can read through RLS; service routes write.
-
-### `benchmark_price_observations`
-Durable benchmark component price observations keyed by `(benchmark_id, component_symbol, date)`. The current scorecard route fills primary benchmark observations from existing `paper_performance.bench_nav` / `live_performance.bench_nav` ledgers. Missing/unpriceable data is surfaced in scorecard rows rather than skipped.
-
-### `benchmark_scorecard`
-Materialized multi-horizon rollup keyed by `(market,currency,book,book_scope,benchmark_id,horizon,as_of)`. Stores common-window portfolio return, benchmark return, excess return, daily tracking error, annualized daily information ratio, sample counts, coverage, confidence, and status. It never feeds orders or learner mutation in Phase 1.
-
-### `rotation_config`
-Per-market/per-book rotation flags and thresholds. `rotation_shadow_enabled=true` by default for measurement. `rotation_paper_execute_enabled=false` and `rotation_live_proposals_enabled=false`; no sell/buy/proposal execution is enabled by this migration.
-
-### `rotation_events`
-Append-only capital-rotation audit ledger. P0 inserts `planned` or `rejected` shadow events from PaperTrader's `insufficient_cash` branch. Trigger `rotation_events_block_mutation` blocks UPDATE/DELETE. Rows include candidate/source symbols, scores, edge, notional, gate results, and explicit `no_execution` audit data.
-
-### `live_performance` provenance columns
-Adds nullable/backfilled `market`, `currency`, `broker`, and `book_scope` so live scorecard rollups can aggregate only explicitly scoped same-market/same-currency rows.
-
----
-
-## 8.13 Daily Per-Holding Risk Analytics (advisory, append-only)
-
-Three additive tables (migration 154) backing `features/holding-risk-daily`. Owner-only SELECT (email RLS `(auth.jwt() ->> 'email') = '<owner-email>'`), service_role writes, anon REVOKEd. Advisory-only: the risk score, posture, and LLM strategy note reach **no order path** for any account, including read-only `<read-only-account-id>`. **No cross-currency roll-up** — every row carries its own `market` + `currency`; USD and INR are never summed. Populated daily post-close by `/api/agents/holding-risk` (cron migration 156). Publish/claim via the migration-155 RPCs.
-
-### `holding_risk_runs`
-Claim/lifecycle header — one row per (`market` × `account_id` × `captured_on` × `formula_version` × `input_hash`) computation, identified by `run_key` (UNIQUE `holding_risk_runs_run_key_uniq`). Concurrent/retried crons race on that unique insert; the loser reads back the existing run. `status ∈ {running,complete,failed,partial}`; a failed run stays as evidence. Trigger `holding_risk_runs_lifecycle_guard()` blocks DELETE always, freezes identity/evidence columns, and lets `status` move **forward once** out of `running` only (never terminal→terminal). Partial index `holding_risk_runs_latest_idx (market, account_id, currency, formula_version, captured_on DESC) WHERE status='complete'` serves latest-complete lookups. Key cols: `broker`, `account_label`, `source_captured_at`, `completed_at`, `data_confidence` (0–1), `missing_inputs text[]`, `error`.
-
-### `holding_risk_snapshots`
-Append-only risk-data ledger — one row per run × holding (UNIQUE `(run_id, symbol)`; FK → `holding_risk_runs`). Trigger `holding_risk_append_only()` blocks **both** UPDATE and DELETE; a rerun is a new `run_id`, never a rewrite. Deterministic columns: `holding_risk_score int CHECK 0–100`, `risk_posture ∈ {hold,review,trim,exit_review,insufficient_data}`, `risk_drivers jsonb` (per-component detail), `action_reason`, `add_capacity boolean` (risk room exists — **NEVER an order signal**), `weight_pct ∈ [0,1]`, `beta`, `realized_vol_pct`, `unrealized_pnl_pct`, `data_confidence`, `missing_inputs`, `formula_version`. `strategy_note text` is the **LLM prose** — nullable, best-effort, never blocks, and cannot change the deterministic score/posture/action. Indexes: `holding_risk_snapshots_run_idx (run_id)`, `holding_risk_snapshots_symbol_idx (account_id, symbol, captured_on DESC)`.
-
-### `account_risk_snapshots`
-Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `holding_risk_runs`). Same `holding_risk_append_only()` UPDATE/DELETE block. `metrics jsonb` persists the RiskMetrics roll-up for Δ-vs-prior trend; `total_value` (own-currency, never cross-summed), `data_confidence`, `missing_inputs`, `formula_version`. Index `account_risk_snapshots_latest_idx (market, account_id, currency, formula_version, captured_on DESC)`.
-
----
-
-## Migration history summary
-
-### Return-observation evidence (2026-07-16)
-
-| Table | Purpose | Mutation / access rule |
-|---|---|---|
-| `symbol_return_observations` | Per-symbol window summary: volatility, measured market beta, overlap, provenance | Append-only; owner-read RLS; service-role write |
-| `symbol_daily_returns` | Frozen per-session close pair and simple return for future point-in-time pair correlation | Append-only; owner-read RLS; service-role write |
-
-`symbol_daily_returns` is strictly market-local (`us` or `india`) and records the price basis as `adjusted_close` or `raw_close`. Corporate-action/provider revisions append with a new fingerprint; they never overwrite earlier evidence. No scoring, sizing, eligibility, order, or exit path reads either table in the measurement phase.
-
-| Migration range | Key tables / changes |
-|---|---|
-| 001–020 | Core: profiles, auth, strategy_config, agent_signals, paper_portfolio, paper_positions, paper_trades, watchlist |
-| 021–030 | paper_positions exit columns, strategy_config risk profile, macro_regime + macro_signals |
-| 031–040 | agent_config, learner_config + learning_priors, paper_order_events (trigger), evidence_records, strategy_versions + experiment_runs, trade_proposals + decision_journal |
-| 041–050 | uploaded_trade_files + trade_decisions, live_account_snapshots, agent_runs |
-| 051–060 | signal_score_history (054), india_screen_cache (058), multi-market market column on paper_portfolio/positions/trades/performance |
-| 061–099 | broker_accounts, api_key_vault, llm_call_log, rag_traces, mentor_insights, edge_signals, edge_ic_history, learning_priors_history |
-| 099 | agent_alerts.issue_key + partial unique index |
-| 126–128 | PaperTrader standalone cron: signal freshness gate, claim_run_id, expected_price + realized_slip_pct + fill_status on positions + trades |
-| 133–135 | investment_mandates + strategy_evaluations (append-only trigger), mandate_id column on agent_signals + paper_trades + decision_observations |
-| 136 | agent_signals: `score_source` + `scoring_version`; decision_observations: 10 summary cols + NOT VALID range guards; strategy_versions: 3 new lifecycle states (`measure_only`, `live_review_eligible`, `live_approved`) |
-| 137 | universe_snapshots + universe_snapshot_scores tables (cross-sectional rank, measure-only) |
-| 138 | shadow_decisions: `policy_version_id` drops NOT NULL; `setup_type text` col + index (archetype shadow rows) |
-| 139 | strategy_config: +8 `live_auto_*` cols; trade_proposals: +4 autonomous cols + status constraint expanded (`queued_auto`, `manual_review_required`); broker_order_events: new append-only table + `boe_block_mutation()` trigger blocking UPDATE/DELETE |
-| 140 | `reserve_live_order_budget_v2` RPC — adds `p_execution_actor` param; `approved_by_user=(actor='owner')`; counts `unknown_needs_reconcile`+`partially_filled` in daily budget; REVOKE public/anon/authenticated, GRANT service_role only |
-| 141 | strategy_config: `live_auto_mode_us`/`live_auto_mode_india` (off/manual/autonomous); trade_proposals: `market` col + index |
-| 142 | RLS: owner-scope the `USING(true)` authenticated SELECT policies on trade_proposals/strategy_config/paper_trades/decision_journal/deep_analyses/mentor_insights/trade_decisions/uploaded_trade_files |
-| 143 | **Restore** (idempotent) the out-of-band 139/140 objects so a clean DB rebuilds: trade_proposals autonomous cols, broker_orders reservation cols, broker_order_events table+trigger+RLS, `reserve_live_order_budget_v2` RPC — exact prod DDL |
-| 144 | RLS: owner-scope corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings; enable service-only RLS on universe_snapshots/_scores |
-| 145 | Unique partial index `trade_proposals(signal_id,market) WHERE execution_mode='autonomous_live'` — atomic autonomous signal claim (no double-propose/buy) |
-| 146 | `symbol_blocklist` table (owner-curated tradable-universe blocklist; leveraged/inverse ETFs auto-blocked in code) + RLS (service + owner-read) |
-| 147 | Phase-1 repair (idempotent): `strategy_config` live_auto_* cols restore + REVOKE PUBLIC from `reserve_live_order_budget_v2` (no-op on prod; clean-rebuild reproducibility) |
-| 148 | Live kill-switches + sell atomicity: partial unique index `trade_proposals_active_sell_uniq (symbol,market) WHERE sell + active` |
-| 149 | Historical replay harness: 4 additive tables `replay_packets`, `replay_packet_items`, `replay_eligibility_runs`, `replay_eligibility_events`; RLS enabled, no policy (service-only). Measure-only, OFF |
-| 150 | PIT fundamentals: `fundamental_facts` append-only vintage ledger; UNIQUE `payload_hash`; RLS `ff_service_all` + `ff_owner_read`, anon REVOKEd. Index note: `captured_at::date` cannot go in an index expr (not IMMUTABLE) — indexed as plain `(symbol,market,filing_date DESC,captured_at DESC)`, COALESCE applied in-query. OFF (capture-on-fetch, fail-open) |
-| `20260729160000` | Adds `macro` and `corporate_action` to the sealed `replay_packet_items.item_type` vocabulary. Measure-only; no live consumer. |
-| 151 | Cross-sectional rank: `universe_snapshot_scores` +`rank_quality`/`comparable_group_key`/`group_n`/`rank_eligible`; `agent_signals` +`rank_pct`/`rank_rejected` (+ `rank_pct ∈ [0,1]` NOT VALID→validated check); status `rank_rejected`. Additive, OFF by default (genome `entry.rank_pct_min` default 0.0) |
-| 154 | **Daily Per-Holding Risk**: 3 additive append-only tables `holding_risk_runs` (lifecycle guard: DELETE blocked, identity frozen, status forward-once out of `running`), `holding_risk_snapshots` + `account_risk_snapshots` (UPDATE+DELETE blocked). Owner-email SELECT RLS + service-role writes, anon REVOKEd. Advisory-only, no order path; no cross-currency roll-up |
-| 155 | Daily Per-Holding Risk RPCs: claim-run (unique `run_key` insert, loser reads back) + publish-run (running→terminal transition with snapshots) — SECURITY DEFINER, service_role only |
-| 165 | `watchlist.market` (text NOT NULL default `US`) — route code read/wrote it for months but the column never existed; GET 500'd (panel "0 tracked") + every manual add failed. Backfills India from `.NS/.BO` |
-| 166 | LLM config data fix: rewrite invalid `deepseek-v4-flash/pro` → `deepseek-chat`/`deepseek-reasoner` in `agent_config`; seed `research`/`trader`/`mentor-evaluate`/`mentor-thesis`/`mentor-ask` rows (per-flow model from Settings) |
-| 20260720114315 | DeepSeek V4 cutover: supersedes migration 166 after DeepSeek made V4 concrete and scheduled the legacy aliases for 2026-07-24 retirement; rewrites `agent_config` and `api_key_vault.model_id` to V4 Flash/Pro. |
-| 167 | `strategy_config` +`trading_style` (default `position`) +`target_hold_days` — Trading Style presets (Swing/Position/Long-term); horizon governs the time-stop only before a champion is promoted |
-| 169 | `live_performance` (`account_id`,`date`,`equity`,`bench_nav`, PK`(account_id,date)`) - real daily equity curve per live broker account for the Live-vs-VOO chart; accrued forward on each snapshot refresh (RH exposes no account-value history). Initial migration used broad authenticated SELECT; `20260713112754_tighten_live_performance_rls` tightens it to owner-email SELECT, service-role writes |
-| 170 | **Automated strategy validation**: `strategy_validation_automation` (per-market `enabled`/`auto_shadow_enabled`/`max_active_shadows 0-1`, owner-read RLS, seeded us+india enabled) + `activate_strategy_shadow(bigint)` SECURITY DEFINER RPC (service_role only) that atomically routes a PASSED challenger to `shadow_paper` under a per-market advisory lock + capacity cap. Also schedules pg_cron `kairos-validation-sweep` (Fri 21:45 UTC). Cannot promote/execute — shadow only |
-| 171 | `market_controls` (`market` pk us/india, `paused`, `trading_enabled`, `paused_reason`, `paused_at`) — per-market pause/kill so one market's breaker no longer halts the other. Global `strategy_config.app_paused`/`trading_enabled` retained as a master-kill. Helpers in `lib/market-controls.ts`; owner-read RLS, service-role writes; seeded from current global flags |
-| 172 | `research_queue` (pk `(market,symbol)`, `priority`, `attempts`, `discovery_source`, `deferred_at`) — research candidate carry-forward: candidates beyond a run's cap are deferred here with raised priority (starvation-free) instead of the old silent `.slice()` drop, so a growing watchlist/screener pool rotates fairly under provider budgets. Helper `lib/research-queue.ts`; owner-read RLS, service-role writes |
-| 173 | `oauth_pkce_state` - server-side one-time PKCE verifier store keyed by `state` + `provider` for generic MCP broker OAuth callbacks. Callback consumes by provider-scoped delete-and-return, so replay/race callbacks cannot reuse a verifier |
-| 174 | Live snapshot broker framework - `live_account_snapshots.broker` labels rows by source broker and the registry MCP refresh path auto-adds connected accounts. Pruning is broker-scoped and only runs after a successful non-empty capture, never after an outage or empty result |
-| 175 | `strategy_sleeves` + `strategy_config.allocation_enabled` - deterministic asset-allocation proposal core. Shipped OFF by default; callers return null unless `allocation_enabled=true`. Sanitizes malformed bands/targets and never routes to orders |
-| 177 | `execute_paper_rotation(...)` RPC (service_role) — capital-rotation Phase 1 PAPER: atomic sell-weakest-holding + buy-candidate in one transaction (rolls back if the candidate can't be funded after the sale — never leaves the book in cash). Idempotent on `idempotency_key`; writes status `paper_executed` to `rotation_events`. SHIPPED OFF: only invoked when `rotation_config.rotation_paper_execute_enabled=true` (default false) + guardrails (persistence/cooldown/per-run+day caps) pass. Paper book only |
-| 176 | `provider_pacing` (`provider` pk, `min_interval_ms`, `last_started_at`) + `try_acquire_provider_slot(provider, min_interval_ms)` RPC (service_role) — serverless-safe per-provider rate-limit lease (atomic INSERT…ON CONFLICT DO UPDATE…WHERE). `providerCachedFetch` acquires a slot before a real call for HARD-limited providers (Massive 5/min, GDELT 1/5s); no slot → serve stale cache instead of bursting past the wall. Data-fetch pacing only — no order path |
-| 20260713112754 | RLS tightening for `live_performance`: drops broad authenticated read policy and replaces it with owner-email SELECT (`(select auth.jwt()) ->> 'email' = '<owner-email>'`) |
-| 20260713143000 | Benchmark-alpha scorecard tables (`benchmarks`, `benchmark_price_observations`, `benchmark_scorecard`), `live_performance` provenance columns, capital-rotation shadow config/events (`rotation_config`, append-only `rotation_events`), and pg_cron `kairos-benchmark-scorecard` |
-| 20260714000000 | pg_cron `kairos-broker-keepwarm` (daily 06:00+18:00 UTC) → `POST /api/broker-mcp/keepwarm` refreshes/rotates every connected MCP broker token so the OAuth refresh chain never lapses over weekends. Read-only, no order path |
-| 20260714010000 | **Canonical Evidence Router — policy foundation** (`router_enabled=false`, shadow-only): immutable `evidence_policy_versions` + mutable `active_evidence_policy` pointer + immutable `evidence_policy_rules` (per-intent auto/prefer/only/off) + `provider_runtime_config` (conservative-only overrides) + `provider_capability_status` (per provider/market/intent maturity) + append-only `evidence_policy_evaluations` (shadow proof). `activate_evidence_policy(market,version,required_intents,actor)` SECURITY DEFINER RPC (advisory lock + required-intent check, service_role only). Append-only triggers block UPDATE/DELETE on versions/rules/evaluations. Seeded `us:v1`+`india:v1` all-Auto, disabled. Owner-read RLS, service-role writes. No scoring/order/money path |
-| 20260714020000 | **Canonical Evidence Router — cache foundation**: `evidence_cache_v2` (canonical per market/symbol/intent/provider/fingerprint; `__MARKET__` symbol for market-wide) + append-only `provider_call_ledger` (normalized status/error only, **no** tokens/URLs/headers/bodies) + durable `provider_refresh_jobs` queue (one active job per identity via partial unique index) + `claim_provider_refresh_jobs(limit,lease)` SECURITY DEFINER RPC (`FOR UPDATE SKIP LOCKED`, service_role only). Owner-read RLS. Separate from legacy `av_cache` |
-| 20260714030000 | **Pacing repair** — idempotent reconciliation of the out-of-band live `provider_pacing` + `try_acquire_provider_slot` (previously untracked "migration 176") so a fresh env rebuilds identically. Matches live semantics exactly; no behavior change |
-| 20260715130000 | **Evidence Router ACL + provenance repair**: explicitly removes `PUBLIC`/`anon`/`authenticated` execution from policy, refresh-claim, and pacing RPCs; makes `provider_pacing` service-role-only; adds the canonical `evidence_cache_v2.provenance` array used to preserve adapter field/source attribution through cache hits |
-| 20260715131000 | **Evidence Router table ACL hardening**: removes all `anon` grants and all authenticated write grants from policy, runtime, capability, evaluation, cache, call-ledger, and refresh-queue tables; authenticated remains owner-read through RLS, while `service_role` retains server-side access |
-| 20260715160000 | **Downside hedge (US PAPER only, OFF)**: config, state, append-only ledger, paper position/trade role provenance, transactional evaluation/fill/exit RPCs, owner-read RLS and service-only writes. No live order path. |
-| 20260716210000 | **Router cutover prerequisites** (shadow-only, `router_enabled` still false): `evidence_field_baselines` (mutable — a moving reference point, not evidence), append-only `evidence_degradation_events`, `evidence_evaluation_details`, `evidence_evaluation_reviews`, plus frozen-cohort + activation-binding columns on `evidence_policy_evaluations`, and the `activate_evidence_policy_bound()` RPC. RLS on with owner-read on all four; anon has no grants; writes service-role only; RPC is `security definer` with fixed `search_path`, executable by `service_role` only. *(Row was missing from this table; the migration is confirmed APPLIED in production — verified via `information_schema.columns` on 2026-07-18.)* |
-| 20260719090000 | **Weekend research catch-up**: adds `agent_signals.session_validated/as_of_session/staged_at`, the staged-row invariant + one-active-stage partial unique index, structured `agent_runs.workload_metrics`, and per-market Saturday/Sunday catch-up crons. Weekend rows are non-executable until a fresh session re-score. |
-| 20260721130000 | **Router evidence hardening** (still shadow-only): `evidence_policy_evaluations` gains immutable `safety_pass`, `quality_pass`, and `market_session_date`; one inactive `router_enabled=true` candidate per market copies the current active rule set so evidence binds the exact future candidate without moving the active pointer; the bound activation RPC requires both verdicts plus ten distinct passing market sessions in the prior 45 days and a still-fresh selected evaluation. Adds daily cache-only cohort crons. Production stays on disabled baselines. |
-| 20260721164500 | Router cohort session-source clarification: `market_session_date` is sourced from executable ResearchAgent rows (`session_validated=true`, `as_of_session`), not candidate candle availability. Missing India bars therefore persist as failed coverage evidence instead of crashing the evaluator; weekend/holiday staged rows cannot count. |
-| 20260731210000 | **Market-local US schedules + India news shadow:** replaces five fixed-UTC US jobs with paired seasonal UTC schedules carrying exact New York `local_slot` contracts; adds daily post-close `kairos-india-news-shadow`. No new table: shadow payloads reuse `evidence_cache_v2` intents `sentiment.news_headlines_shadow` / `event.corporate_announcement_shadow`, and exact call accounting reuses append-only `provider_call_ledger` run IDs prefixed `india-news-shadow:`. No decision consumer. |
-| 20260824183930–20260824190302 | **Instrument-family measurement:** creates `instrument_family_observations`, backfills deterministic curated taxonomy without reconstructed features, then independently blocks TRUNCATE and removes service-role destructive grants. Owner diagnostics only; no decision or money-path consumer. |
-
-### Capital rotation containment (20260722185000)
-
-Migration `20260722185000` contains capital-rotation P1 and hardens its future
-claim contract. It forces `rotation_paper_execute_enabled=false` with a database
-check constraint because the cost/tax/turnover/fresh-price/post-swap gates are
-incomplete, while preserving shadow measurement. The replacement RPC verifies
-the exact `claim_run_id` and then returns `p1_guardrails_incomplete`; it contains
-no position, cash, trade, or order mutation. The caller also requires an
-independent deployment flag.
-
-Migration `20260722203000` adds the read-only, service-role-only
-`get_rotation_return_cohort(market, symbols, since)` RPC. It returns one latest
-point-in-time revision per symbol/session from `symbol_daily_returns`, bounded
-to one market and at most 20 symbols. This prevents PostgREST row limits from
-silently truncating P0 candidate-correlation evidence. It has no write or
-trading authority.
-
-### Evidence evaluation tables
-
-`evidence_policy_evaluations` and `evidence_evaluation_details` sat at **0 rows** from the
-20260716210000 migration until 2026-07-18: the comparator, degradation guard, and bound
-activation RPC all shipped, but nothing fed them. Their first and only writer is the
-**cohort builder** (`lib/evidence/evaluation/cohort-builder.ts`, exposed as
-`GET/POST /api/agents/evidence-cohort?market=us|india`), which resolves real recent research
-decisions into a frozen dual-run cohort and persists one evaluation row plus one detail row
-per cohort symbol — including rows where either path abstained or failed, which the spec
-requires to be retained rather than filtered out.
-
-Migration `20260721130000` separates safety from quality and records the trading
-session represented by frozen daily bars. Rows remain append-only, owner-read,
-service-role-write, and carry an `expires_at` (default 72h) so the selected proof
-must be fresh. Historical passing rows can contribute only to the ten-session
-window; old v1 rows have neither verdict nor a session date and cannot qualify.
-
-**These rows are measurement, not authority.** `router_enabled` remains `false` for both
-markets, so an evaluation changes no score, signal, size, position, or order. Persisting one
-cannot activate anything — activation is the separate owner-gated `activate_evidence_policy_bound()`
-RPC, which additionally requires the evaluation's baseline to still be the active policy and
-every flagged divergence to carry an approving review row.
-## Earnings Risk Observations (P0)
-
-`earnings_risk_observations` is a compact normalized decision-context ledger,
-not a new source-of-truth store. Raw provider payloads stay in the existing
-evidence/cache layers. Rows reference the signal/proposal when available and
-carry market, event/session, normalized option quote, proxy/stop ratio, policy,
-counterfactual verdict, and legacy-blackout parity.
-
-The table is append-only and retry-idempotent. Owner-authenticated clients have
-`SELECT`; `service_role` has only `SELECT` and `INSERT`; anon has no grant.
-Database checks pin P0 to `policy_mode='shadow'` and
-`behavior_changed=false`. Migrations:
-`20260729200000_earnings_risk_observations.sql` and
-`20260729201000_harden_earnings_risk_observation_acl.sql`, with
-`20260729202000_optimize_earnings_risk_observations.sql` adding the
-proposal lookup index and init-plan-safe owner policy.
-
-## `theme_observations` (2026-08-04)
-
-Append-only per-run record of Theme Scout output — one row per
-(`run_date`, `market`, `theme_raw`). `watchlist` rows expire after 7 days, so a
-theme's recurrence across runs, which is the entire rise/decline signal, had no
-durable home.
-
-`theme_slug` is the stable identity from `lib/themes/vocabulary.ts`; **NULL means
-the controlled vocabulary does not cover that string**, recorded rather than
-guessed. `watchlist.theme_slug` carries the same value on the live row.
-
-RLS enabled, owner-email SELECT policy, `service_role` holds
-`INSERT, REFERENCES, SELECT, TRIGGER` only — UPDATE/DELETE/TRUNCATE revoked, so
-append-only is a grant property rather than a convention the writer follows.
-
-Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
-path reads either column. See `features/theme-tracking/FEATURE_ARCHITECTURE.md`.
-
-## `market_events` / `market_event_outcomes` (2026-08-05)
-
-Append-only ledger of dated, typed market events plus their matured forward
-paths, so a recurring event pattern becomes a counted base rate rather than a
-remembered story. Nothing in the schema could record a market event before this.
-
-`occurred_at` (when the event became **public**) is kept separate from
-`observed_at` (when we recorded it) and a CHECK rejects `occurred_at >
-observed_at`. That column is where look-ahead enters; a drift toward "when we
-noticed" makes every backward measurement silently optimistic. Verified live: a
-future `occurred_at` is rejected.
-
-`event_type` is validated against `lib/events/vocabulary.ts` at the API rather
-than by a DB enum, because extending an enum is a migration while the vocabulary
-is meant to be owner-reviewed — each new type is another trial against an
-unresolved false-discovery correction.
-
-RLS enabled, owner-email SELECT policies. `market_events` grants
-`INSERT, REFERENCES, SELECT, TRIGGER` only; `market_event_outcomes` adds UPDATE
-for re-maturation. Neither has DELETE or TRUNCATE.
-
-Measurement only: no score, eligibility, sizing, entry, exit, promotion or broker
-path reads either table. See `features/event-ledger/FEATURE_ARCHITECTURE.md`.
-
-## Capital Plan private records (2026-08-08)
-
-`capital_profiles` holds the current encrypted owner-entered planning profile;
-every save also inserts an immutable encrypted row in
-`capital_profile_snapshots`. `capital_area_watchlists` holds the owner-selected
-market/locality configuration. It is not a discovered listing universe and does
-not contain an address, lender document, broker token, or account number.
-
-`capital_decision_runs` is the append-only audit ledger for deterministic
-mortgage-prepayment, cross-asset, and area-watch snapshot results. Inputs and
-results are AES-256-GCM encrypted in application code; only narrow metadata,
-the bounded decision state, engine version, and evidence references are stored
-in plaintext. `capital_profile_snapshots` and `capital_decision_runs` have row
-mutation and statement-level truncate triggers and service-role mutation grants
-revoked. All four tables have RLS enabled and no browser grants.
-
-The weekly `kairos-capital-area-snapshots` cron runs after the Property
-collection cadence and reads the existing observation table only. It adds no
-provider calls and records unavailable local coverage explicitly. These tables
-are not readable by any scoring, agent, order, or broker path.
-
-## Property metro-county context (2026-08-09)
-
-`property_market_counties` is the declared county boundary for each US metro:
-Austin holds Bastrop, Caldwell, Hays, Travis, and Williamson; Phoenix holds
-Maricopa and Pinal. It prevents a metro label or one county's parcel source from
-silently becoming a claim of full-metro coverage.
-
-`property_county_observations` is an append-only, service-role-only annual ACS
-context ledger. It stores county FIPS, source vintage, median household income,
-median gross rent, median home value, and rental-vacancy rate. It has no owner,
-address, parcel, protected-class, listing, sale-price, or recommendation field.
-The table has RLS plus update/delete/truncate guards. ACS rows are unavailable
-until the server `CENSUS_API_KEY` is configured and the source is explicitly
-activated; missing credentials are recorded as source unavailability, never as
-zero county coverage.
-
-## Score / price divergence evidence (2026-09-08)
-
-`score_price_divergence_runs` is the daily market-local heartbeat for the
-measure-only divergence job. It records input/canonical counts and exclusions,
-including a zero-event run, so silence cannot be mistaken for a clean result.
-
-`score_price_divergence_events` stores immutable three- and five-research-session
-windows where score and price moved in opposing directions. The primary cohort
-is fixed at five sessions, at least five score points, and at least a two-percent
-opposing price move. Each row carries the score source/version plus availability
-and applied-weight fingerprints; a methodology change breaks the window.
-
-`score_price_divergence_outcomes` copies h5/h10/h20 forward outcomes only after
-they exist in `observation_labels`. All three tables have owner-read RLS,
-explicit Data API grants, service-role insert only, and update/delete/truncate
-guards. No scoring, eligibility, sizing, exit, order, or broker path reads them.
-See `features/score-price-divergence/FEATURE_ARCHITECTURE.md`.
-
-
----
-
-# Source: docs\arch\05-crons-and-scheduling.md
-
-# Kairos — Crons & Scheduling
-> Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). Verify production `cron.job` rows before relying on a listed schedule.
-> 2026-09-17: **`kairos-crypto-native-shadow` runs every day at 00:15 UTC** (migration
-> `20260917190000_crypto_native_shadow_collector.sql`). It calls `POST /api/agents/crypto-research-shadow`
-> after the completed UTC daily-bar boundary and before the crypto position monitor at 00:30 UTC. It is a
-> separate 24/7 evidence lane: it writes daily research and explicit broker-quote/pair refusals, never a
-> paper or live order. This exists because sending crypto through the US ResearchAgent allowed it to be
-> repeatedly deferred behind equity holdings while a run misleadingly reported success.
->
-> 2026-09-16: **Crypto paper Stage 3 jobs are cloud-scheduled through Supabase pg_cron** (migration
-> `20260916020000_crypto_paper_pool.sql`, applied with the Stage 3 pool). `kairos-crypto-paper-trade`
-> calls `POST /api/agents/crypto-paper-trade` at 14:30 UTC daily; `kairos-crypto-position-monitor`
-> calls `POST /api/agents/crypto-position-monitor` at 00:30 UTC daily. Both use the existing
-> Vault-backed `kairos_call_agent` bridge and never depend on Windows Task Scheduler, a local
-> development server, or Vercel Cron's GET-only trigger. The monitor fails closed unless Alpha
-> Vantage supplied the exact UTC day that just closed; it never treats a provisional daily candle
-> or yesterday's stale candle as a valid stop/target input. Paper only; no broker order path.
->
-> 2026-09-15: **`warm-market-snapshot` pg_cron added (migration `20260916010000_warm_market_snapshot_cron.sql` — NOT yet applied; requires substituting `{{APP_URL}}` and `<CRON_SECRET>` placeholders before applying via `db query --linked`).** Schedule `15 21 * * 1-5` (21:15 UTC = 16:15 ET after NYSE close). Calls `POST /api/cron/warm-market-snapshot` with cron-secret header. That endpoint calls `/api/markets/overview` with the cron secret, which grants an owner-level bypass (via `verifyCronSecret`) so the Massive provider call runs and writes `market_overview_snapshots` once per session. Result: viewer requests to `/api/markets/overview/cached` always find a fresh snapshot and never trigger a live provider call. The endpoint is idempotent — the overview route writes the snapshot on every successful call and the pg_cron job fires once per session.
->
-> 2026-09-14: **Markets pages now inherit a once-per-session cadence; no new cron was added.** `/api/markets/quotes` is cache-only — it reads `price_cache`, which `kairos-price-cache-fill` (13:25 UTC weekdays, retry 13:45) already populates for the whole regime/sector/leveraged universe in ONE grouped provider call. Its old path called the provider's previous-day aggregate per symbol behind a 5-minute cache AND computed an intraday `(c - o)` move, so the cached path is both cheaper and more correct. `/api/markets/overview` keeps the grouped provider as its source — reading `price_cache` there was tried and rejected on production evidence (2026-07-17) — and instead stores its resolved payload in `market_overview_snapshots`, keyed by session date, so the provider is resolved at most once per session rather than once per 5-minute window per warm instance.
->
-> 2026-09-09: `kairos-listing-discovery-us` runs weekdays at 23:35 UTC and calls `/api/agents/listing-discovery?market=us`. It reads the SEC daily master index for registration/prospectus metadata only and writes the isolated candidate/filing evidence registry. The job does not insert `watchlist` rows, create ResearchAgent inputs, set eligibility, call a broker, create a paper position, or place an order. Provider failure records an errored `agent_runs` row rather than being interpreted as zero listings.
->
-> 2026-09-09: **Manual Trade Guardian Stage 0 — `kairos-manual-fill-detect`**, `*/15 13-21 * * 1-5` (every 15 min, 13:00-21:00 UTC = 9am-5pm ET weekdays), `POST /api/agents/manual-fill-detect/cron`. Owner-approved 2026-09-09 (features/manual-trade-guardian/FEATURE_ARCHITECTURE.md). Scoped to account `<agentic-account-id>` only (the one order-permitted account). Fetches live Robinhood holdings (`fetchRobinhoodBrokerAccounts`, same call `holding-risk` makes), diffs against the last known qty per symbol in the new `agentic_position_ledger` table, and classifies each increase as `manual` (no matching Kairos `broker_orders` fill) or `agentic` (matched). A manual fill additionally gets a suggested protective stop (mandate `stop_loss_pct` off live avg cost — the same source `PaperTrader` uses) and raises a warn-level `agent_alerts` row. **Places no order** — Stage 0 is detection + alert only; the pure diff/matching logic lives in `lib/trading/manual-fill-detection.ts` (tested, `tests/manual-fill-detection.test.ts`), the route is a thin fetch/write/alert shell. See `docs/arch/04-database-schema.md` for `agentic_position_ledger`.
->
-> 2026-09-08: **Property Stage 3 — ZIP-level area context (Zillow ZHVI) rides the existing weekly `kairos-property-collect` job.** No new cron: `lib/property/sources.ts` gains `ZillowZhviZipAdapter` (source_key `zillow-zhvi-zip`), and `app/api/property/collect/route.ts` loops `ZIP_PROPERTY_ADAPTERS` after the county-context loop, writing the new `property_zip_observations` table (migration `20260908120000_property_zip_zhvi_observations.sql`, applied and verified via `information_schema`/`pg_trigger`). The adapter fetches Zillow's national ZIP-level ZHVI CSV (~120MB, no key) once per run via the shared per-invocation fetch cache and keeps only rows whose `Metro` column matches Austin/Phoenix and only the trailing 13 monthly columns (enough for a 3M/12M trend). Because the source publishes monthly, weekly polling is idempotent — duplicates are absorbed by the table's unique constraint, so no per-ZIP `since` cursor is needed. `maxDuration` on `/api/property/collect` raised 60 -> 120 to give the large download headroom. GET `/api/property/zip-trend?market=&zip=` (new, owner-gated) reads the table for the property workspace UI. See `docs/arch/04-database-schema.md` and `features/property-zip-area-context/FEATURE_ARCHITECTURE.md`.
->
-> 2026-09-01: **`exit-stop-shadow` added** — jobs 129 (US, Sun 04:20 UTC) and 130 (India, Sun 04:30 UTC), both `POST /api/agents/exit-stop-shadow?market=<m>&horizon=10`. Measure-only; writes `exit_stop_shadow_runs` and nothing else. India runs separately because it recorded zero target hits across 965 observations and is a different exit regime.
->
-> 2026-08-28: **Alpha Diagnostic Lab scheduled (read-only).** `kairos-alpha-diagnostics-us` (127) `10 4 * * 0` and `kairos-alpha-diagnostics-india` (128) `20 4 * * 0`. Weekly, after label-maturation and dimension-diagnostics settle — the input only changes as labels mature, so a daily cadence would re-run an identical plan and be refused by the `plan_fingerprint` unique index (the endpoint returns the existing run with `reused: true` rather than failing a cron that fires twice). Writes one `backtest_experiments` row per run and nothing else.
->
-> 2026-08-25: **Archetype IC evaluator scheduled (measure-only).** `kairos-archetype-ic-us` (125) `40 3 * * 0` and `kairos-archetype-ic-india` (126) `50 3 * * 0`. Weekly rather than daily because the input only changes as `observation_labels` mature. Writes `archetype_ic_runs`; nothing in the money path reads it.
->
-> 2026-08-25: **Horizon-extension shadow scheduled (measure-only).** Two new pg_cron jobs, 10 minutes ahead of each PositionMonitor so the policy records its verdict against the same state the live time stop will see:
->
-> | job | schedule (UTC) | local |
-> |---|---|---|
-> | `kairos-horizon-extension-shadow-us` (123) | `5 20,21 * * 1-5` | 4:05 PM ET (DST-safe double-fire, mirrors `kairos-position-monitor`) |
-> | `kairos-horizon-extension-shadow-india` (124) | `5 11 * * 1-5` | 4:35 PM IST |
->
-> The route and decision core (`lib/trading/horizon-extension.ts`) shipped 2026-08-11 but were never scheduled — `horizon_extension_shadow` held 28 rows, all stamped that single day. Same "route exists, scheduled nowhere" failure as `/api/agents/autonomous-shadow/cron`. Nothing consumes the output; the policy is strictly additive (can only turn "close now" into "hold one more day", bounded by `max_hold_days`), fail-closed on missing evidence, and cannot open, size, re-enter, or suppress a stop/target/exit.
->
-> Why it matters: ~75% of closed US paper lots (51/68) exit on the unconditional time stop, which fires on `ageDays > horizonDays` with no reference to P&L, trend or score. The four US lots that ran to `partial_target` instead averaged **+20.3%** and won 4/4.
->
-
-> 2026-08-20: **`kairos-settle-check-us` added — `0 13 * * 1-5` (09:00 ET).** Next-day settlement check for US paper marks. Runs after the Massive grouped daily feed publishes the prior session and before the next US session opens. Timing evidence: 2026-08-17's grouped bars were available ~13:40 UTC on 08-18, while 2026-08-18's were still absent at 00:55 UTC on 08-19 — the feed lands overnight, not the same evening. If it runs before publication it reports `nothing_to_compare`, never a false pass. MEASURE-ONLY: writes no NAV, no position price, no trade.
-
-> Last updated: 2026-08-08 (Property collection runs Sunday at 10:00 UTC, Property forecasts at 10:30 UTC, and Capital Plan area snapshots at 10:45 UTC. The final job reads only already-persisted Property observations, so it makes no provider call and cannot turn unavailable ZIP/PIN/locality data into a local prediction. All three remain outside securities scoring, orders, and money movement.)
-
-> 2026-08-09: When the explicitly gated `census-acs` source is active and its
-> server key is configured, the existing Sunday Property collection job makes
-> one bounded request per state and writes annual county context for every
-> declared Austin/Phoenix metro county. It does not fetch sales, listings, or
-> parcel records and it never substitutes county data for ZIP/locality evidence.
->
-> Property parcel evidence is not a pg_cron/Vercel job. `.github/workflows/property-evidence.yml` runs monthly on the 8th at 05:15 UTC and can be dispatched per source. It exits before downloading when no active owner scope exists. Large Maricopa/TCAD archives remain ephemeral, raw artifacts are never uploaded, and Stage 1 writes evidence only; it runs no AVM or property transaction workflow.
-> Last updated: 2026-08-05 (Added weekday `kairos-event-maturation` at 16:10 UTC, jobid 116. Computes 1/5/21-session forward paths for the market event ledger into `market_event_outcomes`. Measure-only; no score, sizing, entry, exit, promotion or broker path reads it.)
-> Previously: 2026-08-01 (Removed the obsolete `kairos-macro-read-india` cron. India has no domestic macro narrative until the market-local exogenous-risk observation layer has source-backed data; the route continues to refuse India before any LLM call or write.)
-> Previously: 2026-07-31 (US research, paper-entry, and close-monitor slots are DST-safe market-local contracts: paired EDT/EST UTC invocations plus an exact route guard admit only one. Added daily post-close `kairos-india-news-shadow`; it is evidence-only and uses no scoring API key.)
-> Previously: 2026-07-21 (PaperTrader is standalone-only: one in-session attempt per market, with US at 15:15 UTC and India at 04:10 UTC. Research no longer tail-calls it. The route independently refuses weekends, holidays, and outside-session execution.)
-> Previously: 2026-07-19 (Per-market ResearchAgent catch-up now runs on supported market-closed days: weekends plus verified full NYSE/NSE equity holidays. Daily triggers self-skip on trading days, special sessions, and unsupported calendar years. Results remain `weekend_staged` under the legacy status name, `session_validated=false`, and never chain a trader.)
-> Previously: 2026-07-17 (`kairos-price-cache-fill` now also backfills ~400d of sector-XL daily history — one paced, resumable provider call per symbol on the existing schedule. No new cron, no schema change.)
-> Previously: 2026-07-15 (Codex audit: added the missing daily `kairos-earnings-pit-capture` at 02:10 UTC; moved `kairos-india-markets-fill-retry` from a colliding 10:45 slot to 10:35 UTC. India primary remains 10:15; symbol-profile backfill remains 11:40.)
-> Update this file when: a new cron is added or removed, a schedule changes, or a new endpoint is wired to a cron.
-
-> 2026-09-14: **`kairos-user-risk-email`** `5 * * * *`, `POST /api/agents/user-risk-email` (`20260914210000_user_risk_email_cron.sql`, **applied and verified in production**). The opt-in daily risk email (features/per-user-broker-risk §5, Phase 3). It fires HOURLY but mails only users whose `send_hour_utc` matches the current UTC hour, so recipients in different time zones get a sane local time rather than one fixed global send. Hourly firing is **not** hourly mail, by three independent limits: `enabled` defaults FALSE (nobody is opted in, so every run currently selects zero rows); a UNIQUE INDEX on `user_risk_email_sends (user_id, send_date)` makes a second same-day send impossible, and the sender writes that audit row BEFORE calling the email provider so a retried cron loses the race rather than mailing twice (proven in production inside a rolled-back transaction: the second same-day insert raised `unique_violation`); and `MAX_SENDS_PER_RUN` caps any single run. Access is re-checked at send time, so a revoked grant stops the mail as well as the pages. No LLM, no order path, no owner table.
-
-> 2026-09-14: **`kairos-user-holding-risk-india`** `15 11 * * 1-5` and **`kairos-user-holding-risk-us`** `45 21 * * 1-5`, `POST /api/agents/user-holding-risk?market=<market>` (`20260914190000_user_holding_risk_cron.sql`, **applied and verified in production**). Per-guest risk analytics (features/per-user-broker-risk §4). Each runs 15 minutes after the owner's `kairos-holding-risk-<market>` job for the same market — the offset is deliberate, since both share the Yahoo candle source and the owner's book is the one that must not wait. Fans out per CONNECTED guest, but cannot consume provider budget: the guest path imports only the keyless Yahoo endpoint and no LLM (see `lib/risk/guest-risk.ts`). What does scale per guest is one broker call per user per market per day, against that user's own Zerodha quota. With no guest connected — the state at time of scheduling — each run is a single indexed SELECT returning zero rows. Advisory-only, read-only, writes only `user_*` tables.
-
-**Adding a cron:**
-- Cloud: add to `vercel.json` (hit deployed URL)
-- Local: add to `scripts/run-agents.ps1` (Windows Task Scheduler; PC must be on)
-- Update this file with the new entry
-
----
-
-## Vercel crons (cloud, hit deployed URL)
-
-Defined in `vercel.json`. Fire against the Vercel deployment URL regardless of local machine state.
-
-| Endpoint | Schedule (UTC) | What it does |
-|---|---|---|
-| `/api/agents/evaluation/p1-gate/cron` | Sundays 02:00 UTC | Count closed evaluable trades per market; fire System Health info alert when ≥ 20 |
-| `/api/agents/autonomous-live/cron?market=us` | Weekdays 15:00 UTC (~10–11 AM ET, in US session) | Per-market run: 9-gate kernel + fresh kill-switch + session-window guard + per-market USD NAV + Kelly; submit live US orders via Robinhood REST; no-op when `AUTONOMOUS_LIVE_ENABLED=false`, market not autonomous, or session closed |
-| `/api/agents/autonomous-live/cron?market=india` | Weekdays 06:00 UTC (11:30 AM IST, in NSE session) | Same, India: INR NAV from Kite margins+holdings; Kite REST |
-| `/api/agents/live-exit-monitor/cron` | Hourly at :00, 03:00–20:00 UTC weekdays (pg_cron `kairos-live-exit-monitor`, `0 3-20 * * 1-5`) | Protective exits for LIVE positions: reconstructs positions from confirmed full/partial broker fills, then uses the shared `decideExitLadder` core plus paper's fresh-score/confirmed direction-flip policy. No time exit. Shadow and executable state are isolated, and a runner is protected only after a non-zero broker-confirmed partial fill. `app_paused` / `security_locked` are hard stops in both modes. |
-| `/api/agents/db-cleanup` | 1st of month 03:00 UTC | Prune 15 safe tables (llm_call_log >90d, agent_runs >60d, etc.); never touches ledgers |
-
----
-
-## Windows Task Scheduler (local machine, ET)
-
-All triggered by `scripts/run-agents.ps1 -Agent <name>`. PC must be on for these to fire.
-
-| Task name | Schedule (ET) | Endpoint | Notes |
-|---|---|---|---|
-| `brief-morning` | Weekdays 8:00 AM | `/api/briefing/generate` | Morning email before market open |
-| `research` | Weekdays 9:00 AM | `/api/agents/research/cron?market=us` | US signal generation (3 candidates/day) |
-| `paper-trade-us` | Legacy local task; disable when pg_cron is active | `/api/agents/paper-trade?market=us` | Route is session-gated; production authority is pg_cron |
-| `trader` | Weekdays 9:45 AM | `/api/agents/trader` | TraderAgent proposals; `approval_required=true` |
-| `scan-india-refresh` | Weekdays 5:30 AM | `/api/scan/india/refresh` | Refresh up to 600 NSE equities oldest-first; scanner reports fresh/stale rotating coverage |
-| `research-india` | Weekdays 6:15 AM | `/api/agents/research/cron?market=india` | India signal generation post-NSE-close |
-| `paper-trade-india` | Legacy local task; disable when pg_cron is active | `/api/agents/paper-trade?market=india` | Route is session-gated; production authority is pg_cron |
-| `position-monitor` | Weekdays 4:15 PM | `/api/agents/position-monitor?market=us` | US trailing-stop, target/partial-profit, fresh-score and direction-flip checks; no time exit |
-| `position-monitor-india` | Weekdays 6:35 AM | `/api/agents/position-monitor?market=india` | India position exits |
-| `brief-evening` | Weekdays 4:30 PM | `/api/briefing/generate` | Evening email recap |
-| `nav-snapshot` | Weekdays 5:00 PM | `/api/agents/performance` | Daily NAV + alpha snapshot |
-| `learner` | Fridays 5:00 PM | `/api/agents/learner` | Weekly weight learning; route skips non-Fridays |
-| `macro-sentinel` | Mondays 8:00 AM | `/api/agents/macro-sentinel` | Weekly macro regime computation |
-| `policy-events` | Weekdays 23:00 UTC | `/api/agents/policy-events` | US-only FOMC schedule/outcome sync plus record-only 1D/5D impact capture from frozen return evidence; no expectation source, scoring, or execution effect |
-| `macro-read-us` | Weekdays 9:30 AM ET (13:30 UTC) | `/api/agent-mind/macro-read?market=us` | Agent Mind Phase 3: cached daily plain-English "what the macro backdrop means for your book" (US). Advisory/narrative only — never trades or sizes |
-| `theme-scout` | Sundays 8:00 PM ET | `/api/agents/theme-scout` | Weekly, discovery-only watchlist additions; independent of ResearchAgent |
-| `stale-check` | Every 4h | `/api/alerts/stale-check` | **Run accounting, not liveness (W6, 2026-08-16).** Three checks per expected job: (1) did a run exist that is NOT `status='error'` — an errored run no longer satisfies the schedule and raises its own `run-failed:<agent>:<market>` alert; (2) if the run wrote a run-accounting envelope into `result_summary`, does `eligible = succeeded + expected_skip + deferred + unavailable + failed` reconcile (`run-accounting:<agent>:<market>`); (3) the cross-run freshness registry (`lib/monitoring/freshness-contracts.ts`) — per-symbol high-watermark advance on `price_cache`, `observation_labels`, `decision_observations` (`freshness:<contract-id>`). Read-only over monitored tables; writes only `agent_alerts`. |
-| `live-snapshot` | Weekdays (manual / Task Scheduler) | `scripts/sync_robin.py` | Python script — pulls Robinhood positions into `live_account_snapshots` |
-| `live-account-refresh` | On demand / Task Scheduler (`robinhood_mcp` source) | `POST /api/live-account/refresh-snapshot` | Deterministic MCP capture of all Robinhood accounts → upserts `live_account_snapshots` AND accrues one `live_performance` row/account/day (real equity + VOO close) — the forward-built source for the Live-vs-VOO chart (RH has no account-value history to backfill) |
-
----
-
-## Postgres pg_cron (in-database, fire against deployed URL)
-
-Scheduled inside Supabase via `cron.schedule`, calling the deployed app through the
-`kairos_call_agent(endpoint, body, method, timeout_ms)` helper. Independent of local machine state.
-
-| Job | Schedule (UTC) | Calls | What it does |
-|---|---|---|---|
-| `kairos-dimension-diagnostics-us` | Weekdays 23:20 UTC | `POST /api/agents/dimension-diagnostics?market=us` | P0 post-label diagnostic. Reads immutable decision/label evidence only; writes append-only market-local findings about availability, descriptive factor behavior and agent contribution. It makes no provider/LLM call and cannot change an agent, score, strategy, trade, exit, sizing or broker action. |
-| `kairos-dimension-diagnostics-india` | Weekdays 23:25 UTC | `POST /api/agents/dimension-diagnostics?market=india` | Same P0 contract, separately for India. USD/US evidence is never read as India evidence. |
-| `kairos-research` | Weekdays 13:00+14:00 UTC; only 09:00 ET admitted | `POST /api/agents/research/cron?market=us&local_slot=09%3A00` | Paired seasonal invocations keep the research contract at 09:00 New York time. The nonmatching invocation exits before provider/DB work. Daily technical scoring filters out the current session until 16:00 ET. |
-| `kairos-paper-trade-us` | Weekdays 15:15+16:15 UTC; only 11:15 ET admitted | `POST /api/agents/paper-trade?market=us&local_slot=11%3A15` | The scheduled US paper-entry attempt stays at 11:15 ET across DST and independently enforces the NYSE session/calendar. |
-| `kairos-paper-trade-india` | Weekdays 04:10 UTC (09:40 IST) | `POST /api/agents/paper-trade?market=india` | Morning India paper-entry attempt, after research starts and inside NSE hours. |
-| `kairos-research-us-pm` | Weekdays 18:00+19:00 UTC; only 14:00 ET admitted | `POST /api/agents/research/cron?market=us&local_slot=14%3A00` | Afternoon rescore at a stable 14:00 ET. Daily factors still use the last completed session; live quotes remain execution inputs, not partial daily technical bars. |
-| `kairos-paper-trade-us-pm` | Weekdays 19:15+20:15 UTC; only 15:15 ET admitted | `POST /api/agents/paper-trade?market=us&local_slot=15%3A15` | Afternoon US paper-entry/rotation attempt at a stable 15:15 ET. |
-| `kairos-research-discovery-us` | Weekdays 14:30 UTC | `POST /api/agents/research/cron?market=us&scope=discovery` | Discovery-only research on its own budget. Takes ONLY never-held discovery buckets (screener, edge relative-strength, metals, region ETFs); holdings are excluded outright so it cannot touch an exit/SELL path. Exists because gatherSymbols orders candidates holdings → watchlist → screener and the wall-clock budget cuts from the tail, so screener candidates sat permanently at the back and were never scored — zero screener-sourced decisions across all of 2026-07. Runs after the 13:00 main run on a warm cache. |
-| `kairos-research-discovery-india` | Weekdays 05:00 UTC | `POST /api/agents/research/cron?market=india&scope=discovery` | Same contract for India, after the 04:00 main run. |
-| `kairos-event-maturation` | Weekdays 16:10 UTC | `POST /api/agents/event-maturation` | Matures recorded market events into 1/5/21-session forward paths. Daily rather than weekly even though events arrive roughly monthly: the job is idempotent and costs ~2s for the whole ledger, while a weekly tick could leave a freshly elapsed 21-session horizon unmatured for up to 7 days — long enough for a base-rate read to under-count its own n. 16:10 UTC sits after the referenced US session settles and clear of the 13:25/13:45 price-cache ticks and the 14:00 briefing. Weekdays only: no session elapses at a weekend. Measure-only. |
-| `kairos-screener-contract` | Weekdays 11:10 UTC | `POST /api/validation/screener-contract` | Re-probes every Yahoo screener criterion with a threshold no security can satisfy and confirms the count collapses. Raises `screener-field-degraded:<field>` at critical when a criterion is accepted but discarded — a failure that produces no error and would otherwise widen a bucket silently. Runs ahead of the US research window so a degraded field is known before discovery uses it. |
-| `kairos-position-monitor` | Weekdays 20:15+21:15 UTC; only 16:15 ET admitted | `POST /api/agents/position-monitor?market=us&local_slot=16%3A15` | US daily score/stop/target/time checks remain after the regular close in both EDT and EST. The seasonal duplicate exits before monitor work. |
-| `kairos-research-india-mid` | Weekdays 07:00 UTC (12:30 IST) | `POST /api/agents/research/cron?market=india` | Midday India research cycle — same intraday-adaptation rationale as the US PM run. |
-| `kairos-paper-trade-india-mid` | Weekdays 07:45 UTC (13:15 IST) | `POST /api/agents/paper-trade?market=india` | Midday India paper-entry/rotation attempt inside NSE hours. |
-| `kairos-holding-risk-us` | Weekdays 21:30 UTC (17:30 ET) | `POST /api/agents/holding-risk?market=us` | Daily Per-Holding Risk: scores every US live-account holding (deterministic score + posture, LLM prose note only). Fires after the 16:00 ET close **and** after `nav-snapshot` refreshes the account book at 21:00 UTC. 290s timeout. **Advisory-only — touches no order path.** |
-| `kairos-holding-risk-india` | Weekdays 11:00 UTC (16:30 IST) | `POST /api/agents/holding-risk?market=india` | Same, India (Kite): fires after the 15:30 IST close. 290s timeout. Advisory-only. |
-| `kairos-live-snapshot` | Weekdays 13:00–21:00 UTC every 2h | `POST /api/live-account/refresh-snapshot` | Refreshes the live account book for every CONNECTED cloud MCP broker (Robinhood + Webull via the registry driver `captureAccounts`) → `live_account_snapshots` + `live_performance` (US, `market='us'`, VOO bench). Cloud-native (OAuth vault token, no local machine). Auto-ADDs newly-returned accounts. Auto-pruning is broker-scoped and fail-safe: it runs only after that broker returns at least one valid account, deletes only rows for that broker not in the successful capture set, and never runs on failed/empty capture, so a broker outage cannot mass-delete another broker or wipe the kill-switch baseline. **India (Kite) accrual (`refreshKite`)** runs in the same call, fully independent + fail-soft: NAV = Kite `margins.equity.net` + Σ(last_price×qty), bench = ^NSEI close, written as ONE `live_performance` row (`market='india'`, `broker='kite'`, `currency='INR'`, `account_id`=Kite `user_id`). It writes **only** `live_performance`, never `live_account_snapshots`, so the Kite account can never leak into the US account chips or the US kill-switch NAV baseline; a stale Kite daily token just skips the day. This is the forward-built source for the India Live-vs-NIFTY chart (`/api/live-portfolio/performance?market=india`, which falls back to the paper India NIFTY curve until ≥2 live Kite days exist). |
-| `kairos-prewarm-us` | **7-day** every 5 min in the 12:00 UTC hour (12 ticks before 13:00 US research; migration 20260714070000) | `POST /api/agents/prewarm?market=us` | **Evidence-cache prewarmer.** Warms `av_cache` with each US symbol's fundamentals/sentiment/insider evidence AHEAD of scoring so a cold-start run gets cache hits instead of bursting Massive (5/min) / GDELT (1/5s) past their walls mid-run. BOUNDED (45s wall-clock) + RESUMABLE — each tick warms until the budget then returns `{warmed, remaining}`; the pacing lease + av_cache dedupe drain the universe across ticks (warm symbols are instant cache hits, so ticks advance to the cold tail). Warm-only: no scoring, no signal/packet writes, **no order path**. |
-| `kairos-prewarm-india` | **7-day** every 10 min in the **03:00 UTC hour** (before the 04:00 India research) | `POST /api/agents/prewarm?market=india` | Warms active India fundamentals only. The retired GDELT India scoring path is no longer called; replacement news collection has its own post-close shadow. |
-| `kairos-price-prewarm-us` | Weekdays 20:02 and 20:07 UTC (added 2026-09-10) | `POST /api/agents/price-prewarm?market=us` | **Post-close PRICE-BAR refresh — the only run that can fetch TODAY's bar.** `expectedNewestSession` names today's session only *after* the 20:00 UTC close, so the pre-close research run (13:00 UTC), which was `prewarmPriceCache`'s ONLY caller, can never see the current session as missing: it reported "134/139 already fresh" while the freshness monitor at 20:00 correctly reported 86/103 scopes stale. Nothing refetched between the close and `kairos-position-monitor` at 20:15, so marks, stop checks and target checks ran on the PREVIOUS session's close — the failure `lib/data/completed-candles.ts` records from 2026-08-17. Scope is the same set the freshness contract demands (open positions → recent decisions → benchmarks, via `resolvePrewarmScope`), deadline-bounded and priority-ordered. **Not** `/api/agents/prewarm`: that is the *evidence* warmer (av_cache fundamentals/sentiment/insider) and touches no price bars. |
-| `kairos-price-prewarm-india` | Weekdays 10:02 and 10:07 UTC (added 2026-09-10) | `POST /api/agents/price-prewarm?market=india` | Same defect, same fix for India: the India research run precedes the 10:00 UTC close, while `kairos-position-monitor-india` runs at 11:15 UTC. These ticks land between them. |
-| `kairos-india-news-shadow` | Daily 12:15 UTC (17:45 IST) | `POST /api/agents/india-news-shadow` | Bounded holdings-first NSE corporate-announcement + Google News RSS collection into `evidence_cache_v2` and `provider_call_ledger`. Runs on weekends/holidays because events are not exchange-session-bound. No score, signal, paper/live trade, learner mutation, or broker reader. |
-| `kairos-evidence-shadow-us` | **7-day** 14:20/35/50 UTC (after US research) | `POST /api/agents/evidence-shadow?market=us` | **Canonical Evidence Router dual-run shadow** (migration 20260714060000). **Weekend self-skip** (both prewarm + shadow): on Sat/Sun the route no-ops when the per-market `research_queue` backlog is <10, so idle weekend quota is used only when there's real backlog to drain; weekdays always run. Resolves the router-covered intents (fundamentals/analyst/insider/daily-bars) over the per-market universe = `watchlist` ∪ `research_queue` (unioned so India — whose rotation universe lives in `research_queue`, not the us/US-only `watchlist` — actually accumulates evidence; before this the India branch always resolved an empty universe), logging every attempt to `provider_call_ledger` + `evidence_cache_v2`. `router_enabled=false` → observational only, NEVER scored/traded. Bounded 45s + resumable (fresh cache short-circuits); 3 ticks drain the universe. Decoupled from the research hot path so it can't slow the 50-symbol run. Accumulates the coverage/disagreement evidence the Phase-4 cutover is gated on. |
-| `kairos-evidence-shadow-india` | **7-day** 04:30/40/50 UTC (after India research) | `POST /api/agents/evidence-shadow?market=india` | Same, India. |
-| `kairos-evidence-cohort-us` | Daily 15:05 UTC (after final US shadow tick) | `POST /api/agents/evidence-cohort?market=us&limit=50` | Cache-only cutover evidence. Replays frozen ResearchAgent score inputs, writes immutable safety/quality parity results, deduplicates unchanged cohort fingerprints, and consumes no external-provider quota. Measurement only; cannot activate a policy. |
-| `kairos-evidence-cohort-india` | Daily 05:05 UTC (after final India shadow tick) | `POST /api/agents/evidence-cohort?market=india&limit=50` | Same, India/INR. Only session-validated ResearchAgent rows supply `as_of_session`, so weekend/holiday staged runs cannot increase the ten-session cutover count; missing Router bars are recorded as failed coverage rather than crashing the evaluator. |
-| `kairos-closed-day-research-us` | Daily 15:10 UTC; route permits only supported weekends/full NYSE holidays | `POST /api/agents/research/cron?market=us&mode=closed_day_catchup` | Scores only US carry-forward queue symbols not already staged for the same completed session. Trading days, special sessions, and unsupported calendar years self-skip. Writes non-executable staged signals; leaves candidates queued for next-session revalidation; never chains a trader. |
-| `kairos-closed-day-research-india` | Daily 05:10 UTC; route permits only supported weekends/full NSE CM holidays | `POST /api/agents/research/cron?market=india&mode=closed_day_catchup` | India-equivalent catch-up, independently scoped in INR/NSE symbol space. Uses the NSE Capital Market calendar, not settlement/derivatives calendars; Muhurat special sessions abstain. Same non-executable lifecycle. |
-| `kairos-earnings-pit-capture` | **Daily** 02:10 UTC | `POST /api/calendar/earnings/refresh` | Captures changing US pre-report consensus vintages and the first provider actual observed after release. Conservative PIT rule rejects consensus captured on/after the US report date. Data-capture only; no score/order consumer. |
-| `kairos-earnings-risk-monitor-us` | Weekdays 16:00 UTC (12:00 EDT / 11:00 EST) | `POST /api/agents/earnings-risk-monitor` | Bounded US holdings-only earnings/options shadow. Runs after PaperTrader and outside the 14:00-15:15 provider cluster, so same-day new positions are included without competing with evidence cohorts. Reads open paper positions and the latest complete per-account live-risk snapshots, merges the PIT cache with one Robinhood calendar call, requests per-symbol/options evidence only for an event inside the holding horizon, and appends `behavior_changed=false` evidence. It never scores, sizes, enters, exits, or calls India options. |
-| `kairos-india-markets-fill` (+ `-retry`) | Weekdays 10:15 + 10:35 UTC | `POST /api/markets/india` | Post-close display snapshot for India indices, sectors, and versioned NIFTY-50 breadth. One deduplicated, paced provider stream; GET is cache-only. Retry moved from 10:45 because that slot is used by `kairos-scan-india-refresh`. |
-| `kairos-broker-keepwarm` | **Daily** 06:00 + 18:00 UTC (7 days/week, migration 20260714000000) | `POST /api/broker-mcp/keepwarm` | **MCP token keep-warm.** Iterates every connected MCP broker and calls `getValidAccessToken`, which refreshes + CAS-rotates the refresh token when the short-lived access token (Webull ~1 day) is expiring. Insurance so the OAuth refresh chain never lapses across weekends/holidays when the weekday-only market crons (`broker-sync`, `research`) don't touch it. Read-only — no tool calls, **no order path**. A refresh failure raises a critical System Health issue (`broker-token:<broker>`) for reconnect. |
-| `kairos-validation-sweep` | Fridays 21:45 UTC | `POST /api/validation/sweep` | **Automated strategy validation (migration 170)** recovery sweep: for each market, validates up to 5 never-validated challengers (`state='challenger'`, `validation_experiment_id IS NULL`) through the deterministic Validation Engine, and — when the per-market `strategy_validation_automation` policy allows — auto-routes a PASSED challenger into the single `shadow_paper` slot via the `activate_strategy_shadow` RPC. Catches challengers created outside LearnerAgent or interrupted before in-process validation. Runs 45 min after the Friday learner. Self-reports to **System Health** (`reportIssue`/`resolveIssue`, key `cron-failed:kairos-validation-sweep`) on any execution error, clears on a clean run. Also writes an `agent_runs` heartbeat (`agent_type='validation_sweep'`, market `us`) so **`stale-check`** flags a SILENT non-run — registered as a Friday-only job (expected 21:00 UTC, 2h grace). So both failure modes are covered: errored-when-run and never-fired. **Cannot promote a champion or touch any paper/live execution path — `shadow_paper` is non-executing.** |
-| `kairos-price-cache-fill` (+ `-retry`) | Weekdays 13:25 + 13:45 UTC (pre-market, before the 14:00 briefing; migration 20260715140000) | `POST /api/agents/price-cache-fill` | **Markets display price-cache fill.** Pre-fills `price_cache` with the whole Markets ETF universe (regime proxies SPY/QQQ/IWM/TLT/IEF/HYG/UUP/GLD + VIXY/DIA, the 11 sector XLs, and the leveraged sentiment pairs TQQQ/SQQQ/… ) via ONE Massive **grouped-daily** call (all US tickers in a single request, filtered to the universe) — so the Markets tiles (`markets/synthesis`, `markets/quotes`, `charts/sector-returns`) read a warm cache instead of each bursting Massive's ~5/min free tier on page load.
-
-> **`markets/overview` is deliberately NOT a `price_cache` reader (corrected 2026-07-17).**
-> This chapter previously listed it here and asserted it read the warm cache. It never
-> did, and it should not — the claim was wrong, not the code. Verified against prod
-> (`<production-project-ref>`) on 2026-07-17:
-> 1. **The cache cannot cover the tile.** The overview needs all 15 symbols (SPY/QQQ/DIA/VIXY
->    + 11 XLs) **on one session**. `QQQ`, `DIA` and `VIXY` hold **2 bars each** (07-14, 07-15) —
->    the daily fill only began covering them on 07-14 and the 400d backfill is sector-XL-only.
->    Only **two** fully-aligned 15/15 sessions exist in the entire table.
-> 2. **The head of the cache is ragged.** On 07-17 the newest bar per symbol was 07-16 for
->    SPY and XLV but 07-15 for the other 13. A "latest bar per symbol" read would therefore
->    render SPY's 07-16 close beside XLK's 07-15 close as one snapshot — reintroducing the
->    cross-session mix the grouped rewrite exists to prevent.
-> 3. **The cache is a full session STALER.** Requiring honest 15/15 alignment resolves to
->    07-15, while grouped serves 07-16. Cache-first would trade freshness for nothing.
-> 4. **The rate-limit argument no longer applies.** It was written when the route fired 15
->    per-symbol `/prev` calls against a ~5/min ceiling. The route now spends 2–3 grouped
->    calls, each `revalidate: 3600` (past sessions are immutable) behind a 5-min route memo —
->    ~2 calls/**hour**, ≈0.7% of budget. The premise was overtaken by the rewrite.
->
-> A cache **fallback** on provider error was also considered and rejected: `price_cache` is
-> filled from the *same provider's same endpoint*, so an outage that breaks the route
-> correlates with a stalled fill — it would fall back to a staler copy of the same failure,
-> while adding a DB dependency to a route that has none. The degraded payload + Retry is honest.
->
-> The tile's contract: every symbol on ONE session, labelled with `sessionDate` /
-> `priorCloseDate`, unresolved symbols as `n/a` — **never 0.00%**, never "today" for a prior
-> session. Pinned by `tests/markets-overview.test.ts`. Late, never wrong. The prev-session close is stable all day, so one fill/day is enough; the 13:45 tick is an idempotent no-op once 13:25 has filled (skips when the most-recent session is already cached). Falls back to sequential per-symbol `/prev` (lease-gated 5/min, bounded 45s, resumable) only if the grouped endpoint is unavailable. Raises a System Health `warn` (`price-cache-fill-degraded`, auto-clears at UTC midnight) only on a large shortfall. **Display data only — never on the money/scoring path.**<br><br>**Sector history backfill (2026-07-17).** The same tick also backfills ~400 calendar days of daily bars for the 11 sector XLs, because `charts/sector-returns` offers 1W/1M/3M/6M/1Y windows and the daily fill alone only ever accumulates one session per tick — with two cached sessions every window collapsed onto the same two bars and reported a one-day move as a "1Y return". Uses `/v2/aggs/ticker/{sym}/range/1/day/{from}/{to}`, which returns the FULL series in ONE request, so the whole 11-ETF backfill costs **11 provider calls total** (not 11 × 400). Each call takes the shared `try_acquire_provider_slot` lease (12.5s = 5/min), is wall-clock bounded, and is **resumable** — a tick drains what fits (~1-3 symbols), skips symbols that already have depth, and later ticks finish the rest; once drained it is a permanent no-op. Runs **before** the per-symbol fallback deliberately: on a grouped-endpoint failure the fallback would otherwise consume the whole budget and starve the backfill indefinitely. Going first costs the daily fill nothing for these symbols — the range call spans up to the most recent session, so a backfilled sector is daily-filled by the same request. No new cron and no schema change: it rides the existing schedule. |
-| `kairos-benchmark-scorecard-{india,us}-{initial,retry}` | **Market-local post-close**: India 15:45/16:15 IST; US 16:15/16:45 ET (paired UTC schedules are DST-guarded) | `POST /api/agents/benchmark-scorecard?market=<market>&attempt=<initial\|retry>&local_slot=<local time>` | **Benchmark Alpha P1 (migration 20260915130000)** runs a separate collector and `agent_runs` row for each market. A run is `done` only when **every enabled benchmark** has an `ok` observation dated to that market's expected completed session; otherwise it is `partial` (or `error`) with per-benchmark provider, expected/observed session, source status/error, and retry attempt. The market freshness issue resolves only after every enabled benchmark advances. Measurement-only: no learner mutation, paper fill, or live order. |
-| `kairos-downside-hedge-us` | Weekdays 21:10 UTC | `POST /api/agents/downside-hedge` | Deterministic US paper hedge evaluation. Default OFF; shadow logging and paper execution have separate flags. No live path. |
-| `kairos-edge-scout-us` | Weekdays 22:30 UTC | `POST /api/agents/edge-scout?market=us&universe=liquid&maxSymbols=50` | Post-close bounded factor snapshot. The route rotates 50-name pages through the current liquid US universe; fresh relative-strength rows may admit up to four provenance-only ResearchAgent candidates, but never alter score, sizing, exits, or order gates. |
-| `kairos-edge-scout-india` | Weekdays 11:30 UTC | `POST /api/agents/edge-scout?market=india&maxSymbols=50` | India post-close equivalent. Never cross-sums or updates US lifecycle state. |
-| `kairos-edge-ic-us` / `-india` | Mondays 02:00 / 03:00 UTC | `POST /api/agents/edge-ic?...` | Weekly bounded retrospective IC diagnostic. Explicitly current-universe/survivorship-biased; cannot promote, score, size, or trade. |
-| `kairos-crypto-native-shadow` | Daily 00:15 UTC | `POST /api/agents/crypto-research-shadow` | 24/7, non-executing crypto evidence lane. It reads Robinhood onboarding, point-in-time USD-pair inventory, explicit tradability and read-only quotes; public completed UTC daily candles come from Coinbase first, Kraken second, and Alpha Vantage only as a compatibility fallback. History collection is bounded to the lowest-spread quoted tradeable pairs and every other pair is recorded as deferred. An eligible research observation is not an execution permission: no preview, paper fill, or live order occurs. |
-| `kairos-edge-readiness` | Daily 03:20 UTC | `POST /api/agents/edge-readiness` | Reads cached IC history only, updates the measure-only readiness projection, emits one-time review milestones, and warns when collection is stale. No provider or trading call. |
-| `kairos-international-allocation-shadow` | Mondays 03:30 UTC | `POST /api/allocation/international/assess?mode=p2_weekly` | **P2A international-allocation operational shadow.** Appends one US/USD VXUS assessment per ISO week from persisted paper positions and the latest immutable policy snapshot. It records `action=none`, null costs/tax drag, coverage state, and input fingerprints while target/band remain unset. No provider call, candidate, paper/live position, order, broker, or India/INR read. |
-
-The route fails closed (publishes a failed/insufficient-data run, never yesterday-as-today) when a broker
-snapshot is missing/stale, so cron timing is a best-effort ordering, not a correctness dependency. **EDT/EST
-caveat:** the US job is set for EDT (summer); shift it +1h at the November EST changeover. Both jobs are
-re-scheduled idempotently (unschedule-first) by migration 156.
-
----
-
-## Cron authentication
-
-All cron-triggered routes verify the `x-cron-secret` request header using a timing-safe comparison (`verifyCronSecret()` in `lib/auth/cron.ts`). The secret is `CRON_SECRET` in env and Vercel environment variables.
-
-Cron routes do NOT require an owner session — they accept the cron secret as an alternative. This means the secret must be kept private; anyone with it can invoke cron routes.
-
----
-
-## Daily schedule overview (US trading day)
-
-```
-5:30 AM ET  — scan-india-refresh (NSE cache)
-6:15 AM ET  — research-india
-6:35 AM ET  — position-monitor-india
-8:00 AM ET  — brief-morning + macro-sentinel (Mon only)
-9:00 AM ET  — research (US)
-9:25 AM ET  — price-cache-fill (Markets ETF cache; retry 9:45)
-9:45 AM ET  — trader (US proposals)
-10:15/11:15 AM ET — paper-trade-us (EST/EDT; fixed 15:15 UTC)
-4:15 PM ET  — position-monitor (US)
-4:30 PM ET  — brief-evening
-5:00 PM ET  — nav-snapshot
-5:00 PM ET  — learner (Fri only)
-Every 4h    — stale-check (cloud, Vercel)
-Sun 8 PM ET — theme-scout
-2:00 PM UTC  — autonomous-live (cloud, Vercel, weekdays; after research+signals at 1 PM UTC)
-Sun 2 AM UTC — p1-gate (cloud, Vercel)
-1st of month 3 AM UTC — db-cleanup (cloud, Vercel)
-11:00 AM UTC — holding-risk India (pg_cron, weekdays; after 15:30 IST close)
-9:30 PM UTC  — holding-risk US (pg_cron, weekdays; after 16:00 ET close + nav-snapshot)
-Fri 9:45 PM UTC — validation-sweep (pg_cron; recovers never-validated challengers, after learner)
-9:10 PM UTC  — downside-hedge-us (pg_cron; US paper only, default OFF)
-3:45/4:15 PM IST — India benchmark-scorecard initial + bounded retry (pg_cron)
-4:15/4:45 PM ET — US benchmark-scorecard initial + bounded retry (pg_cron; DST-safe paired UTC schedules)
-2:10 AM UTC  — earnings-pit-capture (daily; data capture only)
-10:15/10:35 AM UTC — India Markets full snapshot + retry (weekdays; display only)
-```
-
-**Research capacity note (2026-07-17):** the US and India jobs both prioritize
-stale holdings, but held rows no longer spend an LLM narrative call because the
-decision is deterministic. One existing worker is reserved for candidates while
-the others prioritize holdings, so discovery always advances without raising
-concurrency. Candidate overflow retains its original defer time and
-is bounded to six deferrals/seven days. Theme Scout's seven-day owner-scoped rows
-and `watchlist.research_enabled` prevent disabled or month-old machine discoveries
-from silently expanding the daily universe. Prewarm and evidence-shadow are Canonical
-Evidence Router jobs, not GitHub/Vibe jobs; shadow remains observational and never
-feeds scoring or orders, though its provider calls still obey the shared pacing layer.
-
-**Order-maintenance correction (2026-07-26):** The every-30-minute maintenance trigger only sends stale-order cancellation during a US market session and processes one candidate. It independently reconciles one unknown order through a read-only broker status query; the owner can request that read-only reconciliation from Trading. The limits avoid overnight/weekend MCP churn and leave cold-start headroom.
-
----
-
-# Source: docs\arch\06-env-variables.md
-
-# Kairos — Environment Variables
-> 2026-09-14: **`BROKER_CREDENTIAL_KEY`** (server-only, required before any guest broker connection can be stored). The AES-256-GCM key material for `lib/security/credential-cipher.ts`, which encrypts per-user broker credentials in `user_broker_credentials`. Must be at least 32 characters — the module REFUSES to encrypt with a shorter or missing secret rather than accepting a weak key, so a guest connection simply cannot be created until it is set. Keep it out of the database: the point of envelope encryption here is that a database read alone is not enough to use someone's brokerage account, which fails if the key lives beside the ciphertext. Rotating it invalidates every stored credential (each guest must reconnect); the stored `v1.` envelope prefix exists so a future rotation scheme can tell versions apart.
-> Last updated: 2026-09-14 (previously 2026-09-08)
-> Update this file when: a new env var is added, an existing var is removed, a var moves to/from the vault, or default values change.
-
-All secrets live in `.env.local` (gitignored) + Vercel environment variables for production.
-The `api_key_vault` Supabase table holds runtime-editable keys — see `lib/vault.ts`.
-
-> **Warning about encoding:** A UTF-8 BOM in `.env.local` causes the entire app to 500 at boot.
-> If the app won't start after editing env, check the file encoding (must be UTF-8 without BOM).
-
----
-
-## Required at startup (app won't boot without these)
-
-```
-NEXT_PUBLIC_SUPABASE_URL=         # Supabase project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY=    # Supabase anon key (public, safe)
-SUPABASE_SERVICE_ROLE_KEY=        # Supabase service role (private — never expose to client)
-ANTHROPIC_API_KEY=                # Claude API
-CRON_SECRET=                      # Shared secret for Vercel cron + Task Scheduler auth
-```
-
----
-
-## Optional — features degrade gracefully without them
-
-```
-# Stripe (billing)
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-
-# Email
-RESEND_API_KEY=
-EMAIL_FROM=                       # e.g. "Kairos <<verified-email-sender>>". Defaults to Resend's shared
-                                  # <verified-email-sender>, which may only mail the Resend ACCOUNT
-                                  # OWNER's own address — inviting anyone else needs a verified domain.
-RESEND_WEBHOOK_SECRET=            # Svix signing secret (whsec_...) from the Resend dashboard webhook.
-                                  # Required by /api/webhooks/resend, which FAILS CLOSED without it:
-                                  # unset means every delivery event is rejected 401 and bounces are
-                                  # never recorded, so a dead invite address stays invisible. There is
-                                  # deliberately no verification-skip flag.
-BRIEFING_TO=                      # Email address that receives briefings (test mode: any address)
-
-# LLM observability
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-LANGFUSE_HOST=                    # e.g. https://cloud.langfuse.com
-
-# Vector / RAG (off if absent — no-ops silently)
-JINA_API_KEY=          # free at jina.ai (no CC), 1M tokens/month
-
-# Experiment tracking
-WANDB_API_KEY=
-
-# Robinhood MCP (OAuth token stored in vault at runtime)
-ROBINHOOD_CLIENT_ID=              # From MCP dynamic registration
-ROBINHOOD_CLIENT_SECRET=          # From MCP dynamic registration
-
-# Provider adapter overrides (default to jina/resend if absent)
-EMBEDDING_PROVIDER=               # jina (default) | openai
-RERANK_PROVIDER=                  # jina (default) | cohere
-EMAIL_PROVIDER=                   # resend (default) | smtp
-
-# OpenAI (only needed if EMBEDDING_PROVIDER=openai)
-OPENAI_API_KEY=
-
-# Cohere (only needed if RERANK_PROVIDER=cohere)
-COHERE_API_KEY=
-
-# SMTP (only needed if EMAIL_PROVIDER=smtp)
-# Gmail: smtp.gmail.com / 465 / the full address / a 16-char APP PASSWORD (needs 2FA —
-# a normal account password is refused with 535 5.7.8). EMAIL_FROM must be that same
-# mailbox or a verified alias, or Gmail rewrites/rejects the sender. This is the free way
-# to mail someone other than the Resend account owner without verifying a domain.
-# ORDER MATTERS: EMAIL_FROM and EMAIL_PROVIDER must flip TOGETHER with SMTP_PASS.
-# EMAIL_FROM set to a gmail address while still on Resend 403s every send; EMAIL_PROVIDER
-# =smtp without SMTP_PASS makes isAvailable() false and invites return 503.
-SMTP_HOST=
-SMTP_PORT=
-SMTP_USER=
-SMTP_PASS=
-
-# USPS Address Standardization — property address verification (US only)
-# Free developer account: https://developers.usps.com (create an app, enable the
-# Addresses API). Both values are required; either one alone counts as absent.
-USPS_CONSUMER_KEY=
-USPS_CONSUMER_SECRET=
-```
-
-### USPS address verification behaviour without the credential
-
-`lib/property/address-verify.ts` is **inert and honest** when `USPS_CONSUMER_KEY`
-or `USPS_CONSUMER_SECRET` is missing: it makes no network call and returns
-`not_configured` with the exact enable steps. The property UI shows
-"Address verification is not configured" — never a green check and never a false
-failure. An address that cannot be verified is flagged, never blocked from being
-saved. India (`bengaluru`) is outside USPS coverage and returns `no_validator`;
-no Indian address validator is wired. Persistent USPS outages open a single
-System Health alert under `property-address-verify:usps`.
-
----
-
-## Runtime-editable (stored in `api_key_vault` table, editable via `/dashboard/admin/vault`)
-
-These keys are NOT in `.env.local`. They live in Supabase and are fetched at runtime via `lib/vault.ts`.
-
-| Key name | Display name | Notes |
-|---|---|---|
-| `ALPHA_VANTAGE_API_KEY` | Alpha Vantage | Free tier: 25 calls/day; exhaustion fires System Health warn |
-| `MASSIVE_API_KEY` | Massive Market Data | US candles + screener |
-| `FMP_API_KEY` | FinancialDatasets | ResearchAgent screener candidates |
-| `KITE_ACCESS_TOKEN` | Kite Access Token | Daily refresh required (SEBI mandate: expires 6 AM IST) |
-| `ROBINHOOD_ACCESS_TOKEN` | Robinhood OAuth Token | CAS-protected refresh via `lib/robinhood-mcp-client.ts` |
-| `ROBINHOOD_REFRESH_TOKEN` | Robinhood Refresh Token | Used to refresh access token before expiry |
-| `WEBULL_MCP_*` (vault, `provider: webull_mcp`) | Webull Cloud MCP OAuth | `WEBULL_MCP_CLIENT_ID` / `_ACCESS_TOKEN` / `_REFRESH_TOKEN` / `_TOKEN_EXPIRES`. Written on the one-time OAuth connect (`/api/broker-mcp/webull/login`→`/callback`; legacy `/api/webull/*` 307-redirects there); CAS refresh in the config-driven `lib/brokers/mcp-driver.ts` (registry entry `MCP_BROKERS.webull`). Read-only (Phase 1). NOT env vars — vault rows |
-| `STOCKTWITS_TOKEN` | StockTwits | Social sentiment for US tickers |
-
----
-
-## Provider adapter env vars (added 2026-07-10)
-
-| Var | Default | Options | Effect |
-|---|---|---|---|
-| `EMBEDDING_PROVIDER` | `jina` | `jina`, `openai` | Selects the embedding model used for RAG trade memory |
-| `RERANK_PROVIDER` | `jina` | `jina`, `cohere` | Selects the reranker used after vector retrieval |
-| `EMAIL_PROVIDER` | `resend` | `resend`, `smtp` | Selects the transport for briefing emails |
-
-When `EMBEDDING_PROVIDER` or `RERANK_PROVIDER` is absent or set to `jina`, the Jina AI free
-tier is used (1M tokens/month, no credit card required). When `JINA_API_KEY` itself is absent,
-the entire RAG path silently no-ops — no errors, no embeddings, no retrieval.
-
----
-
-## Where each key is used
-
-| Key | Used by |
-|---|---|
-| `ANTHROPIC_API_KEY` | `lib/llm-router.ts` (Claude tiers) |
-| `CRON_SECRET` | `lib/auth/cron.ts` → all cron routes |
-| `SUPABASE_SERVICE_ROLE_KEY` | `lib/supabase/service.ts` → crons + admin ops |
-| `ALPHA_VANTAGE_API_KEY` | `lib/av-cache.ts`, ResearchAgent, MacroSentinel, ThemeScout |
-| `MASSIVE_API_KEY` | `lib/massive-data.ts` → US candles + screener |
-| `FMP_API_KEY` | ResearchAgent screener (FinancialDatasets `screen_stocks`) |
-| `KITE_ACCESS_TOKEN` | `lib/brokers/adapters/kite.ts` |
-| `ROBINHOOD_ACCESS_TOKEN` | `lib/robinhood-mcp-client.ts` |
-| `JINA_API_KEY` | `lib/providers/embeddings/jina.ts`, `lib/providers/rerank/jina.ts` |
-| `RESEND_API_KEY` | `lib/providers/email/resend.ts` |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | `lib/providers/email/smtp.ts` (only when `EMAIL_PROVIDER=smtp`) |
-| `EMAIL_FROM` | `app/api/admin/access/route.ts` (invitation sender), `app/api/agents/user-risk-email/route.ts` |
-| `RESEND_WEBHOOK_SECRET` | `lib/email/resend-webhook.ts`, `app/api/webhooks/resend/route.ts` |
-| `LANGFUSE_*` | `lib/llm-router.ts` (Langfuse tracing) |
-| `STRIPE_*` | `app/api/stripe/*` |
-
----
-
-# Source: docs\arch\07-coding-conventions.md
-
-# Kairos — Coding Conventions
-> Last updated: 2026-09-15
-> Update this file when: a project-wide convention changes, a new pattern is adopted across all files, or an existing pattern is deprecated. This chapter changes rarely.
-
-> 2026-09-15 (viewer Phase 4 — markets + settings + watchlist): `VIEWER_OWN_DATA_ROUTES` expanded to cover per-user watchlist (`/api/user-watchlist`) and notification prefs (`/api/user-prefs`). Both write only rows keyed to `auth.uid()` and call no provider. `MarketsPage` uses role to pick `/api/markets/overview` (owner) vs `/api/markets/overview/cached` (viewer); client role-switching is presentation-only — the route itself has the gate. The cron warm endpoint (`/api/cron/warm-market-snapshot`) accepts either a valid cron-secret header or an owner session, granting an owner-level bypass via `verifyCronSecret` before calling the live overview route so the snapshot is written without a live session.
-
-> 2026-09-15 (viewer Phase 3): **a route a viewer page needs gets a viewer-safe path, never a relaxed owner path.**
-> - `VIEWER_API_ROUTES` entries may set `exact: true`; use it whenever a route's children are not viewer-safe (`/api/agents/research-journal` is exact because `/context` calls Alpha Vantage and `/evolution` exposes learning internals). `tests/viewer-route-sweep.test.ts` sweeps only the exact file for such entries.
-> - A route that serves both roles resolves `role` with `requireViewerOrOwner(req)` and **skips** owner-only reads for a viewer (live snapshots, broker orders, trade proposals) rather than filtering them out of a response built with them.
-> - When the owner's route can call a provider (fundamentals, earnings calendar), add a stored-only sibling such as `/api/research/fundamentals/cached` for viewers instead of allowlisting the parent. A viewer never triggers a backfill.
-> - Client pages call `useRole()` (`lib/auth/use-role.ts`) to decide which requests to make and which buttons to show, waiting until the role is known before firing owner-only requests. This is presentation only; the route is the boundary.
-
-> 2026-09-15: **An email-link page acts only on the account the link proves — never on a session the browser already has.** Production defect: `/reset-password` showed its form whenever `getSession()` returned anything, and the admin-minted invite link carried hash tokens that the PKCE browser client from `@supabase/ssr` ignores. Opening a viewer's invite while signed in as the owner therefore changed the OWNER's password, and the viewer's account never got one. The pattern now, in `lib/auth/email-link.ts`:
-> - Servers mail the app's own URL built with `buildEmailLink(base, path, generateLink().properties)` from Supabase's `hashed_token`, never `properties.action_link`. Set-password links go to `/reset-password`; sign-in links go to `/auth/confirm?next=…` (`safeNextPath`, same-origin only).
-> - Pages call `establishEmailLinkSession(supabase, parseEmailLink(search, hash), ALLOWED_TYPES)`, which verifies the token (`verifyOtp`), a PKCE `code`, or Supabase's hash tokens (`setSession`, for Supabase-sent Forgot-password mail) and thereby replaces any existing session. `SET_PASSWORD_LINK_TYPES` = invite, recovery; `SIGN_IN_LINK_TYPES` = magiclink. No link means an error, not a fallback to the current session.
-> - The token is stripped from the address bar immediately, the effect runs once (a one-time token must not be spent twice), and a password change re-checks `getUser().id` against the link's account right before `updateUser`. The page shows which email it is changing.
-> Guarded by `tests/email-link-session.test.ts`, which fails if a page reads `getSession(` to decide or the route mails `action_link` again.
-
-> 2026-09-14 (Per-User Broker & Risk Phase 1): **a viewer-reachable API route belongs to exactly one of two classes**, declared in `lib/auth/roles.ts` and enforced by `tests/viewer-route-sweep.test.ts` and `tests/broker-connection-routes.test.ts`.
-> `VIEWER_API_ROUTES` — *shared reads*: GET-only, no provider call, no write. This is what keeps guest traffic from multiplying the provider budget, so the class stays GET-only rather than being softened for one exception.
-> `VIEWER_OWN_DATA_ROUTES` — *own data*: may write and may call a provider, but only for rows keyed to the caller's `auth.uid()`, taken from the session and **never** from the request body. Currently only `/api/broker-connections` (GET, POST).
-> Note the asymmetry: the outbound-call sweep runs over `VIEWER_API_ROUTES` ONLY, because an own-data route is allowed the provider call the sweep forbids. Nothing therefore stops a genuinely shared read being smuggled in as own-data, so the containment is a separate assertion that every own-data prefix sits under `/api/broker-connections` — widening that list is a deliberate act that fails a test, not a quiet edit.
-> Connecting a broker needed both a write and a provider call, so it became a second class rather than an exemption inside the first; a route that is neither is not viewer-reachable at all. Prefix matching in both helpers is exact-or-subpath, so `/dashboard/research` does not admit `/dashboard/research-journal`.
-
-Codified in `PRD.md` §2. All agents must follow; apply consistently to every file.
-
----
-
-## 1. Styling
-
-- **`T` token object** declared at the top of every file that renders UI:
-  ```ts
-  const T = {
-    bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
-    text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
-    accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
-  };
-  ```
-- All styles are **inline** (`style={{ ... }}`). No Tailwind utility classes.
-- Color must come from `T.*` — never hard-coded hex outside the T object.
-- **Mobile-first** by default: every page/component must be responsive at 375px+.
-- No CSS modules. No styled-components. No class utilities of any kind.
-
----
-
-## 2. Database access
-
-| Context | Import | Notes |
-|---|---|---|
-| Server components / API routes | `createClient()` from `@/lib/supabase/server` | Cookie-based auth; runs server-side |
-| Service role (crons, admin ops) | `createServiceClient()` from `@/lib/supabase/service` | Bypasses RLS; never use in client components |
-| Client components | `createClient()` from `@/lib/supabase/client` | Browser-side; respects RLS |
-
-Never import the service-role client in client components. The service role key must never reach the browser.
-
----
-
-## 3. API route conventions
-
-- All routes in `app/api/`. Each file exports named HTTP handlers (`GET`, `POST`, `PATCH`, `DELETE`).
-- `export const dynamic = "force-dynamic"` on all routes that read runtime state.
-- Auth gate: `requireOwner()` from `@/lib/auth/require-owner` on owner-only routes.
-- Cron auth: `verifyCronSecret(req)` from `@/lib/auth/cron` (timing-safe comparison).
-- Return `NextResponse.json({ error })` with correct HTTP status on errors.
-- Cron routes: accept `x-cron-secret` header (bypasses owner session check) OR require owner session.
-
-### Unavailable ≠ zero (display-data contract)
-
-**A data route must never express "I could not get this" as a number.** A zero
-fallback renders as a confident, colour-coded value (a green `+0.00%` pill is
-indistinguishable from a genuinely flat sector), which is a silent lie.
-
-Convention for display quotes (`/api/markets/overview` is the reference
-implementation; see `lib/markets/daily-change.ts`):
-
-- Nullable values: `price`, `change`, `changePct` are `number | null`. There is
-  no zero for a failure to hide behind.
-- Explicit per-item state: `status: "ok" | "unavailable"` plus a human-readable
-  `reason` when unavailable (per the "Detail Over Cryptic" rule — say what
-  failed and why, never a bare status).
-- Payload-level state: `stale`, `unavailableCount`, and `degraded` (a sentence,
-  present only when the whole route is degraded, e.g. missing credentials or a
-  provider rate limit).
-- **Any client field the route emits must actually be read.** A `stale` flag the
-  consumer's interface omits is the same outage, silently.
-- Degraded payloads are **not cached** — they must clear the moment the provider
-  or credential recovers.
-- Provenance must be truthful: name the real provider, the real endpoint
-  semantics (end-of-day vs intraday), and the data's own age (`fetchedAt` from
-  the server), never the browser clock at response time.
-
-### Daily change means close vs PRIOR close
-
-A daily change is the latest session's close against the **prior session's
-close**. A single session's `(close - open) / open` is the *intraday* move — a
-different, usually smaller number whose **sign can invert**. Verified on the
-2026-07-15 session: XLRE's intraday was −0.11% (red) while its true daily change
-was +0.18% (green). Never source a "today" figure from one session's OHLC alone.
-
-### Massive free tier: ~5 requests/minute (hard)
-
-`MASSIVE_API_KEY` is rate limited at ~5 req/min, shared by the whole app. A
-per-symbol fan-out silently blows it — 15 parallel `/prev` calls leave ~10
-failing, which is exactly how zero-fallbacks become a wall of `+0.00%`.
-
-- Prefer **grouped daily**
-  (`/v2/aggs/grouped/locale/us/market/stocks/{date}`): every US ticker's OHLC for
-  one session in ONE request. Two calls (latest session + prior session) serve an
-  entire tile universe and keep every symbol on the same session.
-- Grouped for the **current calendar date** is refused until after midnight ET
-  ("Attempted to request today's data before end of day"), and holidays return
-  `200` with no `results` — so walk back from today, skipping weekends, and take
-  the first dates that return bars.
-- Past sessions are immutable → cache grouped responses hard (by date).
-- A single grouped call needs no pacing lease. Per-symbol fallbacks DO —
-  `try_acquire_provider_slot` (12.5s = 5/min); see `price-cache-fill`.
-
-### Auth gate matrix
-
-| Route type | Gate |
-|---|---|
-| `/dashboard/**` pages | Supabase middleware (redirects to login) |
-| `/api/**` routes | Each route calls `requireOwner()` itself — middleware does NOT cover API routes |
-| Cron routes | Accept `x-cron-secret` header OR require owner session |
-| Admin routes | `requireOwner()` + role check |
-
----
-
-## 4. Agent conventions
-
-- All agents write to shared Supabase tables. **Zero direct agent-to-agent HTTP calls.**
-- Every agent run logs to `agent_runs` (start/end/status). Log before any external call.
-- LLM calls go through `callLLM()` in `lib/llm-router.ts` (Langfuse tracing + cost logging).
-- Multi-step tool loops use `runAgentLoop()` (also Langfuse-traced).
-- Scores are deterministic (no LLM). Thesis/direction text comes from `fast` (Groq).
-- Use tier aliases (`fast`, `claude-smart`, `claude-opus`, etc.) — never hardcode model names in agent files.
-
----
-
-## 5. TypeScript
-
-- Strict mode always on.
-- Centralized types at `@/types/` — add new shared types there, not inline in route files.
-- No `any` outside of tightly-scoped third-party type bridging.
-- All API response shapes typed.
-
----
-
-## 6. File structure
-
-```
-app/
-  api/
-    agents/<name>/route.ts    — agent endpoint
-    briefing/generate/route.ts
-    admin/route.ts
-    ...
-  dashboard/<page>/page.tsx   — dashboard pages
-components/
-  dashboard/                  — dashboard components
-  ui/                         — shared UI primitives
-lib/
-  supabase/
-    server.ts                 — cookie client
-    client.ts                 — browser client
-    service.ts                — service role client
-  llm-router.ts
-  vault.ts
-  av-cache.ts
-  research-agent.ts
-  providers/
-    embeddings/
-    rerank/
-    email/
-  brokers/
-    adapters/
-    registry.ts
-```
-
----
-
-## 7. What never to do
-
-1. **Never re-litigate approved decisions.** If it's in `PROJECT_DECISIONS.md` as approved → implement it, don't redesign it.
-2. **Never invent styling conventions.** Inline styles with `T` color tokens only.
-3. **Never use Tailwind utility classes.** The codebase does not use them.
-4. **Never touch the primary Robinhood account.** Agentic account only (see `08-risk-and-safety.md`).
-5. **Never add features beyond the current task scope.** No scope creep.
-6. **Never commit secrets.** No API keys, no tokens, no service role keys in code.
-7. **Never modify `AGENTS.md` or `PRD.md` without Architect role + Vaibhav approval.**
-8. **Never call agent endpoints from other agent endpoints.** Table-mediated coordination only.
-
-
----
-
-## Display freshness: never leave "correct" silent (2026-09-14)
-
-A time series that ends on the last market close is **correct**, not stale. A
-chart that shows this without saying so is indistinguishable from a dead
-collector, and gets repeatedly reported as a bug.
-
-**Convention:** any view of a daily market series states its as-of session
-unconditionally — in the healthy case too, not only on a warning.
-
-Two layers, and they answer different questions:
-
-| Layer | Question | Source |
-|---|---|---|
-| **Relative** (`BenchmarkFreshness.status`) | Does the comparator keep up with the book's own sessions? | the two ledgers |
-| **Absolute** (`BenchmarkFreshness.pipeline`) | Are the ledgers level with the exchange calendar? | `expectedLatestSessionDate` |
-
-The relative layer alone is structurally blind to the failure owners actually
-notice: when **both** ledgers stall together, `missingPortfolioSessions` is 0
-and it reports `"ok"`. Only the calendar can separate "market closed" from
-"pipeline stopped".
-
-- `expectedLatestSessionDate(market, now)` (`lib/trading/market-calendar.ts`)
-  returns the latest session whose close should already be recorded. Today
-  counts **only after that market's regular close** (16:00 ET / 15:30 IST).
-  It walks back over weekends and holidays, abstains on special sessions, and
-  returns `calendarSupported: false` for a year outside the static calendars.
-- `pipelineFreshness` (`lib/analytics/benchmark-display.ts`) is pure — the
-  caller supplies the calendar facts, so the analytics module does no clock or
-  timezone work and stays trivially testable.
-- **Fail open, never loud:** without a supported calendar the state is
-  `"unknown"`. Never assert staleness the calendar cannot prove — a false
-  stale banner is worse than no banner.
-
-Distinct from `lastCompletedMarketSession`, which always starts from yesterday
-and therefore cannot say whether today's close is due. That function is
-unchanged; it serves closed-day research labelling.
-
-## Symbol display: ticker plus company name (2026-09-14)
-
-`paper_positions` and `paper_trades` carry **no** name column; `symbol_profiles.company_name`
-(keyed `symbol` + `market`) is the only source. Coverage is partial — as of
-2026-09-14, US 36/38 and India 34/59 of displayed symbols — so every consumer
-renders the bare ticker when no name exists, never a blank line or a guess.
-Names are resolved server-side for the symbols actually on screen and passed
-down as a `symbol → name` map, rather than fetched per row.
-
-
-## Authorization: never read a role from a user-writable row (2026-09-14)
-
-A role used for authorization must come from a table the user cannot write.
-`profiles.role` is not such a table — its RLS is `FOR ALL USING (auth.uid() = id)`,
-so the row's own subject can change it. Read roles from `app_user_roles`
-(service-role write only) via `lib/auth/session-role.ts`.
-
-Boundaries are declared once, in `lib/auth/roles.ts`, and enforced twice:
-`middleware.ts` at the edge and the route's own guard. A route appearing in the UI
-can therefore never silently widen a viewer's reach — it must also be added to
-`VIEWER_API_ROUTES`, which is method-scoped (GET-only today, so a shared route's
-PATCH stays owner-only).
-
-Two rules that are easy to get wrong:
-
-- **Prefix matching must be exact-or-subpath.** `pathname.startsWith("/dashboard/research")`
-  also admits `/dashboard/research-journal`, a different page. Use
-  `path === prefix || path.startsWith(prefix + "/")`.
-- **Hiding a control is not an access control.** `/api/auth/role` exists so client
-  components can hide owner-only buttons; every owner action is still refused
-  server-side regardless of what the UI renders.
-
-**Any route reachable by a non-owner must be a pure read over already-persisted
-tables** — no provider call, no LLM call, no write. This is the cost guarantee for
-shared access, and `tests/viewer-route-sweep.test.ts` enforces it.
-
----
-
 # Source: docs\arch\08-risk-and-safety.md
-
 # Kairos — Risk & Safety
 > 2026-09-14: **The UI is not a security boundary; RLS is.** `lib/supabase/client.ts` ships `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the browser, so any holder of a valid session can query PostgREST directly, whatever the app renders. Until `20260914140000_viewer_phase0_close_blanket_rls.sql`, 34 tables were reachable by any authenticated session and 7 were writable — including the paper book and the learner's weights. That was never a live breach (only the owner can obtain a session), but it meant the single-email gate in `middleware.ts` / `requireOwner()` was carrying 100% of the isolation, with RLS contributing nothing. Phase 0 closed it. **Standing rule: before any additional identity is admitted to this system, verify no table grants blanket `authenticated` access.** Any feature that adds a login must re-run that check; a UI-level permission is not an isolation control.
 >
@@ -5607,7 +3485,6 @@ excluded from readiness.
 ---
 
 # Source: docs\arch\09-learning-loop.md
-
 # Kairos — Learning Loop
 > 2026-09-08: **Score-return IC drift detector shipped (Stage A, detection only).**
 > Owner asked how to know which shipped feature made the score/return
@@ -6773,7 +4650,6 @@ still required before any time-stop policy change.
 ---
 
 # Source: docs\arch\KAIROS_CONSOLIDATED_ARCHITECTURE.md
-
 # Kairos / FinanceOS — Consolidated Architecture
 
 > **Audience:** a new engineer, reviewer, or collaborator who needs to understand
@@ -7255,7 +5131,6 @@ capital.
 ---
 
 # Source: features\_template\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: <Feature Name>
 
 ## Status
@@ -7352,7 +5227,6 @@ Implementation allowed: No
 ---
 
 # Source: features\advanced-learning\FEATURE_ARCHITECTURE.md
-
 # Advanced Learning — Deflated Sharpe + PBO, Regime-Conditioning, Meta-Labeling
 
 > Status: **DRAFT (design only, unapproved)**. No code, no migration, no deployment.
@@ -7833,7 +5707,6 @@ overfitting guard bites, and should be locked before Phase B enforcement.
 ---
 
 # Source: features\agent-evolution\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Agent Evolution (source-attributed discovery, expanded genome, US/India parity)
 
 ## Status
@@ -8286,7 +6159,6 @@ Implementation allowed: No
 ---
 
 # Source: features\agent-mind\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Agent Mind — surfacing what the agents believe, how it evolves, and what macro data means for the book
 
 ## Status
@@ -8549,7 +6421,6 @@ Implementation allowed: No
 ---
 
 # Source: features\agent-source-pipeline-remediation\FEATURE_ARCHITECTURE.md
-
 # Agent Source Pipeline Remediation
 
 Status: APPROVED for implementation by owner on 2026-07-20.
@@ -8628,7 +6499,6 @@ conviction exit for that position for the session.
 ---
 
 # Source: features\agent-transparency-debate\FEATURE_ARCHITECTURE.md
-
 # Feature: Agent Transparency + Deep-Dive Debate
 
 Status: DRAFT (Phase 1 in progress) · Owner: Vaibhav · Started 2026-07-04
@@ -8700,7 +6570,6 @@ RLS: service_role all; authenticated read.
 ---
 
 # Source: features\agentic-quant-platform\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Governed Agentic Quant Platform
 
 ## Status
@@ -9591,7 +7460,6 @@ Docs (`docs/arch/*`, `system-map.json`, `AGENTS.md`, `PRD.md`) reconciled per §
 ---
 
 # Source: features\alpha-diagnostic-lab\FEATURE_ARCHITECTURE.md
-
 # Alpha Diagnostic Lab
 
 > **2026-08-28 v2 amendment:** P0 implementation defects found by the independent
@@ -10136,7 +8004,6 @@ No new package is approved or expected.
 ---
 
 # Source: features\alpha-diagnostic-lab\IMPLEMENTATION_RESULT.md
-
 # Alpha Diagnostic Lab — implementation result
 
 > Status: **v2.2 measurement repair complete and production-flow verified**
@@ -10231,7 +8098,6 @@ Architecture:
 ---
 
 # Source: features\asset-allocation\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture — Asset-Class Allocation
 
 > Status: **Deterministic CORE built + SHIPPED OFF (migration 175).** Genome
@@ -10342,7 +8208,6 @@ overtrading. Kill-switch / drawdown / per-market controls all still apply.
 ---
 
 # Source: features\atr-exit-stop\FEATURE_ARCHITECTURE.md
-
 # ATR-scaled exit stop — shadow arm
 
 > Status: **DRAFT — architecture proposal, awaiting owner approval. No code written.**
@@ -10455,7 +8320,6 @@ now is worthwhile only because the data accrues whether or not anyone is watchin
 ---
 
 # Source: features\atr-paper-exit-policy\FEATURE_ARCHITECTURE.md
-
 # ATR Paper Exit Policy
 
 > Status: **MEASURE-ONLY PHASE APPROVED AND IMPLEMENTED**
@@ -10590,7 +8454,6 @@ approval.
 ---
 
 # Source: features\atr-paper-exit-policy\IMPLEMENTATION_RESULT.md
-
 # ATR Paper Exit Evidence - Implementation Result
 
 > Completed: 2026-07-22
@@ -10651,7 +8514,6 @@ turnover comparison, trial-family correction, and explicit owner approval.
 ---
 
 # Source: features\automated-strategy-validation\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Automated Strategy Validation and Shadow Routing
 
 ## Status
@@ -10780,7 +8642,6 @@ comes from its stored, reproducible US/India data snapshots.
 ---
 
 # Source: features\automated-strategy-validation\IMPLEMENTATION_RESULT.md
-
 # Automated Strategy Validation Implementation Result
 
 Date: 2026-07-12
@@ -10838,7 +8699,6 @@ is deliberately retained.
 ---
 
 # Source: features\benchmark-alpha\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture - Benchmark Alpha Scorecard
 
 > Status: **P1 BUILT 2026-07-13; P1E DISPLAY COMPARATORS BUILT 2026-08-24.** Phase 1 measurement is implemented; Phase 2 learner/promotion wiring remains unbuilt.
@@ -11213,7 +9073,6 @@ Blend benchmarks ship after single-symbol benchmarks:
 ---
 
 # Source: features\benchmark-alpha\IMPLEMENTATION_RESULT.md
-
 # Benchmark display comparators — implementation result
 
 **Shipped:** 2026-08-24  
@@ -11260,7 +9119,6 @@ LearnerAgent, promotion gates, risk, paper trades, live proposals, or orders.
 ---
 
 # Source: features\briefing\FEATURE_ARCHITECTURE.md
-
 # Feature: Daily Briefing
 
 Status: v1 shipped (2026-07-04). v2 partially shipped; live holding-risk integration shipped 2026-07-21.
@@ -11335,7 +9193,6 @@ the 7-day agent recap from agent_runs + learner_runs + rescore flags.
 ---
 
 # Source: features\broker-compatible-research-universe\FEATURE_ARCHITECTURE.md
-
 # Broker-Compatible Broad US Research Universe
 
 > Status: **PROPOSED — architecture only.** No schema, ingestion, schedule, score,
@@ -11806,7 +9663,6 @@ the broad catalog a buy list.
 ---
 
 # Source: features\broker-symbol-tradability\FEATURE_ARCHITECTURE.md
-
 # Broker Symbol Tradability Gate — Feature Architecture
 
 **Status:** Stage 0 approved 2026-09-09; shadow implementation and production schema deployed, enforcement remains gated
@@ -11908,7 +9764,6 @@ This schema and RPC change requires explicit approval and a checked-in migration
 ---
 
 # Source: features\capital-advisor\FEATURE_ARCHITECTURE.md
-
 # Capital Advisor
 
 ## Status
@@ -12304,7 +10159,6 @@ baseline, and expose calibration. No automatic promotion or capital movement.
 ---
 
 # Source: features\capital-advisor\IMPLEMENTATION_RESULT.md
-
 # Capital Advisor Implementation Result
 
 Implemented: 2026-08-08
@@ -12369,7 +10223,6 @@ Implemented: 2026-08-08
 ---
 
 # Source: features\capital-rotation\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture - Capital Rotation
 
 > Status: **P0 SHADOW BUILT 2026-07-13.** Paper/live execution remains disabled and unbuilt.
@@ -12653,7 +10506,6 @@ The riskiest assumption is that the current deterministic score plus benchmark-a
 ---
 
 # Source: features\catalyst-scout\FEATURE_ARCHITECTURE.md
-
 # CatalystScout — Feature Architecture
 
 > Status: **Stage 1 LIVE (measure-only shadow)**. No gate, no sizing, no order-path change.
@@ -12733,7 +10585,6 @@ claim — so it is not counted in `coverage` and always contributes.
 ---
 
 # Source: features\correlation-aware-construction\FEATURE_ARCHITECTURE.md
-
 # Correlation-Aware Portfolio Construction — FEATURE ARCHITECTURE
 
 > Status: **Reviewed / measurement prerequisite required / P0-P1 activation not approved.** Design only.
@@ -12863,7 +10714,6 @@ Show US↔India co-movement at the **owner/total** level — the blind spot per-
 ---
 
 # Source: features\cross-sectional-rank\FEATURE_ARCHITECTURE.md
-
 # Cross-Sectional Ranking — Feature Architecture
 
 **STATUS: IMPLEMENTED (P0–P2), OFF by default (`entry.rank_pct_min` = 0.0). Migration 151 applied 2026-07-11.**
@@ -13171,7 +11021,6 @@ A challenger that sets `rank_pct_min > 0` must be replayable by the Validation E
 ---
 
 # Source: features\crypto-native-platform\FEATURE_ARCHITECTURE.md
-
 # Crypto-Native Research, Execution, and Learning
 
 > Status: **Approved for Stages A–D by Vaibhav, 2026-09-16.** This does not
@@ -13400,7 +11249,6 @@ the descriptive policy name stays in the snapshot, not in the integer argument.
 ---
 
 # Source: features\data-availability-layer\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture — Data Availability Layer
 
 > 2026-07-31 correction: the India GDELT sentiment assumptions in this historical design did not survive production evidence (0/310 usable observations). Active India scoring no longer calls or applies that dimension. The approved replacement is the shadow-only NSE-announcement + Google News RSS plan in `features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md`; this document must not be used to re-enable GDELT.
@@ -13643,7 +11491,6 @@ live-validated), so this is no longer a launch blocker — just a monitoring con
 ---
 
 # Source: features\data-provider-abstraction\FEATURE_ARCHITECTURE.md
-
 # Data Provider Abstraction + Per-Dimension Routing — FEATURE_ARCHITECTURE (DRAFT)
 
 Status: **DRAFT — awaiting approval.** No code written yet.
@@ -13901,7 +11748,6 @@ keys** and alone likely get US under the 25/day AV cap.
 ---
 
 # Source: features\data-source-policy\FEATURE_ARCHITECTURE.md
-
 # Data Source Policy + Canonical Evidence Router — Feature Architecture
 
 > 2026-07-31 current-state correction: India per-symbol GDELT sentiment is retired from active scoring after zero usable production coverage. Replacement NSE/Google headline evidence is a separate shadow and is not an active `sentiment.news` provider policy. See `features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md`.
@@ -14845,7 +12691,6 @@ Webull contract/coverage comparison with durable fixtures and provenance.
 ---
 
 # Source: features\decision-review\FEATURE_ARCHITECTURE.md
-
 # Decision Review / Counterfactual — Feature Architecture
 
 > Status: **IMPLEMENTED (Phase A — measure-only, read-only)**. No migration, no writes.
@@ -15229,7 +13074,6 @@ and weight change stays the LearnerAgent's gated, aggregate-evidence job.
 ---
 
 # Source: features\dimension-diagnostics\FEATURE_ARCHITECTURE.md
-
 # Dimension Diagnostics Architecture
 
 > Status: approved design, not implemented.
@@ -15589,7 +13433,6 @@ applicable, and 09 in the same implementation change.
 ---
 
 # Source: features\dimension-diagnostics\IMPLEMENTATION_RESULT.md
-
 # Dimension Diagnostics P0 Implementation Result
 
 > Shipped: 2026-08-06
@@ -15647,7 +13490,6 @@ trade, exit, sizing, provider call, LLM call, or broker action.
 ---
 
 # Source: features\discovery-risk-and-instrument-policy\FEATURE_ARCHITECTURE.md
-
 # Discovery, Instrument Policy, Sizing, and Exit Control
 
 **Status:** Partially implemented. The auditability work below is now deployed as
@@ -15940,7 +13782,6 @@ Every approved implementation updates the relevant sections of `docs/arch/03-age
 ---
 
 # Source: features\downside-hedging\FEATURE_ARCHITECTURE.md
-
 # Downside Hedging - Feature Architecture
 
 > Status: APPROVED FOR BUILD (2026-07-15). US PAPER ONLY. SHIPS OFF.
@@ -16038,7 +13879,6 @@ execution cannot be enabled unless shadow is enabled. There is no live toggle.
 ---
 
 # Source: features\duration-signal-measurement\FEATURE_ARCHITECTURE.md
-
 # Duration Signal — Measurement Only
 
 **Status:** DEFERRED by owner decision, 2026-08-20. Not approved, not implemented.
@@ -16176,7 +14016,6 @@ Nothing in this lane may be read by the money path.
 ---
 
 # Source: features\earnings-aware-risk\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Earnings-Aware Risk
 
 ## Status
@@ -16612,7 +14451,6 @@ entry, exit, promotion or broker behaviour changed.
 ---
 
 # Source: features\earnings-aware-risk\IMPLEMENTATION_RESULT.md
-
 # Earnings-Aware Risk P0 Implementation Result
 
 Date: 2026-07-29
@@ -16770,7 +14608,6 @@ computing through them.
 ---
 
 # Source: features\earnings-expectations-peer-delta\FEATURE_ARCHITECTURE.md
-
 # Earnings Expectations & Peer Delta — Feature Architecture
 
 > Status: **DRAFT — architecture only. Awaiting Vaibhav's approval before any Builder work.**
@@ -17621,7 +15458,6 @@ enforces each:
 ---
 
 # Source: features\earnings-repricing-barrier\FEATURE_ARCHITECTURE.md
-
 # Earnings Repricing Barrier
 
 Status: Approved corrective safety change, implemented 2026-07-30.
@@ -17665,7 +15501,6 @@ post-event daily bar resumes normal deterministic scoring.
 ---
 
 # Source: features\edge-calibration-readiness\FEATURE_ARCHITECTURE.md
-
 # Edge Calibration Readiness Monitor
 
 **Status:** Approved
@@ -17837,7 +15672,6 @@ unavailable, never as zero evidence or ready.
 ---
 
 # Source: features\edge-factor-discovery\FEATURE_ARCHITECTURE.md
-
 # Edge/Factor Discovery + Signal Validation + Regime Filter
 
 **Status: P0/P1 MEASURE-ONLY BUILT. P2+ NOT APPROVED OR WIRED.**
@@ -18356,7 +16190,6 @@ reverted to a plain news-driven scout in the interim (it is not the alpha source
 ---
 
 # Source: features\event-aware-fundamentals-adr\FEATURE_ARCHITECTURE.md
-
 # Event-Aware Fundamentals and Exchange-Listed ADRs
 
 Status: Approved for implementation by owner on 2026-07-31
@@ -18472,7 +16305,6 @@ No trade, historical signal, or immutable evidence row is rewritten.
 ---
 
 # Source: features\event-ledger\FEATURE_ARCHITECTURE.md
-
 # Event Ledger — Feature Architecture
 
 Status: **Step 1 approved and shipped 2026-08-05. Steps 2-5 remain proposals.**
@@ -18820,7 +16652,6 @@ proposal (gated on §5 in full, including the unresolved false-discovery control
 ---
 
 # Source: features\exit-geometry-provenance\FEATURE_ARCHITECTURE.md
-
 # Exit-geometry provenance and shadow-baseline repair
 
 > Status: **APPROVED — paper-only evidence repair.** Owner approval: 2026-09-12.
@@ -18880,7 +16711,6 @@ A shadow cannot judge a policy it did not actually measure.
 ---
 
 # Source: features\exogenous-risk-evidence\FEATURE_ARCHITECTURE.md
-
 # Exogenous Risk Evidence Layer
 
 > Status: **P0 FOUNDATION BUILT; LEGACY US INTEGRITY + EXPLAINABILITY REMEDIATED; P1-P3 INGESTION NOT YET ENABLED.**
@@ -19318,7 +17148,6 @@ into an immutable ledger, which is not worth the permanent artifact.
 ---
 
 # Source: features\external-research-integrations\FEATURE_ARCHITECTURE.md
-
 # Governed External Research Integrations
 
 > Status: **REVISED DRAFT FOR CLAUDE + OWNER REVIEW. DESIGN ONLY.**
@@ -20038,7 +17867,6 @@ GitHub Actions compute pattern and its boundary has been independently reviewed.
 ---
 
 # Source: features\external-research-shadow\FEATURE_ARCHITECTURE.md
-
 # External Research Shadow Runtime
 
 > Status: **APPROVED FOR P0/P1 ISOLATED FOUNDATION ONLY (2026-08-10).**
@@ -20281,7 +18109,6 @@ signals, strategy activation, broker adapters, or order execution.
 ---
 
 # Source: features\external-skill-observation\FEATURE_ARCHITECTURE.md
-
 # External Skill Observation Adapter
 
 > Status: **DRAFT - NOT APPROVED FOR IMPLEMENTATION**
@@ -20348,7 +18175,6 @@ repository execution remains governed by
 ---
 
 # Source: features\external-strategy-discovery\FEATURE_ARCHITECTURE.md
-
 # External strategy discovery
 
 > Status: **REVISION 2 — DRAFT, not implementation-ready. No code written.**
@@ -20948,7 +18774,6 @@ approved document; it is not covered by this one.
 ---
 
 # Source: features\factor-quantile-diagnostics\FEATURE_ARCHITECTURE.md
-
 # Factor quantile + stability diagnostics (alphalens method port)
 
 > Status: **DRAFT — awaiting approval.** No code written.
@@ -21065,7 +18890,6 @@ migration, no new dependency, no new route, no schedule change.
 ---
 
 # Source: features\feature-pack-validation\FEATURE_ARCHITECTURE.md
-
 # Feature-Pack Validation Architecture
 
 > Status: P0 built; P1 technical measurement already collecting; feature-registry
@@ -21442,7 +19266,6 @@ replace the implementation-level specifications below:
 ---
 
 # Source: features\feature-pack-validation\IMPLEMENTATION_RESULT.md
-
 # Feature-Pack Validation: P0 Result
 
 > Shipped: 2026-08-02
@@ -21594,7 +19417,6 @@ contract, not from an observed response.
 ---
 
 # Source: features\forecast-calibration\FEATURE_ARCHITECTURE.md
-
 # Forecast Calibration and Earnings-Event Assurance
 
 Status: Approved by owner direction and implemented in phases on 2026-07-30.
@@ -21743,7 +19565,6 @@ position.
 ---
 
 # Source: features\health-control-and-paper-pnl\FEATURE_ARCHITECTURE.md
-
 # Health Control And Paper P&L
 Status: APPROVED AND IN BUILD (owner request, 2026-07-20)
 
@@ -21809,7 +19630,6 @@ Status: APPROVED AND IN BUILD (owner request, 2026-07-20)
 ---
 
 # Source: features\historical-evidence-intake\FEATURE_ARCHITECTURE.md
-
 # Governed Historical Evidence Intake
 
 **Status:** APPROVED for implementation by owner direction on 2026-07-29
@@ -22062,7 +19882,6 @@ new experiment binding.
 ---
 
 # Source: features\historical-replay-harness\FEATURE_ARCHITECTURE.md
-
 # Historical Replay Harness — Frozen Point-in-Time Eligibility
 
 > **STATUS: SUPERSEDED IN PART.** The sealed primitives were implemented. The
@@ -22402,7 +20221,6 @@ touched, consistent with the fix prompt's "shadow/measure-only first" doctrine);
 ---
 
 # Source: features\holding-risk-daily\FEATURE_ARCHITECTURE.md
-
 # Feature: Daily Per-Holding Risk Analytics
 
 **Status:** SHIPPED — current formula `hr-v3`
@@ -22685,7 +20503,6 @@ Exact times and dependency ordering go in
 ---
 
 # Source: features\hybrid-stop\FEATURE_ARCHITECTURE.md
-
 # Hybrid Protective Stops
 
 > Status: P1 implemented: read-only coverage and autonomous-entry interlock.
@@ -23000,7 +20817,6 @@ create overlapping sell capacity.
 ---
 
 # Source: features\hybrid-stop\IMPLEMENTATION_RESULT.md
-
 # Hybrid Protective Stops: P1 Implementation Result
 
 Date: 2026-07-30
@@ -23039,7 +20855,6 @@ Kite GTT has limit-child gap risk; Webull remains disabled pending its own sandb
 ---
 
 # Source: features\india-benchmark-fallback\FEATURE_ARCHITECTURE.md
-
 # India secondary-benchmark fallback
 
 > Status: **DRAFT — scope only, awaiting owner approval. No code written.**
@@ -23161,7 +20976,6 @@ the book reads.
 ---
 
 # Source: features\india-markets-parity\FEATURE_ARCHITECTURE.md
-
 # India Markets Verification And Hardening
 
 > Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
@@ -23379,7 +21193,6 @@ all green.
 ---
 
 # Source: features\instrument-aware-scoring\FEATURE_ARCHITECTURE.md
-
 # Instrument-Aware Research and Scoring
 
 **Status:** Approved; P0/P1 measurement implemented; 2026-09-15 gold evidence repair + oil exposure pack (measure-only, §11)
@@ -23629,7 +21442,6 @@ evidence with Newey-West or block-bootstrap uncertainty, plus owner approval.
 ---
 
 # Source: features\instrument-aware-scoring\IMPLEMENTATION_RESULT.md
-
 # Instrument-Aware Scoring — Implementation Result
 
 **Implemented by:** Codex / GPT-5
@@ -23689,7 +21501,6 @@ curated ETF cohort in the new ledger. Every family therefore remains below the
 ---
 
 # Source: features\international-equity-allocation\FEATURE_ARCHITECTURE.md
-
 # International Equity Exposure Architecture
 
 > Status: **P0-P2A SHIPPED (read-only). P2 comparative study and P3-P4 remain unapproved.**
@@ -24104,7 +21915,6 @@ and separate approvals.
 ---
 
 # Source: features\known-anomalies\FEATURE_ARCHITECTURE.md
-
 # Known-Anomaly Research Backlog
 
 > Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION.**
@@ -24335,7 +22145,6 @@ scoring/sizing/order/exit effect exists. Deterministic; no LLM.
 ---
 
 # Source: features\learning-core\FEATURE_ARCHITECTURE.md
-
 # Learning Core Rebuild — Feature Architecture
 
 **Status (2026-07-06): FULL ROADMAP BUILT.** Phase 1 (decision ledger), all P0 improvements (transactional fill RPC, cron-gap detector, vitest suite), Portfolio Constructor, Phase 2 (Validation Engine + fail-closed promotion + calibrated Kelly sizing + dynamic R:R), Execution Gateway paper-stage (Alpaca), and Phase 3 (typed strategy genome, feature registry + whitelisted compiler, shadow decisions, regime features, governance rewiring) — all built, migrated live (057–065, 068–071), and passing 85 tests + tsc + build. Two critical pre-existing bugs discovered and fixed along the way via live schema access: `paper_order_events.signal_id` type mismatch (Decision 34) and the Trade Queue reading a dead `trade_queue` table instead of `trade_proposals` (Decision 36). Genome/feature-registry/shadow are all opt-in and inert by default — nothing changes live behavior until a human deliberately activates them. Remaining out-of-scope (spend/hosting decisions, not specs): paid data tier, cloud infra migration.
@@ -24483,7 +22292,6 @@ not each shadow version's own genome (separate enhancement).
 ---
 
 # Source: features\learning-integrity\FEATURE_ARCHITECTURE.md
-
 # Learning Integrity - Taint Detection, Exclusion & Learner Recovery
 
 **Status:** DRAFT - awaiting approval. No implementation code until approved.
@@ -24815,7 +22623,6 @@ diagrams, then append a history entry per project convention.
 ---
 
 # Source: features\leveraged-etf-and-intraday-execution\FEATURE_ARCHITECTURE.md
-
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
 **Status:** APPROVED 2026-09-13 — L0–L1 implementation only; no paper or live execution
@@ -25137,7 +22944,6 @@ daily OHLC cache. L2–L4 remain unimplemented and unapproved.
 ---
 
 # Source: features\live-auto-trading\FEATURE_ARCHITECTURE.md
-
 # Live Auto Trading — Feature Architecture
 
 **Last updated:** 2026-07-10  
@@ -25489,7 +23295,6 @@ Uses `reserve_live_order_budget_v2` with `p_execution_actor='autonomous_worker'`
 ---
 
 # Source: features\live-exit-ladder-parity\FEATURE_ARCHITECTURE.md
-
 # Live Exit Ladder Parity — Architecture Proposal
 
 > Status: **Approved and implemented; production state/shadow tables verified**
@@ -25662,7 +23467,6 @@ from its route. That extraction is part of this work, not a prerequisite.
 ---
 
 # Source: features\live-trading-hardening\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Live-Trading Hardening (proposal consolidation, order-status sync, snapshot parse, pre-send confirmation, broker-side protective stops)
 
 ## Status
@@ -25931,7 +23735,6 @@ Implementation allowed: No
 ---
 
 # Source: features\llm-council-shadow\FEATURE_ARCHITECTURE.md
-
 # LLM Council — Shadow Annotation
 
 **Status:** DEFERRED by owner decision, 2026-08-20. Not approved, not implemented.
@@ -26084,7 +23887,6 @@ so it cannot quietly become a sizing input the way the 2026-07-15 exit hole did.
 ---
 
 # Source: features\local-historical-replay\FEATURE_ARCHITECTURE.md
-
 # Local Historical Replay Worker
 
 **Status:** APPROVED and implemented by owner direction on 2026-07-29
@@ -26210,7 +24012,6 @@ and limitations. It visually separates these runs from legacy signal replay.
 ---
 
 # Source: features\macro-dimension-role\FEATURE_ARCHITECTURE.md
-
 # Macro dimension — role correction
 
 > Status: **Stage 1 COMPLETE (measure-only, shipped). Stages 2–3 not approved.**
@@ -26451,7 +24252,6 @@ construction. It alters live selection, so it needs its own approval and shadow.
 ---
 
 # Source: features\manual-trade-guardian\FEATURE_ARCHITECTURE.md
-
 # Manual Trade Guardian — Architecture Proposal
 
 > Status: **Stage 0 approved 2026-09-09 and IMPLEMENTED.** Migration applied
@@ -26656,7 +24456,6 @@ or broker work. No external order was sent while implementing this feature.
 ---
 
 # Source: features\market-local-risk-configuration\FEATURE_ARCHITECTURE.md
-
 # Market-Local Risk Configuration
 
 > Status: **DRAFT - NOT APPROVED FOR IMPLEMENTATION**
@@ -26743,7 +24542,6 @@ market-local outcomes.
 ---
 
 # Source: features\markets-data\FEATURE_ARCHITECTURE.md
-
 # Markets Data — Price-Cache Fill Architecture
 
 > Status: **Implemented** (2026-07-15)
@@ -26950,7 +24748,6 @@ per-currency; nothing is cross-summed. No change was needed and none was made.
 ---
 
 # Source: features\mentor-agent\FEATURE_ARCHITECTURE.md
-
 # Feature: Mentor AI Agent
 
 Status: DRAFT → building v1 (2026-07-04).
@@ -27015,7 +24812,6 @@ Tools:
 ---
 
 # Source: features\momentum-factors\FEATURE_ARCHITECTURE.md
-
 # Momentum / Growth Factors — Feature Architecture
 
 > **STATUS: DRAFT — NOT APPROVED.** Proposal for review. No code until explicit sign-off.
@@ -27104,7 +24900,6 @@ antidote to survivorship.
 ---
 
 # Source: features\multi-tenant\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Multi-Tenant (Friends & Family)
 
 ## Status
@@ -27667,7 +25462,6 @@ MetaLearner), `05-crons-and-scheduling.md` (per-user fan-out),
 ---
 
 # Source: features\nav-restructure\FEATURE_ARCHITECTURE.md
-
 # Feature: Left-nav restructure (funnel order + surface LLM config)
 
 Last updated: 2026-07-12
@@ -27725,7 +25519,6 @@ PageHeader when rendered as a tab.
 ---
 
 # Source: features\new-symbol-and-ipo-discovery\FEATURE_ARCHITECTURE.md
-
 # New Symbol, Listing, and Pre-IPO Discovery
 
 > Status: PARTIALLY IMPLEMENTED — P0 plus the filing-discovery slice of P1 shipped 2026-09-09. Exchange-listing events, identity reconciliation, broker candidate probes, 20/40/60 admission shadows, and every money-path effect remain unimplemented and separately gated.
@@ -28239,7 +26032,6 @@ allowed as listing identity.
 ---
 
 # Source: features\paper-exit-plan-display\FEATURE_ARCHITECTURE.md
-
 # Paper Portfolio Exit Plan Display
 
 Status: approved for implementation (owner requested, 2026-07-21)
@@ -28307,7 +26099,6 @@ The projection is assembled on the server. The client receives only display data
 ---
 
 # Source: features\paper-portfolio-benchmarks\FEATURE_ARCHITECTURE.md
-
 # Paper Portfolio — market-aware benchmarks + page cleanup
 
 **Status: SHIPPED. 2026-07-08.**
@@ -28442,7 +26233,6 @@ S&P 500. Flag if you'd rather backfill VOO across history instead.
 ---
 
 # Source: features\per-user-broker-risk\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Per-User Broker Connections & Private Risk Analytics
 
 ## Status
@@ -28845,7 +26635,6 @@ trim drivers only.
 ---
 
 # Source: features\performance-truth\FEATURE_ARCHITECTURE.md
-
 # Performance Truth Layer — Feature Architecture
 
 Last updated: 2026-07-09 (v2 — post Codex BLOCKER/HIGH review)  
@@ -29368,7 +27157,6 @@ All migrations additive. No existing columns modified. No existing behavior chan
 ---
 
 # Source: features\pipeline-data-and-timing\FEATURE_ARCHITECTURE.md
-
 # Pipeline Data and Timing Remediation
 
 Status: SHIPPED
@@ -29493,7 +27281,6 @@ flowchart LR
 ---
 
 # Source: features\pit-fundamentals\FEATURE_ARCHITECTURE.md
-
 # Point-in-Time (PIT) Fundamentals — Feature Architecture
 
 STATUS: DRAFT — awaiting owner approval
@@ -29794,7 +27581,6 @@ node descriptions change.
 ---
 
 # Source: features\policy-event-ledger\FEATURE_ARCHITECTURE.md
-
 # US Policy Event Ledger
 
 ## Decision
@@ -29851,7 +27637,6 @@ ResearchAgent or an LLM. The read API powers the Markets card.
 ---
 
 # Source: features\portfolio-simulation\FEATURE_ARCHITECTURE.md
-
 # Deterministic Portfolio Simulation
 
 Status: Approved by owner for isolated implementation on 2026-08-10
@@ -29921,7 +27706,6 @@ decide whether a rule is useful; a simulation result cannot change any policy.
 ---
 
 # Source: features\portfolio-sizing-replay\FEATURE_ARCHITECTURE.md
-
 # Historical sizing comparison
 
 Status: owner-approved diagnostic comparison, 2026-09-20.
@@ -29996,7 +27780,6 @@ are changed.
 ---
 
 # Source: features\property-address-and-carrying-costs\FEATURE_ARCHITECTURE.md
-
 # Property Address And Carrying Costs
 
 Status (2026-08-08): **Implemented.** Address and current carrying-cost fields use the existing encrypted `property_assets.encrypted_payload` contract. The editable-record release adds `property_asset_history` through `20260808180110_property_asset_history.sql`; its history snapshots are encrypted too.
@@ -30174,7 +27957,6 @@ metric is documented in this feature record.
 ---
 
 # Source: features\property-address-and-carrying-costs\IMPLEMENTATION_RESULT.md
-
 # Implementation Result
 
 Implemented on 2026-08-08:
@@ -30198,7 +27980,6 @@ Not claimed: parcel resolution, AVM, property-specific insurance quote, automati
 ---
 
 # Source: features\property-decision-workspace\FEATURE_ARCHITECTURE.md
-
 # Kairos Property Decision Workspace
 
 Status (2026-08-07): **P0-P4 and valuation-evidence Stage 1 schema applied to production and verified.**
@@ -30519,7 +28300,6 @@ it is easy to crawl.
 ---
 
 # Source: features\property-decision-workspace\IMPLEMENTATION_RESULT.md
-
 # Kairos Property — implementation result
 
 Date: 2026-08-07 · Production project `<production-project-ref>`
@@ -30767,7 +28547,6 @@ county assessment, manual scenario, or shadow forecast as a market-value claim.
 ---
 
 # Source: features\property-owner-evidence\FEATURE_ARCHITECTURE.md
-
 # Property Owner Evidence Intake
 
 Status: Implemented 2026-08-08.
@@ -30801,7 +28580,6 @@ The user-facing form states that a document is evidence only. Tax and insurance 
 ---
 
 # Source: features\property-valuation\FEATURE_ARCHITECTURE.md
-
 # Property Valuation Evidence
 
 Status (2026-08-08): **Stage 1 schema is shipped, but collection is disabled.**
@@ -31056,7 +28834,6 @@ delay.
 ---
 
 # Source: features\property-valuation\IMPLEMENTATION_RESULT.md
-
 # Implementation Result
 
 Updated on 2026-08-08:
@@ -31079,7 +28856,6 @@ contracts first.
 ---
 
 # Source: features\property-value-intelligence\FEATURE_ARCHITECTURE.md
-
 # Property Value Intelligence
 
 ## Status
@@ -31316,7 +29092,6 @@ comparison improves both error and interval calibration on the same market.
 ---
 
 # Source: features\property-value-intelligence\IMPLEMENTATION_RESULT.md
-
 # Implementation Result
 
 Implemented on 2026-08-08:
@@ -31348,7 +29123,6 @@ validation gates.
 ---
 
 # Source: features\property-zip-area-context\FEATURE_ARCHITECTURE.md
-
 # Property Stage 3 — ZIP-Level Area Context
 
 ## Status
@@ -31432,7 +29206,6 @@ a source joins the flow it already belongs to, not fork a near-duplicate.
 ---
 
 # Source: features\python-runtime\FEATURE_ARCHITECTURE.md
-
 # Python Runtime — Feature Architecture
 
 Status: **Implemented (measure-only). Not wired into any decision path.**
@@ -31575,7 +29348,6 @@ Python on a user-facing render path.
 ---
 
 # Source: features\quote-dispute-session-alignment\FEATURE_ARCHITECTURE.md
-
 # Quote cross-check — session alignment and dispute escalation
 
 > Status: **DRAFT — awaiting approval.** No code written.
@@ -31713,7 +29485,6 @@ analytics token, not a new vendor or money-path authority.
 ---
 
 # Source: features\relationship-graph\FEATURE_ARCHITECTURE.md
-
 # Relationship Graph and Cross-Company Propagation - Feature Architecture
 
 > Status: **P0 feasibility study RUN AND FAILED. Recommendation: do not build. Design retained for the record.**
@@ -32279,7 +30050,6 @@ for its actual US universe to measure that anomaly honestly and cheaply today.
 ---
 
 # Source: features\research-journal-controls\FEATURE_ARCHITECTURE.md
-
 # Feature: Research Journal Controls and Market-Local Clocks
 
 **Status:** SHIPPED
@@ -32351,7 +30121,6 @@ for its actual US universe to measure that anomaly honestly and cheaply today.
 ---
 
 # Source: features\research-journal\FEATURE_ARCHITECTURE.md
-
 # Feature: Research Journal (daily funnel report + learning evolution)
 
 Status: BUILT (v1 shipped 2026-07-06; v2 novice-first upgrade approved 2026-07-12) · Owner: Vaibhav · Started 2026-07-06
@@ -32646,7 +30415,6 @@ append-only ledger.
 ---
 
 # Source: features\research-trade-plan\FEATURE_ARCHITECTURE.md
-
 # Feature: Research-Time Indicative Trade Plan
 
 Status: APPROVED / BUILDING (2026-07-20) · Owner: Vaibhav · Builder: Codex
@@ -32817,7 +30585,6 @@ deployment gates.
 ---
 
 # Source: features\research-universe-fix\FEATURE_ARCHITECTURE.md
-
 # Research Universe Fix — Feature Architecture
 
 **Status:** APPROVED → IMPLEMENTING  
@@ -32927,7 +30694,6 @@ System Map and SYSTEM_OVERVIEW do not need updating for this fix — the agent-t
 ---
 
 # Source: features\risk-research-visibility\FEATURE_ARCHITECTURE.md
-
 # Risk Analytics — Research Visibility
 
 > Status: **APPROVED — built.** Owner approved 2026-07-17 with §10 decided.
@@ -33098,7 +30864,6 @@ Live-trading accounts the app cannot trade (e.g. `<read-only-account-id>`) get t
 ---
 
 # Source: features\risk-sector-breach-allocation\FEATURE_ARCHITECTURE.md
-
 # Feature: Sector-Cap Breach Allocation (risk-internal, deterministic)
 
 **Status:** SHIPPED - allocator `sba-v1`, posture consumer `hr-v3`
@@ -33404,7 +31169,6 @@ loss-only-never-exit, purity) must stay green.
 ---
 
 # Source: features\risk-tier-gate\FEATURE_ARCHITECTURE.md
-
 # Risk-Tier Gate — Feature Architecture
 
 > Status: **Stage 1 LIVE (measure-only shadow)**. No gate, no sizing, no order-path change.
@@ -33494,7 +31258,6 @@ it with eyes open — this document does not resolve that, it flags it.**
 ---
 
 # Source: features\robinhood-agentic-evidence\FEATURE_ARCHITECTURE.md
-
 # Robinhood Agentic Evidence — Feature Architecture
 
 > Status: P0 approved and implemented. Later phases require a separate owner-approved design and evidence gate.
@@ -33532,7 +31295,6 @@ No scanner, Level 2, tax lots, options, or Robinhood data call is enabled by P0.
 ---
 
 # Source: features\robinhood-crypto\FEATURE_ARCHITECTURE.md
-
 # Robinhood Crypto — Feature Architecture
 
 > Status: **Stage 3 LIVE (paper trading)** — legacy_v1 scoring + own $10k paper pool + dedicated
@@ -33748,7 +31510,6 @@ an equivalent scoping column — exact schema left to the migration design, not 
 ---
 
 # Source: features\robinhood-mcp-integration\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: In-App Robinhood MCP Client — read-only snapshot + human-gated live order execution + allowlist-backed account selector
 
 ## Status
@@ -34062,7 +31823,6 @@ Implementation allowed: No
 ---
 
 # Source: features\router-cutover\FEATURE_ARCHITECTURE.md
-
 # Canonical Evidence Router Controlled Cutover
 
 > Status: **REVIEWED DESIGN DRAFT. NOT APPROVED FOR IMPLEMENTATION OR CUTOVER.**
@@ -34713,7 +32473,6 @@ No tolerance was widened and no gate was relaxed to accommodate any of this.
 ---
 
 # Source: features\score-correlation-drift\FEATURE_ARCHITECTURE.md
-
 # Score-Return Correlation Drift Detector (Stage A)
 
 > Owner-approved 2026-09-08. **DETECTION ONLY, not causal attribution.**
@@ -34849,7 +32608,6 @@ boundary, and the "changed after, not caused by" framing.
 ---
 
 # Source: features\score-price-divergence\FEATURE_ARCHITECTURE.md
-
 # Score / Price Divergence — Feature Architecture
 
 Status: **Implemented** (owner-approved 2026-09-08; production evidence collection active)
@@ -34934,7 +32692,6 @@ from a divergence: rising price can make valuation scores fall mechanically.
 ---
 
 # Source: features\scoring-data-truth\FEATURE_ARCHITECTURE.md
-
 # Scoring Data-Truth Audit
 
 **Status:** Corrective fixes implemented; semantic redesigns remain proposed
@@ -35079,7 +32836,6 @@ pending work; this patch supplies no evidence of increased investment returns.
 ---
 
 # Source: features\scoring-methodology\FEATURE_ARCHITECTURE.md
-
 # Scoring Methodology Upgrade — Feature Architecture
 
 **Last updated:** 2026-07-10  
@@ -35532,7 +33288,6 @@ in `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
 ---
 
 # Source: features\sector-regime-dimension\FEATURE_ARCHITECTURE.md
-
 # Sector-by-regime dimension
 
 > Status: **DRAFT — awaiting approval. BLOCKED on a data prerequisite (§3).**
@@ -35737,7 +33492,6 @@ provider. Sector ETFs and `macro_regime` already exist.
 ---
 
 # Source: features\sector-relative-strength\FEATURE_ARCHITECTURE.md
-
 # Sector Relative Strength — SUPERSEDED
 
 > Status: **WITHDRAWN 2026-09-09.** Do not implement this document.
@@ -35826,7 +33580,6 @@ Nothing in steps 1-5 touches the money path.
 ---
 
 # Source: features\sector-scoring-integrity\FEATURE_ARCHITECTURE.md
-
 # Sector scoring integrity — cyclicals, macro weighting, and dead scoring code
 
 > Status: **REVISION 3 — DRAFT. F1 and F2 NOT approved and NOT enabled.
@@ -36178,7 +33931,6 @@ forward-shadow gates.
 ---
 
 # Source: features\self-healing-agent\FEATURE_ARCHITECTURE.md
-
 # Live-Order Caps + Self-Healing / Health-Monitoring Agent
 
 **Status:** DRAFT — awaiting approval. No implementation code until approved.
@@ -36383,7 +34135,6 @@ add the per-agent diagram, and append a history entry per project convention.
 ---
 
 # Source: features\settings-llm-control\FEATURE_ARCHITECTURE.md
-
 # Settings-driven LLM + API-key control for every flow
 
 **Status: SHIPPED (both parts). 2026-07-08.**
@@ -36487,7 +34238,6 @@ No implementation until you approve + answer 1–3.
 ---
 
 # Source: features\shadow-population\FEATURE_ARCHITECTURE.md
-
 # Shadow-Population Strategy Search — Feature Architecture
 
 > Status: **DRAFT v2 — RESHAPE. P0 IN PROGRESS (Vaibhav approved P0 only, 2026-09-04).**
@@ -36748,7 +34498,6 @@ P2:
 ---
 
 # Source: features\shadow-registry\FEATURE_ARCHITECTURE.md
-
 # Shadow Registry and Upgrade Path
 
 Status: APPROVED (owner instruction, 2026-07-29)
@@ -36979,7 +34728,6 @@ blocker; repairing the index remains a separately approved schema change.
 ---
 
 # Source: features\shadow-registry\IMPLEMENTATION_RESULT.md
-
 # Shadow Registry and Upgrade Path - Implementation Result
 
 Date: 2026-07-29; production-provenance upgrade reviewed 2026-08-24
@@ -37042,7 +34790,6 @@ rollback.
 ---
 
 # Source: features\shared-viewer-access\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Shared Viewer Access (Read-Only Friends & Family)
 
 ## Status
@@ -37632,7 +35379,6 @@ owner-only or provider request) and `tests/viewer-route-sweep.test.ts` (now hono
 ---
 
 # Source: features\stock-context\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Stock Context
 
 ## Status
@@ -37856,7 +35602,6 @@ Implementation allowed: Yes
 ---
 
 # Source: features\strategy-evidence-scorecard\FEATURE_ARCHITECTURE.md
-
 # Strategy Evidence Scorecard
 
 > Status: **DRAFT — for owner approval. No code written.**
@@ -38013,7 +35758,6 @@ exactly the tuning this document forbids.
 ---
 
 # Source: features\strategy-library-shadow\FEATURE_ARCHITECTURE.md
-
 # Public strategy library — shadow harness
 
 > Status: **DRAFT — scope and brief. No code written. Not approved.**
@@ -38241,7 +35985,6 @@ refuse them.
 ---
 
 # Source: features\strategy-portfolio-lab\FEATURE_ARCHITECTURE.md
-
 # Strategy Portfolio Lab
 
 > Status: Approved for P0 implementation. Owner reconfirmed the shared
@@ -38307,7 +36050,6 @@ combination compiler; P3 only after promotion-grade OOS evidence exists.
 ---
 
 # Source: features\symbol-score-history\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Per-Symbol Score History vs Price
 
 ## Status
@@ -38413,7 +36155,6 @@ changes, the source table changes, or per-indicator attribution is added.
 ---
 
 # Source: features\system-health-model-resilience\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: System Health funnel + Model Resilience
 
 ## Status
@@ -38628,7 +36369,6 @@ Implementation allowed: No
 ---
 
 # Source: features\system-reference\FEATURE_ARCHITECTURE.md
-
 # System Reference Architecture
 
 > Status: Approved
@@ -38694,7 +36434,6 @@ and proposed work.
 ---
 
 # Source: features\systematic-pattern-discovery\FEATURE_ARCHITECTURE.md
-
 # Systematic Pattern Discovery — Feature Architecture
 
 > Status: **PARKED — IDEA ONLY. NEEDS MORE RESEARCH AND THOUGHT BEFORE ANY BUILD.**
@@ -38884,7 +36623,6 @@ justified on that basis.
 ---
 
 # Source: features\technical-factor-calibration\FEATURE_ARCHITECTURE.md
-
 # Technical Factor Calibration
 
 > Status: **APPROVED FOR MEASURE-ONLY IMPLEMENTATION**
@@ -39048,7 +36786,6 @@ Full production audit: `features/scoring-data-truth/FEATURE_ARCHITECTURE.md`.
 ---
 
 # Source: features\theme-tracking\FEATURE_ARCHITECTURE.md
-
 # Theme Tracking — Feature Architecture
 
 Status: **Step 1 approved and shipped 2026-08-04. Steps 2-5 remain proposals.**
@@ -39316,7 +37053,6 @@ the five weeks already collected. Those are gone.
 ---
 
 # Source: features\time-review-exit\FEATURE_ARCHITECTURE.md
-
 # Time-Review Exit Policy
 
 Status: APPROVED FOR P0 MEASUREMENT ONLY on 2026-08-07
@@ -39475,7 +37211,6 @@ kill-switch, mandate, and protective-order gates.
 ---
 
 # Source: features\time-review-exit\IMPLEMENTATION_RESULT.md
-
 # Time-Review Exit Shadow — Implementation Result
 
 Implemented: 2026-09-03
@@ -39532,7 +37267,6 @@ paper-policy change. Live use requires a separate approval.
 ---
 
 # Source: features\trade-behavior-mirror\FEATURE_ARCHITECTURE.md
-
 # Trade Behavior Mirror — Past-Trade Analysis — Feature Architecture
 
 > **STATUS: DRAFT — NOT APPROVED.** Proposal for review. No code until explicit sign-off.
@@ -39625,7 +37359,6 @@ regime-skew metrics + Mentor narrative).
 ---
 
 # Source: features\trading-mandate\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Cross-Market Trading Mandates
 
 ## Status
@@ -39787,7 +37520,6 @@ RLS policy were verified from the production schema after application.
 ---
 
 # Source: features\trading-mandate\IMPLEMENTATION_RESULT.md
-
 # Trading Mandates Implementation Result
 
 Status: Complete
@@ -39836,7 +37568,6 @@ These follow-ups do not block mandate configuration or the core US/India agent b
 ---
 
 # Source: features\upgrade-path-attribution\FEATURE_ARCHITECTURE.md
-
 # Upgrade Path Causal Performance Attribution
 
 Status: APPROVED — owner instruction, 2026-09-18
@@ -39928,7 +37659,6 @@ P&L total or from aggregate portfolio performance after multiple releases.
 ---
 
 # Source: features\us-keyless-screener\FEATURE_ARCHITECTURE.md
-
 # US Keyless Screener — Feature Architecture
 
 Status: **Draft — awaiting owner approval. No code written.**
@@ -40354,7 +38084,6 @@ server-side surfaces them, which is why §4.1's base clause exists.
 ---
 
 # Source: features\us-paper-fractional-shares\FEATURE_ARCHITECTURE.md
-
 # US Paper Fractional Shares
 
 > Status: **APPROVED FOR IMPLEMENTATION**
@@ -40400,7 +38129,6 @@ live-order limits.
 ---
 
 # Source: features\us-selection-and-hold-gaps\FEATURE_ARCHITECTURE.md
-
 # Decision-Intent and Holding-Exit Integrity
 
 > Status: **APPROVED FOR INTEGRITY BUILD; SCORE POLICY REMAINS MEASURE-ONLY.**
@@ -40501,7 +38229,6 @@ so it is now measured by the dedicated shadow rather than reused as entry eviden
 ---
 
 # Source: features\volatility-scaled-exit-geometry\FEATURE_ARCHITECTURE.md
-
 # Volatility-Scaled Exit Geometry
 
 > Status: **PROPOSED — architecture only.** No scoring, sizing, stop, target,
@@ -40640,7 +38367,6 @@ architecture propose changing `resolveExecutionRiskReward`. It must state:
 ---
 
 # Source: features\walk-forward-ic-folds\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture: Purged Out-of-Sample IC Validation
 
 ## Status
@@ -42061,7 +39787,6 @@ horizon.
 ---
 
 # Source: features\webull-broker\FEATURE_ARCHITECTURE.md
-
 # Feature Architecture — Webull as 3rd Broker (MCP)
 
 > Status: **Phase 1 (read-only, Cloud MCP) BUILT — OAuth connected; live read capture still fail-soft if a configured tool is not offered by the connected MCP surface.**
@@ -42220,7 +39945,6 @@ token in vault → CAS refresh). Steps:
 ---
 
 # Source: features\webull-trading-api\FEATURE_ARCHITECTURE.md
-
 # Webull Trading API Adapter
 
 > Status: transport implementation approved 2026-07-19; disabled and not approved for activation. US live money path.
@@ -42463,7 +40187,6 @@ Missing schema, config, account, credential, or broker response fails closed.
 ---
 
 # Source: features\weekend-research-catchup\FEATURE_ARCHITECTURE.md
-
 # Market-Closed-Day Research Catch-up and Agent Capacity
 
 Status: APPROVED by owner on 2026-07-19 ("do it"; holiday extension approved with "ok")
@@ -42608,7 +40331,6 @@ the pre-feature weekday behavior.
 ---
 
 # Source: features\weekend-research-catchup\IMPLEMENTATION_RESULT.md
-
 # Market-Closed-Day Research Catch-up — Implementation Result
 
 Completed: 2026-07-19
@@ -42674,7 +40396,6 @@ change, or cross-market aggregation was performed by this implementation.
 ---
 
 # Source: features\zerodha-coin-portfolio\FEATURE_ARCHITECTURE.md
-
 # Zerodha Coin portfolio sleeve
 
 Status: APPROVED by owner (`go`, 2026-09-03)
@@ -42738,7 +40459,6 @@ The page states that Coin NAV is end-of-day/last available and that existing per
 ---
 
 # Source: SYSTEM_OVERVIEW.md
-
 # Kairos System Overview
 
 > Last reviewed: 2026-08-06 (architecture-to-production conformance baseline)
@@ -42809,7 +40529,6 @@ feature implementation result in the same commit; see the contract in
 ---
 
 # Source: ARCHITECTURE.md
-
 # Kairos Architecture Portal
 
 > Last reviewed: 2026-08-06 (architecture-to-production conformance baseline)
@@ -42921,7 +40640,6 @@ the appropriate contextual home because it already owns the live topology.
 ---
 
 # Source: PROJECT_DECISIONS.md
-
 # Project Decisions â€” Kairos
 
 ## Purpose
@@ -44789,4 +42507,5 @@ classification. Any consumption of `catalyst_shadow` by scoring/sizing/gating is
 evidence-gated future decision.
 
 **Architecture:** `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
+
 
