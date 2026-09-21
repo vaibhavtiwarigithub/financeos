@@ -1,4 +1,37 @@
 # Kairos — Agents
+> Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). This chapter documents responsibilities; it is not permission to enable proposed paths.
+> 2026-09-18: **Short interest wired into the risk-tier shadow** — item #2 (short interest) of the
+> `achaljhawar/1rok` gap-analysis plan. Yahoo's `defaultKeyStatistics` module (`shortPercentOfFloat`,
+> `shortRatio`) was already fetched for every US symbol via `fetchUsOverview`'s Finnhub-gap-fill pass
+> (`lib/india-data.ts`) but never parsed. Added a `BONUS_COPY_ONLY` list in `lib/data/fundamentals.ts`
+> — deliberately separate from the `FILLABLE` gap-trigger list, since Finnhub can never supply these
+> fields and adding them there would have silently forced an extra Yahoo call on every US symbol, even
+> ones with full Finnhub coverage. Coverage is therefore partial (only when Yahoo is already being
+> called for some other reason), not universal — same honest-unavailable convention as everything
+> else. Folded into risk-tier's existing `specialRisk` component as a squeeze-setup signal (>20% of
+> float short + >5 days to cover). See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md` §5.
+>
+> 2026-09-18: **CatalystScout shadow (measure-only)** — `lib/scoring/catalyst-scout.ts`, item #1 of
+> the `achaljhawar/1rok` gap-analysis plan (their Catalyst agent's prompt discloses an adaptable
+> scoring shape; theirs is LLM-judged, this is deterministic). Closes the "earnings handled only
+> defensively, never scored for upside" gap. Zero new fetches — built entirely from data already in
+> scope at the `decision_observations` write: `daysToEarnings`, the Finnhub analyst consensus
+> (`lib/data/analyst.ts`, previously logged-only, still not scored live), `insider_score` gated on its
+> own real availability flag, Webull's already-fetched 5-day capital-flow sign, and the existing
+> breakdown veto. Written to `decision_observations.features.catalyst_shadow`; not read by
+> scoring/sizing/gate/order. Same `coverage`-tracked additive-asymmetry discipline as risk-tier-gate.
+> See `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
+>
+> 2026-09-18: **Risk-tier shadow (measure-only)** — `lib/risk/risk-tier.ts`, adapted from
+> `github.com/achaljhawar/1rok`'s disclosed (LLM-judged there, deterministic here) risk-agent scoring
+> shape: 5-component additive composite (volatility/fragility/concentration/macro/special) off data
+> ResearchAgent already fetches — no new provider, no LLM. Written to
+> `decision_observations.features.risk_tier_shadow` on every scored candidate. Not read by
+> scoring/sizing/gate/order — same measure-only discipline as instrument-family evidence and oil
+> exposure. Ships with a stated, unresolved asymmetry (missing evidence contributes zero risk points,
+> not a neutral default — opposite bias from `analyst_score`'s abstain-on-thin-evidence convention),
+> tracked via a `coverage` field, not silently fixed. See `features/risk-tier-gate/FEATURE_ARCHITECTURE.md`.
+>
 > 2026-09-16: **Crypto Stage 3 — paper trading live (owner-approved evidence-gate override).**
 > `lib/scoring/instrument-taxonomy.ts` crypto `scoreMode` `measure_only` → `legacy_v1`. Two new small
 > agents, `CryptoPaperTrader` and `CryptoPositionMonitor` (registry entries below), deliberately NOT

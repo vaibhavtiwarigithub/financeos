@@ -1,4 +1,5 @@
 # Kairos — Crons & Scheduling
+> Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). Verify production `cron.job` rows before relying on a listed schedule.
 > 2026-09-17: **`kairos-crypto-native-shadow` runs every day at 00:15 UTC** (migration
 > `20260917190000_crypto_native_shadow_collector.sql`). It calls `POST /api/agents/crypto-research-shadow`
 > after the completed UTC daily-bar boundary and before the crypto position monitor at 00:30 UTC. It is a

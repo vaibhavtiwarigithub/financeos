@@ -1,6 +1,6 @@
 # Kairos Architecture Chapter Index
 
-> Last reviewed: 2026-08-08 (Capital Plan foundation)
+> Last reviewed: 2026-09-21 (current system reference and evidence-status audit)
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
@@ -20,6 +20,7 @@ hierarchy and [SYSTEM_OVERVIEW.md](../../SYSTEM_OVERVIEW.md) for a short orienta
 | `07-coding-conventions.md` | UI, data access, API, and agent conventions | A project-wide convention changes |
 | `08-risk-and-safety.md` | Money-path gates, autonomy, kill switches, ledgers | Order flow, autonomy, or safety behavior changes |
 | `09-learning-loop.md` | Evaluation, learning, validation, and promotion controls | Learning flow, genome, or promotion controls change |
+| `10-current-system-reference.md` | Friend-facing current behavior, status vocabulary, and shipped-vs-shadow boundaries | Any material runtime, safety, benchmark, crypto, or learning contract changes |
 
 ## Source-of-truth hierarchy
 

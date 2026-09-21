@@ -1,5 +1,6 @@
 # Kairos — What Is This?
 > Last updated: 2026-09-08
+> Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md).
 > Update this file when: product direction changes, new feature areas are added, core principles change, or the top-level pitch changes.
 
 ---

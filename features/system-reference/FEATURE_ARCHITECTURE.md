@@ -2,7 +2,7 @@
 
 > Status: Approved
 > Implementation allowed: Yes
-> Last updated: 2026-07-30
+> Last updated: 2026-09-21
 
 ## Goal
 
@@ -44,6 +44,11 @@ feature documents are micro-architecture; implementation result files record del
 project decisions capture approval and rationale. An agent-flow change updates the
 diagram source and history, then its relevant chapter. A drift test guards the diagram
 contract.
+
+The friend-facing current-state document is `docs/arch/10-current-system-reference.md`.
+This feature design specifies the reference surface; chapter 10 explains current
+runtime contracts and distinguishes active, paper-only, shadow, collecting, blocked,
+and proposed work.
 
 ## Acceptance criteria
 
