@@ -2,6 +2,9 @@
 
 > Last reviewed: 2026-09-21 (current system reference and evidence-status audit)
 
+For a single comprehensive reading path, start with
+[KAIROS_CONSOLIDATED_ARCHITECTURE.md](KAIROS_CONSOLIDATED_ARCHITECTURE.md).
+
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
 agent chapter. Use [ARCHITECTURE.md](../../ARCHITECTURE.md) for the documentation

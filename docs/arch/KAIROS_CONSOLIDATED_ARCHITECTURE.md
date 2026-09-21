@@ -1,0 +1,357 @@
+# Kairos / FinanceOS — Consolidated Architecture
+
+> **Audience:** a new engineer, reviewer, or collaborator who needs to understand
+> the complete application from one document.
+>
+> **Reviewed:** 2026-09-21
+>
+> **Status rule:** “Active” means the code and production contract are present.
+> “Paper-only” means it can affect simulated books but never a broker. “Shadow”
+> means evidence collection only. “Blocked” means a named prerequisite is missing.
+> Historical feature documents are design records; this document describes how the
+> system is connected today.
+
+## 1. Product purpose
+
+Kairos is a personal AI-assisted quantitative investing operating system. It is
+not a chat bot that invents trades and it is not a single-factor stock scanner.
+It runs a controlled loop:
+
+```text
+market/provider evidence
+        ↓
+market-local research and deterministic scoring
+        ↓
+session-validated signals and decision evidence
+        ↓
+paper portfolio construction and simulated fills
+        ↓
+position monitoring, exits and reconciliation
+        ↓
+closed-trade labels, diagnostics and learning evidence
+        ↓
+validated shadows/challengers (never silent promotion)
+```
+
+The system supports separate US, India and crypto books. Paper comes before live
+execution. Any live order must pass broker, data, risk, protection, idempotency
+and owner-authorisation gates. LLMs can summarize persisted evidence, but they do
+not have authority to invent a score, target, stop, position size or live order.
+
+## 2. System boundaries and technology
+
+The web application is Next.js App Router with TypeScript and React. Supabase
+provides Postgres, Auth, Row Level Security, Vault, Realtime and pg_cron. Server
+routes use Supabase server/service clients; browser components never receive a
+service-role key. Owner-only APIs use the confirmed owner gate.
+
+Production schedules run in Supabase pg_cron and call deployed API routes through
+the Vault-backed `kairos_call_agent` bridge. Local Windows schedules are useful
+for development but are not the production source of truth.
+
+Main runtime areas:
+
+- `app/dashboard/` and `components/dashboard/`: Investing workspace.
+- `app/property/`: owner-recorded property/equity workspace.
+- `app/capital-plan/`: capital profile and allocation workspace.
+- `lib/data/`: provider adapters, caching and freshness contracts.
+- `lib/scoring/`: deterministic equity and crypto scoring.
+- `lib/trading/`: exits, ladders, geometry and order policies.
+- `lib/brokers/` and `lib/robinhood-mcp.ts`: broker capability and execution adapters.
+- `supabase/migrations/`: schema, RPCs, constraints and cron jobs.
+- `features/`: feature-level architecture and decision records.
+- `docs/arch/`: stable operational architecture chapters.
+
+## 3. Workspaces and user interface
+
+### Investing workspace
+
+`/dashboard` is the owner’s operating console. Major routes are:
+
+| Route | Purpose |
+|---|---|
+| `/dashboard` | Portfolio summary, NAV/cash, macro banner, health and agent status |
+| `/dashboard/research` | Symbol scores, dimensions, thesis and dated evidence |
+| `/dashboard/research/[symbol]` | Price/score history and symbol-level research detail |
+| `/dashboard/learning` | Champion/challengers, validation and Performance Truth |
+| `/dashboard/agents` | Agent cards, topology and per-agent diagrams |
+| `/dashboard/upgrade-path` | Shadow inventory, evidence, blockers and attribution status |
+| `/dashboard/markets` | Macro, breadth, sectors and benchmark market data |
+| `/dashboard/smart-money` | Options/insider/sentiment evidence and trade queue |
+| `/dashboard/india` | NSE research, INR paper book and Kite surfaces |
+| `/dashboard/live-portfolio` | Broker positions, snapshots and live-vs-benchmark charts |
+| `/dashboard/journal` | Signal → fill → exit → outcome decision journal |
+| `/dashboard/mentor` | Evidence-based coaching notes |
+| `/dashboard/backtest` | Historical validation/replay outputs |
+| `/dashboard/scanner` | Bounded US/India candidate screening |
+| `/dashboard/settings` | Broker connections, model routing, controls, keys and maintenance |
+
+The System Reference surface is owner-only and reads a fixed allowlist. It is not
+a repository browser. The Agent diagrams are rendered from
+`public/agent-diagrams/system-map.json`, which is the topology source of truth.
+
+### Property and Capital workspaces
+
+Property stores owner-entered properties, financing, carrying costs, evidence
+imports, market observations and shadow forecasts. It is not an automated AVM.
+Capital stores allocation profiles, capital decision runs and capital-rotation
+shadows. Neither workspace can silently place an investing order.
+
+## 4. Markets, books and instruments
+
+### US book
+
+USD paper portfolio, US equity/ETF universe and broker-compatible symbols. The
+ResearchAgent uses applicable fundamentals, technicals, sentiment, macro and
+insider evidence. US paper fills support fractional shares. Robinhood is the
+primary intended execution broker; Webull is a read-only research/broker surface
+until its trading contract is explicitly enabled.
+
+### India book
+
+INR paper portfolio for NSE-compatible equity/ETF symbols. India uses market-local
+calendar/session handling, local provider evidence and Zerodha/Kite compatibility.
+India remains whole-share in the paper path unless an instrument contract says
+otherwise. US macro is never copied into India as if it were local evidence.
+
+### Crypto book
+
+Crypto has an isolated USD paper pool. The approved initial paper basket is
+BTC-USD, ETH-USD and SOL-USD; broker-discovered pairs are recorded separately.
+Crypto uses public Coinbase/Kraken candles and quotes for research, Coin metadata
+where available, and Robinhood MCP only for broker capability/execution truth.
+Crypto does not reuse stock P/E, earnings, insider or equity-macro formulas.
+
+Live crypto is disabled. The live path requires account/pair eligibility, fresh
+executable quotes, preview acceptance, protective-order proof and reconciliation.
+
+## 5. Data architecture
+
+Every input has a source, observed timestamp, market/session, provenance and
+quality state. Provider data is cached and quota-accounted. `price_cache` stores
+OHLCV bars with provider/basis/provenance metadata. Evidence caches prevent the
+research hot path from repeatedly spending provider quota.
+
+Core data families:
+
+- `agent_signals`: session-validated research decisions and score dimensions.
+- `signal_score_history` / decision observations: dated score history and feature
+  snapshots used for divergence and learning diagnostics.
+- `paper_portfolio`, `paper_positions`, `paper_trades`: isolated paper books,
+  positions, lots, partial exits and realized outcomes.
+- `paper_order_events` / decision journal: immutable event and rationale trail.
+- `live_account_snapshots`, `live_performance`, broker order tables: broker truth,
+  never inferred from a paper ledger.
+- benchmark observations and scorecards: market-local benchmark curves and
+  expected-session freshness state.
+- learning, shadow, validation and attribution tables: append-only evidence for
+  proposed changes.
+- System Health tables: failures, warnings, owner actions and auto-expiry state.
+
+Data contracts fail closed. Missing or stale evidence becomes an explicit refusal,
+not a fabricated zero. Database RPCs serialize cash/position changes and enforce
+the money-path rules transactionally.
+
+## 6. Agents and scheduled pipeline
+
+### ResearchAgent
+
+Runs market-local research after the relevant session boundary. It gathers a
+bounded universe, fetches applicable evidence, computes deterministic dimensions,
+writes signal observations and creates pending signals. It never directly buys.
+
+### DeepSeek/alternate model lane
+
+The LLM router can run alternative research prose/model assignments. Model output
+is tagged and compared for paper outcomes; model prose cannot bypass deterministic
+score or risk contracts.
+
+### PaperTrader
+
+Claims pending signals and performs: market-control check, kill-switch check,
+session/fresh-price check, score threshold, cash, name/sector limits, duplicate
+and anti-pyramiding checks, broker-compatible symbol check, and transactional fill.
+The crypto paper trader is a separate route and RPC mandate branch.
+
+### PositionMonitor
+
+Runs after the market’s completed bar. It refreshes current marks, high/low
+touch evidence, highest-price ratchets and exit decisions. A settled bar high may
+trigger a target even when the close recovers. If stop and target conflict, the
+policy remains conservative and stop precedence is preserved.
+
+### LearnerAgent
+
+Reads mature, non-tainted closed outcomes and produces summaries/challengers.
+It does not mutate weights simply because a small in-sample result looks good.
+Promotion requires declared samples, purged/out-of-sample validation, provenance,
+and owner-approved state transitions.
+
+### MacroSentinel and event agents
+
+MacroSentinel creates an advisory market regime from provider-backed indicators.
+It does not silently halt or throttle trading. Earnings, event maturation,
+news/sentiment, insider, catalyst and risk-tier agents write evidence or shadows
+with explicit availability and timestamps.
+
+### Supporting agents
+
+Theme/Edge discovery, evidence shadow, evidence cohort, price prewarm, benchmark
+collectors, holding-risk, broker keepwarm, validation sweep and system-health
+workers are separate scheduled jobs. Each route has a bounded runtime and reports
+its own persistence/failure state.
+
+## 7. Scoring model
+
+The equity composite combines applicable dimensions: technical, fundamental,
+sentiment, macro and insider. Instrument-aware applicability prevents a stock-only
+fundamental formula from masquerading as ETF evidence. A shared weighted scorer
+validates scores, weights and availability masks; unavailable dimensions do not
+silently become zero-positive evidence.
+
+Technical inputs include RSI, EMA relationships, trend, volume confirmation and
+breakdown veto. EMA-200, MACD, relative strength and ADX may be measured shadows
+until their market-local IC and forward-shadow gates clear. Fundamental inputs are
+provider-backed and event-aware where possible. Sentiment and insider inputs carry
+their own coverage flags.
+
+The score threshold creates an eligibility candidate, not a guaranteed return.
+Dimension rank IC, t-stat and code-version IC are monitored by market, cohort,
+horizon, label maturity, qualifying sessions and overlap-adjusted effective sample
+size. Current evidence is insufficient for automatic score-weight promotion.
+
+Crypto score v1 is separate and deterministic: trend/relative strength, structure,
+volatility/regime and liquidity/execution. Event/news/network features are
+measure-only until they have timestamped, point-in-time coverage and predictive
+evidence.
+
+## 8. Portfolio construction and sizing
+
+The constructor applies finite cash, gross exposure, name, sector, correlation,
+volatility and risk-budget constraints. The live route uses broker equity snapshots
+and its own protective gates; it must not silently use paper NAV. A cash balance is
+capacity, not an instruction to buy. Extra cash is deployed only after fresh
+research, current rank, risk and correlation checks.
+
+The offline sizing replay compares equal planned allocation with equal stop-risk
+allocation on the same frozen realized opportunities. It models costs, caps,
+fractional US quantities, whole India quantities, partial exits and sampled
+drawdown. It cannot claim the globally optimal size or assess missed opportunities.
+
+The historical replay remains evidence-limited: India has 20 distinct symbol roots
+without canonical price history, and partial-lot/stop provenance still needs
+reconciliation. The separate top-up experiment is not a production feature.
+
+## 9. Exit geometry
+
+Stops and targets are recorded with entry provenance, geometry version and observed
+inputs where available. The ladder supports full target, partial target plus
+runner protection, trailing protection, structural invalidation and score/direction
+exit. The no-clock exit policy is intended to let valid winners run, but its
+historical replay and intrabar semantics remain monitored carefully.
+
+Crypto geometry is native: structural invalidation and ATR/realized-volatility
+floor, expected costs, liquidity and maximum-loss bound. No unconditional calendar
+exit is assumed. Paper crypto exits use completed OHLC bars and adverse resolution
+for ambiguous barriers.
+
+## 10. Benchmarks and charts
+
+US and India benchmark collectors are market-local. Each run records expected
+session, observed session, provider, benchmark and retry state. A run is `done`
+only when every enabled benchmark reaches that market’s expected completed session;
+otherwise it is partial/error. Freshness alerts resolve only after all configured
+benchmarks advance.
+
+Charts consume canonical persisted observations. They must not mix sessions or use
+portfolio data from one market with another market’s benchmark. Benchmark-relative
+performance is descriptive until a matched, frozen attribution experiment proves
+an upgrade-path effect.
+
+Crypto displays BTC buy-and-hold and a frozen equal-weight eligible reference as
+separate benchmarks; neither is presented as a universal market proxy.
+
+## 11. Learning, strategies and Upgrade Path
+
+Upgrade Path is an evidence registry, not a list of promises. A path can be:
+
+- **Operational:** proves a collector, guard or persistence contract.
+- **Shadow:** records an alternative signal/strategy without changing behavior.
+- **Paper cohort:** runs a controlled paper comparison.
+- **Matched replay:** compares baseline and variant on the same population/window.
+
+Measured attribution requires common market/window/population, frozen code/config
+hashes, net cost basis, independent sessions, benchmark, drawdown, turnover,
+confidence interval and exact variant-minus-baseline arithmetic. Aggregate portfolio
+P&L cannot be relabelled as proof of one feature. The attribution ledger is empty
+when no path has a valid producer; that is safer than manufacturing rows.
+
+Capital rotation, external strategies, sector relative strength, catalyst/risk
+tiers, model comparisons, time/ATR/volatility exit alternatives and leveraged ETF
+strategies are shadows or proposals until their gates pass. TQQQ/SQQQ/SOXL/SOXS
+require dedicated volatility/leverage-aware policies and must not inherit ordinary
+equity targets or stops.
+
+## 12. Broker and live safety
+
+Robinhood MCP is capability-probed for accounts, pairs, quotes, previews, orders,
+positions and reconciliation. Webull is not assumed to provide crypto execution.
+Zerodha/Kite is the India execution contract. Broker support is checked for the
+exact symbol before a live order.
+
+Live order flow must verify: owner/live switch, active account, broker connection,
+fresh account snapshot, pair eligibility, fresh executable quote, score/geometry,
+cash/buying power, kill switches, daily loss/drawdown/rate limits, idempotency and
+protective-order state. A live position without verified protection raises a
+critical issue and blocks further buys. Viewer accounts can read only the routes
+explicitly granted to them and cannot mutate owner settings.
+
+## 13. System Health
+
+Health separates critical failures from informational refusals and owner actions.
+Examples of critical states are provider quota breaches, stale required market
+data, failed persistence, broker-token failure, benchmark non-advancement and an
+unprotected live position. A candidate refused for insufficient history is not by
+itself a system outage; it is recorded as evidence.
+
+Investigate in this order: expected session → provider/provenance → database row →
+route response → cron run → UI. A green build or rendered card is not proof that a
+money-path action succeeded.
+
+## 14. Production schedules (conceptual)
+
+Schedules are market-local and can have seasonal duplicate invocations that exit
+before work. The important ordering is:
+
+```text
+provider/evidence prewarm
+  → research and discovery
+  → paper-entry attempt
+  → post-close price prewarm
+  → PositionMonitor
+  → label maturation / diagnostics
+  → weekly validation and shadow review
+```
+
+Crypto runs daily because the market is 24/7, while stock research and paper
+execution follow US/India sessions. Every job is bounded, idempotent and expected
+to write an `agent_runs` heartbeat or an explicit refusal/error.
+
+## 15. Documentation and change governance
+
+Use this document for the complete connected view. Use:
+
+- `docs/arch/` for stable operational chapters;
+- `features/*/FEATURE_ARCHITECTURE.md` for feature contracts and non-goals;
+- `features/*/IMPLEMENTATION_RESULT.md` for shipped deviations;
+- `PROJECT_DECISIONS.md` for owner approvals and reversals;
+- `WORK_LOG.md` for delivery evidence and open work;
+- `public/agent-diagrams/system-map.json` for topology.
+
+Any change to a provider, agent, score dimension, applicability rule, schema/RPC,
+cron, benchmark, money-path gate, learning/promotion rule or broker contract must
+update this document and its detailed feature/chapter owner in the same change.
+
+The safest interpretation of any missing evidence is “not proven yet.” Kairos is
+designed to keep researching and measuring without silently turning a shadow into
+capital.
