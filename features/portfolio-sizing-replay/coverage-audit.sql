@@ -13,7 +13,8 @@ with risk_plans as (
   order by t.id, s.created_at desc, s.id desc
 ), bars as (
   select r.id, count(p.date) as bar_count from risk_plans r left join price_cache p
-    on upper(p.symbol)=upper(r.symbol) and p.date::date between r.executed_at::date and r.end_at::date
+    on upper(regexp_replace(p.symbol,'\\.(NS|BO)$','')) = upper(regexp_replace(r.symbol,'\\.(NS|BO)$',''))
+   and p.date::date between r.executed_at::date and r.end_at::date
   group by r.id
 )
 select jsonb_build_object(

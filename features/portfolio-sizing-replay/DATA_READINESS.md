@@ -46,8 +46,10 @@ that join produced 210 candidate lots with original-stop evidence, of which 169
 also have at least one matching price bar. These are coverage counts, not replay
 results. `coverage-audit.sql` is the reproducible read-only query.
 
-India's unmatched lots require exchange-suffix/ticker-history reconciliation or
-must remain excluded. A daily bar does not prove intraday fill ordering,
+India's unmatched lots remain unmatched even after deterministic `.NS`/`.BO`
+exchange-suffix normalization; their symbols have no corresponding canonical
+price-cache history. They require a provider backfill or a verified ticker-change
+mapping and must remain excluded until then. A daily bar does not prove intraday fill ordering,
 corporate-action treatment, or partial-lot lineage.
 
 Local verification: 17 focused tests passed and TypeScript passed. The CLI test
