@@ -79,6 +79,98 @@ The LLM is an assistant around this pipeline: it can summarize evidence and
 explain a result, but it is not an unrestricted source of prices, scores, risk
 limits, targets, stops, or orders.
 
+## Visual architecture map
+
+These diagrams are the fastest way to orient yourself. The detailed feature
+chapters contain additional diagrams for individual agents and workflows.
+
+### 1. System context
+
+```mermaid
+flowchart LR
+  U[Owner / viewer] --> UI[Next.js dashboard]
+  UI --> API[Server routes and agent endpoints]
+  API --> DB[(Supabase Postgres, Auth, Storage)]
+  API --> R[Research and learning agents]
+  API --> P[Paper portfolio and position monitor]
+  R --> E[Evidence cache and provenance]
+  E --> DB
+  P --> DB
+  API --> B[Broker adapters and MCP]
+  B --> RH[Robinhood / other broker accounts]
+  API --> M[Market providers and benchmark feeds]
+```
+
+The dashboard is a controlled view of server-side contracts. It does not give a
+viewer direct database or broker access, and paper execution is separated from
+live-account permissions.
+
+### 2. From market data to a trade decision
+
+```mermaid
+flowchart TD
+  A[Provider data] --> B{Fresh, point-in-time,
+  quota-safe?}
+  B -- no --> X[Record refusal / degraded evidence]
+  B -- yes --> C[Market-local dimensions]
+  C --> D[Deterministic composite score]
+  D --> E{Eligibility, liquidity,
+  risk and broker checks}
+  E -- no --> Y[No order; retain reason]
+  E -- yes --> F[Portfolio sizing and cash checks]
+  F --> G[Paper fill or owner-gated live preview]
+  G --> H[Lots, marks, exits and reconciliation]
+```
+
+Every “no” branch is an explicit outcome. Missing evidence is not silently
+converted into a bullish score or an order.
+
+### 3. Exit and learning loop
+
+```mermaid
+flowchart LR
+  S[Open position] --> Q[Fresh completed-session mark]
+  Q --> X{Stop, target,
+  trail or score invalidation?}
+  X -- no --> S
+  X -- yes --> L[Partial or full exit]
+  L --> T[Closed lot with provenance]
+  T --> M{Taint, maturity and
+  cohort checks pass?}
+  M -- no --> N[Exclude from learning]
+  M -- yes --> O[Returns, IC/t-stat,
+  benchmark and attribution]
+  O --> W[Shadow / upgrade ledger]
+  W --> V{Evidence gate passes?}
+  V -- no --> W
+  V -- yes --> A[Explicit review and promotion]
+```
+
+This loop explains why a feature can be collecting for a long time without
+changing a score, position size, or order.
+
+### 4. Paper, live and viewer boundaries
+
+```mermaid
+flowchart TB
+  subgraph Research[Shared research and evidence]
+    RS[Signals, dimensions, benchmarks, learning]
+  end
+  RS --> PP[Paper portfolio]
+  RS --> PR[Live proposal / approval card]
+  PR --> G{Owner live switch +
+  broker capability + fresh quote}
+  G -- fail --> NO[Blocked; no broker order]
+  G -- pass --> LT[Live TraderAgent]
+  LT --> BR[Broker account]
+  V[Viewer account] --> RO[Read-only allowlist]
+  RO -. cannot reach .-> RS
+  RO -. cannot reach .-> BR
+```
+
+The arrows are intentionally asymmetric: research may inform both paper and
+live paths, but a viewer cannot use the UI to cross an owner or broker boundary.
+
 ### What each detailed feature entry tells you
 
 When reading a feature section, look for five questions: **why** the feature
