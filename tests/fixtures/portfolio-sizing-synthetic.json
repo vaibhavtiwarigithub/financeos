@@ -1,0 +1,20 @@
+{
+  "plan": {
+    "market": "us", "initialCash": 10000, "endAt": "2026-09-18T20:00:00Z",
+    "equalWeightPct": 8, "riskBudgetPct": 0.5, "maxNamePct": 12,
+    "maxSectorPct": 30, "maxGrossPct": 80, "additionalCostBps": 0,
+    "maxMarkAgeHours": 24
+  },
+  "tape": [
+    {
+      "id": "synthetic-buy", "kind": "entry", "entryId": "synthetic-a",
+      "symbol": "SYNTHETIC", "sector": "tech", "at": "2026-09-18T14:00:00Z",
+      "price": 100, "stop": 95, "stopObservedAt": "2026-09-18T13:59:00Z",
+      "entryStopVerified": true, "tainted": false
+    },
+    {
+      "id": "synthetic-mark", "kind": "mark", "at": "2026-09-18T20:00:00Z",
+      "prices": { "SYNTHETIC": 110 }
+    }
+  ]
+}
