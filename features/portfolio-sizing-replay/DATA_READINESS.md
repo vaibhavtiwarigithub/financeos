@@ -47,10 +47,22 @@ also have at least one matching price bar. These are coverage counts, not replay
 results. `coverage-audit.sql` is the reproducible read-only query.
 
 India's unmatched lots remain unmatched even after deterministic `.NS`/`.BO`
-exchange-suffix normalization; their symbols have no corresponding canonical
-price-cache history. They require a provider backfill or a verified ticker-change
-mapping and must remain excluded until then. A daily bar does not prove intraday fill ordering,
+exchange-suffix normalization. The current canonical-cache audit identifies these
+20 bought symbol roots with no cache history at all:
+`APOLLOHOSP`, `BAJAJ-AUTO`, `BAJAJFINSV`, `BAJFINANCE`, `BPCL`, `CANBK`,
+`HCLTECH`, `HEROMOTOCO`, `IOC`, `KPEL`, `LODHA`, `NAUKRI`, `NTPC`, `ONGC`,
+`PFC`, `SUNPHARMA`, `TECHM`, `TITAN`, `TORNTPHARM`, and `WIPRO`.
+The 58-lot gap is therefore a symbol-history gap, not 58 unique securities;
+some of these symbols have multiple historical lots. They require a provider
+backfill or a verified ticker-change mapping and must remain excluded until then.
+A daily bar does not prove intraday fill ordering,
 corporate-action treatment, or partial-lot lineage.
+
+`coverage-audit.sql` reports the missing roots directly and uses guarded numeric
+casts for risk-plan JSON. It is a read-only audit; it does not rename symbols,
+insert bars, or overwrite trade history. A provider backfill must first preserve
+provider symbol, source timestamp, adjustment policy, and a content hash, then be
+reviewed before entering the replay tape.
 
 Local verification: 17 focused tests passed and TypeScript passed. The CLI test
 uses a clearly labelled synthetic fixture, not historical portfolio evidence.
