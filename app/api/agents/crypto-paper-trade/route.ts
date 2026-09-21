@@ -30,7 +30,8 @@ export const maxDuration = 60;
 // Genome/portfolio-constructor parity is a future decision once real paper
 // history exists, not guessed here (doc §2.4).
 const CRYPTO_MANDATE = {
-  version: "crypto-v1-static",
+  version: 1,
+  policy: "crypto-v1-static",
   stop_loss_pct: 15,
   target_pct: 25,
   target_hold_days: 10,

@@ -211,6 +211,12 @@ uses `score_source`; constrained discovery `source` is `screener`. The previousl
 committed daily 00:45 UTC paper schedule is now applied. Non-cron entry invocation
 requires the owner, not merely any signed-in viewer.
 
+The fill RPC now has a crypto-only mandate branch (score 60, at most three names,
+native claimed signal and reviewed basket required). Equity mandate lookup is
+unchanged. The guarded migration refuses unexpected RPC source drift and was
+first executed inside a rolled-back transaction. RPC mandate version is integer 1;
+the descriptive policy name stays in the snapshot, not in the integer argument.
+
 - no leverage, perpetuals, options, staking yield, lending, DeFi, transfers, or
   custody/wallet functionality;
 - no on-chain metric until it is licensed, point-in-time, and coverage-audited;
