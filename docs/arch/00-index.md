@@ -4,6 +4,8 @@
 
 For a single comprehensive reading path, start with
 [KAIROS_CONSOLIDATED_ARCHITECTURE.md](KAIROS_CONSOLIDATED_ARCHITECTURE.md).
+For the complete feature-by-feature encyclopedia, use
+[KAIROS_FULL_ARCHITECTURE.md](KAIROS_FULL_ARCHITECTURE.md).
 
 This directory is the definitive chapter-by-chapter operational architecture. Each
 chapter is independently updateable: a broker change does not require editing the
