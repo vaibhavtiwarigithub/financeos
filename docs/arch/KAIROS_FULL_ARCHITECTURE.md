@@ -845,7 +845,7 @@ implements `sendChecked` and `isDeliverable`, and treats an address in nodemaile
 `rejected` list as a failure (`sendMail` resolves when *any* recipient is accepted, so
 reading only the resolve would turn a refusal into a grant).
 
-**Why it exists:** Resend's shared `onboarding@resend.dev` sender may only mail the Resend
+**Why it exists:** Resend's shared `<verified-email-sender>` sender may only mail the Resend
 account owner, so inviting anyone else returns HTTP 403. SMTP with a Gmail app password
 (`smtp.gmail.com:465`, 2FA required) needs no verified domain and costs nothing;
 `EMAIL_FROM` must be the authenticated mailbox or Gmail rewrites the sender.
@@ -1903,7 +1903,7 @@ When false, all proposals land on `manual_review_required`. Shadow accumulates e
 **Inputs:**
 - `strategy_config` policy + per-market mode columns
 - `agent_signals` (last 24h, `score_source='deterministic_v1'`, direction=long, markets in autonomous mode)
-- `live_account_snapshots` for NAV (account 605420660, max age 4h)
+- `live_account_snapshots` for NAV (account <agentic-account-id>, max age 4h)
 - `paper_trades` for Kelly calibration (last 100 closed)
 
 **Key behavior:** Same 9-gate kernel as shadow, plus:
@@ -3322,7 +3322,7 @@ Adds nullable/backfilled `market`, `currency`, `broker`, and `book_scope` so liv
 
 ## 8.13 Daily Per-Holding Risk Analytics (advisory, append-only)
 
-Three additive tables (migration 154) backing `features/holding-risk-daily`. Owner-only SELECT (email RLS `(auth.jwt() ->> 'email') = 'vterminater@gmail.com'`), service_role writes, anon REVOKEd. Advisory-only: the risk score, posture, and LLM strategy note reach **no order path** for any account, including read-only `965848641`. **No cross-currency roll-up** — every row carries its own `market` + `currency`; USD and INR are never summed. Populated daily post-close by `/api/agents/holding-risk` (cron migration 156). Publish/claim via the migration-155 RPCs.
+Three additive tables (migration 154) backing `features/holding-risk-daily`. Owner-only SELECT (email RLS `(auth.jwt() ->> 'email') = '<owner-email>'`), service_role writes, anon REVOKEd. Advisory-only: the risk score, posture, and LLM strategy note reach **no order path** for any account, including read-only `<read-only-account-id>`. **No cross-currency roll-up** — every row carries its own `market` + `currency`; USD and INR are never summed. Populated daily post-close by `/api/agents/holding-risk` (cron migration 156). Publish/claim via the migration-155 RPCs.
 
 ### `holding_risk_runs`
 Claim/lifecycle header — one row per (`market` × `account_id` × `captured_on` × `formula_version` × `input_hash`) computation, identified by `run_key` (UNIQUE `holding_risk_runs_run_key_uniq`). Concurrent/retried crons race on that unique insert; the loser reads back the existing run. `status ∈ {running,complete,failed,partial}`; a failed run stays as evidence. Trigger `holding_risk_runs_lifecycle_guard()` blocks DELETE always, freezes identity/evidence columns, and lets `status` move **forward once** out of `running` only (never terminal→terminal). Partial index `holding_risk_runs_latest_idx (market, account_id, currency, formula_version, captured_on DESC) WHERE status='complete'` serves latest-complete lookups. Key cols: `broker`, `account_label`, `source_captured_at`, `completed_at`, `data_confidence` (0–1), `missing_inputs text[]`, `error`.
@@ -3389,7 +3389,7 @@ Append-only per-account roll-up — one row per run (UNIQUE `(run_id)`; FK → `
 | 175 | `strategy_sleeves` + `strategy_config.allocation_enabled` - deterministic asset-allocation proposal core. Shipped OFF by default; callers return null unless `allocation_enabled=true`. Sanitizes malformed bands/targets and never routes to orders |
 | 177 | `execute_paper_rotation(...)` RPC (service_role) — capital-rotation Phase 1 PAPER: atomic sell-weakest-holding + buy-candidate in one transaction (rolls back if the candidate can't be funded after the sale — never leaves the book in cash). Idempotent on `idempotency_key`; writes status `paper_executed` to `rotation_events`. SHIPPED OFF: only invoked when `rotation_config.rotation_paper_execute_enabled=true` (default false) + guardrails (persistence/cooldown/per-run+day caps) pass. Paper book only |
 | 176 | `provider_pacing` (`provider` pk, `min_interval_ms`, `last_started_at`) + `try_acquire_provider_slot(provider, min_interval_ms)` RPC (service_role) — serverless-safe per-provider rate-limit lease (atomic INSERT…ON CONFLICT DO UPDATE…WHERE). `providerCachedFetch` acquires a slot before a real call for HARD-limited providers (Massive 5/min, GDELT 1/5s); no slot → serve stale cache instead of bursting past the wall. Data-fetch pacing only — no order path |
-| 20260713112754 | RLS tightening for `live_performance`: drops broad authenticated read policy and replaces it with owner-email SELECT (`(select auth.jwt()) ->> 'email' = 'vterminater@gmail.com'`) |
+| 20260713112754 | RLS tightening for `live_performance`: drops broad authenticated read policy and replaces it with owner-email SELECT (`(select auth.jwt()) ->> 'email' = '<owner-email>'`) |
 | 20260713143000 | Benchmark-alpha scorecard tables (`benchmarks`, `benchmark_price_observations`, `benchmark_scorecard`), `live_performance` provenance columns, capital-rotation shadow config/events (`rotation_config`, append-only `rotation_events`), and pg_cron `kairos-benchmark-scorecard` |
 | 20260714000000 | pg_cron `kairos-broker-keepwarm` (daily 06:00+18:00 UTC) → `POST /api/broker-mcp/keepwarm` refreshes/rotates every connected MCP broker token so the OAuth refresh chain never lapses over weekends. Read-only, no order path |
 | 20260714010000 | **Canonical Evidence Router — policy foundation** (`router_enabled=false`, shadow-only): immutable `evidence_policy_versions` + mutable `active_evidence_policy` pointer + immutable `evidence_policy_rules` (per-intent auto/prefer/only/off) + `provider_runtime_config` (conservative-only overrides) + `provider_capability_status` (per provider/market/intent maturity) + append-only `evidence_policy_evaluations` (shadow proof). `activate_evidence_policy(market,version,required_intents,actor)` SECURITY DEFINER RPC (advisory lock + required-intent check, service_role only). Append-only triggers block UPDATE/DELETE on versions/rules/evaluations. Seeded `us:v1`+`india:v1` all-Auto, disabled. Owner-read RLS, service-role writes. No scoring/order/money path |
@@ -3587,7 +3587,7 @@ See `features/score-price-divergence/FEATURE_ARCHITECTURE.md`.
 >
 > 2026-09-09: `kairos-listing-discovery-us` runs weekdays at 23:35 UTC and calls `/api/agents/listing-discovery?market=us`. It reads the SEC daily master index for registration/prospectus metadata only and writes the isolated candidate/filing evidence registry. The job does not insert `watchlist` rows, create ResearchAgent inputs, set eligibility, call a broker, create a paper position, or place an order. Provider failure records an errored `agent_runs` row rather than being interpreted as zero listings.
 >
-> 2026-09-09: **Manual Trade Guardian Stage 0 — `kairos-manual-fill-detect`**, `*/15 13-21 * * 1-5` (every 15 min, 13:00-21:00 UTC = 9am-5pm ET weekdays), `POST /api/agents/manual-fill-detect/cron`. Owner-approved 2026-09-09 (features/manual-trade-guardian/FEATURE_ARCHITECTURE.md). Scoped to account `605420660` only (the one order-permitted account). Fetches live Robinhood holdings (`fetchRobinhoodBrokerAccounts`, same call `holding-risk` makes), diffs against the last known qty per symbol in the new `agentic_position_ledger` table, and classifies each increase as `manual` (no matching Kairos `broker_orders` fill) or `agentic` (matched). A manual fill additionally gets a suggested protective stop (mandate `stop_loss_pct` off live avg cost — the same source `PaperTrader` uses) and raises a warn-level `agent_alerts` row. **Places no order** — Stage 0 is detection + alert only; the pure diff/matching logic lives in `lib/trading/manual-fill-detection.ts` (tested, `tests/manual-fill-detection.test.ts`), the route is a thin fetch/write/alert shell. See `docs/arch/04-database-schema.md` for `agentic_position_ledger`.
+> 2026-09-09: **Manual Trade Guardian Stage 0 — `kairos-manual-fill-detect`**, `*/15 13-21 * * 1-5` (every 15 min, 13:00-21:00 UTC = 9am-5pm ET weekdays), `POST /api/agents/manual-fill-detect/cron`. Owner-approved 2026-09-09 (features/manual-trade-guardian/FEATURE_ARCHITECTURE.md). Scoped to account `<agentic-account-id>` only (the one order-permitted account). Fetches live Robinhood holdings (`fetchRobinhoodBrokerAccounts`, same call `holding-risk` makes), diffs against the last known qty per symbol in the new `agentic_position_ledger` table, and classifies each increase as `manual` (no matching Kairos `broker_orders` fill) or `agentic` (matched). A manual fill additionally gets a suggested protective stop (mandate `stop_loss_pct` off live avg cost — the same source `PaperTrader` uses) and raises a warn-level `agent_alerts` row. **Places no order** — Stage 0 is detection + alert only; the pure diff/matching logic lives in `lib/trading/manual-fill-detection.ts` (tested, `tests/manual-fill-detection.test.ts`), the route is a thin fetch/write/alert shell. See `docs/arch/04-database-schema.md` for `agentic_position_ledger`.
 >
 > 2026-09-08: **Property Stage 3 — ZIP-level area context (Zillow ZHVI) rides the existing weekly `kairos-property-collect` job.** No new cron: `lib/property/sources.ts` gains `ZillowZhviZipAdapter` (source_key `zillow-zhvi-zip`), and `app/api/property/collect/route.ts` loops `ZIP_PROPERTY_ADAPTERS` after the county-context loop, writing the new `property_zip_observations` table (migration `20260908120000_property_zip_zhvi_observations.sql`, applied and verified via `information_schema`/`pg_trigger`). The adapter fetches Zillow's national ZIP-level ZHVI CSV (~120MB, no key) once per run via the shared per-invocation fetch cache and keeps only rows whose `Metro` column matches Austin/Phoenix and only the trailing 13 monthly columns (enough for a 3M/12M trend). Because the source publishes monthly, weekly polling is idempotent — duplicates are absorbed by the table's unique constraint, so no per-ZIP `since` cursor is needed. `maxDuration` on `/api/property/collect` raised 60 -> 120 to give the large download headroom. GET `/api/property/zip-trend?market=&zip=` (new, owner-gated) reads the table for the property workspace UI. See `docs/arch/04-database-schema.md` and `features/property-zip-area-context/FEATURE_ARCHITECTURE.md`.
 >
@@ -3727,7 +3727,7 @@ Scheduled inside Supabase via `cron.schedule`, calling the deployed app through 
 > **`markets/overview` is deliberately NOT a `price_cache` reader (corrected 2026-07-17).**
 > This chapter previously listed it here and asserted it read the warm cache. It never
 > did, and it should not — the claim was wrong, not the code. Verified against prod
-> (`dionkikgdmlaotvtbnfr`) on 2026-07-17:
+> (`<production-project-ref>`) on 2026-07-17:
 > 1. **The cache cannot cover the tile.** The overview needs all 15 symbols (SPY/QQQ/DIA/VIXY
 >    + 11 XLs) **on one session**. `QQQ`, `DIA` and `VIXY` hold **2 bars each** (07-14, 07-15) —
 >    the daily fill only began covering them on 07-14 and the 400d backfill is sector-XL-only.
@@ -3857,8 +3857,8 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 
 # Email
 RESEND_API_KEY=
-EMAIL_FROM=                       # e.g. "Kairos <hello@yourdomain.com>". Defaults to Resend's shared
-                                  # onboarding@resend.dev, which may only mail the Resend ACCOUNT
+EMAIL_FROM=                       # e.g. "Kairos <<verified-email-sender>>". Defaults to Resend's shared
+                                  # <verified-email-sender>, which may only mail the Resend ACCOUNT
                                   # OWNER's own address — inviting anyone else needs a verified domain.
 RESEND_WEBHOOK_SECRET=            # Svix signing secret (whsec_...) from the Resend dashboard webhook.
                                   # Required by /api/webhooks/resend, which FAILS CLOSED without it:
@@ -4414,7 +4414,7 @@ shared access, and `tests/viewer-route-sweep.test.ts` enforces it.
 >
 > 2026-08-25: **CORRECTION — capital rotation does NOT execute, in either book. Two docs claimed it did.**
 >
-> Verified against `rotation_config` on `dionkikgdmlaotvtbnfr`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.
+> Verified against `rotation_config` on `<production-project-ref>`: all four rows (us/india x paper/live) carry `rotation_shadow_enabled=true`, `rotation_paper_execute_enabled=false`, `rotation_live_proposals_enabled=false`. Across **98 `rotation_events`**, both markets, all time, `trade_proposal_id` and `paper_trade_ids` are NULL on every row; every event carries `no_execution: true`. Rotation has never moved capital.
 >
 > | Claimed | Actual |
 > |---|---|
@@ -4456,7 +4456,7 @@ shared access, and `tests/viewer-route-sweep.test.ts` enforces it.
 >
 > 2026-08-24: **CORRECTION — both protective-stop gates are OPEN in production. The "Part E (not yet done)" note below is inverted.**
 >
-> Verified against `dionkikgdmlaotvtbnfr` on 2026-08-24:
+> Verified against `<production-project-ref>` on 2026-08-24:
 >
 > | Gate | This chapter says | Production |
 > |---|---|---|
@@ -4679,7 +4679,7 @@ shared access, and `tests/viewer-route-sweep.test.ts` enforces it.
 > Last updated: 2026-07-19 (**Webull Trading API transport restored** — `lib/brokers/webull-trade/` is now a fully wired, permit-backed broker adapter. Key safety properties: (1) **Nine-gate ladder** (`gates.ts`) — every Webull order must clear global_trading_enabled, market_control_enabled, circuit_breakers_clear, autonomy_mode_satisfied, single_allowlisted_account (account `605420606` exclusively), orders_feature_flag (`webull_trade_orders_enabled=false` by default), credential_and_token, risk_checks, quantity_within_mandate; (2) **Permit system** — two permit kinds, `preflight` (DB flag check only) and `order` (full 9-gate evaluation); each permit is single-use and expires after 30 s; the transport refuses any request whose path/method is not on the permit's allowlist; (3) **Token preflight** — `preflight.ts` calls `POST /openapi/auth/token/check` before gate 7 to resolve live token status (`PENDING/NORMAL/INVALID/EXPIRED`) and idle-age; `assertTokenUsableForOrder()` blocks on PENDING (now explicit in types), INVALID, EXPIRED, and idle > 15 days; (4) **Single fetch locus** — `liveWebullTransport()` is the only function in the codebase that calls `fetch()` to `api.webull.com`; (5) **Signing** — HMAC-SHA1 over path + sorted params + MD5 body hash, `${appSecret}&` key, `x-access-token` header alongside HMAC headers, timestamp freshness enforced; (6) All flags remain false: `webull_trade_orders_enabled=false`, `global_trading_enabled`, and account allowlist require explicit owner activation before any order is possible. Constraint migration `20260718130000` applied: `protective_orders.mode` locked to `'wider_disaster_floor'`, `currency NOT NULL`, five new DB-enforced invariants on market/currency/broker-id/floor/order-kind/learning-provenance — zero rows in table at time of apply, all constraints verified safe.)
 > Prior: 2026-07-18 (**Hybrid protective-stop SHADOW SCAFFOLD — built UP TO the placement line, no live order ever.** New pure module set under `lib/protective/`: (1) a broker-neutral `BrokerProtectiveCapabilities` matrix (`capabilities.ts`) — protection is capability-driven per order-type/TIF/session/account, never a flat broker boolean; an adapter with no eligible MULTI-DAY order for the exact position is `unprotected-by-broker`, never silently protected; (2) Kite's declared capability (`kite-capabilities.ts`) filled from the PROVEN GTT code — Kite protects via the WEAKER `gtt_limit` (LIMIT child, unfilled-trigger risk surfaced), and its DAY-only regular SL-M is declared and correctly REJECTED as a multi-day floor; (3) a pure disaster-floor calculator (`disaster-floor.ts`) parameterized by `(mode, distance)` — Q1 unanswered so `mode` defaults to `wider_disaster_floor` (outage + catastrophic-loss mitigation, NOT touch-at-analytical-stop) and the distance is a CONFIG input with no hardcoded value; monotonic ratchet so a falling high-water mark can never lower the floor; (4) a pure reconciliation loop (`reconcile.ts`) detecting out-of-band triggers, partial fills, cancels, expiry, broker edits, and corporate-action qty drift — unknown state is always `needs_reconcile`, a trigger without a confirmed fill never closes the book, a gap through a limit child is reported unprotected (not filled), expired protection is critical; (5) the state model (`state.ts`) — the `protective_order` record shape + status machine + long-only/cancel-before-replace invariants (total executable SELL never exceeds reconciled held qty; a competing SELL is blocked until cancellation is CONFIRMED). **Exit provenance (Codex's correction):** a disaster-floor fill records `exit_reason = protective_disaster_floor` and `learning_scope = risk_policy_only` — the loss STAYS in P&L, NAV, drawdown, mandate and risk-policy evaluation (real money); ONLY the Learner's signal-weight attribution + genome promotion exclude it, so broker capability can't contaminate weight learning (a generic `excluded_from_learning=true` is insufficient because the evaluation engine also filters that field). **THE MONEY LINE:** `placement-gate.ts` — a false-by-default `strategy_config.protective_orders_enabled` flag gates ALL placement and STAYS FALSE; `planProtectivePlacement()` produces the intended broker action as a plain object and NEVER calls a broker. Deterministic, NO LLM on the money path. US/India never cross (per-market capability scope). Migration `20260718000000_protective_orders_shadow.sql` written as a PROPOSAL and **NOT applied to prod** (creates `protective_orders` + append-only `protective_order_events`, adds the flag + `learning_scope` columns). 32 acceptance/unit tests in `tests/protective-hybrid-stop.test.ts` (all 14 spec acceptance tests, each falsifiable — mutation-verified: breaking the ratchet fails AT3, breaking the cancel-guard fails AT1). Gated behind owner approval of touch semantics (Q1), floor distance, and post-fill policy before anything goes live. See "Hybrid protective-stop shadow scaffold" below + `features/hybrid-stop/FEATURE_ARCHITECTURE.md`.)
 > Prior: 2026-07-17 (**Research visibility on the risk surface — a DISPLAY JOIN, coupled to nothing.** `GET /api/portfolio/risk-daily` now attaches a nullable per-holding `research` block (score, direction, `scored_at`, `sessions_since`, `days_since`, `state`, `scored_as_holding`) joined from the latest `agent_signals` row per **`(symbol, market)`** — never symbol alone. **Invariant R1: no field of it is read by `computeHoldingRisk`, `sba-v1`, `constructPortfolio`, the execution kernel, or any gate** — the risk engine stays research-free BY DESIGN, because a sector is over-cap *because* research liked that sector and letting `analyst_score` also veto the cap double-counts the same signal. **Why it exists: on 2026-07-16 AVGO was 6 days unscored while this panel said "trim", and nothing on screen said so — the AGE is the feature, not the score.** Staleness is measured in market-local **SESSIONS** (reusing `marketSessionsSince`; a Friday score read Monday is 3 days but ONE session — a calendar-day rule would paint the book stale every Monday) and displayed in days. Four non-collapsed states: `fresh` (≤ 2 sessions) · `stale` (warning + day count; annotates the SCORE only, never the action) · `never` (no signal ever — deliberately NOT a link) · `unavailable` (abstained — never rendered as a number). Every annotated row is labelled a screener **candidate** score: `is_holding` is false in **463/463** prod rows, so a `neutral` there does not mean "no exit signal" — the exit question was never asked. Fail-soft: an `agent_signals` error still renders the risk table with an explicit "research unavailable". R1 is pinned behaviorally AND architecturally by `tests/risk-research-annotation.test.ts`, whose coupling detector is itself falsification-tested. Supersedes the unmerged `features/risk-research-integration` (research *ordering* trim absorption — not pursued). No schema change, no migration, no new cron, no LLM. See "Daily Per-Holding Risk Analytics" below + `features/risk-research-visibility/FEATURE_ARCHITECTURE.md`.)
-> Prior: 2026-07-16 (**Sector-cap breach ALLOCATOR** — `hr-v1` → `hr-v2`. Defect fixed: a sector-cap breach is a property of the SECTOR, so `sectorUtil >= 1` was the identical number for every holding in the sector and hr-v1 handed EVERY Technology name the identical `trim` (the live AVGO advice: "Trim your position because Technology holdings exceed the 30% sector cap (at 65.6%)") without ever deciding WHICH names absorb the breach or HOW MUCH each gives up — arbitrary and unactionable. New pure module `lib/risk/sector-breach.ts` (`sba-v1`) allocates the breach deterministically by **water-fill**: trim the largest names in the sector down to a common level `L` where `Σ min(wᵢ,L) = cap`. Justified over pro-rata (which re-ships the same blanket verdict and leaves the name-cap breach untouched) and over "marginal contribution" (for a sector-weight cap, a name's marginal contribution IS its weight — the same rule with extra abstraction). NAV basis, because `live-portfolio-gate` enforces the owner's cap as `value/NAV` — the invested basis would make the advice ~43% wrong. Safety properties: **(1) exits untouched** — the `exit_review` branch is first and unconditional; no allocation, and no absence of one, can delay or suppress a protective-stop/thesis-break exit; **(2) risk-internal** — a function of weights and one owner-set cap, ZERO research/`analyst_score` coupling; **(3) defaults to honest** — a sector breach with no usable allocation yields `review` + `missing_inputs:["sector_breach_allocation"]`, NOT a fallback to the old blanket trim; **(4) sector-unknown degrades honestly** — excluded from every sector total, never bucketed into a synthetic sector, never assumed cap-compliant; **(5) LLM still prose-only** — `parseStrategyNotes` (`lib/risk/strategy-notes.ts`) can only emit `Map<requestedSymbol, string>`, proven by test. Non-selected names now say `hold` **with the reason they weren't selected**. Read-only accounts (everything but `605420660`) are labelled advisory-informational. No migration. See "Daily Per-Holding Risk Analytics" below + `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.)
+> Prior: 2026-07-16 (**Sector-cap breach ALLOCATOR** — `hr-v1` → `hr-v2`. Defect fixed: a sector-cap breach is a property of the SECTOR, so `sectorUtil >= 1` was the identical number for every holding in the sector and hr-v1 handed EVERY Technology name the identical `trim` (the live AVGO advice: "Trim your position because Technology holdings exceed the 30% sector cap (at 65.6%)") without ever deciding WHICH names absorb the breach or HOW MUCH each gives up — arbitrary and unactionable. New pure module `lib/risk/sector-breach.ts` (`sba-v1`) allocates the breach deterministically by **water-fill**: trim the largest names in the sector down to a common level `L` where `Σ min(wᵢ,L) = cap`. Justified over pro-rata (which re-ships the same blanket verdict and leaves the name-cap breach untouched) and over "marginal contribution" (for a sector-weight cap, a name's marginal contribution IS its weight — the same rule with extra abstraction). NAV basis, because `live-portfolio-gate` enforces the owner's cap as `value/NAV` — the invested basis would make the advice ~43% wrong. Safety properties: **(1) exits untouched** — the `exit_review` branch is first and unconditional; no allocation, and no absence of one, can delay or suppress a protective-stop/thesis-break exit; **(2) risk-internal** — a function of weights and one owner-set cap, ZERO research/`analyst_score` coupling; **(3) defaults to honest** — a sector breach with no usable allocation yields `review` + `missing_inputs:["sector_breach_allocation"]`, NOT a fallback to the old blanket trim; **(4) sector-unknown degrades honestly** — excluded from every sector total, never bucketed into a synthetic sector, never assumed cap-compliant; **(5) LLM still prose-only** — `parseStrategyNotes` (`lib/risk/strategy-notes.ts`) can only emit `Map<requestedSymbol, string>`, proven by test. Non-selected names now say `hold` **with the reason they weren't selected**. Read-only accounts (everything but `<agentic-account-id>`) are labelled advisory-informational. No migration. See "Daily Per-Holding Risk Analytics" below + `features/risk-sector-breach-allocation/FEATURE_ARCHITECTURE.md`.)
 > 2026-07-21 router proof hardening: cohort evaluation is cache-only and cannot lease, call, or enqueue provider work. ResearchAgent copies already-fetched deterministic score inputs into the canonical cache through an internal read-only adapter. Activation now requires separate `safety_pass` and `quality_pass`, a fresh selected proof, and ten distinct validated ResearchAgent `as_of_session` values in a 45-day window for the exact market/policy/code/strategy tuple. Weekend/holiday staged rows do not count. Existing rows default false and cannot authorize cutover. Router remains shadow-only, `router_enabled=false` both markets.
 
 > 2026-07-31 ADR safety: reviewed ADR identity is explicit, never inferred. `SKHY` uses the Nasdaq ADS and ADS-basis Yahoo fundamentals; retired/OTC proxies (`SKHYV`, `HXSCL`, `HXSCF`) are rejected by the shared paper/live symbol policy. A thin ADS source becomes unavailable rather than falling through to foreign-underlying per-share data. ADR support adds no live-trading permission and does not bypass broker review or any existing market/account/risk gate.
@@ -4849,7 +4849,7 @@ with a `market`).
 
 All global, per-market, broker, and account toggles must be true. Broker resolution fails closed.
 
-US order account is exactly Robinhood agentic account `605420660`. Account `965848641` is read-only for the approved research-holdings use; its NAV/positions cannot size or authorize agentic-account orders. The real implementation currently hardcodes/resolves account IDs; the documentation must not claim otherwise. Credentials/tokens remain encrypted in the vault and never enter code/logs.
+US order account is exactly Robinhood agentic account `<agentic-account-id>`. Account `<read-only-account-id>` is read-only for the approved research-holdings use; its NAV/positions cannot size or authorize agentic-account orders. The real implementation currently hardcodes/resolves account IDs; the documentation must not claim otherwise. Credentials/tokens remain encrypted in the vault and never enter code/logs.
 
 ### 4 — Kill switches
 
@@ -4955,8 +4955,8 @@ Unknown values fail closed. Documentation/UI must not use obsolete names such as
 
 | Account | Market | Role | Allowed use |
 |---|---|---|---|
-| `605420660` | US | agentic/trading | only Robinhood account permitted for Kairos orders and order-account sizing |
-| `965848641` | US | view-only/manual | approved read-only holdings research; never order placement or agentic sizing |
+| `<agentic-account-id>` | US | agentic/trading | only Robinhood account permitted for Kairos orders and order-account sizing |
+| `<read-only-account-id>` | US | view-only/manual | approved read-only holdings research; never order placement or agentic sizing |
 | configured Kite account | India | trading | official Kite API, INR limits, CNC delivery, separate manual gate today |
 
 Every broker/account lookup is scoped by broker, market, role, enabled state, and account ID. No silent default.
@@ -5114,7 +5114,7 @@ paper-trade, label-maturation, research/cron) is a separate change.
 ## Launch blockers for L4
 
 - shared execution kernel used by all live paths;
-- correct account test (`605420660`) and allowlist verification;
+- correct account test (`<agentic-account-id>`) and allowlist verification;
 - atomic autonomous budget RPC with true actor audit;
 - scoring version lifecycle enforcement;
 - fresh agentic-account state with no fallback NAV;
@@ -5277,7 +5277,7 @@ never be treated as an order signal, and they never call the Execution Gateway.
 
 `features/holding-risk-daily` — daily `/api/agents/holding-risk?market=us|india` (pg_cron migration 156,
 US 21:30 UTC / India 11:00 UTC). Scores **every holding in every live account** — Robinhood Trading
-`605420660`, Robinhood **read-only `965848641`**, and Kite India — with a deterministic 0–100
+`<agentic-account-id>`, Robinhood **read-only `<read-only-account-id>`**, and Kite India — with a deterministic 0–100
 risk-control pressure index and a risk posture. Safety properties:
 
 - **Hybrid, deterministic-first.** `lib/risk/holding-risk.ts` (`hr-v3`) computes the score **and** the
@@ -5315,7 +5315,7 @@ risk-control pressure index and a risk posture. Safety properties:
   are advisory. `add_capacity` means "risk limits have room," **not** a buy signal. Nothing here reaches
   `executeApprovedOrder`, the gateway, or a broker. The UI labels the note "advisory" and, for read-only
   accounts, "advisory only - no order path." Since `hr-v3`, every account receives concentration
-  `review`, not `trim`; allowlisting account `605420660` for order transport does not create an account-
+  `review`, not `trim`; allowlisting account `<agentic-account-id>` for order transport does not create an account-
   specific objective/cap mandate. The deterministic reason states that no trim is recommended. The
   `readOnlyAccount` flag controls advisory transport wording only, not concentration posture. An absent
   flag defaults to the read-only wording.
@@ -5361,7 +5361,7 @@ risk-control pressure index and a risk posture. Safety properties:
     research is the annotation. A failed read (`research: null`) is kept distinct from a successful read
     that found nothing (`state: 'never'`), so the UI never claims a symbol was never scored when it merely
     failed to look.
-  - Every account gets the annotation, including read-only `965848641` (informational there, as the
+  - Every account gets the annotation, including read-only `<read-only-account-id>` (informational there, as the
     strategy note already is). Additive only: **no schema change, no migration, no new cron, no provider
     call, no LLM.** Rows deep-link to `/dashboard/research-journal?symbol=&market=`.
 - **Fails closed.** A missing/stale broker snapshot publishes a `failed`/`insufficient-data` run — never
@@ -8769,7 +8769,7 @@ This feature does not include:
 
 - Options, crypto, futures, short selling, leverage, or margin borrowing.
 - Intraday, high-frequency, or latency-sensitive trading.
-- Access to any Robinhood account except agentic account `605420660`.
+- Access to any Robinhood account except agentic account `<agentic-account-id>`.
 - Guaranteed returns or an assertion that Kairos will beat the market.
 - Autonomous promotion of a strategy to live trading.
 - Silent changes to risk policy, tax rules, execution permissions, or champion strategies.
@@ -9025,7 +9025,7 @@ Initial behavior is always `approval_required`. A proposal must display quote, q
 Before submission, the Live Trade Gateway must:
 
 1. Fetch current Robinhood account state and quote.
-2. Verify account number `605420660`.
+2. Verify account number `<agentic-account-id>`.
 3. Re-run cash, risk, tax, event, liquidity, and freshness checks.
 4. Call Robinhood `review_equity_order`.
 5. Show any values that changed since proposal creation.
@@ -9241,7 +9241,7 @@ Exact database columns and endpoint payload schemas belong in the implementation
 - Only the superadmin user may approve live strategies, orders, rule changes, or auto-live authorizations.
 - Service jobs use a narrowly scoped server credential and cannot call the live gateway unless the authorization contract permits it.
 - Robinhood tokens are never persisted in application tables or logs.
-- Account `605420660` is enforced at the gateway and verified against the broker response.
+- Account `<agentic-account-id>` is enforced at the gateway and verified against the broker response.
 
 ### Failure Handling
 
@@ -9343,7 +9343,7 @@ The implementation plan will narrow each phase. Expected areas include:
 ## Files / Behavior That Must Not Change
 
 - Do not modify `AGENTS.md` or `PRD.md` without Architect role and explicit Vaibhav approval.
-- Do not access any Robinhood account except `605420660`.
+- Do not access any Robinhood account except `<agentic-account-id>`.
 - Do not enable live execution without the approved gateway and exact approval workflow.
 - Do not add options, shorting, leverage, crypto, or intraday scope.
 - Do not use an LLM as an authoritative market-data, P&L, fill, tax, or risk source.
@@ -9377,7 +9377,7 @@ The implementation plan will narrow each phase. Expected areas include:
 
 ### Live execution
 
-- Only account `605420660` can pass gateway validation.
+- Only account `<agentic-account-id>` can pass gateway validation.
 - An order cannot submit without current data, passing risk/tax checks, Robinhood review, and an exact unexpired user approval.
 - Duplicate submission does not create a duplicate order.
 - Partial fills and broker discrepancies reconcile or trigger `safety_paused`.
@@ -10627,7 +10627,7 @@ approval.
 - Tests: 1,229 passed, 6 skipped; focused ATR/label suite 15 passed.
 - Production build: clean on the final implementation tree.
 - Supabase migration `20260722110000_atr_exit_evidence_labels.sql`: applied to
-  FinanceOS project `dionkikgdmlaotvtbnfr`; six columns, three constraints,
+  FinanceOS project `<production-project-ref>`; six columns, three constraints,
   RLS, and zero execution dependencies verified.
 - Production already has 747 decision observations containing frozen ATR. The
   361 currently matured labels predate that evidence and are intentionally not
@@ -10808,7 +10808,7 @@ and all execution gates remain separate.
 ## Production Verification
 
 - Applied and verified `supabase/migrations/170_strategy_validation_automation.sql`
-  against FinanceOS Supabase project `dionkikgdmlaotvtbnfr`.
+  against FinanceOS Supabase project `<production-project-ref>`.
 - Verified US and India policies seeded enabled with one shadow slot each.
 - Verified `activate_strategy_shadow` execute grant is restricted to
   `service_role` and `postgres`.
@@ -16825,7 +16825,7 @@ With those four changes, Stage 0 and Stage 1 are buildable now, cheaply, and Sta
 ## 1. Verified current-state audit
 
 Every number below was re-derived against the production database
-(`dionkikgdmlaotvtbnfr`) or read from the live source file on 2026-09-03. See the companion Codex
+(`<production-project-ref>`) or read from the live source file on 2026-09-03. See the companion Codex
 brief §2 for the exact SQL.
 
 ### 1.1 What exists today
@@ -19281,7 +19281,7 @@ two independent barriers rather than one, matching `earnings_risk_observations`.
   and policy. The `cron.unschedule` runs in a `DO` block that swallows its own
   error, so re-running is safe.
 - **RLS and grants.** RLS enabled on both. Owner policy is
-  `(select auth.jwt() ->> 'email') = 'vterminater@gmail.com'`. `authenticated` =
+  `(select auth.jwt() ->> 'email') = '<owner-email>'`. `authenticated` =
   SELECT only; `anon` has **no grant at all** and is refused with `42501`.
   `20260801150500` correctly repairs the first migration's over-revoke — RLS
   filters rows but does not grant table privileges, so the owner-read policy
@@ -22466,10 +22466,10 @@ rules, the daily cron cadence, or the snapshot schema changes.
   ("deterministic services calculate risk; LLMs may propose/explain") and the
   safety rule ("LLMs may not control money limits, accounts, promotion, order
   submission").
-- **Scope: all live accounts.** Every Robinhood account (Trading `605420660`,
-  read-only `965848641`, any others) + Kite India. The strategy line is
+- **Scope: all live accounts.** Every Robinhood account (Trading `<agentic-account-id>`,
+  read-only `<read-only-account-id>`, any others) + Kite India. The strategy line is
   **advisory for all accounts and wired to NOTHING** — it never reaches the order
-  path. Only `605420660` can ever act on a call, and only via the existing
+  path. Only `<agentic-account-id>` can ever act on a call, and only via the existing
   owner-click Execution Gateway.
 
 ## Non-goals / guardrails
@@ -22584,7 +22584,7 @@ Schema rules:
      all 6 RH accounts, per-account `get_equity_positions` + `get_portfolio`, and
      a batched `get_equity_quotes` over deduped held symbols to price holdings.
      `agentic_allowed=false` gates order placement only, not reads, so all 6
-     accounts feed risk while order placement stays restricted to `605420660`.
+     accounts feed risk while order placement stays restricted to `<agentic-account-id>`.
      The same capture backs `refreshViaMcp()` (all 6 accounts upserted into
      `live_account_snapshots`, not only the active one);
    - capture one coherent, bounded input snapshot per account. Never combine a
@@ -25151,7 +25151,7 @@ daily OHLC cache. L2–L4 remain unimplemented and unapproved.
 
 The previous draft was not safe to implement. It used the wrong Robinhood account number (`605420606`), bypassed the hardened Execution Gateway by calling `submitRobinhoodOrder()` directly, used a race-prone read/sum daily cap, allowed a fallback NAV, and proposed auto BUY before live exit/reconciliation was complete.
 
-**Authorized order account:** `605420660` only. Read-only account `965848641` may be used only for the explicitly approved holdings-research path and must never price, size, authorize, or execute an order for the agentic account.
+**Authorized order account:** `<agentic-account-id>` only. Read-only account `<read-only-account-id>` may be used only for the explicitly approved holdings-research path and must never price, size, authorize, or execute an order for the agentic account.
 
 The goal remains valid: after Kairos proves a scoring version in shadow/paper evidence, Vaibhav may enable an autonomous **risk envelope**. Individual orders inside that envelope need not require a click. Enabling autonomy does not allow an LLM to control money limits, activate scoring versions, choose accounts, or bypass deterministic gates.
 
@@ -25207,7 +25207,7 @@ Autonomy uses independent keys that all must pass:
 4. unexpired `live_auto_enabled_until` lease;
 5. global and US trading switches on;
 6. Robinhood MCP enabled and token healthy;
-7. active account resolves from the allowlist to `605420660` with role `trading`;
+7. active account resolves from the allowlist to `<agentic-account-id>` with role `trading`;
 8. active scoring strategy is `live_approved` with linked validation evidence;
 9. no unresolved critical trading/data/reconciliation alert.
 
@@ -25274,7 +25274,7 @@ Add `broker_order_events` as an append-only lifecycle ledger if it does not alre
 A proposal may be queued for auto execution only when all are true:
 
 - market is US;
-- account target is exactly `605420660` after allowlist resolution;
+- account target is exactly `<agentic-account-id>` after allowlist resolution;
 - side is BUY for a new long or SELL for a verified held position;
 - signal source is deterministic and scoring strategy lifecycle is `live_approved`;
 - signal/quote/proposal are within configured freshness windows;
@@ -25414,7 +25414,7 @@ India auto trading is a separate architecture. It must use Kite’s official HTT
 
 ## 11. Acceptance tests
 
-- Any account other than `605420660` is rejected before reserve/preview/submit.
+- Any account other than `<agentic-account-id>` is rejected before reserve/preview/submit.
 - Auto caller cannot call the broker adapter directly; static test verifies only shared kernel imports it.
 - Deployment flag false, expired lease, invalid autonomy level, or DB read error blocks auto.
 - Two concurrent runs for one proposal yield one reservation and at most one submit intent.
@@ -25456,7 +25456,7 @@ Shadow cron at 07:30 UTC unchanged.
 Direct Robinhood REST via `lib/brokers/robinhood/rest-client.ts`:
 - Token from vault key `ROBINHOOD_MCP_ACCESS_TOKEN`
 - `GET https://api.robinhood.com/instruments/?symbol=X` → instrument URL
-- `POST https://api.robinhood.com/orders/` — market, gfd, account=605420660
+- `POST https://api.robinhood.com/orders/` — market, gfd, account=<agentic-account-id>
 - `submitRobinhoodOrder()` (MCP) is NOT called — requires live MCP session context unavailable in serverless
 
 ### India execution path
@@ -26515,7 +26515,7 @@ construction. It alters live selection, so it needs its own approval and shadow.
   `tradingMandate` for every paper entry (`lib/research-agent.ts:1786`). The
   same function is the correct source for a manual fill's stop — not a new
   formula.
-- Account allowlist is unchanged by this feature: `605420660` is the only
+- Account allowlist is unchanged by this feature: `<agentic-account-id>` is the only
   order-permitted account; everything else stays read-only.
 
 ## 2. Design
@@ -26523,10 +26523,10 @@ construction. It alters live selection, so it needs its own approval and shadow.
 ### 2.1 Detection (new, tight-cadence cron)
 
 New route `POST /api/agents/manual-fill-detect/cron`, cron-secret gated,
-scoped to `605420660` only.
+scoped to `<agentic-account-id>` only.
 
 Each run:
-1. Fetch live positions for `605420660` via `fetchRobinhoodBrokerAccounts`
+1. Fetch live positions for `<agentic-account-id>` via `fetchRobinhoodBrokerAccounts`
    (same call `holding-risk` already makes — reuse, don't re-implement).
 2. Compare against a new **position-ledger snapshot** (see schema below) —
    the last known qty per symbol this feature itself recorded.
@@ -26559,7 +26559,7 @@ existing approval handler executes the SELL at once. Guardian instead creates
 a dedicated `guardian_protection_plans` record in `pending_approval`:
 
 ```
-account_id: 605420660
+account_id: <agentic-account-id>
 symbol, qty, entry_price, stop_price
 status: pending_approval → armed
 ```
@@ -26581,7 +26581,7 @@ Section 4.
 Because Robinhood has no broker-native stop, a sibling monitor reads an armed
 plan only after **both** `AUTONOMOUS_LIVE_ENABLED` and
 `strategy_config.live_auto_enabled` are on, the app is not paused/locked, the
-active US account is exactly `605420660`, and the US market is open. It then
+active US account is exactly `<agentic-account-id>`, and the US market is open. It then
 requires a fresh quote at or below the committed stop, atomically claims the
 plan, creates one `autonomous_live` market SELL proposal, and calls the same
 hardened execution gateway used by the live exit monitor. The gateway still
@@ -26600,7 +26600,7 @@ reacts to a manual sell beyond recording it in the position ledger
 ```sql
 create table agentic_position_ledger (
   id bigint generated always as identity primary key,
-  account_id text not null,            -- '605420660' only, checked
+  account_id text not null,            -- '<agentic-account-id>' only, checked
   symbol text not null,
   qty numeric not null,
   avg_cost numeric,
@@ -26632,7 +26632,7 @@ there can be no armed/visible plan without its `created` evidence event.
   Robinhood MCP support that hasn't been confirmed to exist) and is not
   assumed here.
 - **Does not watch Kite/India manual fills.** The owner's ask was specifically
-  the agentic (Robinhood, `605420660`) account. India protective-order
+  the agentic (Robinhood, `<agentic-account-id>`) account. India protective-order
   placement already exists on a separate, more mature path
   (`lib/protective/`); extending detection there is a future, separate ask.
 
@@ -27211,10 +27211,10 @@ Kairos is **single-user, owner-gated to one email**. Concretely:
 
 | Layer | Today | File |
 |---|---|---|
-| Owner identity | `OWNER_EMAIL = "vterminater@gmail.com"` (hardcoded constant) | `lib/auth/owner.ts` |
+| Owner identity | `OWNER_EMAIL = "<owner-email>"` (hardcoded constant) | `lib/auth/owner.ts` |
 | Page gate | `middleware.ts` signs out any session whose `email !== OWNER_EMAIL`; gates `/dashboard`, `/admin` | `middleware.ts` |
 | API gate | `requireOwner()` returns 403 unless `user.email === OWNER_EMAIL && email_confirmed_at` | `lib/auth/require-owner.ts` |
-| RLS | Owner-**email** predicate: `(auth.jwt() ->> 'email') = 'vterminater@gmail.com'` on the sensitive tables; `service_role` bypasses RLS for all server/agent writes | migrations 142, 144, `20260713112754` |
+| RLS | Owner-**email** predicate: `(auth.jwt() ->> 'email') = '<owner-email>'` on the sensitive tables; `service_role` bypasses RLS for all server/agent writes | migrations 142, 144, `20260713112754` |
 | Profiles | `profiles` PK = `auth.users.id`; `handle_new_user()` trigger auto-creates a row on signup and stamps `role='superadmin'` for the owner email | `001_initial_schema.sql` |
 
 **Which tables already carry `user_id`:** only the *legacy consumer-app* tables
@@ -28594,7 +28594,7 @@ friends. "Guests are read-only" must not rest on nobody calling them:
   are not reachable from that object at all.
 - Every order-capable route keeps `requireOwner()`. Being a connected guest grants
   nothing on those routes.
-- The `605420660`-only order-placement rule in `CLAUDE.md` is unchanged and
+- The `<agentic-account-id>`-only order-placement rule in `CLAUDE.md` is unchanged and
   unaffected; guest accounts are never candidates for it.
 
 ### 3. Isolation of the private data plane
@@ -28641,7 +28641,7 @@ reason**, never silently, and never falls back to the owner's data.
 > turn this on. Everything below still exists and still runs: the table, the
 > hourly `kairos-user-risk-email` cron, the `send_hour_utc` honouring, the
 > one-send-per-day index and the unsubscribe route. What does not work is
-> DELIVERY — the send goes through the shared `onboarding@resend.dev` sender,
+> DELIVERY — the send goes through the shared `<verified-email-sender>` sender,
 > which Resend permits only to the Resend account owner, so a guest who enabled
 > it received nothing and had no way to tell why. Offering a switch that silently
 > does nothing is worse than offering none. Restore the UI once either a verified
@@ -30522,7 +30522,7 @@ it is easy to crawl.
 
 # Kairos Property — implementation result
 
-Date: 2026-08-07 · Production project `dionkikgdmlaotvtbnfr`
+Date: 2026-08-07 · Production project `<production-project-ref>`
 Status: **P2-P4 and valuation-evidence Stage 1 shipped. Schema, secrets,
 production deployment, parser self-checks, and the no-scope download guard are
 verified. Authenticated visual verification remains pending.**
@@ -30721,7 +30721,7 @@ Vercel production/preview/development, and the FinanceOS GitHub Action. GitHub
 also has the FinanceOS Supabase URL and service-role key; no value was logged.
 
 Production deployment `dpl_9QQQZaxASYtQMkSMGrf3BaZ1f9H6` is live at
-`https://financeos-phi.vercel.app`. GitHub Actions run `31241170477` completed
+`https://financeos-phi.vercel.app`. GitHub Actions run `<workflow-run-id>` completed
 both matrix jobs: each parser self-check passed and each source returned
 `NO_SCOPE` before downloading. This is the intended state until the owner adds a
 Phoenix ZIP or Austin parcel through the authenticated UI.
@@ -33047,7 +33047,7 @@ All four are settled. This section is a record, not an open question.
 | Q3 | Show `conviction` alongside `analyst_score`? | **OMIT** | Identical to `analyst_score` in every prod row inspected. Revisit only if they diverge. |
 | Q4 | Mobile (375px) columns | **score + age badge only** | Direction and `scored_as_holding` go behind the existing row expander. Mobile-first is a standing rule. |
 
-**Verified against prod after the decision (2026-07-17, project `dionkikgdmlaotvtbnfr`):**
+**Verified against prod after the decision (2026-07-17, project `<production-project-ref>`):**
 
 - **Q3 is right, and for a better reason than stated.** `analyst_score = conviction` in
   **458 of 463** rows — not all of them. The 5 exceptions (AAPL 58/62, NVDA 55/48,
@@ -33093,7 +33093,7 @@ Three findings that shape the implementation:
   not reimplemented, per §4.
 
 ## 11. Out of scope
-Live-trading accounts the app cannot trade (e.g. `965848641`) get the same annotation — it is informational there, as the strategy note already is. No new cron, no migration, no provider call, no LLM.
+Live-trading accounts the app cannot trade (e.g. `<read-only-account-id>`) get the same annotation — it is informational there, as the strategy note already is. No new cron, no migration, no provider call, no LLM.
 
 ---
 
@@ -33126,7 +33126,7 @@ the cron, the snapshot schema, and the LLM prose boundary.
 ## 1. The defect this exists to fix
 
 Risk Analytics shipped this for AVGO, a live holding in the read-only Robinhood
-account `965848641`:
+account `<read-only-account-id>`:
 
 > "Strategy note (advisory): Trim your position because Technology holdings exceed
 > the 30% sector cap (at 65.6%), with a risk score of 63..."
@@ -33335,7 +33335,7 @@ driver's `detail` (jsonb).
   (`features/risk-research-integration/FEATURE_ARCHITECTURE.md`, branch
   `worktree-agent-abaf0b16ef6af4175`, unmerged) is untouched.
 - **No order path.** The route places, previews, and cancels nothing. Only
-  `605420660` may ever place an order, and only via the owner-click Execution
+  `<agentic-account-id>` may ever place an order, and only via the owner-click Execution
   Gateway, which this feature does not call.
 - **No LLM on any number.** The LLM still writes `strategy_note` prose only, and
   is now handed the allocation as read-only context it must explain, never alter.
@@ -33346,13 +33346,13 @@ driver's `detail` (jsonb).
 
 ## 8. Advisory labelling
 
-`readOnlyAccount` is set by the cron: `false` only for `605420660` (the sole
+`readOnlyAccount` is set by the cron: `false` only for `<agentic-account-id>` (the sole
 order-permitted account per CLAUDE.md), `true` for every other account including
-`965848641` - where AVGO sits. `readOnlyAccount` changes advisory transport wording
+`<read-only-account-id>` - where AVGO sits. `readOnlyAccount` changes advisory transport wording
 only; concentration is `review` for both account classes. `exit_review` reasons carry:
 
 - read-only → *"Advisory only — this account is read-only in Kairos; the app cannot trade it."*
-- `605420660` → *"Advisory only — this feature places no order; any action requires owner approval in the Execution Gateway."*
+- `<agentic-account-id>` → *"Advisory only — this feature places no order; any action requires owner approval in the Execution Gateway."*
 
 Both are advisory. The distinction tells the owner whether an order path exists
 at all, rather than implying one does.
@@ -33789,9 +33789,9 @@ watched, to confirm the field mapping before trusting it.
 ## Feature Purpose
 
 Today, refreshing the live Robinhood account snapshot (equity, buying power,
-positions for the read-only Trading account `965848641`) depends on
+positions for the read-only Trading account `<read-only-account-id>`) depends on
 `execClaude` (`lib/claude-exec.ts`) — Windows-desktop-only, fails on Vercel.
-Robinhood order execution (account `605420660`) is fully manual: approving a
+Robinhood order execution (account `<agentic-account-id>`) is fully manual: approving a
 proposal generates a natural-language command the user pastes into their own
 Claude Code session with Robinhood MCP access.
 
@@ -33923,7 +33923,7 @@ any write call, ever.
 - ANY error reading `broker_accounts`/`active_account_us` ABORTS the order.
   The silent fallback-to-default pattern used by `getActiveBroker()` for
   broker selection is explicitly FORBIDDEN for account selection.
-- The existing hardcode (`AGENTIC_ACCOUNT = "605420660"` in
+- The existing hardcode (`AGENTIC_ACCOUNT = "<agentic-account-id>"` in
   `trader/route.ts`) is NOT removed in this feature. Removal is a separate,
   later change gated on the allowlist being verified live. Until then both
   checks run.
@@ -33990,7 +33990,7 @@ any write call, ever.
   feature changes transport for step 2 only.
 - Removing the manual Claude-Code-paste flow (stays available: simply don't
   select `robinhood_mcp` as `active_broker_us`).
-- Removing the `605420660` hardcode (separate later change, R8).
+- Removing the `<agentic-account-id>` hardcode (separate later change, R8).
 - Options trading: `place_option_order` is never called; the adapter
   supports equities only.
 - Auto-discovery of accounts from broker APIs.
@@ -34004,7 +34004,7 @@ any write call, ever.
 - `strategy_config.robinhood_mcp_enabled` — boolean, **default false** (R9).
 - `strategy_config.max_order_notional` — numeric, default null → computed as 15% of latest live equity (R6.6).
 - `strategy_config.active_account_us` / `active_account_india` — text, default today's hardcoded values.
-- `broker_accounts` — `id, broker, market, account_number, label, role ('trading'|'view_only'), created_at`; service-role-only; seeded `605420660`→trading/us, `965848641`→view_only/us, current Kite account→india.
+- `broker_accounts` — `id, broker, market, account_number, label, role ('trading'|'view_only'), created_at`; service-role-only; seeded `<agentic-account-id>`→trading/us, `<read-only-account-id>`→view_only/us, current Kite account→india.
 - `broker_orders` — new partial unique index per R6.7; new status value `unknown_needs_reconcile` (R7). RLS enabled + client grants revoked (migration 089 — already applied live).
 
 ## Error Handling
@@ -37140,7 +37140,7 @@ Kairos is single-user, gated on one hardcoded email.
 
 | Layer | Today | Evidence |
 |---|---|---|
-| Identity | `OWNER_EMAIL = "vterminater@gmail.com"` | `lib/auth/owner.ts` |
+| Identity | `OWNER_EMAIL = "<owner-email>"` | `lib/auth/owner.ts` |
 | Page gate | middleware rejects any non-owner session | `middleware.ts` (matches `/dashboard`, `/property`, `/admin` only — **not** `/api/*`) |
 | API gate | `requireOwner()` per route | 169 of 252 API routes call it; the remainder use cron secrets or inline `ADMIN_EMAIL` checks |
 | Data reads | server-side `createServiceClient()` | 266 files; service-role **bypasses RLS entirely** |
@@ -37587,7 +37587,7 @@ status: accepted, delivered to their mail server, bounced, reported as spam by
 recipient. It states plainly that a spam-folder placement is invisible and
 shows as delivered.
 
-Not fixable in code: mail from Resend's shared `onboarding@resend.dev` sender
+Not fixable in code: mail from Resend's shared `<verified-email-sender>` sender
 is often filtered to spam and may only be sent to the Resend account owner.
 A verified sending domain plus `EMAIL_FROM` is the owner's decision.
 
@@ -39504,7 +39504,7 @@ consumer, and the unconditional time stop remains active.
 ## Production proof
 
 - Migration `time_review_exit_shadow` applied to FinanceOS Supabase project
-  `dionkikgdmlaotvtbnfr`.
+  `<production-project-ref>`.
 - Both tables have RLS, owner-only SELECT policies, narrow grants, and UPDATE /
   DELETE rejection triggers.
 - Rolled-back transaction proved observation insertion, duplicate-key refusal,
@@ -39764,7 +39764,7 @@ mandate and reports the source as `default`.
 Implemented 2026-07-12 across Settings, ResearchAgent, PaperTrader,
 PositionMonitor, LearnerAgent, and the US proposal-building TraderAgent. Migration
 168 was applied directly as one reviewed SQL file to the verified linked FinanceOS
-project (`dionkikgdmlaotvtbnfr`) because its timestamped migration ledger does not
+project (`<production-project-ref>`) because its timestamped migration ledger does not
 align with the repository's numbered local ledger and a broad CLI push could replay
 unrelated migrations. The table, US/India seeds, provenance columns, and owner-read
 RLS policy were verified from the production schema after application.
@@ -39793,7 +39793,7 @@ RLS policy were verified from the production schema after application.
 Status: Complete
 Completed: 2026-07-12
 Commit: `5616338` (`feat: add cross-market trading mandates`)
-Production migration: `168_trading_mandates.sql` applied and verified on FinanceOS Supabase project `dionkikgdmlaotvtbnfr`.
+Production migration: `168_trading_mandates.sql` applied and verified on FinanceOS Supabase project `<production-project-ref>`.
 
 ## Delivered
 
@@ -39830,7 +39830,7 @@ These follow-ups do not block mandate configuration or the core US/India agent b
 - Added `max_signal_age_sessions` per market (default 2). PositionMonitor ignores stale score/direction evidence but continues stop, target, time-stop, hedge, and other price-based exits.
 - The fill RPC reads the canonical mandate cap and treats the application parameter as tighten-only defense in depth.
 - Research now unions current paper alpha positions with only the latest live snapshot per account. Held symbols are marked `isHeld`, researched before discovery, and do not consume the new-candidate cap.
-- Migration `20260716013000_mandate_capacity_and_score_freshness.sql` was applied to `dionkikgdmlaotvtbnfr`. Production remained at 11 US / 13 India alpha positions, proving the cap change did not force-close.
+- Migration `20260716013000_mandate_capacity_and_score_freshness.sql` was applied to `<production-project-ref>`. Production remained at 11 US / 13 India alpha positions, proving the cap change did not force-close.
 - Correlation-aware P0/P1 was not activated because candidate-to-book pair observations are not persisted today. The corrected prerequisite and shadow gate are recorded in `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.
 
 ---
@@ -42634,7 +42634,7 @@ Completed: 2026-07-19
 
 ## Production proof
 
-Supabase project `dionkikgdmlaotvtbnfr`:
+Supabase project `<production-project-ref>`:
 
 - `agent_signals.session_validated boolean not null default true`
 - `agent_signals.as_of_session date`
@@ -43223,7 +43223,7 @@ Status: Approved
 Category: Product / UX
 
 Context: The briefing was a wall of LLM prose. The user wants newsletter-grade structure with mandatory explanations on every metric.
-Decision: Render the data deterministically as designed HTML blocks (accurate); the LLM writes only a short editor's note + a grounded 3-part outlook with confidence. v2 adds a lighter theme, per-metric explanations, market/positions/future outlooks, a 7-day agent-activity recap, and a Mentor block. Email delivers via Resend; `email_sent` reflects the real result; recipient/sender overridable via `BRIEFING_TO`/`BRIEFING_FROM`. onboarding@resend.dev only delivers to the Resend account owner until a domain is verified.
+Decision: Render the data deterministically as designed HTML blocks (accurate); the LLM writes only a short editor's note + a grounded 3-part outlook with confidence. v2 adds a lighter theme, per-metric explanations, market/positions/future outlooks, a 7-day agent-activity recap, and a Mentor block. Email delivers via Resend; `email_sent` reflects the real result; recipient/sender overridable via `BRIEFING_TO`/`BRIEFING_FROM`. <verified-email-sender> only delivers to the Resend account owner until a domain is verified.
 Reason: Numbers must be accurate (code-built) and every figure must carry a what/why (locked user preference — details mandatory).
 Alternatives considered: All-LLM prose (hallucination + wall of text); all-static (no human voice).
 Impact: Redesigned morning/evening emails.
@@ -43292,7 +43292,7 @@ Date: 2026-07-04
 Status: **Open — not resolved. Requires explicit user sign-off before any fix.**
 Category: Architecture / Security
 
-Context: An audit this session found that `execClaude` (`lib/claude-exec.ts`) runs the Claude Code CLI as a plain text-completion subprocess — no `ANTHROPIC_API_KEY`, no MCP server config attached anywhere. It structurally cannot call any MCP tool (Robinhood, FinancialDatasets, etc.) no matter what its prompt asks for; the pattern in every call site is "ask the model to call a tool it can't reach, trust whatever text comes back." Confirmed call sites: `lib/research-agent.ts` (`fetchAndStoreAccountSnapshot` and `runScreener` — meaning the CLAUDE.md-mandated dual-bucket momentum/value screener has likely never produced real candidates via this path), `app/api/mentor/evaluate/route.ts` (worst case: could silently write hallucinated "verified" fundamental data into `trade_journal` as fact), `app/api/portfolio/live-holdings/route.ts`, `lib/market-data.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/chart-data.ts` (two functions), and — highest severity — `app/api/agents/trader/route.ts` and `app/api/agents/trade/approve/route.ts`, the real-money order-execution paths for account `605420660`, which gate "order submitted to Robinhood" entirely on a `success: true` JSON flag `execClaude` cannot authentically produce. It currently fails toward `success: false` in practice rather than fabricating a fill, but this is not a code guarantee — there is no independent verification step.
+Context: An audit this session found that `execClaude` (`lib/claude-exec.ts`) runs the Claude Code CLI as a plain text-completion subprocess — no `ANTHROPIC_API_KEY`, no MCP server config attached anywhere. It structurally cannot call any MCP tool (Robinhood, FinancialDatasets, etc.) no matter what its prompt asks for; the pattern in every call site is "ask the model to call a tool it can't reach, trust whatever text comes back." Confirmed call sites: `lib/research-agent.ts` (`fetchAndStoreAccountSnapshot` and `runScreener` — meaning the CLAUDE.md-mandated dual-bucket momentum/value screener has likely never produced real candidates via this path), `app/api/mentor/evaluate/route.ts` (worst case: could silently write hallucinated "verified" fundamental data into `trade_journal` as fact), `app/api/portfolio/live-holdings/route.ts`, `lib/market-data.ts`, `app/api/portfolio/robinhood/route.ts`, `lib/chart-data.ts` (two functions), and — highest severity — `app/api/agents/trader/route.ts` and `app/api/agents/trade/approve/route.ts`, the real-money order-execution paths for account `<agentic-account-id>`, which gate "order submitted to Robinhood" entirely on a `success: true` JSON flag `execClaude` cannot authentically produce. It currently fails toward `success: false` in practice rather than fabricating a fill, but this is not a code guarantee — there is no independent verification step.
 Decision: **Not resolved.** This entry exists to flag the risk and lock in why `trading_mode = disabled` must stay in place (per CLAUDE.md) until a real fix ships. No code change has been made against this finding.
 Reason: This is exactly the class of risk Decision 3 (Evidence, Data, and Online Research Policy) was written to prevent — LLM-mediated "tool calls" that aren't real must not be trusted as evidence or as execution confirmation, especially on the order-placement path.
 Alternatives considered (proposed, none implemented yet): (a) Rebuild these call sites as direct, typed API calls with no LLM asked to "call" a tool in the loop — most consistent with Decision 3; (b) add a real `ANTHROPIC_API_KEY` so `execClaude`'s replacement can use genuine MCP tool-calling; (c) leave as-is and rely on `trading_mode = disabled` — acceptable short-term only, not a fix.
@@ -43451,7 +43451,7 @@ Context: Reconnecting the Supabase MCP (after an earlier session's connector poi
 Decision: Apply `alter table paper_order_events alter column signal_id type uuid using signal_id::text::uuid` directly (migration `070_fix_paper_order_events_signal_id.sql`), applied live via the reconnected Supabase MCP — lossless since the column had zero rows. Also applied migrations `060_observation_labels.sql` and `069_portfolio_limits.sql` (previously blocked by SQL-editor issues) in the same MCP session, and verified the fix end-to-end: restarted the stale `next start` production server (it had been serving a build compiled before several of this session's commits), re-triggered ResearchAgent, and confirmed `decision_observations` now receives real rows with full 5-dimension `features` blobs per candidate.
 Reason: A schema-level type bug silently blocking every paper-trade audit-event write for the entire life of the project is a data-integrity issue, not a design question — no alternative considered beyond fixing the type. Doing it via direct MCP access (once available) rather than another round of manual-SQL-editor copy/paste avoided further exposure to the session's earlier Redis/RLS-dialog friction.
 Alternatives considered: Leave the column as bigint and stop inserting `signal_id` into `paper_order_events` (rejected — silently drops real audit-trail linkage instead of fixing the root cause); leave it for a future migration batch (rejected — it was actively causing every single paper fill's event log to be empty, worth fixing immediately since the fix was zero-risk with the table empty).
-Impact: `paper_order_events` will now actually populate on future fills — the audit trail this table exists for finally works. No behavior change to fills themselves (the JS-side resilience already handled the failure gracefully by reverting to pending; this just makes fills succeed instead of silently retrying forever). Confirms migrations 059/060/069/070 are all live on the FinanceOS Supabase project (`dionkikgdmlaotvtbnfr`).
+Impact: `paper_order_events` will now actually populate on future fills — the audit trail this table exists for finally works. No behavior change to fills themselves (the JS-side resilience already handled the failure gracefully by reverting to pending; this just makes fills succeed instead of silently retrying forever). Confirms migrations 059/060/069/070 are all live on the FinanceOS Supabase project (`<production-project-ref>`).
 Files/features affected: `supabase/migrations/070_fix_paper_order_events_signal_id.sql` (new), `paper_order_events` table (live schema change).
 Reversal cost: Very low (single column type change on an empty table; trivially revertible)
 
@@ -44789,3 +44789,4 @@ classification. Any consumption of `catalyst_shadow` by scoring/sizing/gating is
 evidence-gated future decision.
 
 **Architecture:** `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
+
