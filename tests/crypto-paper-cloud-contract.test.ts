@@ -6,6 +6,12 @@ const root = process.cwd();
 const read = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
 describe("crypto paper Stage 3 cloud contract", () => {
+  it("uses the constrained discovery source separately from native pipeline identity", () => {
+    const research = read("app/api/agents/crypto-research-shadow/route.ts");
+    expect(research).toContain('source: "screener", score_source: "crypto_native_shadow_v1"');
+    expect(research).toContain("cryptoResearchInventory(");
+    expect(read("app/api/agents/crypto-paper-trade/route.ts")).toContain("await requireOwner()");
+  });
   it("schedules both crypto jobs through the existing Vault-backed pg_cron bridge", () => {
     const migration = read("supabase/migrations/20260916020000_crypto_paper_pool.sql");
     expect(migration).toContain("kairos-crypto-paper-trade");

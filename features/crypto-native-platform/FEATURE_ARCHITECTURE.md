@@ -201,6 +201,16 @@ to this workspace.
 
 ## 6. Explicit deferrals
 
+### Paper recovery implementation note — 2026-09-21
+
+The existing Stage 3 paper basket remains BTC-USD/ETH-USD/SOL-USD; this repair
+does not expand executable names or enable live trading. Public research always
+prioritizes these three before bounded broker-discovered names, normalizes USD
+symbols, and labels missing broker members non-tradeable. Native pipeline identity
+uses `score_source`; constrained discovery `source` is `screener`. The previously
+committed daily 00:45 UTC paper schedule is now applied. Non-cron entry invocation
+requires the owner, not merely any signed-in viewer.
+
 - no leverage, perpetuals, options, staking yield, lending, DeFi, transfers, or
   custody/wallet functionality;
 - no on-chain metric until it is licensed, point-in-time, and coverage-audited;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { checkKillSwitches } from "@/lib/kill-switches";
@@ -46,9 +46,8 @@ export async function POST(req: NextRequest) {
   try {
     const isCron = verifyCronSecret(req);
     if (!isCron) {
-      const userClient = await createClient();
-      const { data: { user } } = await userClient.auth.getUser();
-      if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      const gate = await requireOwner();
+      if (gate) return gate;
     }
 
     if (await isPaused(supabase, "crypto")) {

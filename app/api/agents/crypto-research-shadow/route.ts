@@ -7,6 +7,7 @@ import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 import { scoreCryptoShadow } from "@/lib/scoring/crypto-score";
 import { deriveCryptoResearchShadow } from "@/lib/scoring/crypto-research-shadow";
 import { classifyCryptoPaperCandidate } from "@/lib/scoring/crypto-candidate";
+import { cryptoResearchInventory } from "@/lib/scoring/crypto-research-inventory";
 import { fetchCryptoCandles, fetchCryptoQuote } from "@/lib/data/crypto-quotes";
 import { cryptoCompletedCandles, cryptoSessionDate } from "@/lib/data/crypto-session";
 import { readRobinhoodCryptoExecutionSnapshot } from "@/lib/robinhood-mcp";
@@ -50,16 +51,9 @@ export async function POST(req: NextRequest) {
   // separately from public historical candles. A successful candidate is still
   // measure-only: this route has no paper or live execution authority.
   const broker = await readRobinhoodCryptoExecutionSnapshot([...CRYPTO_SYMBOLS]);
-  const inventory = broker.pairInventoryObserved
-    ? [...broker.pairs.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
-    // Public research/paper is allowed to continue against the fixed, reviewed
-    // basket when a live broker read is unavailable. This is never a claim that
-    // Robinhood would accept an order; live remains fail-closed below.
-    : [...CRYPTO_SYMBOLS].map((symbol) => ({ symbol, brokerPair: `${symbol}-USD`, tradeable: false }));
-  // The broker inventory decides the population. History pulls are intentionally
-  // bounded and deterministic: if the broker offers more pairs than one run can
-  // reasonably source, the lowest observed spreads are covered first and every
-  // deferred pair is explicitly recorded rather than disappearing from the run.
+  const inventory = cryptoResearchInventory(broker.pairInventoryObserved ? [...broker.pairs.values()] : []);
+  // Prioritize the approved paper basket, then remaining pairs deterministically.
+  // Missing broker membership does not authorize live execution.
   const targets = inventory.slice(0, MAX_HISTORY_FETCHES_PER_RUN);
   const targetSymbols = new Set(targets.map((pair) => pair.symbol));
   const candleResults = new Map<string, Awaited<ReturnType<typeof fetchCryptoCandles>>>();
@@ -156,7 +150,9 @@ export async function POST(req: NextRequest) {
     const { error: signalError } = await supabase.from("agent_signals").insert({
       symbol: row.symbol, market: "us", direction: "long", analyst_score: Math.round(score.score), conviction: Math.round(score.score),
       agent_type: "crypto_research", agent_label: "crypto_native", status: "pending", session_validated: true,
-      as_of_session: expectedSession, source: "crypto_native_shadow", score_source: "crypto_native_shadow_v1", scoring_version: STRATEGY_VERSION,
+      // source is discovery provenance (DB CHECK: holding/watchlist/screener).
+      // The native pipeline identity belongs in score_source, not source.
+      as_of_session: expectedSession, source: "screener", score_source: "crypto_native_shadow_v1", scoring_version: STRATEGY_VERSION,
       asset_class: "crypto", rationale: `Native crypto score ${score.score}: trend ${score.components.trend}, structure ${score.components.structure}, volatility ${score.components.volatility}; public ${row.raw.public_quote.source} quote.`,
       signal_breakdown: { crypto_native: row.raw.evidence, score, public_quote: row.raw.public_quote },
     });
