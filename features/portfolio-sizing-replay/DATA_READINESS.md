@@ -36,6 +36,20 @@ It must not be used to overwrite historical rows. Coverage alone does not verify
 the stop was accepted by execution, resolve multiple attempted fills, or supply
 the missing July marks.
 
+## Canonical price-cache recovery (2026-09-21)
+
+The earlier position-mark table was not the only historical-price source. The
+canonical `price_cache` currently contains 95,336 rows across 364 symbols, from
+2021-07-26 through 2026-09-21. A frozen lot join found daily bars for all 108 US
+buy lots and 96 of 154 India buy lots. Combining strict risk-plan matching with
+that join produced 210 candidate lots with original-stop evidence, of which 169
+also have at least one matching price bar. These are coverage counts, not replay
+results. `coverage-audit.sql` is the reproducible read-only query.
+
+India's unmatched lots require exchange-suffix/ticker-history reconciliation or
+must remain excluded. A daily bar does not prove intraday fill ordering,
+corporate-action treatment, or partial-lot lineage.
+
 Local verification: 17 focused tests passed and TypeScript passed. The CLI test
 uses a clearly labelled synthetic fixture, not historical portfolio evidence.
 

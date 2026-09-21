@@ -1,5 +1,7 @@
 # Work Log
 
+Sizing evidence follow-up (2026-09-21): canonical `price_cache` recovery verified 95,336 rows / 364 symbols (2021-07-26 onward). Frozen join: daily bars for 108/108 US and 96/154 India buy lots; strict timestamped original-stop candidates for 210 lots, with at least one price bar for 169. Added read-only `features/portfolio-sizing-replay/coverage-audit.sql`. India symbol-history and partial-lot lineage remain unresolved; no optimum sizing or top-up policy claimed.
+
 | Crypto paper signal/schedule recovery | Codex | in_progress | 2026-09-21 | Zero production fills and zero native signals despite admitted candidates. Investigating signal persistence and unapplied daily schedule; paper only, no live enablement. |
 
 Sizing replay follow-up (2026-09-21): 17 focused tests passed; TypeScript passed. Added read-only `features/portfolio-sizing-replay/recover-entry-stops.sql` with frozen cutoff, exact signal/market/symbol matching, pre-fill timestamp bounds and 0.0001 fill tolerance. Prior production audit found candidate source matches for 82 US / 127 India lots, including 57 / 81 missing captured stops. These are not approved replay episodes: lineage, taint and July price history remain unresolved. No empirical return uplift, optimum allocation or top-up policy is claimed. No production state changed.
