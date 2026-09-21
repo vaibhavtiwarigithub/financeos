@@ -11,6 +11,21 @@
 > Historical feature documents are design records; this document describes how the
 > system is connected today.
 
+## How a finance professional should read this
+
+Kairos uses familiar investment concepts, but records them more strictly than a
+typical brokerage screen. A **symbol** is an instrument ticker. A **signal** is a
+dated research decision. An **entry** is a buy execution. A **position** is open
+inventory. A **lot** is one accounting slice of an entry or partial exit. A
+**benchmark** is the market alternative for the same capital. A **shadow** is a
+research experiment that cannot affect an order. A **session** is a completed US,
+NSE or UTC crypto period, not merely the time a request ran.
+
+The most important distinction is between a forecast and an allocation. A score of
+78 means current evidence ranks a candidate highly; it does not mean a 78% return
+or an all-in instruction. The portfolio constructor still checks cash,
+concentration, liquidity, stop distance, correlation, controls and freshness.
+
 ## 1. Product purpose
 
 Kairos is a personal AI-assisted quantitative investing operating system. It is
@@ -225,6 +240,12 @@ volatility/regime and liquidity/execution. Event/news/network features are
 measure-only until they have timestamped, point-in-time coverage and predictive
 evidence.
 
+An **IC** is the rank correlation between a score and later return over a declared
+horizon. A positive IC means higher-ranked names tended to return more in that
+cohort; it is not a guarantee. The t-stat measures uncertainty. Kairos also tracks
+qualifying sessions, label maturity and overlap-adjusted effective sample size so
+overlapping daily observations are not mistaken for independent bets.
+
 ## 8. Portfolio construction and sizing
 
 The constructor applies finite cash, gross exposure, name, sector, correlation,
@@ -242,6 +263,17 @@ The historical replay remains evidence-limited: India has 20 distinct symbol roo
 without canonical price history, and partial-lot/stop provenance still needs
 reconciliation. The separate top-up experiment is not a production feature.
 
+For a stop-risk diagnostic, the planned amount is:
+
+```text
+risk fraction = (entry price - stop price) / entry price
+planned notional = NAV × risk budget / risk fraction
+```
+
+Cash, name/sector/gross caps, correlation, share increments and transaction costs
+then bound that amount. Cash is capacity, not a buy signal; unused cash can mean
+that no candidate passed the current evidence and risk gates.
+
 ## 9. Exit geometry
 
 Stops and targets are recorded with entry provenance, geometry version and observed
@@ -254,6 +286,15 @@ Crypto geometry is native: structural invalidation and ATR/realized-volatility
 floor, expected costs, liquidity and maximum-loss bound. No unconditional calendar
 exit is assumed. Paper crypto exits use completed OHLC bars and adverse resolution
 for ambiguous barriers.
+
+### Worked stock trade
+
+For a $10,000 book, a $100 entry, $95 stop and $115 target, an 8% allocation arm
+plans $800 before caps and costs. A 0.5% stop-risk arm sees 5% per-share risk and
+plans $1,000 before caps. If the bar high reaches $115 but closes at $112, target
+evidence can trigger the configured partial sale while the close remains the
+conservative mark. If the same bar’s low touches $95, stop precedence resolves the
+ambiguity adversely. The outcome is stored at lot level.
 
 ## 10. Benchmarks and charts
 
@@ -291,6 +332,17 @@ tiers, model comparisons, time/ATR/volatility exit alternatives and leveraged ET
 strategies are shadows or proposals until their gates pass. TQQQ/SQQQ/SOXL/SOXS
 require dedicated volatility/leverage-aware policies and must not inherit ordinary
 equity targets or stops.
+
+### Strategy lifecycle in investment terms
+
+1. Declare universe, signal, holding/exit policy, costs, sizing and benchmark.
+2. Run a shadow without changing the incumbent.
+3. Wait for labels to mature and evaluate purged/out-of-sample folds.
+4. Compare baseline and variant on the same opportunities and sessions.
+5. Promote only through an owner-approved state transition.
+
+“Ready” means the evidence contract is complete, not that the strategy wins every
+week.
 
 ## 12. Broker and live safety
 
@@ -355,3 +407,21 @@ update this document and its detailed feature/chapter owner in the same change.
 The safest interpretation of any missing evidence is “not proven yet.” Kairos is
 designed to keep researching and measuring without silently turning a shadow into
 capital.
+
+## 16. Finance glossary
+
+| Term | Kairos meaning |
+|---|---|
+| NAV | Cash plus marked position value for one isolated book |
+| Gross exposure | Total long notional divided by NAV |
+| Stop distance | Entry-to-stop percentage used for risk sizing |
+| Slippage | Difference between expected and simulated/actual fill |
+| IC | Rank correlation between score/rank and forward return |
+| t-stat | Uncertainty statistic for an estimated effect |
+| Purged fold | Validation split with a gap preventing label leakage |
+| Point-in-time | Information actually available at the decision timestamp |
+| Cohort | Explicit population being evaluated |
+| Attribution | Evidence that a named change caused a measured difference |
+| Shadow | Non-authoritative alternative collecting evidence only |
+| Champion | Currently approved strategy configuration |
+| Kill switch | Control blocking new risk while allowing risk reduction |
