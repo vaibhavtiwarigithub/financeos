@@ -34,6 +34,14 @@
     {
       "path": "/api/agents/leveraged-etf-shadow/collect",
       "schedule": "5 15 * * 1-5"
+    },
+    {
+      "path": "/api/agents/soxl/cron",
+      "schedule": "30 15 * * 1-5"
+    },
+    {
+      "path": "/api/agents/global-spillover/collect",
+      "schedule": "0 11 * * 1-5"
     }
   ]
 }
