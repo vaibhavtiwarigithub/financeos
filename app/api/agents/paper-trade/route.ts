@@ -733,11 +733,20 @@ export async function POST(req: NextRequest) {
         });
       } catch { /* shadow only — never affects the fill */ }
 
+      const constructorBook = bookByMarket.get(market) ?? [];
       const constructed = constructPortfolio(
-        bookByMarket.get(market) ?? [],
+        constructorBook,
         [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
         marketLimits
       );
+      // A rejected/shrunk candidate's adjustment string carries only the
+      // combined book+candidates percentage (e.g. "92.45%, cap 80%"), which
+      // cannot be decomposed back into which holdings produced it once the
+      // book has since changed — an ARM rejection audited days later found
+      // paper_position_marks had no rows for that instant, so this was the
+      // only surviving evidence. Recording the exact per-symbol book this
+      // decision was made against closes that gap for future audits.
+      const constructorBookSnapshot = constructorBook.map(b => ({ symbol: b.symbol, sector: b.sector, valuePct: Math.round(b.valuePct * 100) / 100 }));
       const rawSizedPct = constructed.orders[0]?.finalSizePct ?? 0;
       // Finite-number gate — NaN fails every `<= 0` / `< 1` comparison below
       // (NaN <= 0 is false), so a NaN from an upstream model coefficient,
@@ -751,7 +760,7 @@ export async function POST(req: NextRequest) {
         await revertClaim(signal.id);
         const reason = "portfolio_constructor_denied: non-finite sizedPct";
         skipped.push({ symbol: signal.symbol, reason });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, book: constructorBookSnapshot } });
         continue;
       }
 
@@ -775,7 +784,7 @@ export async function POST(req: NextRequest) {
       if (noRoom) {
         const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
         skipped.push({ symbol: signal.symbol, reason });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, rotation_candidate: true } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, rotation_candidate: true, book: constructorBookSnapshot } });
         // NB: the claim is deliberately NOT reverted here. The rotation block
         // below owns it and reverts on every non-executing path.
       }
@@ -785,7 +794,7 @@ export async function POST(req: NextRequest) {
       // inside paperAllocationSpend.
       const sizedPct = noRoom ? proposedSizePct : rawSizedPct;
       if (!noRoom) {
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments, book: sizedPct < proposedSizePct ? constructorBookSnapshot : undefined } });
       }
 
       // finalSizePct is a percentage of this market-local NAV. Available cash

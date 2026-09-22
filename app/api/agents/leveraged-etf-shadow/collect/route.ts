@@ -1,9 +1,21 @@
-// Leveraged-ETF L1 shadow collector. Fires once daily from vercel.json; the
-// 11:00-11:14 ET observation window is enforced independently inside
-// buildLeveragedEtfShadowObservation using the real ET clock (etParts), not
-// the cron's UTC firing time — so a fixed-UTC cron slot that drifts out of
-// the window across a DST transition correctly no-ops (logged, not silent)
-// rather than recording a mistimed observation. See leveraged-etf-shadow.ts.
+// Leveraged-ETF L1 shadow collector. The 11:00-11:14 ET observation window is
+// enforced independently inside buildLeveragedEtfShadowObservation using the
+// real ET clock (etParts), not the cron's UTC firing time — so a fixed-UTC
+// cron slot that drifts out of the window correctly no-ops (logged, not
+// silent) rather than recording a mistimed observation. See
+// leveraged-etf-shadow.ts.
+//
+// 2026-09-22: vercel.json now schedules this path TWICE — 15:05 UTC
+// (11:05 EDT) for April-October, 16:05 UTC (11:05 EST) for December-
+// February — instead of the single fixed-UTC slot that went dark for ~4
+// months outside EDT. KNOWN REMAINING GAP: March and November (the actual
+// DST-transition months) are covered by neither slot precisely, since the
+// US switch date (2nd Sunday March / 1st Sunday November) isn't expressible
+// in cron's month field. Collection may miss a few days around each
+// transition; it will not silently mis-time an observation (the window
+// check still fails closed), it will just skip those days. Acceptable for
+// a measure-only shadow; revisit if a full year of clean daily coverage
+// becomes load-bearing for Phase 1 evidence review.
 //
 // Measure-only: this route writes ONLY to leveraged_etf_shadow_observations.
 // It never reads or writes paper_positions, paper_trades, trade_proposals,
