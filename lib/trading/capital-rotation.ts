@@ -8,7 +8,7 @@ import {
   type RotationP1Readiness,
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong, isHoldingReview } from "@/lib/learning/entry-cohort";
 import {
   hasExactPaperTaxLot,
   summarizeRotationScoreEdgeEvidence,
@@ -231,7 +231,19 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
       decisionContext: row.decision_context,
       discoverySource: row.discovery_source,
     });
-    const holding = row.decision_context === "holding_review";
+    // BUG FIXED 2026-09-22: this used to check row.decision_context ===
+    // "holding_review" directly, skipping the discoverySource fallback that
+    // isEntryCandidateLong (above) already applies. Every legacy row before
+    // decision_context started being populated has decision_context=null and
+    // discovery_source='holding'/'india_holding' instead -- resolveDecisionContext
+    // handles that fallback, but this literal check never did, so ZERO rows ever
+    // classified as "holding" and the candidate/holding pairing loop in
+    // summarizeRotationScoreEdgeEvidence always ran over an empty holdings set.
+    // Reproduced directly against production: 538 classified rows, 538
+    // candidates, 0 holdings, before this fix. That's the reason
+    // score_to_return_mapping has read pairCount=0 for two months of shadow
+    // running on both markets, keeping P1 readiness permanently blocked.
+    const holding = isHoldingReview({ decisionContext: row.decision_context, discoverySource: row.discovery_source });
     if (!candidate && !holding) continue;
     outcomes.push({
       sessionDate: String(row.ts).slice(0, 10), observedAt: String(row.ts), symbol: String(row.symbol ?? ""),
