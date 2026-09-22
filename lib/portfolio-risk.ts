@@ -4,7 +4,7 @@ import type { Candle } from "@/lib/data/technicals";
 
 // ── Sector reference data ────────────────────────────────────────────────────
 
-const SECTOR_MAP: Record<string, string> = {
+export const SECTOR_MAP: Record<string, string> = {
   // Technology
   AAPL:"Technology", MSFT:"Technology", NVDA:"Technology", AVGO:"Technology",
   ORCL:"Technology", CRM:"Technology", AMD:"Technology", INTC:"Technology",
