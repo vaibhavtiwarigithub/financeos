@@ -1,5 +1,40 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## `leveraged_etf_shadow_observations` deployed — 2026-09-22
+
+The table backing `app/api/agents/leveraged-etf-shadow/route.ts` did not exist in
+production (`to_regclass` returned null; no migration created it, despite
+`lib/trading/leveraged-etf-shadow.ts` and the route being committed 2026-08-03).
+The route was a dead end: every call 503'd `leveraged_etf_shadow_not_deployed`.
+Migration `20260922000000_leveraged_etf_shadow_observations.sql` created it
+(append-only, immutable-row triggers, `decision` CHECK-locked to
+`observe_only`, no anon/authenticated grants — owner-gated route + service-role
+client only, matching `user_broker_credentials`'s posture) and was applied and
+verified in production. **Still open:** no cron and no caller populate it. The
+route accepts a POST but nothing sends one — a data collector (real SOXL/TQQQ
+quotes + underlying + realized vol/ATR14/trend20d/dollar volume at the
+11:00–11:14 ET window) is unbuilt. Until that exists, "deployed" is true but
+"collecting" is false.
+
+## SOXL ceiling amendment — owner approved 2026-09-22
+
+SOXL's individual paper allocation ceiling is now 5% of current US paper NAV,
+superseding the 3% individual ceiling below for SOXL only. The aggregate leveraged
+sleeve ceiling remains 5%. Cash, loss-budget sizing, and combined semiconductor
+exposure can reduce the actual allocation. This does not alter live permissions.
+The risk module records this amendment as semiconductor-paper-risk-v2.
+
+## Owner authorization update — 2026-09-22
+
+The owner approved implementing and activating automatic paper trading for SOXL
+and SOXX with instrument-specific research, sizing, protection, and combined
+semiconductor exposure accounting. This supersedes the earlier L0–L1-only
+authorization for these two symbols. SOXX is an ordinary sector ETF; SOXL must
+retain a distinct daily-reset leveraged policy. Existing L2 risk ceilings remain
+the initial implementation envelope. This authorization does not establish an
+empirical edge or grant live trading permission. TQQQ and inverse funds are not
+included in this paper activation. Deployment status remains pending verification.
+
 **Status:** APPROVED 2026-09-13 — L0–L1 implementation only; no paper or live execution
 **Date:** 2026-07-26
 **Scope:** US paper book first. India, live trading, inverse ETFs, options, and extended-hours trading are explicitly out of scope.
