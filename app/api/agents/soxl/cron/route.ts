@@ -23,6 +23,12 @@
 // entry trend check (computed fresh each run, not a persisted "thesis") as a
 // proxy, this route relies on the mechanical stop/target/trail ladder alone
 // until a real thesis-freshness signal exists.
+//
+// lastExitAt (2026-09-22): now reads the real last-closed-lot timestamp
+// instead of a hardcoded null. Currently a no-op in practice — this cron
+// always uses now() as signalAt, so a fresh check always postdates any past
+// exit — but it stops being inert the moment a real signal-generation
+// timestamp (distinct from "checked at") is introduced.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -173,6 +179,21 @@ export async function GET(req: NextRequest) {
   // optimal (spec 1.C).
   const swingLow = Math.min(...candles.candles.slice(-10).map(c => c.low));
 
+  // Real last-exit tracking (was hardcoded null): the most recent closed
+  // soxl_paper lot's exit timestamp. planSoxlEntry rejects a signal whose
+  // signalAt <= lastExitAt, so this only matters if a future caller passes a
+  // genuine signal-generation timestamp distinct from "now" — this cron
+  // currently always uses now() as signalAt, so the check is a no-op today,
+  // but wiring the real value means it starts protecting the moment that
+  // changes instead of silently staying inert.
+  const { data: lastExit } = await supabase
+    .from("paper_trades")
+    .select("closed_at")
+    .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper")
+    .not("closed_at", "is", null)
+    .order("closed_at", { ascending: false }).limit(1).maybeSingle();
+  const lastExitAt = lastExit?.closed_at ? new Date(lastExit.closed_at as string).getTime() : null;
+
   const { data: portfolio, error: portfolioErr } = await supabase
     .from("paper_portfolio").select("nav, cash_balance, updated_at").eq("market", "us").maybeSingle();
   if (portfolioErr || !portfolio) return NextResponse.json({ status: "error", reason: `portfolio_query_failed: ${portfolioErr?.message ?? "not_found"}` }, { status: 500 });
@@ -190,7 +211,7 @@ export async function GET(req: NextRequest) {
     now,
     quote: { bid: quote.bid ?? quote.price, ask: quote.ask ?? quote.price, observedAt: new Date(quote.retrievedAt).getTime() },
     signalAt: now,
-    lastExitAt: null, // last-exit tracking not wired yet — see route comment; a fresh cold-start entry is always treated as eligible
+    lastExitAt,
     signalSession: new Date(now).toISOString().slice(0, 10),
     expectedSignalSession: new Date(now).toISOString().slice(0, 10),
     entryWindowOpen: true,
