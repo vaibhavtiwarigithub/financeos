@@ -538,7 +538,7 @@ is optional, always small, and **never moves without you clicking "yes".**
 ```mermaid
 flowchart LR
   DATA[Market data\nUS + India] --> RESEARCH[ResearchAgent\nscores each stock]
-  MACRO[MacroSentinel\neconomy read] --> RESEARCH
+  MACRO[MacroSentinel\neconomy read] -->|US only; unavailable for India| RESEARCH
   RESEARCH --> SIGNALS[Signals\nscore per stock]
   SIGNALS --> PAPER[PaperTrader\npretend-money trades]
   SIGNALS -.approved by you.-> LIVE[Live order\nreal money, tiny]

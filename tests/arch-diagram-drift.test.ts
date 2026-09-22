@@ -36,6 +36,12 @@ const SYSTEM_MAP = path.join(DIAGRAM_DIR, 'system-map.json');
  * so this list cannot silently rot into a blanket amnesty.
  */
 const DECLARED_OVERLAPS: Record<string, string> = {
+  'KAIROS_FULL_ARCHITECTURE.md#4':
+    'Consolidated reader guide: end-to-end data, paper/live approval and outcome flow, ' +
+    'not the authoritative component topology. Macro input is explicitly US-only.',
+  'KAIROS_FULL_ARCHITECTURE.md#7':
+    'Consolidated guide learning narrative: shows the separate SHADOW and ARCHIVE branches ' +
+    'and owner activation decision, as in the standalone learning-loop chapter.',
   '01-what-is-kairos.md#0':
     'Onboarding abstraction, not topology: collapses the real graph into a "wheel" with nodes ' +
     'that do not exist in the map (DATA/SIGNALS/OUTCOMES) and deliberately skips CHALLENGER. ' +

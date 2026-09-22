@@ -16,6 +16,7 @@ import {
 import { primaryBenchmarkContractErrors } from "@/lib/data/benchmark-registry";
 import { admitMarketLocalSlot, expectedLatestSessionDate } from "@/lib/trading/market-calendar";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
+import { loadBenchmarkHistory } from "@/lib/analytics/benchmark-history";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -258,15 +259,7 @@ async function upsertProviderObservations(
 }
 
 async function loadBenchmarkLevels(svc: any, benchmark: BenchmarkConfig): Promise<LevelPoint[]> {
-  const { data, error } = await svc
-    .from("benchmark_price_observations")
-    .select("date, close")
-    .eq("benchmark_id", benchmark.id)
-    .eq("source_status", "ok")
-    .order("date", { ascending: true })
-    .limit(500);
-  if (error) return [];
-  return (data ?? []).map((r: any) => ({ date: String(r.date).slice(0, 10), level: Number(r.close) }));
+  return loadBenchmarkHistory(svc, benchmark.id);
 }
 
 async function loadPaperSeries(svc: any, market: "us" | "india"): Promise<LevelPoint[]> {
