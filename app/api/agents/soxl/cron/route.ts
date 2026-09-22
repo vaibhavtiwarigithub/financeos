@@ -24,11 +24,8 @@
 // proxy, this route relies on the mechanical stop/target/trail ladder alone
 // until a real thesis-freshness signal exists.
 //
-// lastExitAt (2026-09-22): now reads the real last-closed-lot timestamp
-// instead of a hardcoded null. Currently a no-op in practice — this cron
-// always uses now() as signalAt, so a fresh check always postdates any past
-// exit — but it stops being inert the moment a real signal-generation
-// timestamp (distinct from "checked at") is introduced.
+// Entry evidence is tied to a completed candle session, not invocation time.
+// Re-entry requires a newer daily setup; missing monitor proof blocks entry.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -40,6 +37,8 @@ import { planSoxlEntry, monitorSoxl, type SoxlPolicy } from "@/lib/trading/soxl-
 import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import type { SemiconductorHolding } from "@/lib/trading/semiconductor-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { soxlEntryWindow, soxlQuoteTime } from "@/lib/trading/soxl-evidence";
+import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
 
@@ -69,9 +68,8 @@ const SOXL_POLICY: SoxlPolicy = {
 
 // Curated set mirrors lib/trading/semiconductor-risk.ts's DIRECT list — a
 // known, incomplete static universe (see that module's own top comment).
-// Anything outside it is passed as semiconductor:false, which is correct for
-// every symbol in the current US book today but will silently under-count a
-// name the list hasn't caught up to. Flagged, not solved, here.
+// Anything outside it is unknown, never assumed unrelated. Until portfolio
+// classification is wired, unknown positive holdings refuse additional risk.
 const KNOWN_SEMICONDUCTOR = new Set(["SOXL", "SOXX", "SMH", "ARM", "NVDA", "AMD", "AVGO", "MU", "INTC", "QCOM", "TSM", "MRVL", "AMAT", "LRCX", "KLAC", "ASML", "ADI", "TXN", "MCHP", "ON", "MPWR"]);
 
 // Liquidity/vol floors, also experimental (spec 1.A: "timestamped ...
@@ -98,7 +96,7 @@ export async function GET(req: NextRequest) {
       quote: {
         price: monitorQuote.source === "unavailable" ? NaN : monitorQuote.price,
         dayLow: monitorQuote.dayLow ?? null, dayHigh: monitorQuote.dayHigh ?? null,
-        observedAt: new Date(monitorQuote.retrievedAt).getTime(),
+        observedAt: soxlQuoteTime(monitorQuote, now),
       },
       position: {
         market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
@@ -122,12 +120,13 @@ export async function GET(req: NextRequest) {
     await resolveIssue("soxl-monitor-failed", supabase);
 
     if (decision.action === "none" || decision.action === "runner_hold") {
-      await supabase.from("paper_positions").update({
+      const { error: updateError } = await supabase.from("paper_positions").update({
         current_price: monitorQuote.price,
         highest_price: decision.highestPrice,
         stop_loss: parseFloat(decision.trailingStop.toFixed(2)),
         updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
+      if (updateError) return NextResponse.json({ status: "error", reason: "monitor_state_write_failed" }, { status: 500 });
       return NextResponse.json({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
     }
 
@@ -153,10 +152,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
   }
 
-  const [candles, quote] = await Promise.all([
+  if (!soxlEntryWindow(new Date(now))) return NextResponse.json({ status: "no_entry", reason: "outside_entry_window" });
+  const [candleResult, quote] = await Promise.all([
     fetchUsCandles("SOXL", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getQuote("SOXL", supabase),
   ]);
+  const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
+  const expectedSession = expectedNewestSession("us", new Date(now));
+  const signalSession = candles.candles.at(-1)?.date;
+  if (signalSession !== expectedSession) return NextResponse.json({ status: "no_entry", reason: "stale_candle_evidence" });
   if (candles.candles.length < 60) {
     return NextResponse.json({ status: "no_entry", reason: "insufficient_candle_history", dataPoints: candles.candles.length });
   }
@@ -173,25 +177,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "no_entry", reason: "liquidity_floor_not_met", dollarVolume: features.dollarVolume });
   }
   const atr = technicals.atr14;
-  const lastClose = candles.candles[candles.candles.length - 1]?.close ?? 0;
   // Structural stop: swing low over the last 10 sessions. An explicit,
   // deliberately simple initial choice — not fit to anything, not claimed
   // optimal (spec 1.C).
   const swingLow = Math.min(...candles.candles.slice(-10).map(c => c.low));
 
-  // Real last-exit tracking (was hardcoded null): the most recent closed
-  // soxl_paper lot's exit timestamp. planSoxlEntry rejects a signal whose
-  // signalAt <= lastExitAt, so this only matters if a future caller passes a
-  // genuine signal-generation timestamp distinct from "now" — this cron
-  // currently always uses now() as signalAt, so the check is a no-op today,
-  // but wiring the real value means it starts protecting the moment that
-  // changes instead of silently staying inert.
-  const { data: lastExit } = await supabase
+  // A read failure cannot be mistaken for "never exited". The completed
+  // candle session must postdate the last closed lot before re-entry.
+  const { data: lastExit, error: lastExitError } = await supabase
     .from("paper_trades")
     .select("closed_at")
     .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper")
     .not("closed_at", "is", null)
     .order("closed_at", { ascending: false }).limit(1).maybeSingle();
+  if (lastExitError) return NextResponse.json({ status: "error", reason: "last_exit_query_failed" }, { status: 500 });
   const lastExitAt = lastExit?.closed_at ? new Date(lastExit.closed_at as string).getTime() : null;
 
   const { data: portfolio, error: portfolioErr } = await supabase
@@ -203,19 +202,22 @@ export async function GET(req: NextRequest) {
   const holdings: SemiconductorHolding[] = (positions ?? []).map((p: any) => ({
     symbol: String(p.symbol),
     marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0),
-    semiconductor: KNOWN_SEMICONDUCTOR.has(String(p.symbol).toUpperCase()),
+    semiconductor: KNOWN_SEMICONDUCTOR.has(String(p.symbol).toUpperCase()) ? true : null,
   }));
 
   const plan = planSoxlEntry({
     policy: SOXL_POLICY,
     now,
-    quote: { bid: quote.bid ?? quote.price, ask: quote.ask ?? quote.price, observedAt: new Date(quote.retrievedAt).getTime() },
-    signalAt: now,
+    quote: { bid: quote.bid ?? NaN, ask: quote.ask ?? NaN, observedAt: soxlQuoteTime(quote, now) },
+    // Daily evidence cannot become a new post-exit setup merely by being fetched again.
+    signalAt: Date.parse(`${signalSession}T00:00:00Z`),
     lastExitAt,
-    signalSession: new Date(now).toISOString().slice(0, 10),
-    expectedSignalSession: new Date(now).toISOString().slice(0, 10),
-    entryWindowOpen: true,
-    monitorVerifiedAt: now,
+    signalSession,
+    expectedSignalSession: expectedSession,
+    entryWindowOpen: soxlEntryWindow(new Date(now)),
+    // No durable, sleeve-specific successful monitor proof exists yet.
+    // Refuse new entries instead of asserting that this invocation verified it.
+    monitorVerifiedAt: NaN,
     trendQualified,
     atr: atr ?? 0,
     structuralStop: swingLow,
