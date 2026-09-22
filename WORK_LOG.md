@@ -1,5 +1,7 @@
 # Work Log
 
+Correction to a543498e: removed the unsupported 2:1 target floor and restored original rounding and mandate bounds. The floor inflated learned targets while still labelling them ledger_percentile and unexpectedly capped mandate targets at 40%. Regression coverage preserves 7/8 and 30/80 mandate geometry and exact learned provenance. This restores the prior policy; it does not establish that policy as optimal. Production deployment and any fills during the affected interval still require verification. Return/drawdown optimization and the leveraged collector remain open.
+
 | Risk-reward floor and leveraged-ETF opportunity diagnosis | Codex / GPT-5 | completed | 2026-09-21 | Added a deterministic 2:1 minimum gross reward:risk floor to fill-time geometry; thin learned data still falls back safely. SOXL was not a missed generic signal: leveraged ETFs remain intentionally blocked from the core money path and the existing L1 shadow has no production collector schedule, so no trade behavior was enabled. |
 
 Sizing evidence follow-up (2026-09-21): canonical `price_cache` recovery verified 95,336 rows / 364 symbols (2021-07-26 onward). Frozen join: daily bars for 108/108 US and 96/154 India buy lots; strict timestamped original-stop candidates for 210 lots, with at least one price bar for 169. Added read-only `features/portfolio-sizing-replay/coverage-audit.sql`. India symbol-history and partial-lot lineage remain unresolved; no optimum sizing or top-up policy claimed.

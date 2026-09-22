@@ -129,28 +129,18 @@ export function resolveExecutionRiskReward(args: {
   const learnedStopPct = Math.abs(mae) * 100;
   const learnedTargetPct = mfe * 100;
 
-  // Never create a new plan whose gross reward is smaller than twice the
-  // amount risked.  The old swing mandate was 7% stop / 8% target (1.14:1),
-  // which required an unrealistically high win rate before costs.  This is a
-  // geometry floor, not a return promise: the target remains capped and the
-  // position-size/risk gates still decide whether the trade is acceptable.
-  const enforceRewardRiskFloor = (stopLossPct: number, targetPct: number) => ({
-    stopLossPct,
-    targetPct: Math.min(40, Math.max(targetPct, roundPrice(stopLossPct * 2))),
-  });
-
+  // Preserve the selected policy's levels. Increasing a target to manufacture
+  // a nominal reward:risk ratio does not establish positive expectancy.
   if (Number.isFinite(learnedN) && learnedN >= 60 && Number.isFinite(mae) && mae < 0 && Number.isFinite(mfe) && mfe > 0
       && learnedStopPct >= 1 && learnedTargetPct >= 1) {
-    const geometry = enforceRewardRiskFloor(Math.min(10, learnedStopPct), Math.min(40, learnedTargetPct));
     return {
-      stopLossPct: geometry.stopLossPct,
-      targetPct: geometry.targetPct,
+      stopLossPct: roundPrice(Math.min(10, learnedStopPct)),
+      targetPct: roundPrice(Math.min(40, learnedTargetPct)),
       source: "ledger_percentile",
       sampleSize: Math.round(learnedN),
     };
   }
-  const geometry = enforceRewardRiskFloor(mandateStop, mandateTarget);
-  return { stopLossPct: geometry.stopLossPct, targetPct: geometry.targetPct, source: "mandate", sampleSize: null };
+  return { stopLossPct: mandateStop, targetPct: mandateTarget, source: "mandate", sampleSize: null };
 }
 
 export function buildExecutionRiskPlanProvenance(args: {

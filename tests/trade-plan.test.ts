@@ -67,9 +67,11 @@ describe("fill-time risk/return binding", () => {
     }).source).toBe("mandate");
   });
 
-  it("does not permit a sub-2:1 gross reward-to-risk geometry", () => {
+  it("preserves mandate geometry without inventing a larger reward", () => {
     const policy = resolveExecutionRiskReward({ mandateStopLossPct: 7, mandateTargetPct: 8 });
-    expect(policy).toMatchObject({ stopLossPct: 7, targetPct: 14, source: "mandate" });
+    expect(policy).toMatchObject({ stopLossPct: 7, targetPct: 8, source: "mandate" });
+    expect(resolveExecutionRiskReward({ mandateStopLossPct: 30, mandateTargetPct: 80 }))
+      .toMatchObject({ stopLossPct: 30, targetPct: 80 });
   });
 
   it("refuses to bind non-positive or non-finite fills", () => {
@@ -87,7 +89,7 @@ describe("fill-time risk/return binding", () => {
     });
     expect(provenance).toMatchObject({
       version: "v1", market: "india", resolved_horizon_days: 10,
-      resolved: { source: "ledger_percentile", stop_loss_pct: 5.34, target_pct: 10.68, sample_size: 134 },
+      resolved: { source: "ledger_percentile", stop_loss_pct: 5.34, target_pct: 3.45, sample_size: 134 },
       ledger_percentile: { stop_mae_pctile: -0.0534, target_mfe_pctile: 0.0345, stop_percentile: 0.25, target_percentile: 0.75 },
     });
   });
