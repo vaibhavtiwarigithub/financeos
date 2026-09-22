@@ -1,4 +1,4 @@
-// SOXL paper-entry cron. ENTRY ONLY — see the "not wired yet" note below.
+// SOXL paper cron: entry when flat, monitor+exit when held.
 // Owner-approved 2026-09-22: automatic PAPER trading for SOXL, 5% NAV
 // ceiling. Live execution is untouched: this route never reads broker_orders
 // and calls no broker adapter. lib/trading/symbol-policy.ts's generic
@@ -7,18 +7,22 @@
 // execution gateway) — this cron is SOXL's own, deliberately separate door,
 // not a hole punched in the shared gate.
 //
-// NOT WIRED YET: monitoring an already-open SOXL position (stop/target/
-// trailing/thesis exits). lib/trading/soxl-lifecycle.ts's monitorSoxl()
-// requires a real bid AND ask; the production quote chain (lib/data/
-// quotes.ts) essentially never supplies either (Massive's /v2/snapshot
-// entitlement returning 403 is documented there) — every other position
-// monitor in this codebase (app/api/agents/position-monitor/route.ts) uses
-// dayLow/dayHigh + currentPrice instead, never bid/ask. Feeding monitorSoxl
-// a synthesized bid/ask here without first reconciling that mismatch risks
-// a wrong stop-touch decision on a real (if paper) position, so this route
-// intentionally does not call it yet. Until that's fixed, an open SOXL
-// position is UNMANAGED after entry: no automatic stop, target, or re-entry
-// gating runs. This is reported honestly below, not silently.
+// Monitoring reuses the SAME price + session dayLow/dayHigh convention as
+// app/api/agents/position-monitor/route.ts (never bid/ask — production
+// quotes essentially never carry them; see lib/data/quotes.ts's Massive
+// 403-entitlement note). lib/trading/soxl-lifecycle.ts's SoxlMonitorQuote
+// was fixed to match that contract instead of requiring bid/ask (which this
+// route originally, incorrectly, synthesized from price alone — that would
+// have silently skipped every intraday stop/target touch). Exits reuse the
+// existing execute_paper_exit RPC unchanged (already position-role-generic).
+//
+// Deliberately deferred, not silent: thesisInvalidated is always passed as
+// false. There's no built "is the SOXL thesis still valid" signal distinct
+// from the entry trend check, and the spec's own instruction is that STALE
+// thesis evidence must never authorize an exit — so rather than reuse the
+// entry trend check (computed fresh each run, not a persisted "thesis") as a
+// proxy, this route relies on the mechanical stop/target/trail ladder alone
+// until a real thesis-freshness signal exists.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -26,9 +30,12 @@ import { fetchUsCandles } from "@/lib/data/candles";
 import { getQuote } from "@/lib/data/quotes";
 import { computeTechnicals, detectBreakdownVeto } from "@/lib/data/technicals";
 import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
-import { planSoxlEntry, type SoxlPolicy } from "@/lib/trading/soxl-lifecycle";
+import { planSoxlEntry, monitorSoxl, type SoxlPolicy } from "@/lib/trading/soxl-lifecycle";
+import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import type { SemiconductorHolding } from "@/lib/trading/semiconductor-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+
+const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -73,10 +80,71 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
 
   const { data: existing, error: existingErr } = await supabase
-    .from("paper_positions").select("id, qty").eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper").maybeSingle();
+    .from("paper_positions")
+    .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target")
+    .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper").maybeSingle();
   if (existingErr) return NextResponse.json({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` }, { status: 500 });
   if (existing) {
-    return NextResponse.json({ status: "held_awaiting_monitor_wiring", positionId: existing.id, note: "monitoring/exit not wired yet — see route comment" });
+    const monitorQuote = await getQuote("SOXL", supabase);
+    const decision = monitorSoxl({
+      now,
+      maxQuoteAgeMs: MONITOR_MAX_QUOTE_AGE_MS,
+      quote: {
+        price: monitorQuote.source === "unavailable" ? NaN : monitorQuote.price,
+        dayLow: monitorQuote.dayLow ?? null, dayHigh: monitorQuote.dayHigh ?? null,
+        observedAt: new Date(monitorQuote.retrievedAt).getTime(),
+      },
+      position: {
+        market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
+        priceTarget: existing.price_target == null ? null : Number(existing.price_target),
+        initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
+        currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),
+        highestPrice: existing.highest_price == null ? null : Number(existing.highest_price),
+        partialTaken: false, // paper clears price_target after a partial (see exit-ladder.ts) — a remaining runner cannot re-fire it
+      },
+      thesisInvalidated: false, // see route header comment
+    });
+
+    if (decision.action === "data_unavailable" || decision.action === "invalid_position") {
+      await reportIssue({
+        issueKey: "soxl-monitor-failed", severity: "warn", category: "risk",
+        title: `SOXL paper position could not be monitored (${decision.action})`,
+        detail: `positionId=${existing.id}, quoteSource=${monitorQuote.source}, stale=${monitorQuote.stale}`,
+      }, supabase);
+      return NextResponse.json({ status: "monitor_failed", reason: decision.action, positionId: existing.id });
+    }
+    await resolveIssue("soxl-monitor-failed", supabase);
+
+    if (decision.action === "none" || decision.action === "runner_hold") {
+      await supabase.from("paper_positions").update({
+        current_price: monitorQuote.price,
+        highest_price: decision.highestPrice,
+        stop_loss: parseFloat(decision.trailingStop.toFixed(2)),
+        updated_at: new Date().toISOString(),
+      }).eq("id", existing.id);
+      return NextResponse.json({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
+    }
+
+    // stop_full / target_full / partial_target / thesis_full: reuses the
+    // existing, already position-role-generic execute_paper_exit RPC.
+    const isStop = decision.action === "stop_full";
+    const fillPrice = isStop ? paperStopFillPrice(monitorQuote.price, decision.trailingStop) : monitorQuote.price;
+    const exitReason = isStop ? "soxl_stop_hit"
+      : decision.action === "partial_target" ? "soxl_partial_target"
+      : decision.action === "thesis_full" ? "soxl_thesis_invalidated"
+      : "soxl_target_hit";
+    const { data: exitResult, error: exitErr } = await supabase.rpc("execute_paper_exit", {
+      p_position_id: existing.id, p_exit_price: fillPrice, p_exit_reason: exitReason,
+      p_exit_qty: decision.action === "partial_target" ? decision.exitQty : null,
+      p_partial_stop_loss: decision.action === "partial_target" ? decision.runnerStop : null,
+    });
+    if (exitErr) {
+      await reportIssue({ issueKey: "soxl-exit-failed", severity: "critical", category: "risk", title: "SOXL paper exit RPC failed", detail: `positionId=${existing.id}: ${exitErr.message}` }, supabase);
+      return NextResponse.json({ status: "error", reason: `exit_rpc_failed: ${exitErr.message}` }, { status: 500 });
+    }
+    const exit = exitResult as any;
+    if (!exit?.ok) return NextResponse.json({ status: "error", reason: `exit_denied: ${exit?.error ?? "unknown"}` }, { status: 500 });
+    return NextResponse.json({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
   }
 
   const [candles, quote] = await Promise.all([
