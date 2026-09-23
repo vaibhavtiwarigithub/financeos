@@ -20,6 +20,8 @@ export interface DeterministicQuote {
   changePct: number | null;
   source: QuoteSource;
   retrievedAt: string;
+  /** Timestamp supplied by the price provider; absent if provenance is unknown. */
+  observedAt?: string;
   stale: boolean;       // true if > 15 min old during market hours
   /** Session low (day.l from Massive snapshot). Used by PositionMonitor to check
    *  intraday stop touches — a stop hit during the session is real even if price
@@ -130,6 +132,8 @@ async function fetchMassiveBatchQuotes(
         bid: t?.lastQuote?.p ?? null, ask: t?.lastQuote?.P ?? null,
         change: change ?? null, changePct: changePct ?? null,
         source: "massive", retrievedAt, stale: fromPrevDay,
+        observedAt: typeof t?.updated === "number" && Number.isFinite(t.updated) && t.updated > 0
+          ? new Date(t.updated / 1_000_000).toISOString() : undefined,
         dayLow:  typeof t?.day?.l === "number" && t.day.l > 0 ? t.day.l : null,
         dayHigh: typeof t?.day?.h === "number" && t.day.h > 0 ? t.day.h : null,
       };
