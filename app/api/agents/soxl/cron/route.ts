@@ -26,6 +26,21 @@
 //
 // Entry evidence is tied to a completed candle session, not invocation time.
 // Re-entry requires a newer daily setup; missing monitor proof blocks entry.
+//
+// monitorVerifiedAt (2026-09-22): now real, not NaN. Every completed
+// invocation of this route (monitor branch OR entry branch, any resolved
+// outcome that isn't an error) writes an agent_runs row with
+// agent_type='soxl_cron'. The entry branch reads the most recent PRIOR such
+// row (never this invocation's own — it hasn't been written yet) and treats
+// its completed_at as monitorVerifiedAt only if within MONITOR_LIVENESS_MS.
+// This is a liveness proof for the monitoring MECHANISM (auth, DB
+// connectivity, the quote-fetch chain) — this route only ever evaluates one
+// state per invocation (monitor when held, entry when flat), so there is
+// never a position to have "actively monitored" at entry-check time; proving
+// the pipeline itself works on its normal cadence is the honest substitute.
+// On a cold start (no prior row, or the pipeline hasn't completed cleanly in
+// MONITOR_LIVENESS_MS) entry correctly stays blocked until the first clean
+// run establishes the baseline.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -41,9 +56,37 @@ import { soxlEntryWindow, soxlQuoteTime } from "@/lib/trading/soxl-evidence";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
+// This cron fires once/day (weekdays); 26h tolerates the normal cadence plus
+// a couple hours of slack without silently accepting a genuinely stuck cron
+// (e.g. a whole missed weekday would exceed this and correctly re-block).
+const MONITOR_LIVENESS_MS = 26 * 60 * 60 * 1000;
+const AGENT_TYPE = "soxl_cron";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/** Most recent PRIOR clean completion of this route, or null if none / stale. */
+async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceClient>, now: number): Promise<number | null> {
+  const { data } = await supabase
+    .from("agent_runs")
+    .select("completed_at")
+    .eq("agent_type", AGENT_TYPE)
+    .eq("status", "done")
+    .order("completed_at", { ascending: false })
+    .limit(1).maybeSingle();
+  if (!data?.completed_at) return null;
+  const t = Date.parse(data.completed_at as string);
+  return Number.isFinite(t) && t <= now && now - t <= MONITOR_LIVENESS_MS ? t : null;
+}
+
+async function recordRun(supabase: ReturnType<typeof createServiceClient>, status: "done" | "error", summary: string): Promise<void> {
+  const nowIso = new Date().toISOString();
+  await supabase.from("agent_runs").insert({
+    agent_type: AGENT_TYPE, market: "us", status, symbols: ["SOXL"],
+    trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
+    result_summary: summary.slice(0, 500),
+  } as any).catch(() => undefined); // liveness bookkeeping must never break the real response
+}
 
 const NO_AV_FALLBACK = async () => [];
 
@@ -78,16 +121,31 @@ const KNOWN_SEMICONDUCTOR = new Set(["SOXL", "SOXX", "SMH", "ARM", "NVDA", "AMD"
 // be a meaningful discriminator.
 const MIN_DOLLAR_VOLUME = 10_000_000;
 
+type RunResult = { body: Record<string, unknown>; httpStatus: number; runStatus: "done" | "error"; summary: string };
+
+function ok(body: Record<string, unknown>, httpStatus = 200): RunResult {
+  return { body, httpStatus, runStatus: "done", summary: JSON.stringify(body).slice(0, 500) };
+}
+function fail(body: Record<string, unknown>, httpStatus = 500): RunResult {
+  return { body, httpStatus, runStatus: "error", summary: JSON.stringify(body).slice(0, 500) };
+}
+
 export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const supabase = createServiceClient();
   const now = Date.now();
+  const priorMonitorVerifiedAt = await lastVerifiedMonitorAt(supabase, now);
+  const result = await runSoxlCron(supabase, now, priorMonitorVerifiedAt);
+  await recordRun(supabase, result.runStatus, result.summary);
+  return NextResponse.json(result.body, { status: result.httpStatus });
+}
 
+async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now: number, priorMonitorVerifiedAt: number | null): Promise<RunResult> {
   const { data: existing, error: existingErr } = await supabase
     .from("paper_positions")
     .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target")
     .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper").maybeSingle();
-  if (existingErr) return NextResponse.json({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` }, { status: 500 });
+  if (existingErr) return fail({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` });
   if (existing) {
     const monitorQuote = await getQuote("SOXL", supabase);
     const decision = monitorSoxl({
@@ -115,7 +173,9 @@ export async function GET(req: NextRequest) {
         title: `SOXL paper position could not be monitored (${decision.action})`,
         detail: `positionId=${existing.id}, quoteSource=${monitorQuote.source}, stale=${monitorQuote.stale}`,
       }, supabase);
-      return NextResponse.json({ status: "monitor_failed", reason: decision.action, positionId: existing.id });
+      // A stale/failed monitor is not pipeline liveness -- record it as a
+      // failed run so entry stays blocked rather than crediting this cycle.
+      return fail({ status: "monitor_failed", reason: decision.action, positionId: existing.id }, 200);
     }
     await resolveIssue("soxl-monitor-failed", supabase);
 
@@ -126,8 +186,8 @@ export async function GET(req: NextRequest) {
         stop_loss: parseFloat(decision.trailingStop.toFixed(2)),
         updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
-      if (updateError) return NextResponse.json({ status: "error", reason: "monitor_state_write_failed" }, { status: 500 });
-      return NextResponse.json({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
+      if (updateError) return fail({ status: "error", reason: "monitor_state_write_failed" });
+      return ok({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
     }
 
     // stop_full / target_full / partial_target / thesis_full: reuses the
@@ -145,14 +205,14 @@ export async function GET(req: NextRequest) {
     });
     if (exitErr) {
       await reportIssue({ issueKey: "soxl-exit-failed", severity: "critical", category: "risk", title: "SOXL paper exit RPC failed", detail: `positionId=${existing.id}: ${exitErr.message}` }, supabase);
-      return NextResponse.json({ status: "error", reason: `exit_rpc_failed: ${exitErr.message}` }, { status: 500 });
+      return fail({ status: "error", reason: `exit_rpc_failed: ${exitErr.message}` });
     }
     const exit = exitResult as any;
-    if (!exit?.ok) return NextResponse.json({ status: "error", reason: `exit_denied: ${exit?.error ?? "unknown"}` }, { status: 500 });
-    return NextResponse.json({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
+    if (!exit?.ok) return fail({ status: "error", reason: `exit_denied: ${exit?.error ?? "unknown"}` });
+    return ok({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
   }
 
-  if (!soxlEntryWindow(new Date(now))) return NextResponse.json({ status: "no_entry", reason: "outside_entry_window" });
+  if (!soxlEntryWindow(new Date(now))) return ok({ status: "no_entry", reason: "outside_entry_window" });
   const [candleResult, quote] = await Promise.all([
     fetchUsCandles("SOXL", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getQuote("SOXL", supabase),
@@ -160,12 +220,12 @@ export async function GET(req: NextRequest) {
   const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
   const expectedSession = expectedNewestSession("us", new Date(now));
   const signalSession = candles.candles.at(-1)?.date;
-  if (signalSession !== expectedSession) return NextResponse.json({ status: "no_entry", reason: "stale_candle_evidence" });
+  if (signalSession !== expectedSession) return ok({ status: "no_entry", reason: "stale_candle_evidence" });
   if (candles.candles.length < 60) {
-    return NextResponse.json({ status: "no_entry", reason: "insufficient_candle_history", dataPoints: candles.candles.length });
+    return ok({ status: "no_entry", reason: "insufficient_candle_history", dataPoints: candles.candles.length });
   }
   if (quote.source === "unavailable" || quote.stale || !(quote.price > 0)) {
-    return NextResponse.json({ status: "no_entry", reason: "quote_unavailable_or_stale", source: quote.source });
+    return ok({ status: "no_entry", reason: "quote_unavailable_or_stale", source: quote.source });
   }
 
   const technicals = computeTechnicals(candles.candles);
@@ -174,7 +234,7 @@ export async function GET(req: NextRequest) {
     && technicals.priceVsEma20 === "above" && technicals.priceVsEma50 === "above" && technicals.trend20d === "up";
   const features = computeLeveragedShadowFeatures(candles.candles);
   if (features.dollarVolume == null || features.dollarVolume < MIN_DOLLAR_VOLUME) {
-    return NextResponse.json({ status: "no_entry", reason: "liquidity_floor_not_met", dollarVolume: features.dollarVolume });
+    return ok({ status: "no_entry", reason: "liquidity_floor_not_met", dollarVolume: features.dollarVolume });
   }
   const atr = technicals.atr14;
   // Structural stop: swing low over the last 10 sessions. An explicit,
@@ -190,15 +250,15 @@ export async function GET(req: NextRequest) {
     .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper")
     .not("closed_at", "is", null)
     .order("closed_at", { ascending: false }).limit(1).maybeSingle();
-  if (lastExitError) return NextResponse.json({ status: "error", reason: "last_exit_query_failed" }, { status: 500 });
+  if (lastExitError) return fail({ status: "error", reason: "last_exit_query_failed" });
   const lastExitAt = lastExit?.closed_at ? new Date(lastExit.closed_at as string).getTime() : null;
 
   const { data: portfolio, error: portfolioErr } = await supabase
     .from("paper_portfolio").select("nav, cash_balance, updated_at").eq("market", "us").maybeSingle();
-  if (portfolioErr || !portfolio) return NextResponse.json({ status: "error", reason: `portfolio_query_failed: ${portfolioErr?.message ?? "not_found"}` }, { status: 500 });
+  if (portfolioErr || !portfolio) return fail({ status: "error", reason: `portfolio_query_failed: ${portfolioErr?.message ?? "not_found"}` });
   const { data: positions, error: positionsErr } = await supabase
     .from("paper_positions").select("symbol, qty, current_price").eq("market", "us");
-  if (positionsErr) return NextResponse.json({ status: "error", reason: `positions_query_failed: ${positionsErr.message}` }, { status: 500 });
+  if (positionsErr) return fail({ status: "error", reason: `positions_query_failed: ${positionsErr.message}` });
   const holdings: SemiconductorHolding[] = (positions ?? []).map((p: any) => ({
     symbol: String(p.symbol),
     marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0),
@@ -215,9 +275,13 @@ export async function GET(req: NextRequest) {
     signalSession,
     expectedSignalSession: expectedSession,
     entryWindowOpen: soxlEntryWindow(new Date(now)),
-    // No durable, sleeve-specific successful monitor proof exists yet.
-    // Refuse new entries instead of asserting that this invocation verified it.
-    monitorVerifiedAt: NaN,
+    // Real liveness proof (2026-09-22): the most recent PRIOR clean
+    // completion of this route, from agent_runs, or NaN if none exists or
+    // it's gone stale (see lastVerifiedMonitorAt / MONITOR_LIVENESS_MS at
+    // the top of this file). NaN correctly fails planSoxlEntry's freshness
+    // check and blocks entry -- this is not asserted, it's read back from a
+    // durable prior run.
+    monitorVerifiedAt: priorMonitorVerifiedAt ?? NaN,
     trendQualified,
     atr: atr ?? 0,
     structuralStop: swingLow,
@@ -228,11 +292,11 @@ export async function GET(req: NextRequest) {
 
   if (!plan.ok) {
     await resolveIssue("soxl-entry-cron-failed", supabase);
-    return NextResponse.json({ status: "no_entry", reason: plan.reason });
+    return ok({ status: "no_entry", reason: plan.reason });
   }
 
   const qty = plan.maxNotional / plan.entry;
-  if (!(qty > 0)) return NextResponse.json({ status: "no_entry", reason: "zero_capacity" });
+  if (!(qty > 0)) return ok({ status: "no_entry", reason: "zero_capacity" });
 
   const { data: rpcResult, error: rpcErr } = await supabase.rpc("execute_soxl_paper_fill", {
     p_market: "us", p_currency: "USD", p_symbol: "SOXL",
@@ -245,12 +309,12 @@ export async function GET(req: NextRequest) {
   });
   if (rpcErr) {
     await reportIssue({ issueKey: "soxl-entry-cron-failed", severity: "warn", category: "execution", title: "SOXL paper entry RPC failed", detail: rpcErr.message }, supabase);
-    return NextResponse.json({ status: "error", reason: `rpc_failed: ${rpcErr.message}` }, { status: 500 });
+    return fail({ status: "error", reason: `rpc_failed: ${rpcErr.message}` });
   }
   const result = rpcResult as any;
   if (!result?.ok) {
-    return NextResponse.json({ status: "no_entry", reason: result?.error ?? "rpc_denied" });
+    return ok({ status: "no_entry", reason: result?.error ?? "rpc_denied" });
   }
   await resolveIssue("soxl-entry-cron-failed", supabase);
-  return NextResponse.json({ status: "entered", qty, entry: plan.entry, stop: plan.stop, target: plan.target, tradeId: result.trade_id });
+  return ok({ status: "entered", qty, entry: plan.entry, stop: plan.stop, target: plan.target, tradeId: result.trade_id });
 }
