@@ -72,6 +72,38 @@
       "schedule": "20 21 * 12,1,2 1-5"
     },
     {
+      "path": "/api/agents/sqqq/cron",
+      "schedule": "40 15 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/sqqq/cron",
+      "schedule": "40 16 * 12,1,2 1-5"
+    },
+    {
+      "path": "/api/agents/sqqq/cron",
+      "schedule": "25 20 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/sqqq/cron",
+      "schedule": "25 21 * 12,1,2 1-5"
+    },
+    {
+      "path": "/api/agents/soxs/cron",
+      "schedule": "0 16 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/soxs/cron",
+      "schedule": "0 17 * 12,1,2 1-5"
+    },
+    {
+      "path": "/api/agents/soxs/cron",
+      "schedule": "30 20 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/soxs/cron",
+      "schedule": "30 21 * 12,1,2 1-5"
+    },
+    {
       "path": "/api/agents/global-spillover/collect",
       "schedule": "0 11 * * 1-5"
     },

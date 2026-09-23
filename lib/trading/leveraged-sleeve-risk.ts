@@ -1,10 +1,13 @@
-/** Shared SOXL+TQQQ leveraged-sleeve NAV ceiling. Owner rule (2026-09-23):
- * "leveraged in total cannot be more than 5% of entire portfolio ever" —
- * combined, not 5% per instrument. Orthogonal to semiconductor-risk.ts's
- * SOXL-specific 25%-of-NAV sector concentration cap, which is unchanged.
+/** Shared SOXL+TQQQ+SQQQ+SOXS leveraged-sleeve NAV ceiling. Owner rule
+ * (2026-09-23): "leveraged in total cannot be more than 5% of entire
+ * portfolio ever" — combined across all four, not 5% per instrument.
+ * Orthogonal to semiconductor-risk.ts's SOXL-specific 25%-of-NAV sector
+ * concentration cap, which is unchanged. Widened 2026-09-23 to include
+ * SQQQ/SOXS once the owner approved their paper (and, later, live) doors —
+ * same combined ceiling, no separate inverse-only allowance.
  */
 export const LEVERAGED_SLEEVE_MAX_NAV_FRACTION = 0.05;
-export const LEVERAGED_SLEEVE_SYMBOLS = new Set(["SOXL", "TQQQ"]);
+export const LEVERAGED_SLEEVE_SYMBOLS = new Set(["SOXL", "TQQQ", "SQQQ", "SOXS"]);
 
 export interface LeveragedSleevePosition {
   symbol: string;

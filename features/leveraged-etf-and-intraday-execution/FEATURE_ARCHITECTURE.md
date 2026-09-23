@@ -21,7 +21,8 @@ being stated plainly rather than absorbed silently:
 
 ### What "enable now" actually requires — read before approving
 
-A live survey of this codebase (2026-09-23) found:
+A live survey of this codebase (2026-09-23) found — **and this section was
+corrected the same day** after finding code the first pass missed:
 
 - **No live order has ever been placed autonomously for anything in this
   app.** `AutonomousLive`'s 9-gate kernel and Kelly sizing are built and
@@ -29,26 +30,40 @@ A live survey of this codebase (2026-09-23) found:
   in production — it has never fired. The only live order this system has
   ever sent was one **manual, human-clicked** Robinhood order on 2026-07-07
   (`features/live-trading-hardening/FEATURE_ARCHITECTURE.md`).
-- **No broker-native protective stop exists anywhere in this codebase.**
-  `lib/brokers/robinhood/rest-client.ts` exposes exactly one order function,
-  `rhPlaceMarketOrder` — no stop, no stop-limit, no bracket/OCO. Every
-  protective exit in this app today (paper AND the live-shadow
-  `LiveExitMonitor`) is an app-side cron polling a price and deciding to
-  sell later. That is adequate for paper (nothing real is at risk). It is
-  not adequate for live 3x leveraged capital: a gap or an outage between
-  cron runs has no broker-side floor under it. `features/live-trading-
-  hardening/FEATURE_ARCHITECTURE.md`'s own P5 ("broker-side protective
-  stops — the real live-risk fix") already flagged this and is still
-  unbuilt.
-- So: **leveraged/inverse instruments would be the very first thing this
-  app ever trades autonomously with real money, using a protective
-  mechanism (broker-native stops) that doesn't exist yet, on instruments
-  (SQQQ/SOXS) that have zero paper track record.** That is the honest
-  starting position. This proposal builds the missing pieces rather than
-  arguing the order again — the owner has ruled — but the risk stated above
-  is real and doesn't go away by proceeding; it goes away by building the
-  protective-stop mechanism BEFORE any live order, which is non-negotiable
-  in this proposal regardless of urgency.
+- **CORRECTED: a broker-native protective stop already exists, built and
+  gated off — this proposal's first draft wrongly said none did.**
+  `lib/protective/placement-worker.ts`'s `placeProtectiveStop()` calls
+  `placeRobinhoodGtcStop()` (`lib/robinhood-mcp.ts`), which places a real
+  GTC stop-market order at Robinhood via the vault-stored, auto-refreshing
+  OAuth token the same MCP path already uses for the one live order this
+  system has sent — no live interactive session required, contrary to the
+  first draft's claim. It's backed by a declared broker capability matrix
+  (`lib/protective/robinhood-capabilities.ts`: RH GTC stop-market, regular
+  session only, cancel-replace to update, no documented lifetime cap),
+  full reconcile/cancel logic, idempotent placement via correlation IDs,
+  and an event log (`protective_orders`/`protective_order_events`). It is
+  currently inert behind two false-by-default gates: the source-level
+  constant `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` in
+  `lib/protective/coverage.ts`, and `strategy_config.protective_orders_enabled`.
+  See `features/hybrid-stop/FEATURE_ARCHITECTURE.md` for its own approval
+  history — its header still reads "deliberately unimplemented," which is
+  now stale relative to the code; `placement-worker.ts` is the P2 placement
+  work that doc's own "Build Order After Approval" step 5 describes, already
+  written.
+- **This changes the shape of the work, not the safety bar.** Equity
+  leverage (SOXL/TQQQ/SQQQ/SOXS) does not need a new stop-placement
+  mechanism built — it needs the EXISTING worker reused (part 3, rewritten)
+  and its two flags flipped, scoped to the leveraged sleeve. Crypto is
+  unaffected by this correction: Robinhood's declared capability matrix has
+  no crypto entry at all, so crypto's stop-order question (part 8) is
+  exactly as open as the first draft said.
+- Every other fact from the first draft stands: no live order has ever
+  fired autonomously for anything in this app, so leveraged/inverse
+  instruments would still be the first live-fire of the whole autonomous
+  path, on instruments (SQQQ/SOXS) with zero paper track record. That risk
+  doesn't disappear because the stop mechanism turns out to already exist
+  — it just means the remaining work is wiring and testing an existing,
+  reviewed component instead of building and reviewing a new one.
 
 ### 1. Reuse existing live machinery — do not build a parallel stack
 
@@ -62,8 +77,10 @@ Everything below already exists, dormant, and is reused unchanged:
 | Shared exit decision core | `lib/trading/exit-ladder.ts` (`decideExitLadder`) | Same function paper SOXL/TQQQ already use — live cannot diverge from paper's protective logic by construction |
 | Order/account infra | `broker_orders` table, `605420660` allowlist (`broker_accounts`, migration 093) | Unchanged; the leveraged sleeve places orders through the SAME allowlisted account, no new account |
 | Deployment + DB dual gate | `AUTONOMOUS_LIVE_ENABLED` (env) AND `strategy_config.live_auto_enabled` (DB) | Both still required; a THIRD gate is added below, specific to the leveraged sleeve |
+| **Broker-native protective stop** | `lib/protective/placement-worker.ts` (`placeProtectiveStop`/`cancelProtectiveStop`), `lib/robinhood-mcp.ts` (`placeRobinhoodGtcStop`) | Reused unchanged (part 3) — a real, already-built GTC stop-market placement, not new code |
 
-No new broker adapter, no new account, no new order table.
+No new broker adapter, no new account, no new order table, and — corrected
+from this proposal's first draft — **no new stop-placement mechanism**.
 
 ### 2. The narrow symbol-policy carve-out
 
@@ -88,37 +105,66 @@ sleeve live route (part 3) and its paper-door siblings (part 5) pass
 `leveragedSleeveCaller: true`. This is the entire scope of the symbol-policy
 change — four named symbols, one named caller class, nothing else moves.
 
-### 3. Broker-native protective stop (build first, gates everything else)
+### 3. Broker-native protective stop — REUSE the existing worker, don't build a new one
 
-New `rhPlaceStopOrder` in `lib/brokers/robinhood/rest-client.ts`, mirroring
-`rhPlaceMarketOrder`'s existing shape but submitting a stop-loss order
-(Robinhood's orders API accepts `trigger: "stop"`, `stop_price`, `type:
-"market"` for a stop-market, or `type: "limit"` + `price` for a stop-limit —
-stop-market is the right default here: certainty of exit matters more than
-price precision for a protective floor).
+**Corrected from this proposal's first draft.** `lib/protective/placement-
+worker.ts`'s `placeProtectiveStop()` already does everything part 3
+originally proposed building: places a real Robinhood GTC stop-market after
+a confirmed fill, records it in `protective_orders`, and `cancelProtective
+Stop()` cancels it before an explicit SELL. No new order-placement code is
+needed for equities.
 
-Sequencing for every live leveraged fill:
-1. Submit the entry as a market order (existing `rhPlaceMarketOrder`,
-   unchanged).
-2. On confirmed fill (poll `getOrder` until `filled`, bounded retries),
-   IMMEDIATELY submit the protective stop order via `rhPlaceStopOrder`.
-3. Poll the stop order's own status until it is confirmed `queued`/`open` at
-   the broker (not just "request accepted" — actually resting).
-4. If step 2 or 3 fails, or times out, **do not leave the position naked**:
-   immediately submit a market SELL to flatten the just-opened position, log
-   a critical `agent_alerts` row, and stop. A failed protective stop is
-   treated as a failed entry, not a "we'll retry the stop later" — every
-   other protective mechanism in this codebase (SOXL/TQQQ paper, the
+Sequencing for every live leveraged fill, using the EXISTING worker:
+1. Submit the entry as a market order through the existing Execution
+   Gateway/`605420660` path (unchanged).
+2. On confirmed fill, call `placeProtectiveStop()` with the fill qty/price
+   and `market: "us"`. It internally evaluates broker eligibility via
+   `evaluateProtection()` against `ROBINHOOD_PROTECTIVE_CAPABILITIES`,
+   computes the stop price, inserts a `protective_orders` row
+   (`status: "placing"`), places the real GTC stop-market, and marks it
+   `active` on confirmation — or `failed` if the broker rejects it.
+3. If `placeProtectiveStop()` returns `ok: false` (not `skipped` — a
+   `skipped: true` means the flags are still off, which should never
+   happen once this door is live-enabled, and is itself worth alerting on
+   if seen), **do not leave the position naked**: immediately submit a
+   market SELL to flatten the just-opened position, log a critical
+   `agent_alerts` row, and stop. A failed protective stop is treated as a
+   failed entry, not a "we'll retry the stop later" — every other
+   protective mechanism in this codebase (SOXL/TQQQ paper, the
    semiconductor/sleeve caps) fails closed the same way.
-5. Every subsequent live-exit-monitor cycle (part 6) reconciles: does the
-   broker still show an open, resting stop order for this position? If not
-   (cancelled externally, filled, broker-side error), the SAME fail-closed
-   flatten in step 4 fires rather than leaving a silently-unprotected
-   position running until the next scheduled check.
+4. Every subsequent live-exit-monitor cycle (part 6) reconciles against
+   `protective_orders.status`: if it's not `active` (cancelled externally,
+   filled, broker-side error, or stuck in `needs_reconcile` from a failed
+   cancel), the SAME fail-closed flatten in step 3 fires rather than
+   leaving a silently-unprotected position running until the next
+   scheduled check. `cancelProtectiveStop()` is called before any explicit
+   SELL from the exit ladder, to avoid a double-sell race against the
+   resting broker stop.
 
-This is new work, not a config flip — reconciliation-grade broker
-protection does not exist today for anything in this app, and building it
-correctly is the actual prerequisite "enable now" requires.
+**Two flags to flip, scoped narrowly:**
+- `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (source constant in
+  `lib/protective/coverage.ts`) is currently a blanket `false` gating this
+  worker for ALL live positions, not just the leveraged sleeve — flipping
+  it to `true` is a real, session-wide change in blast radius, not a
+  leveraged-sleeve-scoped one, since core-equity `AutonomousLive`'s own P1
+  interlock (`features/hybrid-stop/FEATURE_ARCHITECTURE.md`) reads the same
+  constant. This is safe today ONLY because `AUTONOMOUS_LIVE_ENABLED`
+  (core equity) is independently still `false` — but it means flipping this
+  constant is itself a decision with scope beyond this proposal, worth the
+  owner's explicit attention, not a rubber-stamp inside the leveraged-sleeve
+  approval. Recommend: keep the constant `true` permanently once flipped
+  (it's source-level, not a live toggle) and rely on `strategy_config.
+  protective_orders_enabled` (DB) plus the leveraged-sleeve's own 10th gate
+  (part 6) as the actual live controls.
+- `strategy_config.protective_orders_enabled` (DB) is the operational
+  on/off switch — flip this when ready to test, unflip to kill protective
+  placement instantly without a redeploy.
+
+**What's genuinely still missing, not a correction of the above:** the
+entry-fill sequence (step 1-2) that CALLS `placeProtectiveStop()` after a
+leveraged-sleeve fill doesn't exist yet — that's real new code (part 6),
+just orchestration around an existing primitive, not a new broker
+integration.
 
 ### 4. Lease size — fixed, small, NOT Kelly-sized, NOT the paper 5%
 
@@ -232,15 +278,17 @@ materially emptier position than the equity leveraged sleeve did:
   (`lib/brokers/crypto-capability.ts`, `place_crypto_order` /
   `preview_crypto_order` / `cancel_crypto_order`) is capability-DETECTION
   only (does the connected account's MCP session currently advertise these
-  tools) — it has never been called to submit a real order, and per this
-  session's earlier research, that MCP path needs a live human-authenticated
-  session that a serverless cron cannot hold, the same constraint that
-  forced the equities REST-adapter build in the first place. A crypto
-  equivalent of that REST adapter does not exist and would need to be built
-  from whatever Robinhood exposes outside the MCP surface (needs
-  verification — Robinhood's public crypto trading API access is not
-  confirmed available to this account/integration; this is a real open
-  question, not a formality).
+  tools) — it has never been called to submit a real order. **Correction**
+  (found while fixing part 3's stop-mechanism error): the MCP path does NOT
+  actually need a live interactive session — `placeRobinhoodGtcStop` in
+  `lib/robinhood-mcp.ts` already places real equity stop orders serverless,
+  via a vault-stored, auto-refreshing OAuth token (`getValidAccessToken`),
+  the exact same mechanism this system's one real live order used. So a
+  `place_crypto_order` call COULD run from a cron the same way — the actual
+  gap is narrower than first stated: nothing has ever CALLED
+  `place_crypto_order` for real, and its accepted parameters (does it take
+  a stop type at all) are unverified, but the serverless-session objection
+  from the first draft was wrong and is retracted.
 - **Whether Robinhood crypto orders even support a stop order type is
   UNVERIFIED.** Nothing in this codebase currently records the accepted
   parameters of `place_crypto_order` (order type enum, whether `stop_price`
