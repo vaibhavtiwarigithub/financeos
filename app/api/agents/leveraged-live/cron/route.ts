@@ -78,6 +78,30 @@ const SYMBOLS: Array<{
 
 function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+/** Record every leveraged-live fill in broker_orders. REQUIRED for
+ * correctness, not just audit: Manual Trade Guardian
+ * (app/api/agents/manual-fill-detect/cron/route.ts) diffs live Robinhood
+ * holdings in this SAME account (605420660) against broker_orders to tell
+ * an agentic fill from a manual one. Without this row, every leveraged-live
+ * BUY would be misclassified as a manual trade and trigger a false
+ * "manual buy detected" alert plus a redundant suggested stop (this cron
+ * already places a real broker-native one). learning_scope='risk_policy_only'
+ * (not 'full') so these fills are visible to risk/guardian tooling but
+ * never feed core-equity LearnerAgent promotion — matches the L4 proposal's
+ * non-goal that leveraged-sleeve outcomes must not touch core-equity learning. */
+async function recordBrokerOrder(
+  supabase: ReturnType<typeof createServiceClient>,
+  input: { symbol: string; side: "buy" | "sell"; brokerAccountId: string; brokerOrderId: string; qty: number; avgFillPrice: number | null },
+) {
+  await supabase.from("broker_orders").insert({
+    market: "us", broker: "robinhood", broker_env: "live", broker_account_id: input.brokerAccountId,
+    symbol: input.symbol, side: input.side, qty: input.qty, order_type: "market",
+    status: "filled", broker_order_id: input.brokerOrderId, submitted_at: new Date().toISOString(),
+    filled_qty: input.qty, avg_fill_price: input.avgFillPrice, approved_by_user: false,
+    learning_scope: "risk_policy_only",
+  } as any).catch(() => undefined); // best-effort: a logging failure must not undo a real fill
+}
+
 async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceClient>, now: number): Promise<number | null> {
   const { data } = await supabase.from("agent_runs")
     .select("completed_at").eq("agent_type", AGENT_TYPE).eq("status", "done")
@@ -99,8 +123,11 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 /** Flatten a just-opened position when the protective stop could not be
  * confirmed. Treated as a failed entry, not a "retry the stop later" — see
  * FEATURE_ARCHITECTURE.md L4 part 3, step 3. */
-async function flattenAndAlert(symbol: string, qty: number, reason: string, supabase: ReturnType<typeof createServiceClient>) {
+async function flattenAndAlert(symbol: string, qty: number, reason: string, brokerAccountId: string, supabase: ReturnType<typeof createServiceClient>) {
   const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty, type: "market", env: "live" });
+  if (sell.ok && sell.brokerOrderId) {
+    await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId, brokerOrderId: sell.brokerOrderId, qty, avgFillPrice: null });
+  }
   await reportIssue({
     issueKey: `leveraged-live-naked-entry:${symbol}`, severity: "critical", category: "risk",
     title: `LIVE ${symbol} entry flattened — protective stop could not be confirmed`,
@@ -196,6 +223,7 @@ async function runSymbol(
       }, supabase);
       return { status: "error", reason: `exit_submit_failed: ${sell.error}` };
     }
+    await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId: existing.broker_account_id, brokerOrderId: sell.brokerOrderId!, qty: exitQty, avgFillPrice: fillPrice });
     if (decision.action === "partial_target") {
       await supabase.from("leveraged_live_positions").update({
         qty: Number(existing.qty) - exitQty, stop_loss: decision.runnerStop, updated_at: new Date().toISOString(),
@@ -314,6 +342,7 @@ async function runSymbol(
       title: `LIVE ${symbol} BUY fill could not be confirmed`, detail: `brokerOrderId=${buy.brokerOrderId} — MANUAL RECONCILIATION REQUIRED` }, supabase);
     return { status: "error", reason: "fill_unconfirmed_manual_reconcile_required", brokerOrderId: buy.brokerOrderId };
   }
+  await recordBrokerOrder(supabase, { symbol, side: "buy", brokerAccountId, brokerOrderId: buy.brokerOrderId, qty: filledQty, avgFillPrice });
 
   // ── Place broker-native protective stop — REQUIRED, fail-closed flatten ──
   const stop = await placeProtectiveStop({
@@ -321,7 +350,7 @@ async function runSymbol(
     qty: filledQty, entryPrice: avgFillPrice, proposalId: null, proposalBrokerOrderId: buy.brokerOrderId,
   });
   if (!stop.ok) {
-    await flattenAndAlert(symbol, filledQty, stop.reason, supabase);
+    await flattenAndAlert(symbol, filledQty, stop.reason, brokerAccountId, supabase);
     return { status: "flattened_no_protective_stop", reason: stop.reason, entryBrokerOrderId: buy.brokerOrderId };
   }
 

@@ -10,6 +10,7 @@ import type { Market } from "@/lib/edges/types";
 import { edgeHealthKey, inputFingerprint, provenanceMode, universeFingerprint } from "@/lib/edges/evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { rotatingLiquidOffset } from "@/lib/research/relative-strength-discovery";
+import { isLeveragedInverseEtf } from "@/lib/trading/symbol-policy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -50,7 +51,9 @@ async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode:
   // Broad curated liquid universe (static, NON-PIT, survivorship-biased — labeled).
   // Paged by offset so it can be processed in bounded, cached slices across runs.
   if (mode === "liquid") {
-    const all = liquidUniverse(market);
+    // Filtered even though the static list has none hardcoded today (belt +
+    // suspenders — see the watchlist-mode filter below for why this matters).
+    const all = liquidUniverse(market).filter(s => market !== "us" || !isLeveragedInverseEtf(s));
     return { symbols: all.slice(offset, offset + maxSymbols), source: `liquid_static[${offset}:${offset + maxSymbols}]` };
   }
   // A FAILED universe query is not an empty universe.
@@ -70,7 +73,17 @@ async function buildUniverse(svc: any, market: Market, maxSymbols: number, mode:
         svc.from("watchlist").select("symbol")
           .or(`expires_at.is.null,expires_at.gt.${nowIso}`).limit(maxSymbols * 3));
       if (error) return { symbols: [], source: `error:${error.message}`, failed: true };
-      const syms = [...new Set((data ?? []).map((r: any) => String(r.symbol ?? "").toUpperCase().trim()).filter(Boolean))].slice(0, maxSymbols);
+      // The watchlist mixes ordinary equities with the SOXL/TQQQ/SQQQ/SOXS
+      // leveraged-sleeve dedicated doors (which live on the watchlist for
+      // display, not because they're eligible for this generic candidate
+      // path). A 3x daily-reset instrument's momentum/trend is mechanically
+      // amplified by the leverage reset, not real alpha-momentum -- mixing
+      // it into cross-sectional edge/IC testing alongside ordinary stocks
+      // isn't a fair comparison. Confirmed in production 2026-09-23: SOXL
+      // had been silently included in edge_universe_members this way.
+      const syms = [...new Set((data ?? []).map((r: any) => String(r.symbol ?? "").toUpperCase().trim()).filter(Boolean))]
+        .filter(s => !isLeveragedInverseEtf(s))
+        .slice(0, maxSymbols);
       return { symbols: syms as string[], source: "watchlist" };
     }
     const { data, error } = await withSupabaseRetry<{ data: any[] | null; error: { message: string } | null }>(() =>
