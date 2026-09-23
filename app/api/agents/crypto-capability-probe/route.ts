@@ -31,6 +31,13 @@ export async function POST(req: NextRequest) {
           summary: {
             tool_count: inspected.snapshot.toolCount,
             schema_fingerprint: inspected.snapshot.schemaFingerprint,
+            // Narrow derived fact, not the raw schema (see robinhood-mcp.ts's
+            // own "persist hashes, not untrusted schemas" rule) — answers
+            // whether place_crypto_order advertises a stop/trigger order
+            // type, the open question blocking crypto live trading (L4
+            // proposal part 8). null = tool not found or schema unreadable;
+            // [] = tool found, no order-type/trigger enum recognized.
+            place_crypto_order_advertised_types: inspected.snapshot.placeCryptoOrderAdvertisedTypes,
             ...capability,
             // Explicitly prevent the UI/consumer from mistaking tool discovery
             // for account/pair/quote validation.

@@ -424,7 +424,34 @@ export type RobinhoodMcpCapabilitySnapshot = {
   toolCount: number;
   toolNames: string[];
   schemaFingerprint: string;
+  /** Narrow, derived fact (2026-09-23): does place_crypto_order's declared
+   * schema advertise a stop/trigger order type? Extracted, never the raw
+   * schema itself — this file's own rule is "persist hashes rather than
+   * untrusted tool descriptions/schemas." Null when the tool isn't listed
+   * or its schema can't be read; [] when listed but no order-type/trigger
+   * enum was found (implies market/limit-only, but is not proof either way
+   * -- a missing enum could mean a free-text field this probe doesn't
+   * recognize). See features/leveraged-etf-and-intraday-execution/
+   * FEATURE_ARCHITECTURE.md L4 part 8 -- this answers that open question. */
+  placeCryptoOrderAdvertisedTypes: string[] | null;
 };
+
+/** Pull enum-like string values out of a declared order-type/trigger field,
+ * without ever returning or persisting the schema object itself. */
+function extractOrderTypeEnum(inputSchema: unknown): string[] | null {
+  if (!inputSchema || typeof inputSchema !== "object") return null;
+  const props = (inputSchema as any).properties;
+  if (!props || typeof props !== "object") return null;
+  const candidateKeys = ["type", "order_type", "orderType", "trigger", "execution", "time_in_force_type"];
+  for (const key of candidateKeys) {
+    const field = props[key];
+    const enumValues = field?.enum;
+    if (Array.isArray(enumValues) && enumValues.every((v: unknown) => typeof v === "string")) {
+      return enumValues as string[];
+    }
+  }
+  return [];
+}
 
 export const ROBINHOOD_RESEARCH_READ_TOOLS = [
   "get_earnings_calendar",
@@ -453,10 +480,12 @@ export function fingerprintRobinhoodMcpTools(tools: unknown[]): RobinhoodMcpCapa
   }
   normalized.sort((a, b) => a.name.localeCompare(b.name));
   const stable = JSON.stringify(normalized);
+  const placeCryptoOrder = normalized.find((t) => t.name === "place_crypto_order");
   return {
     toolCount: normalized.length,
     toolNames: normalized.map((tool) => tool.name),
     schemaFingerprint: createHash("sha256").update(stable).digest("hex"),
+    placeCryptoOrderAdvertisedTypes: placeCryptoOrder ? extractOrderTypeEnum(placeCryptoOrder.inputSchema) : null,
   };
 }
 
