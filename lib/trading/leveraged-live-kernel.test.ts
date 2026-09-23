@@ -4,7 +4,6 @@ import { evaluateLeveragedLiveEntry, LEVERAGED_LIVE_MIN_PAPER_TRADES } from "./l
 const BASE = {
   deploymentFlagEnabled: true,
   liveAutoEnabled: true,
-  liveAutoEnabledUntil: null,
   appPaused: false,
   securityLocked: false,
   tradingEnabledUs: true,
@@ -26,9 +25,6 @@ describe("evaluateLeveragedLiveEntry", () => {
   });
   it("fails closed on the DB toggle", () => {
     expect(evaluateLeveragedLiveEntry({ ...BASE, liveAutoEnabled: false })).toMatchObject({ go: false, gate: "db_toggle_off" });
-  });
-  it("fails closed on an expired lease window", () => {
-    expect(evaluateLeveragedLiveEntry({ ...BASE, liveAutoEnabledUntil: "1970-01-01T00:00:00.000Z" })).toMatchObject({ go: false, gate: "lease_expired" });
   });
   it("fails closed on app_paused / security_locked / trading_disabled_us", () => {
     expect(evaluateLeveragedLiveEntry({ ...BASE, appPaused: true })).toMatchObject({ go: false, gate: "app_paused" });

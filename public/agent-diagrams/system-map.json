@@ -71,12 +71,12 @@
     },
     "L4LIVE": {
       "label": "L4 live trading (proposed)",
-      "description": "app/api/agents/leveraged-live/cron/route.ts. features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md's L4 section. Owner-approved 2026-09-23 for SOXL/TQQQ/SQQQ/SOXS (crypto still proposal-only — no live order path exists for it). CODE-COMPLETE as of 2026-09-23, same day as approval, but inert: FIVE independent conditions must all hold before any order fires (AUTONOMOUS_LIVE_ENABLED env, strategy_config.live_auto_enabled, strategy_config.protective_orders_enabled, PROTECTIVE_PLACEMENT_WORKER_AVAILABLE source constant, leveraged_sleeve_live_lease_usd > 0 — defaults to 0). Reuses lib/protective/placement-worker.ts's placeRobinhoodGtcStop for a real, already-built GTC stop-market at Robinhood — no new broker integration. A failed stop placement always flattens the just-filled position. New leveraged_live_positions table (one open row per symbol, isolated from paper and from core-equity AutonomousLive). A symbol also needs 10 closed paper trades (or an explicit logged override) before its live door fires. Crypto has no declared stop-order capability in Robinhood's capability matrix — crypto-live remains unbuilt.",
+      "description": "app/api/agents/leveraged-live/cron/route.ts. features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md's L4 section. Owner-approved 2026-09-23 for SOXL/TQQQ/SQQQ/SOXS (crypto still proposal-only — no live order path exists for it). CODE-COMPLETE as of 2026-09-23, same day as approval, but inert: FIVE independent conditions must all hold before any order fires (LEVERAGED_LIVE_ENABLED env, strategy_config.leveraged_live_auto_enabled, strategy_config.protective_orders_enabled, PROTECTIVE_PLACEMENT_WORKER_AVAILABLE source constant, leveraged_sleeve_live_lease_usd > 0 — owner-set to $50). The first two were DECOUPLED from core-equity AutonomousLive's own AUTONOMOUS_LIVE_ENABLED/live_auto_enabled after the owner flagged, at enable time, that reusing the shared flags would silently also enable core-equity live trading (a much larger, never-fired system) as a side effect. Controlled from Settings -> Leveraged Sleeve -- Live Trading (app/api/settings/leveraged-live/route.ts, components/dashboard/LeveragedLiveSettings.tsx), separate from the existing Autonomous Trading (core-equity) panel. Reuses lib/protective/placement-worker.ts's placeRobinhoodGtcStop for a real, already-built GTC stop-market at Robinhood — no new broker integration. A failed stop placement always flattens the just-filled position. New leveraged_live_positions table (one open row per symbol, isolated from paper and from core-equity AutonomousLive). A symbol also needs 10 closed paper trades (or an explicit logged override) before its live door fires. Crypto has no declared stop-order capability in Robinhood's capability matrix — crypto-live remains unbuilt.",
       "addedAt": "2026-09-23",
       "addReason": "Owner: 'Paper and live trading for th[ese] needs to be enabled... dont push back enable now', confirmed via structured choice for all four symbols plus crypto, approved after proposal review, then explicitly asked to continue building the live cron.",
       "status": "changed",
       "changedAt": "2026-09-23",
-      "changeReason": "Proposal implemented same day: leveraged-live cron, kernel gate, live sleeve headroom, and leveraged_live_positions table all written and deployed, still inert behind five independent false/zero defaults.",
+      "changeReason": "Implemented same day, then flags decoupled at enable time after the shared-flag collision with core-equity AutonomousLive was caught before execution; Settings UI panel added; lease set to $50.",
       "removedAt": null,
       "removeReason": null
     },
@@ -904,6 +904,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-09-23",
+      "event": "changed",
+      "nodeId": "L4LIVE",
+      "label": "Flags decoupled at enable time: new LEVERAGED_LIVE_ENABLED (env) + leveraged_live_auto_enabled (DB), separate from core-equity AutonomousLive's own flags -- caught before flipping both would have silently enabled core-equity live trading too. Settings UI panel added. Lease set to $50."
+    },
     {
       "date": "2026-09-23",
       "event": "changed",

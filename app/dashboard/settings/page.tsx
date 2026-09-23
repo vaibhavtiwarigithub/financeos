@@ -12,6 +12,7 @@ import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
 import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
 import DownsideHedgePanel from "@/components/dashboard/DownsideHedgePanel";
 import DataRoutingPanel from "@/components/dashboard/DataRoutingPanel";
+import LeveragedLiveSettings from "@/components/dashboard/LeveragedLiveSettings";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 
 // Config-driven MCP broker snapshot status shape (returned by
@@ -1809,6 +1810,8 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+
+          <LeveragedLiveSettings />
         </div>
       )}
 

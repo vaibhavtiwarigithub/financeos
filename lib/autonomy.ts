@@ -31,6 +31,18 @@ export const DEFAULT_AUTONOMY_LEVEL: AutonomyLevel = "L3_live_manual";
 // be true — neither alone is sufficient. LLMs and agents cannot change this env var.
 export const AUTONOMOUS_LIVE_ENABLED = process.env.AUTONOMOUS_LIVE_ENABLED === "true";
 
+// Deployment-level flag for the LEVERAGED SLEEVE's own live door
+// (SOXL/TQQQ/SQQQ/SOXS — app/api/agents/leveraged-live/cron/route.ts).
+// Deliberately SEPARATE from AUTONOMOUS_LIVE_ENABLED (2026-09-23): the
+// leveraged sleeve and core-equity AutonomousLive both originally checked
+// the same env var + the same strategy_config.live_auto_enabled DB toggle,
+// which meant enabling one silently enabled the other. Owner asked to
+// decouple them rather than flip both systems live at once. Set
+// LEVERAGED_LIVE_ENABLED=true in Vercel env, plus
+// strategy_config.leveraged_live_auto_enabled=true in DB, to unlock ONLY
+// the leveraged sleeve; core-equity AutonomousLive is untouched by this flag.
+export const LEVERAGED_LIVE_ENABLED = process.env.LEVERAGED_LIVE_ENABLED === "true";
+
 function rank(level: string): number {
   const i = (AUTONOMY_LEVELS as readonly string[]).indexOf(level);
   return i < 0 ? -1 : i;

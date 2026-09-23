@@ -1151,10 +1151,19 @@ that gate.
   2026-09-23 — but inert by construction, not by a single flag. One shared route loops all four
   symbols; the entry/monitor/exit sequence (`lib/trading/leveraged-live-kernel.ts`,
   `leveraged-live-entry.ts`, `leveraged-sleeve-risk-live.ts`) is gated by FIVE independent
-  conditions that must ALL hold: `AUTONOMOUS_LIVE_ENABLED` (env), `strategy_config.live_auto_enabled`
-  (DB), `strategy_config.protective_orders_enabled` (DB), `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE`
-  (source constant), and `strategy_config.leveraged_sleeve_live_lease_usd` (DB, defaults to 0 = zero
-  capacity). Reuses the EXISTING broker-native stop placement worker
+  conditions that must ALL hold: `LEVERAGED_LIVE_ENABLED` (env), `strategy_config.
+  leveraged_live_auto_enabled` (DB), `strategy_config.protective_orders_enabled` (DB),
+  `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` (source constant), and `strategy_config.
+  leveraged_sleeve_live_lease_usd` (DB, owner-set to $50 2026-09-23). The first two are
+  DELIBERATELY SEPARATE from core-equity `AutonomousLive`'s own `AUTONOMOUS_LIVE_ENABLED`/
+  `live_auto_enabled` — owner flagged at the moment of enabling this that reusing the shared
+  flags would silently also enable core-equity's live trading (a completely separate, much
+  larger, never-fired system) as a side effect; see `lib/autonomy.ts`'s `LEVERAGED_LIVE_ENABLED`
+  comment. Controlled from **Settings → Leveraged Sleeve — Live Trading**
+  (`app/api/settings/leveraged-live/route.ts`, `components/dashboard/LeveragedLiveSettings.tsx`),
+  its own panel separate from the existing "Autonomous Trading" (core-equity) panel — shows all
+  five gates' live status, the lease amount, and enable/disable with a typed confirmation, same
+  pattern as the core-equity panel. Reuses the EXISTING broker-native stop placement worker
   (`lib/protective/placement-worker.ts`, `placeRobinhoodGtcStop` in `lib/robinhood-mcp.ts` — see
   `features/hybrid-stop/FEATURE_ARCHITECTURE.md`), a real GTC stop-market placement at Robinhood
   already built with reconciliation and cancel/replace — no new broker integration was written. A

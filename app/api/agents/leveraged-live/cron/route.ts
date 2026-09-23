@@ -3,13 +3,17 @@
 // gate-then-fill-then-stop-then-reconcile sequence, so a per-symbol route
 // (the paper doors' own pattern) would just be four copies of this loop.
 //
-// SAFE BY DEFAULT, MULTIPLE INDEPENDENT WAYS: AUTONOMOUS_LIVE_ENABLED (env,
-// false unless set), strategy_config.live_auto_enabled (DB, false),
-// strategy_config.protective_orders_enabled (DB, false),
+// SAFE BY DEFAULT, MULTIPLE INDEPENDENT WAYS: LEVERAGED_LIVE_ENABLED (env,
+// false unless set — deliberately its OWN flag, separate from core-equity's
+// AUTONOMOUS_LIVE_ENABLED, see lib/autonomy.ts), strategy_config.
+// leveraged_live_auto_enabled (DB, false — also its own flag, separate from
+// live_auto_enabled), strategy_config.protective_orders_enabled (DB, false),
 // PROTECTIVE_PLACEMENT_WORKER_AVAILABLE (source constant, false),
 // strategy_config.leveraged_sleeve_live_lease_usd (DB, defaults to 0 = zero
 // capacity). ALL of these must be true/nonzero before this route can submit
-// a single real order — see lib/trading/leveraged-live-kernel.ts.
+// a single real order — see lib/trading/leveraged-live-kernel.ts. Controlled
+// from Settings → Leveraged Sleeve — Live Trading (app/api/settings/
+// leveraged-live/route.ts, components/dashboard/LeveragedLiveSettings.tsx).
 //
 // No live order is ever submitted without a CONFIRMED, broker-resting
 // protective stop (lib/protective/placement-worker.ts's placeProtectiveStop,
@@ -20,7 +24,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
+import { LEVERAGED_LIVE_ENABLED } from "@/lib/autonomy";
 import { PROTECTIVE_PLACEMENT_WORKER_AVAILABLE } from "@/lib/protective/coverage";
 import { placeProtectiveStop, cancelProtectiveStop } from "@/lib/protective/placement-worker";
 import { managedLivePositionId } from "@/lib/protective/coverage";
@@ -209,7 +213,7 @@ async function runSymbol(
   if (!cfg.entryWindow(new Date(now))) return { status: "no_entry", reason: "outside_entry_window" };
 
   const { data: sc, error: scErr } = await supabase.from("strategy_config")
-    .select("live_auto_enabled, live_auto_enabled_until, app_paused, security_locked, trading_enabled_us, protective_orders_enabled, leveraged_sleeve_live_lease_usd, active_account_us")
+    .select("leveraged_live_auto_enabled, app_paused, security_locked, trading_enabled_us, protective_orders_enabled, leveraged_sleeve_live_lease_usd, active_account_us")
     .limit(1).maybeSingle();
   if (scErr || !sc) return { status: "error", reason: `strategy_config_query_failed: ${scErr?.message ?? "not_found"}` };
 
@@ -223,9 +227,8 @@ async function runSymbol(
   if (alertErr) return { status: "error", reason: `alert_count_failed: ${alertErr.message}` };
 
   const gate = evaluateLeveragedLiveEntry({
-    deploymentFlagEnabled: AUTONOMOUS_LIVE_ENABLED,
-    liveAutoEnabled: (sc as any).live_auto_enabled === true,
-    liveAutoEnabledUntil: (sc as any).live_auto_enabled_until ?? null,
+    deploymentFlagEnabled: LEVERAGED_LIVE_ENABLED,
+    liveAutoEnabled: (sc as any).leveraged_live_auto_enabled === true,
     appPaused: (sc as any).app_paused === true,
     securityLocked: (sc as any).security_locked === true,
     tradingEnabledUs: (sc as any).trading_enabled_us !== false,

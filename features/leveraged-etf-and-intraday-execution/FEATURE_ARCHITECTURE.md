@@ -1,5 +1,48 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## L4 implemented, then flags decoupled at enable time — 2026-09-23 (same day as approval)
+
+The L4 section below was implemented same-day (see docs/arch/03-agents.md and
+05-crons-and-scheduling.md for the code inventory: `app/api/agents/
+leveraged-live/cron/route.ts`, `lib/trading/leveraged-live-kernel.ts` /
+`leveraged-live-entry.ts` / `leveraged-sleeve-risk-live.ts`,
+`leveraged_live_positions` table). At the moment the owner set the lease
+($250, then revised to **$50**) and asked to "flip the rest and enable it
+now," a real problem surfaced: the gate originally reused `AUTONOMOUS_LIVE_
+ENABLED` (env) and `strategy_config.live_auto_enabled` (DB) — the SAME two
+flags core-equity `AutonomousLive` uses. Flipping both, as literally asked,
+would have silently enabled autonomous live trading for the entire equity
+book too, not just this $50 leveraged sleeve — a completely separate,
+much larger, never-fired system. This was caught and raised before
+executing, not after.
+
+**Resolution — decouple, don't share:** new independent flags,
+`LEVERAGED_LIVE_ENABLED` (env, `lib/autonomy.ts`) and `strategy_config.
+leveraged_live_auto_enabled` (DB, migration `20260923030000`). Core-equity
+`AutonomousLive`'s own `AUTONOMOUS_LIVE_ENABLED`/`live_auto_enabled` are
+untouched — exactly as dormant as before this feature existed.
+`PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` remains a genuinely shared
+constant (it is the master kill switch for ANY broker-side stop placement
+in this codebase, not leveraged-sleeve-specific) — its blast radius is
+currently contained in practice because nothing else calls
+`placeProtectiveStop()` yet except this leveraged-live cron; flagged here,
+not hidden, in case that changes later.
+
+**Settings UI added** (`app/api/settings/leveraged-live/route.ts`,
+`components/dashboard/LeveragedLiveSettings.tsx`) so live status for the
+leveraged sleeve is visible and controllable in the same place as
+everything else — a separate panel from the existing "Autonomous Trading"
+(core-equity) panel, showing all five gates' current state, the lease
+amount (editable), the shared `protective_orders_enabled` toggle (labeled
+as shared), and enable/disable with a typed confirmation
+(`"ENABLE LEVERAGED LIVE"`), mirroring the core-equity panel's own pattern.
+
+**Current state (2026-09-23):** `leveraged_sleeve_live_lease_usd=50`,
+`leveraged_live_auto_enabled=false`, `protective_orders_enabled=false`,
+`LEVERAGED_LIVE_ENABLED` unset (false), `PROTECTIVE_PLACEMENT_WORKER_
+AVAILABLE=false`. Still fully inert — the lease alone does not enable
+anything; the owner has not yet flipped the remaining flags.
+
 ## L4: live trading for SOXL/TQQQ/SQQQ/SOXS + SQQQ/SOXS paper doors — proposal 2026-09-23 (AWAITING APPROVAL, NOT IMPLEMENTED)
 
 Owner (2026-09-23, same day as the TQQQ paper approval above): "Paper and live
