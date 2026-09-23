@@ -56,9 +56,14 @@ import { soxlEntryWindow, soxlQuoteTime } from "@/lib/trading/soxl-evidence";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
-// This cron fires once/day (weekdays); 26h tolerates the normal cadence plus
-// a couple hours of slack without silently accepting a genuinely stuck cron
-// (e.g. a whole missed weekday would exceed this and correctly re-block).
+// This cron fires twice/day (weekdays): ~11:05 ET (entry window + a mid-
+// session monitor check) and ~16:15 ET, right after the equity position-
+// monitor's own after-close slot, so an open SOXL position gets checked
+// against the FULL day's range (dayLow/dayHigh) at least once, not just the
+// partial range visible at 11:05am -- a 3x instrument that breaches its stop
+// mid-afternoon must not sit unprotected until the next morning's check.
+// 26h tolerates that twice-daily cadence plus real slack without silently
+// accepting a genuinely stuck cron (a whole missed weekday still re-blocks).
 const MONITOR_LIVENESS_MS = 26 * 60 * 60 * 1000;
 const AGENT_TYPE = "soxl_cron";
 
@@ -109,10 +114,11 @@ const SOXL_POLICY: SoxlPolicy = {
   semiconductorCapPct: 25,
 };
 
-// Curated set mirrors lib/trading/semiconductor-risk.ts's DIRECT list — a
-// known, incomplete static universe (see that module's own top comment).
-// Anything outside it is unknown, never assumed unrelated. Until portfolio
-// classification is wired, unknown positive holdings refuse additional risk.
+// Curated set mirrors lib/trading/semiconductor-risk.ts's DIRECT list, kept
+// as the first (fastest, always-true) check. Full-book classification below
+// (symbol_profiles.sector) is the real source now -- this set only short-
+// circuits it and covers the handful of tickers whose symbol_profiles row
+// might be missing or stale.
 const KNOWN_SEMICONDUCTOR = new Set(["SOXL", "SOXX", "SMH", "ARM", "NVDA", "AMD", "AVGO", "MU", "INTC", "QCOM", "TSM", "MRVL", "AMAT", "LRCX", "KLAC", "ASML", "ADI", "TXN", "MCHP", "ON", "MPWR"]);
 
 // Liquidity/vol floors, also experimental (spec 1.A: "timestamped ...
@@ -259,11 +265,27 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
   const { data: positions, error: positionsErr } = await supabase
     .from("paper_positions").select("symbol, qty, current_price").eq("market", "us");
   if (positionsErr) return fail({ status: "error", reason: `positions_query_failed: ${positionsErr.message}` });
-  const holdings: SemiconductorHolding[] = (positions ?? []).map((p: any) => ({
-    symbol: String(p.symbol),
-    marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0),
-    semiconductor: KNOWN_SEMICONDUCTOR.has(String(p.symbol).toUpperCase()) ? true : null,
-  }));
+  // Real per-symbol classification (2026-09-23), not just the curated
+  // semiconductor list: symbol_profiles.sector already covers the whole
+  // book (the same table app/api/agents/edge-ic/route.ts trusts). Verified
+  // against production -- it correctly has sector='Semiconductors' for SKHY,
+  // a real semiconductor holding KNOWN_SEMICONDUCTOR's static list was
+  // missing entirely. A symbol with a real, non-'N/A' sector that ISN'T
+  // Semiconductors is confidently false (known non-semiconductor exposure);
+  // only a symbol with no row here AND not in KNOWN_SEMICONDUCTOR stays
+  // null and correctly fails closed in semiconductorCapacity.
+  const bookSymbols = [...new Set((positions ?? []).map((p: any) => String(p.symbol).toUpperCase()))];
+  const { data: sectorRows } = await supabase
+    .from("symbol_profiles").select("symbol, sector").eq("market", "us").in("symbol", bookSymbols);
+  const sectorBySymbol = new Map((sectorRows ?? []).map((r: any) => [String(r.symbol).toUpperCase(), String(r.sector ?? "")]));
+  const holdings: SemiconductorHolding[] = (positions ?? []).map((p: any) => {
+    const sym = String(p.symbol).toUpperCase();
+    const sector = sectorBySymbol.get(sym);
+    const semiconductor = KNOWN_SEMICONDUCTOR.has(sym) || sector === "Semiconductors" ? true
+      : sector != null && sector !== "" && sector !== "N/A" ? false
+      : null;
+    return { symbol: String(p.symbol), marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0), semiconductor };
+  });
 
   const plan = planSoxlEntry({
     policy: SOXL_POLICY,
