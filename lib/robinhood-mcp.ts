@@ -434,6 +434,12 @@ export type RobinhoodMcpCapabilitySnapshot = {
    * recognize). See features/leveraged-etf-and-intraday-execution/
    * FEATURE_ARCHITECTURE.md L4 part 8 -- this answers that open question. */
   placeCryptoOrderAdvertisedTypes: string[] | null;
+  /** Property KEY NAMES only (never values/descriptions/enums beyond what
+   * extractOrderTypeEnum already surfaces) of place_crypto_order's top-
+   * level inputSchema.properties. Lets a human rule out "the field exists
+   * under a name the enum-extractor didn't guess" without persisting the
+   * schema itself. Null when the tool isn't listed or has no properties. */
+  placeCryptoOrderPropertyKeys: string[] | null;
 };
 
 /** Pull enum-like string values out of a declared order-type/trigger field,
@@ -451,6 +457,14 @@ function extractOrderTypeEnum(inputSchema: unknown): string[] | null {
     }
   }
   return [];
+}
+
+/** Top-level property key names only — never values. */
+function extractPropertyKeys(inputSchema: unknown): string[] | null {
+  if (!inputSchema || typeof inputSchema !== "object") return null;
+  const props = (inputSchema as any).properties;
+  if (!props || typeof props !== "object") return null;
+  return Object.keys(props).sort();
 }
 
 export const ROBINHOOD_RESEARCH_READ_TOOLS = [
@@ -486,6 +500,7 @@ export function fingerprintRobinhoodMcpTools(tools: unknown[]): RobinhoodMcpCapa
     toolNames: normalized.map((tool) => tool.name),
     schemaFingerprint: createHash("sha256").update(stable).digest("hex"),
     placeCryptoOrderAdvertisedTypes: placeCryptoOrder ? extractOrderTypeEnum(placeCryptoOrder.inputSchema) : null,
+    placeCryptoOrderPropertyKeys: placeCryptoOrder ? extractPropertyKeys(placeCryptoOrder.inputSchema) : null,
   };
 }
 

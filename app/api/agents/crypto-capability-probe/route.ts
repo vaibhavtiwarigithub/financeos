@@ -38,6 +38,10 @@ export async function POST(req: NextRequest) {
             // proposal part 8). null = tool not found or schema unreadable;
             // [] = tool found, no order-type/trigger enum recognized.
             place_crypto_order_advertised_types: inspected.snapshot.placeCryptoOrderAdvertisedTypes,
+            // Property key names only, for a human to rule out a field name
+            // the enum-extractor didn't guess (e.g. "stop_price",
+            // "trigger_price") — never the schema's values/descriptions.
+            place_crypto_order_property_keys: inspected.snapshot.placeCryptoOrderPropertyKeys,
             ...capability,
             // Explicitly prevent the UI/consumer from mistaking tool discovery
             // for account/pair/quote validation.
