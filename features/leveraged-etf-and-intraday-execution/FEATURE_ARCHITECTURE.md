@@ -1,5 +1,213 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## TQQQ paper sleeve + SQQQ/SOXS shadow-only + GLD/SLV deferral — proposal 2026-09-23 (AWAITING APPROVAL, NOT IMPLEMENTED)
+
+Owner asked (2026-09-23): "similar to SOXL i want the app to learn and become
+best at trading TQQQ, SQQQ and also SOXS... leveraged in total cannot be more
+than 5% of entire portfolio ever. GLD, SLV should be around 10-15%... when the
+time is right", then "should we research leveraged ones 4 symbols... each day
+to see if they should be bought or not? and also traded since... jump a lot at
+once."
+
+Answer to the "research vs trade cadence" question: split them. Research
+(score/classify) can run daily for all names — cheap, no reason to throttle.
+Trading stays gated by a dedicated per-instrument door with a fixed narrow
+entry window, exactly like SOXL — "it moves fast" is the argument for a
+same-day monitor check (already shipped for SOXL, 2026-09-23, commit
+`11bbe427`), not for more frequent entries or a shared execution engine.
+
+### Decision
+
+| Symbol | Research | Paper trading |
+|---|---|---|
+| TQQQ | Own door (dedicated cron), same pattern as SOXL | **Yes** — new dedicated door, L2 like SOXL |
+| SOXL | Already live (L2, approved 2026-09-22) | Already live — unchanged by this proposal |
+| SQQQ | Shadow-only (`leveraged_etf_shadow_observations`) | **No** — inverse fund, standing refusal (`symbol-policy.ts`'s block; CLAUDE.md push-back mandate). Not up for reconsideration by this proposal. |
+| SOXS | Shadow-only | **No** — same reason as SQQQ |
+| GLD | Unchanged (already tradable as an ordinary ETF, no leverage) | Deferred — regime-tied sizing (10–15%) needs the macro-regime/breadth-shadow Phase 1 evidence review, which is weeks away and out of scope here |
+| SLV | Unchanged | Deferred, same reason as GLD |
+
+This is additive to the existing L0–L4 phased model above, not a
+replacement. TQQQ enters at **L2 (isolated paper sleeve)** directly, mirroring
+SOXL's own L2, because L0/L1 groundwork (instrument classification via
+`symbol-policy.ts`'s block + `leveraged-etf-shadow.ts`'s already-approved
+`TQQQ` shadow entry, quote-quality contract, market-local window policy) is
+already built and shared with SOXL — there is no separate L0/L1 phase to
+repeat for TQQQ specifically.
+
+### 1. Combined 5% ceiling (not 5% each)
+
+The owner's rule is explicit and literal: "leveraged in total cannot be more
+than 5% of entire portfolio ever." SOXL's own ceiling amendment (2026-09-22,
+above) already set SOXL's *individual* ceiling to 5% of NAV — if TQQQ also
+got its own independent 5%, the two together could reach 10%, violating the
+owner's rule. So TQQQ does **not** get its own 5% envelope. Instead:
+
+```
+leveraged_sleeve_headroom = max(0, nav * 0.05 - sum(marketValue of every
+  open soxl_paper/tqqq_paper position))
+```
+
+New pure module `lib/trading/leveraged-sleeve-risk.ts`:
+
+```ts
+export const LEVERAGED_SLEEVE_MAX_NAV_FRACTION = 0.05; // shared SOXL+TQQQ ceiling
+export interface LeveragedSleevePosition { symbol: string; marketValue: number }
+export function leveragedSleeveHeadroom(input: {
+  nav: number; positions: LeveragedSleevePosition[];
+}): { ok: true; headroom: number } | { ok: false; reason: string };
+```
+
+Both `soxl-lifecycle.ts`'s `planSoxlEntry` and the new `tqqq-lifecycle.ts`'s
+`planTqqqEntry` clamp `maxNotional` to
+`min(existing-instrument-specific-cap, leveragedSleeveHeadroom(...).headroom)`
+before returning a plan. `semiconductor-risk.ts`'s existing SOXL-specific
+25%-of-NAV semiconductor concentration cap is untouched — it is a *different*
+constraint (sector exposure, not the leveraged-sleeve ceiling) and stays in
+place unchanged. No new sector-concentration cap is invented for TQQQ/Nasdaq
+exposure — the owner did not ask for one, and the codebase does not have one
+for the general ETF path either (ponytail: skip speculative rule; add if the
+owner asks after seeing real overlap in practice).
+
+A read failure on NAV or the open-position list is a money-path denial
+(`headroom` computation fails closed), matching every existing cap in this
+file.
+
+### 2. TQQQ dedicated door (mirrors SOXL exactly)
+
+New files, one-for-one mirrors of the SOXL equivalents — this codebase's
+established pattern is one isolated door per instrument, not a shared engine
+(see "isolated experiment lineage," section 6 above); a third instrument
+would be the point to consider merging, not the second:
+
+| SOXL | TQQQ (new) |
+|---|---|
+| `lib/trading/soxl-lifecycle.ts` (`planSoxlEntry`, `monitorSoxl`) | `lib/trading/tqqq-lifecycle.ts` (`planTqqqEntry`, `monitorTqqq`) — same shape, same `decideExitLadder` reuse, clamps to `leveragedSleeveHeadroom` instead of `semiconductorCapacity` |
+| `lib/trading/soxl-evidence.ts` (`soxlEntryWindow`, `soxlQuoteTime`) | `lib/trading/tqqq-evidence.ts` — same 15-minute quote-freshness rule; entry window **11:20–11:34 ET** (15 min after SOXL's 11:00–11:14, so the two never contend for the same cron minute; the shared pool-row lock in the RPC would serialize them safely either way, but there is no reason to make them race) |
+| `execute_soxl_paper_fill` RPC, `position_role='soxl_paper'` | `execute_tqqq_paper_fill` RPC, `position_role='tqqq_paper'` — identical shape, `p_symbol <> 'TQQQ'` guard. Exits reuse `execute_paper_exit` unchanged (already position-role-generic), same as SOXL. |
+| `app/api/agents/soxl/cron/route.ts` | `app/api/agents/tqqq/cron/route.ts` — same monitor/entry branch structure, same `agent_runs`-based liveness proof (`agent_type='tqqq_cron'`), same **twice-daily cadence from day one** (entry+mid-day window ~11:20 ET, after-close monitor ~16:20 ET) — SOXL only got the after-close check after a gap was found post-launch; TQQQ ships with it already, since the gap class is now known. |
+| `vercel.json`: 4 SOXL cron entries (EDT/EST × entry-window/after-close) | 4 new TQQQ entries, same EDT/EST pairing, offset by ~15/5 min from SOXL's |
+
+Entry qualification for TQQQ mirrors SOXL's: trend-qualified on TQQQ's own
+candles (`priceVsEma20`/`priceVsEma50`/`trend20d`, `detectBreakdownVeto`),
+ATR-based stop/target, swing-low structural stop, liquidity floor via
+`computeLeveragedShadowFeatures` (already symbol-agnostic, reused as-is, no
+change needed), completed-session candle evidence, fresh-signal-after-exit
+guard. No LLM in the decision path, matching the "no LLM may decide
+eligibility, size, stop, target" rule in section 4 above.
+
+### 3. TQQQ↔SOXL correlation — measured, not gated
+
+The owner asked to "understand relationship between these." `leveraged-etf-
+shadow-features.ts` already computes independent per-symbol vol/trend/ATR;
+add one new pure function, `correlation20d(returnsA, returnsB)` (Pearson,
+trailing 20 sessions of daily returns), called once per collector run over
+TQQQ's and SOXL's own candle series, and store the result on both symbols'
+shadow observation row (`features.correlation_to_soxl_20d` /
+`features.correlation_to_tqqq_20d`). This is informational, matching the
+existing shadow table's `decision` CHECK-locked to `observe_only` — it does
+**not** gate or size either instrument's entries. The 5% aggregate cap in
+part 1 already protects against duplicate-factor risk regardless of measured
+correlation (a hard ceiling that doesn't need the correlation number to be
+right); using the correlation number to gate would be exactly the kind of
+"claim of alpha before the evidence exists" rule 6 (evidence and promotion)
+above warns against.
+
+### 4. SQQQ/SOXS — shadow observation only, no trade door, ever
+
+Per the owner's own standing instruction (`symbol-policy.ts`'s inverse block)
+and CLAUDE.md's push-back mandate ("Removing SELL signal capability... any
+feature that adds agent complexity" is gated, and inverse funds are excluded
+by name in the original SOXL spec), SQQQ/SOXS get **research only, in the
+already-existing shadow-observation sense** — not a new capability, not a
+step toward trading them:
+
+- Migration widens `leveraged_etf_shadow_observations`'s two CHECK
+  constraints: `symbol in ('TQQQ','SOXL','SQQQ','SOXS')`,
+  `underlying_symbol in ('QQQ','SOXX')` (SQQQ/SOXS share the same
+  underlyings as TQQQ/SOXL — inverse, not a different index).
+- `leveraged-etf-shadow.ts`'s `LEVERAGED_LONG_SHADOW_UNIVERSE` becomes
+  `LEVERAGED_SHADOW_UNIVERSE` with an added `direction: "long" | "inverse"`
+  field; `LeveragedShadowSymbol` widens to include `SQQQ`/`SOXS`. The
+  collector route's `for` loop already iterates
+  `Object.keys(LEVERAGED_...UNIVERSE)`, so it picks the two new symbols up
+  with no route change.
+- No RPC, no cron door, no lifecycle module, no `symbol-policy.ts` change —
+  that file's blanket leveraged/inverse block is explicitly off-limits to
+  touch as a shortcut (standing instruction) and this proposal does not need
+  to touch it; the shadow path was always separate from that gate.
+- Rename `decision: "observe_only"` stays exactly as-is; nothing about SQQQ/
+  SOXS's observation record differs in kind from TQQQ/SOXL's, only in that no
+  execution path exists to ever consume it.
+
+### 5. GLD/SLV — explicitly out of scope this round
+
+No code changes. They already trade through the ordinary (non-leveraged) US
+ETF path today if and when the normal screener selects them — nothing here
+changes that. The owner's "10-15% when the time is right" ask is a
+regime-conditional *sizing target*, not a leverage question, and depends on
+the macro-regime/breadth-shadow Phase 1 evidence review (`market-breadth`,
+`global-spillover` collectors, both still accumulating data, per the
+project's own evidence-before-formula-change rule in CLAUDE.md's Scoring
+Data-Truth Review Protocol). Revisit after that review, not as part of this
+leveraged-sleeve change.
+
+### 6. Acceptance criteria (additive to section 8 above)
+
+- SOXL + TQQQ combined open paper notional can never exceed 5% of US paper
+  NAV at decision time; a NAV/position-list read failure denies the TQQQ
+  entry (fails closed), same as every existing cap.
+- TQQQ's own entry/monitor/exit path never touches `paper_positions` rows
+  with `position_role` other than `tqqq_paper`; SOXL's path is unchanged.
+- SQQQ/SOXS can reach `leveraged_etf_shadow_observations` with
+  `decision='observe_only'` and nothing else — no code path from either
+  symbol can produce a score, candidate, paper fill, or order. This is
+  enforced structurally (no RPC/cron exists for them), not by a runtime
+  check that could be bypassed.
+- Correlation figures are stored, visible, and never read by any sizing or
+  gating function.
+- No change to `symbol-policy.ts`, `execute_paper_fill`, the live execution
+  gateway, GLD/SLV's existing ordinary-ETF eligibility, or any core-equity
+  LearnerAgent path.
+
+### 7. Implementation checklist (post-approval)
+
+1. `lib/trading/leveraged-sleeve-risk.ts` + test.
+2. `lib/trading/tqqq-lifecycle.ts` + `tqqq-evidence.ts` + tests (mirror
+   `soxl-lifecycle.test.ts` / `soxl-evidence.test.ts`).
+3. Migration: `position_role` CHECK += `tqqq_paper`; `execute_tqqq_paper_fill`
+   RPC; widen `leveraged_etf_shadow_observations` symbol/underlying_symbol
+   CHECKs for SQQQ/SOXS. Apply via Supabase MCP, verify applied before any
+   code ships that depends on it (per CLAUDE.md's schema-migration rule).
+4. `lib/trading/leveraged-etf-shadow.ts`: widen `LeveragedShadowSymbol`,
+   rename universe const, add `direction` field, add `correlation20d` to
+   `leveraged-etf-shadow-features.ts`, wire into the collector route.
+5. `app/api/agents/tqqq/cron/route.ts`, mirroring `soxl/cron/route.ts`.
+6. `vercel.json`: +4 TQQQ cron entries.
+7. `docs/arch/03-agents.md` (new agent/cron) + `public/agent-diagrams/system-map.json`
+   (new TQQQ node + shadow SQQQ/SOXS edges) in the same commit — required by
+   this repo's own "arch chapters every feature" rule.
+8. Full verification cycle (tsc, full suite, real `next build`), commit,
+   push, confirm Vercel `READY` via MCP — same standard as every change this
+   session.
+
+**Status:** proposal only. No implementation has started. Awaiting explicit
+approval ("Approved" / "Proceed" / "Code it" / "Implement this" / "Yes, build
+it" / "Apply this architecture" / "Approved, implement") per this project's
+Architecture-First Mode before any of the above is written.
+
+## Safety review follow-up — 2026-09-22 (local, not deployed)
+
+The dedicated caller must not substitute last prices for missing bid/ask, fetch
+timestamps for provider observations, or invocation time for monitor proof.
+Entry now uses completed daily evidence, the exchange-local 11:00–11:14 window,
+and refuses unknown semiconductor classifications. Re-fetching an old daily
+setup does not authorize post-exit re-entry. Durable sleeve-specific monitor
+proof is still absent, so entries refuse rather than claim readiness. Existing
+generic protective monitoring has not been removed. Transactional cap enforcement,
+single monitor ownership, fresh thesis exits, provider quote qualification and
+production deployment remain pending; this is containment, not full activation.
+
 ## `leveraged_etf_shadow_observations` deployed — 2026-09-22
 
 The table backing `app/api/agents/leveraged-etf-shadow/route.ts` did not exist in

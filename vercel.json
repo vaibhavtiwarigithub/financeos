@@ -56,6 +56,22 @@
       "schedule": "15 21 * 12,1,2 1-5"
     },
     {
+      "path": "/api/agents/tqqq/cron",
+      "schedule": "25 15 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/tqqq/cron",
+      "schedule": "25 16 * 12,1,2 1-5"
+    },
+    {
+      "path": "/api/agents/tqqq/cron",
+      "schedule": "20 20 * 4-10 1-5"
+    },
+    {
+      "path": "/api/agents/tqqq/cron",
+      "schedule": "20 21 * 12,1,2 1-5"
+    },
+    {
       "path": "/api/agents/global-spillover/collect",
       "schedule": "0 11 * * 1-5"
     },

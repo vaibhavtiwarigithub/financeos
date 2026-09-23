@@ -60,3 +60,34 @@ export function computeLeveragedShadowFeatures(candles: Candle[]): LeveragedShad
 
   return out;
 }
+
+/** Pearson correlation of trailing-20-session daily returns between two
+ * candle series. Informational only (owner asked to "understand the
+ * relationship" between SOXL/TQQQ) -- never gates sizing or entry; the
+ * leveraged-sleeve 5% NAV cap already bounds duplicate-factor risk
+ * regardless of the measured correlation. */
+export function correlation20d(a: Candle[], b: Candle[]): number | null {
+  const returns = (candles: Candle[]): number[] => {
+    const valid = candles.filter(c => Number.isFinite(c.close) && c.close > 0);
+    if (valid.length < 21) return [];
+    const window = valid.slice(-21);
+    const out: number[] = [];
+    for (let i = 1; i < window.length; i++) {
+      if (window[i - 1].close > 0) out.push((window[i].close - window[i - 1].close) / window[i - 1].close);
+    }
+    return out;
+  };
+  const ra = returns(a), rb = returns(b);
+  if (ra.length < 20 || rb.length < 20 || ra.length !== rb.length) return null;
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  const ma = mean(ra), mb = mean(rb);
+  let cov = 0, va = 0, vb = 0;
+  for (let i = 0; i < ra.length; i++) {
+    cov += (ra[i] - ma) * (rb[i] - mb);
+    va += (ra[i] - ma) ** 2;
+    vb += (rb[i] - mb) ** 2;
+  }
+  if (va <= 0 || vb <= 0) return null;
+  const r = cov / Math.sqrt(va * vb);
+  return Number.isFinite(r) ? r : null;
+}

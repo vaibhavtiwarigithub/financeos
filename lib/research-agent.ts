@@ -26,6 +26,8 @@ import { loadInstrumentFamilyEvidence, loadOilExposureEvidence } from "@/lib/sco
 import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 import { cryptoCompletedCandles } from "@/lib/data/crypto-session";
 import { fetchCryptoCandles } from "@/lib/data/crypto-quotes";
+import { computeRiskTier } from "@/lib/risk/risk-tier";
+import { computeCatalystScout } from "@/lib/scoring/catalyst-scout";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -1350,7 +1352,18 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
           autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
         }, client).catch(() => {});
         acc.dimReported[d] = true;
-      } else if (acc.dimReported[d]) {
+      } else {
+        // Always attempt the resolve, not just when THIS invocation's in-memory
+        // `acc` previously marked it reported. `acc` lives in a module-level Map
+        // that resets on every fresh serverless invocation (no warm-instance
+        // guarantee), so gating on `acc.dimReported[d]` meant an alert raised by
+        // one invocation could only be cleared by a LATER call within the SAME
+        // warm instance — effectively never, across cold starts. Confirmed stuck
+        // in production: `data-availability:us:macro` (critical) sat open for 6
+        // days after the underlying macro_signals data was already fresh again.
+        // resolveIssue() is already a cheap no-op when nothing is open under this
+        // key, so calling it unconditionally on every healthy read is correct and
+        // costs nothing extra.
         await resolveIssue(dimKey, client).catch(() => {});
         acc.dimReported[d] = false;
       }
@@ -2325,6 +2338,44 @@ export async function processSymbol(
     const discovery = entry.discoveryContext
       ? { source: entry.discovery_source, ...entry.discoveryContext }
       : undefined;
+
+    // Risk-tier shadow (2026-09-18, measure-only) — see lib/risk/risk-tier.ts.
+    // Deterministic composite adapted from github.com/achaljhawar/1rok's
+    // disclosed risk-agent scoring shape. Not read by scoring/sizing/gate/order.
+    let riskTierShadow: ReturnType<typeof computeRiskTier> | null = null;
+    try {
+      const fundEv = (scores.evidence as any)?.fundamental ?? {};
+      const techEv = (scores.evidence as any)?.technical ?? {};
+      const macroEv = (scores.evidence as any)?.macro ?? {};
+      riskTierShadow = computeRiskTier({
+        beta: typeof fundEv.beta === "number" ? fundEv.beta : null,
+        atrMultipleMove: typeof techEv.atrMultipleMove === "number" ? techEv.atrMultipleMove : null,
+        debtToEquity: typeof fundEv.debt_to_equity === "number" ? fundEv.debt_to_equity : null,
+        profitMargin: typeof fundEv.profit_margin === "number" ? fundEv.profit_margin : null,
+        grossMargin: typeof fundEv.gross_margin === "number" ? fundEv.gross_margin : null,
+        isDiversifiedFund: ["broad_equity_etf", "sector_etf", "thematic_etf", "fixed_income_etf", "india_etf"].includes(instrumentPolicy.family),
+        macroDangerScore: typeof macroEv.danger_score === "number" ? macroEv.danger_score : null,
+        daysToEarnings: daysToEarnings ?? null,
+        breakdownVetoed: techEv.breakdown_veto?.vetoed === true,
+        shortPercentFloat: typeof fundEv.short_percent_float === "number" ? fundEv.short_percent_float : null,
+        daysToCoverShort: typeof fundEv.short_ratio_days === "number" ? fundEv.short_ratio_days : null,
+      });
+    } catch { /* shadow only — never blocks the actual research decision */ }
+
+    // Catalyst shadow (2026-09-18, measure-only) — see lib/scoring/catalyst-scout.ts.
+    // Same 1rok-adapted-shape discipline as the risk-tier shadow above.
+    let catalystShadow: ReturnType<typeof computeCatalystScout> | null = null;
+    try {
+      const techEv2 = (scores.evidence as any)?.technical ?? {};
+      catalystShadow = computeCatalystScout({
+        daysToEarnings: daysToEarnings ?? null,
+        analystConsensusScore: analystResult?.available ? analystResult.score : null,
+        insiderScore: scores.insider_score ?? null,
+        insiderAvailable: included.insider === true,
+        capitalFlow5d: typeof webullExtended?.capitalFlow?.largNet5d === "number" ? webullExtended.capitalFlow.largNet5d : null,
+        breakdownVetoed: techEv2.breakdown_veto?.vetoed === true,
+      });
+    } catch { /* shadow only — never blocks the actual research decision */ }
     // Log (never score with) each measure-only feature_registry formula's value
     // for this decision. Building the IC track record that would justify
     // eventually promoting a feature into the real weighting formula is a
@@ -2393,6 +2444,8 @@ export async function processSymbol(
         trade_plan: tradePlan,
         ...(instrumentFamilyEvidence ? { instrument_family_evidence: instrumentFamilyEvidence } : {}),
         ...(oilExposureEvidence ? { oil_exposure_evidence: oilExposureEvidence } : {}),
+        ...(riskTierShadow ? { risk_tier_shadow: riskTierShadow } : {}),
+        ...(catalystShadow ? { catalyst_shadow: catalystShadow } : {}),
         ...(measuredFeatureValues ? { measured_feature_values: measuredFeatureValues } : {}),
         // Analyst consensus (Finnhub) — LOGGED evidence for the learner to grade,
         // not fed into the live weighted score yet (see fetch site).

@@ -10,239 +10,23 @@ import { paperExitEconomics } from "@/lib/trading/paper-exit-economics";
 import { formatPaperPositionOpenedAt } from "@/lib/paper/position-opened-at";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
 import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
+import { PAPER_BOOK_T, pnlColor, fmtSignedMoney, fmtSignedPct, PaperBookHeader } from "@/components/dashboard/PaperBookHeader";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
-const T = {
-  bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
-  text: "#ECEDEF", textSub: "#9B9EA8", muted: "#6B7280",
-  accent: "#6366F1", green: "#34D399", red: "#F87171", amber: "#FBBF24",
-  greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
-};
+const T = PAPER_BOOK_T;
 
 // Currency symbol per market — US pool is USD, India pool is INR. Never blend the two.
 const CURRENCY: Record<string, string> = { us: "$", india: "₹" };
 
-function pnlColor(n: number) { return n >= 0 ? T.green : T.red; }
-// Signed money. `cur` maps 1:1 to a market ("$"→us, "₹"→india); route through the
-// shared helper so India groups lakh/crore-style while US stays en-US thousands.
-function fmt(n: number, cur = "$") {
-  const market = cur === "₹" ? "india" : "us";
-  return (n >= 0 ? "+" : "-") + fmtMoney(Math.abs(n), market);
-}
-function fmtPct(n: number) { return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
+// Thin local adapters over the shared PaperBookHeader helpers — every call
+// site below passes `cur` as "$"/"₹" (not "us"/"india"), so keep that surface
+// unchanged rather than touching ~15 call sites for a cosmetic rename.
+function fmt(n: number, cur = "$") { return fmtSignedMoney(n, cur === "₹" ? "india" : "us"); }
+const fmtPct = fmtSignedPct;
 
-// ── Gauge helpers ─────────────────────────────────────────────────────────────
-const SEMI_R = 56;
-const SEMI_CX = 72;
-const SEMI_CY = 72;
-const SEMI_CIRC = Math.PI * SEMI_R; // ≈ 175.9
-
-function semiArcPath(cx: number, cy: number, r: number) {
-  return `M ${cx - r},${cy} A ${r},${r} 0 0,1 ${cx + r},${cy}`;
-}
-
-/** Semicircle gauge — 0-100% */
-function SemiGauge({
-  value, label, sublabel, color,
-}: { value: number | null; label: string; sublabel?: string; color: string }) {
-  const clamp = Math.max(0, Math.min(100, value ?? 0));
-  const filled = (clamp / 100) * SEMI_CIRC;
-  const track = semiArcPath(SEMI_CX, SEMI_CY, SEMI_R);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
-      <svg viewBox="0 0 144 84" style={{ width: "144px", height: "84px", overflow: "visible" }}>
-        {/* Track */}
-        <path d={track} fill="none" stroke={T.border} strokeWidth="10" strokeLinecap="round" />
-        {/* Fill */}
-        {value !== null && (
-          <path
-            d={track} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
-            strokeDasharray={`${filled} ${SEMI_CIRC}`}
-          />
-        )}
-        {/* Value text */}
-        <text x={SEMI_CX} y={SEMI_CY - 6} textAnchor="middle" fill={value !== null ? color : T.muted}
-          fontSize="22" fontWeight="700" fontFamily="Inter, sans-serif">
-          {value !== null ? Math.round(value) + "%" : "—"}
-        </text>
-      </svg>
-      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>{label}</div>
-      {sublabel && <div style={{ fontSize: "10px", color: T.muted }}>{sublabel}</div>}
-    </div>
-  );
-}
-
-/** Cash vs deployed donut */
-function CashDonut({ cashPct }: { cashPct: number }) {
-  const deployedPct = 100 - cashPct;
-  const r = 40, cx = 52, cy = 52;
-  const circ = 2 * Math.PI * r;
-  const deployedArc = (deployedPct / 100) * circ;
-  const cashArc = (cashPct / 100) * circ;
-  // start at top (offset = circ*0.25 rotates start to 12 o'clock)
-  const offset = circ * 0.25;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
-      <svg viewBox="0 0 104 72" style={{ width: "104px", height: "72px" }}>
-        {/* Cash (muted) */}
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.border} strokeWidth="11"
-          strokeDasharray={`${cashArc} ${circ}`}
-          strokeDashoffset={offset}
-          strokeLinecap="butt" />
-        {/* Deployed (accent) */}
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.accent} strokeWidth="11"
-          strokeDasharray={`${deployedArc} ${circ}`}
-          strokeDashoffset={offset - cashArc}
-          strokeLinecap="butt" />
-        {/* Centre */}
-        <text x={cx} y={cy - 4} textAnchor="middle" fill={T.accent}
-          fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif">
-          {deployedPct.toFixed(0)}%
-        </text>
-        <text x={cx} y={cy + 10} textAnchor="middle" fill={T.muted}
-          fontSize="8" fontFamily="Inter, sans-serif">
-          deployed
-        </text>
-      </svg>
-      <div style={{ fontSize: "10px", fontWeight: 600, color: T.textSub, textTransform: "uppercase", letterSpacing: "0.09em" }}>Cash Allocation</div>
-      <div style={{ fontSize: "10px", color: T.muted }}>{cashPct.toFixed(0)}% cash · {deployedPct.toFixed(0)}% invested</div>
-    </div>
-  );
-}
-
-/** Thin full-width NAV sparkline with gradient fill */
-function NavSparkline({ perf, cur = "$" }: { perf: any[]; cur?: string }) {
-  if (perf.length < 2) return null;
-  const navs = perf.map(p => p.nav);
-  const min = Math.min(...navs);
-  const max = Math.max(...navs);
-  const range = max - min || 1;
-  const W = 800, H = 52;
-  const PAD = 6;
-  const pts = navs.map((v, i) =>
-    `${(i / (navs.length - 1)) * W},${H - PAD - ((v - min) / range) * (H - PAD * 2)}`
-  ).join(" ");
-  const isUp = navs[navs.length - 1] >= navs[0];
-  const color = isUp ? T.green : T.red;
-  const area = `0,${H} ${pts} ${W},${H}`;
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "14px 20px 10px", marginBottom: "20px" }}>
-      <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "8px" }}>
-        NAV History · {perf.length} days
-        <span style={{ marginLeft: "12px", color, fontWeight: 600 }}>
-          {fmtMoney(navs[navs.length - 1], cur === "₹" ? "india" : "us", 0)}
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: `${H}px` }} preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="navGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon points={area} fill="url(#navGrad)" />
-        <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-      </svg>
-    </div>
-  );
-}
-
-/** Rich gauge+stats header row */
-function PortfolioHeader({
-  nav, cash, totalPnl, totalPnlPct, posValue, positions, winRate, tradeRecord, perf, cur = "$", startingNAV = 10000,
-}: {
-  nav: number; cash: number; totalPnl: number; totalPnlPct: number; posValue: number;
-  positions: any[]; winRate: number | null; tradeRecord: TradeRecord;
-  perf: any[]; cur?: string; startingNAV?: number;
-}) {
-  const cashPct = (cash / nav) * 100;
-  const wr = winRate ?? 0;
-  const wrColor = winRate !== null ? (wr >= 60 ? T.green : wr >= 40 ? T.amber : T.red) : T.muted;
-  // Breakeven is its own outcome — counting it as "closed minus wins" reported a
-  // US book of 1W/5L/2BE as "1W / 7L" and made the gauge unreconcilable.
-  const { wins, losses, breakeven } = tradeRecord;
-  const wrSublabel = `${wins}W / ${losses}L${breakeven > 0 ? ` / ${breakeven}BE` : ""}`;
-  // Benchmark comparison now lives in the multi-timeframe BenchmarkPerformanceChart
-  // below (Portfolio % return vs VOO / NIFTY 50, rebased per timeframe).
-
-  return (
-    <>
-      {/* Gauge + stats panel */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "0",
-        background: T.card, border: `1px solid ${T.border}`, borderRadius: "16px",
-        overflow: "hidden", marginBottom: "16px",
-      }}>
-        {/* Left — gauge cluster */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-around",
-          padding: "24px 28px", borderRight: `1px solid ${T.border}`,
-          gap: "8px", flexWrap: "wrap",
-        }}>
-          <SemiGauge
-            value={winRate}
-            label="Win Rate"
-            sublabel={winRate !== null ? wrSublabel : "no closed trades"}
-            color={wrColor}
-          />
-          <div style={{ width: "1px", height: "80px", background: T.border }} />
-          <CashDonut cashPct={Math.max(0, Math.min(100, cashPct))} />
-        </div>
-
-        {/* Right — key numbers strip */}
-        <div style={{
-          display: "flex", flexDirection: "column", justifyContent: "center",
-          gap: "20px", padding: "24px 32px", minWidth: 0,
-        }}>
-          {/* Paper NAV */}
-          <div>
-            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Paper NAV</div>
-            <div style={{ fontSize: "clamp(22px,7vw,32px)", fontWeight: 800, letterSpacing: "-0.02em", color: T.text, lineHeight: 1 }}>
-              {fmtMoney(nav, cur === "₹" ? "india" : "us", 0)}
-            </div>
-            <div style={{ fontSize: "11px", color: T.muted, marginTop: "3px" }}>started {fmtMoney(startingNAV, cur === "₹" ? "india" : "us", 0)}</div>
-          </div>
-
-          {/* Total P&L */}
-          <div>
-            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Total P&L</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-              <span style={{ fontSize: "22px", fontWeight: 700, color: pnlColor(totalPnl), letterSpacing: "-0.01em" }}>
-                {fmt(totalPnl, cur)}
-              </span>
-              <span style={{
-                fontSize: "12px", fontWeight: 600,
-                color: pnlColor(totalPnl),
-                background: totalPnl >= 0 ? T.greenBg : T.redBg,
-                padding: "2px 7px", borderRadius: "5px",
-              }}>
-                {fmtPct(totalPnlPct)}
-              </span>
-            </div>
-          </div>
-
-          {/* Positions summary */}
-          <div>
-            <div style={{ fontSize: "10px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: "4px" }}>Positions</div>
-            <div style={{ fontSize: "14px", fontWeight: 600, color: T.text }}>
-              {positions.length} open
-              <span style={{ color: T.muted, fontWeight: 400, marginLeft: "6px" }}>·</span>
-              <span style={{ color: T.textSub, fontWeight: 500, marginLeft: "6px" }}>
-                {fmtMoney(posValue, cur === "₹" ? "india" : "us", 0)} deployed
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* NAV sparkline */}
-      <NavSparkline perf={perf} cur={cur} />
-    </>
-  );
-}
 
 function ScoreBar({ score }: { score: number }) {
   const color = score >= 70 ? T.green : score >= 50 ? T.amber : T.red;
@@ -896,13 +680,13 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
       )}
 
       {/* Rich header: gauge cluster + key numbers + sparkline */}
-      <PortfolioHeader
+      <PaperBookHeader
         nav={nav}
         cash={cash}
         totalPnl={totalPnl}
         totalPnlPct={totalPnlPct}
         posValue={posValue}
-        positions={positions}
+        positionCount={positions.length}
         winRate={winRate}
         tradeRecord={tradeRecord}
         perf={perf}

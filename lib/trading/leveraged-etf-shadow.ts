@@ -6,15 +6,23 @@
 
 export const LEVERAGED_ETF_SHADOW_POLICY_VERSION = "leveraged-etf-shadow-l1-v1";
 
-export type LeveragedShadowSymbol = "TQQQ" | "SOXL";
+export type LeveragedShadowSymbol = "TQQQ" | "SOXL" | "SQQQ" | "SOXS";
 
-export const LEVERAGED_LONG_SHADOW_UNIVERSE: Record<LeveragedShadowSymbol, {
+// SQQQ/SOXS (2026-09-23): observe_only shadow entries only -- no RPC, no cron
+// door, no lifecycle module exists or is planned for them. Per the owner's
+// standing inverse-fund refusal (symbol-policy.ts's block; CLAUDE.md push-back
+// mandate), this widening is research-only and structurally cannot become a
+// trade path: `decision` stays CHECK-locked to 'observe_only' in the DB.
+export const LEVERAGED_SHADOW_UNIVERSE: Record<LeveragedShadowSymbol, {
   underlyingSymbol: "QQQ" | "SOXX";
   leverage: 3;
   family: "nasdaq" | "semiconductors";
+  direction: "long" | "inverse";
 }> = {
-  TQQQ: { underlyingSymbol: "QQQ", leverage: 3, family: "nasdaq" },
-  SOXL: { underlyingSymbol: "SOXX", leverage: 3, family: "semiconductors" },
+  TQQQ: { underlyingSymbol: "QQQ", leverage: 3, family: "nasdaq", direction: "long" },
+  SOXL: { underlyingSymbol: "SOXX", leverage: 3, family: "semiconductors", direction: "long" },
+  SQQQ: { underlyingSymbol: "QQQ", leverage: 3, family: "nasdaq", direction: "inverse" },
+  SOXS: { underlyingSymbol: "SOXX", leverage: 3, family: "semiconductors", direction: "inverse" },
 };
 
 export type LeveragedEtfShadowInput = {
@@ -31,6 +39,11 @@ export type LeveragedEtfShadowInput = {
   trend20dPct?: number | null;
   underlyingTrend20dPct?: number | null;
   dollarVolume?: number | null;
+  /** Pearson correlation of trailing-20-session daily returns vs. the OTHER
+   * long-leveraged member of this pair (SOXL<->TQQQ). Informational only —
+   * see correlation20d's own doc comment. Null for SQQQ/SOXS (no peer
+   * computed) or when either series has insufficient history. */
+  correlationToPeer20d?: number | null;
 };
 
 export type LeveragedEtfShadowObservation = {
@@ -48,6 +61,7 @@ export type LeveragedEtfShadowObservation = {
 };
 
 function finite(value: unknown): number | null {
+  if (value == null || typeof value === "boolean" || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -70,8 +84,8 @@ export function isLeveragedObservationWindow(observedAt: string): boolean {
 
 export function buildLeveragedEtfShadowObservation(input: LeveragedEtfShadowInput): LeveragedEtfShadowObservation {
   const symbol = input.symbol.trim().toUpperCase() as LeveragedShadowSymbol;
-  const policy = LEVERAGED_LONG_SHADOW_UNIVERSE[symbol];
-  if (!policy) throw new Error("only explicitly approved long leveraged shadow symbols may be observed");
+  const policy = LEVERAGED_SHADOW_UNIVERSE[symbol];
+  if (!policy) throw new Error("only explicitly approved leveraged shadow symbols may be observed");
   const etfPrice = finite(input.etfPrice);
   const underlyingPrice = finite(input.underlyingPrice);
   const bid = finite(input.bid);
@@ -99,6 +113,7 @@ export function buildLeveragedEtfShadowObservation(input: LeveragedEtfShadowInpu
     features: {
       realized_vol_20d_pct: finite(input.realizedVol20dPct), atr14_pct: finite(input.atr14Pct), trend20d_pct: finite(input.trend20dPct),
       underlying_trend20d_pct: finite(input.underlyingTrend20dPct), dollar_volume: finite(input.dollarVolume), leverage: policy.leverage,
+      correlation_to_peer_20d: finite(input.correlationToPeer20d),
     },
     quote: {
       etfPrice, underlyingPrice, bid, ask,

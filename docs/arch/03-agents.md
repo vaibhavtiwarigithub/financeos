@@ -1098,6 +1098,53 @@ Health info alert when ≥ 20 accumulate.
 
 ---
 
+### Leveraged Sleeve: SOXL / TQQQ paper crons
+
+**Files:** `app/api/agents/soxl/cron/route.ts`, `app/api/agents/tqqq/cron/route.ts`,
+`lib/trading/soxl-lifecycle.ts` / `tqqq-lifecycle.ts`, `lib/trading/soxl-evidence.ts` /
+`tqqq-evidence.ts`, `lib/trading/leveraged-sleeve-risk.ts`, `lib/trading/semiconductor-risk.ts`
+
+Two isolated dedicated-door paper crons, each entry-when-flat / monitor-when-held, mirroring
+each other's structure exactly (see `features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md`
+for the full approval history). Deliberately NOT routed through the generic ResearchAgent/
+PaperTrader/`execute_paper_fill` pipeline — `lib/trading/symbol-policy.ts`'s blanket leveraged/
+inverse block still applies to every other path (research candidates, mandate-driven paper trade,
+live execution gateway); these crons are each instrument's own separate door, not a hole punched
+in that gate.
+
+- **SOXL** (owner-approved 2026-09-22): capacity gated by `semiconductorCapacity()` — a
+  25%-of-NAV semiconductor-sector concentration cap, using real full-book `symbol_profiles.sector`
+  classification (2026-09-23) as the source of truth, `KNOWN_SEMICONDUCTOR` only a fast-path.
+  `execute_soxl_paper_fill` RPC, `position_role='soxl_paper'`.
+- **TQQQ** (owner-approved 2026-09-23): capacity gated by `leveragedSleeveHeadroom()` — the
+  owner's literal rule ("leveraged in total cannot be more than 5% of entire portfolio ever"),
+  a combined SOXL+TQQQ ceiling, not 5% each. `execute_tqqq_paper_fill` RPC,
+  `position_role='tqqq_paper'`.
+- Both entry windows are ET-local (`soxlEntryWindow`/`tqqqEntryWindow`, DST-safe via
+  `Intl.DateTimeFormat`), 15 minutes apart (SOXL 11:00-11:14, TQQQ 11:20-11:34) so the two never
+  contend for the same cron minute — the shared `paper_portfolio` row lock in each RPC would
+  serialize them safely either way, but there is no reason to race them.
+- Both crons fire twice/weekday (entry+mid-day window, then an after-close monitor ~16:15-16:20
+  ET) so an open position's stop/target is checked against the FULL day's range, not just the
+  partial range visible at the morning window — a 3x instrument that breaches its stop
+  mid-afternoon must not sit unprotected until the next morning.
+- Both use the same `agent_runs`-based monitor-liveness proof: each clean completion writes a row
+  (`agent_type='soxl_cron'`/`'tqqq_cron'`), and the entry branch reads the most recent PRIOR row
+  as `monitorVerifiedAt`, blocking entry on a cold start or a stuck pipeline rather than trusting
+  invocation time.
+- Exits reuse the existing, already `position_role`-generic `execute_paper_exit` RPC unchanged —
+  no new exit RPC per instrument.
+- `thesisInvalidated` is always `false` for both — no built "is the thesis still valid" signal
+  distinct from the entry trend check exists yet; both rely on the mechanical stop/target/trail
+  ladder (`lib/trading/exit-ladder.ts`, shared with core equity and live monitoring) alone.
+- No LLM decides eligibility, size, stop, target, or exit for either instrument.
+- **SQQQ/SOXS:** shadow-observation only via `leveraged-etf-shadow/collect` — no RPC, no cron
+  door, no lifecycle module, and none planned (owner's standing inverse-fund refusal). The
+  collector also records SOXL<->TQQQ trailing-20-session return correlation
+  (`correlation_to_peer_20d`), informational only — it never gates sizing or entry.
+
+---
+
 ## 2026-07-17 Research and Exit Contract Audit
 
 - The watchlist input is filtered by `research_enabled=true`, unexpired rows, and

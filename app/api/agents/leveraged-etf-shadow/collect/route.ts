@@ -25,13 +25,14 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { getQuote } from "@/lib/data/quotes";
-import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
+import { computeLeveragedShadowFeatures, correlation20d } from "@/lib/trading/leveraged-etf-shadow-features";
 import {
   buildLeveragedEtfShadowObservation,
   isLeveragedObservationWindow,
-  LEVERAGED_LONG_SHADOW_UNIVERSE,
+  LEVERAGED_SHADOW_UNIVERSE,
   type LeveragedShadowSymbol,
 } from "@/lib/trading/leveraged-etf-shadow";
+import type { Candle } from "@/lib/data/technicals";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -43,16 +44,24 @@ export const maxDuration = 60;
 // here would compete with money-path research for no benefit.
 const NO_AV_FALLBACK = async () => [];
 
+// SOXL<->TQQQ peer correlation (owner asked to "understand the relationship
+// between these"). Only these two have a defined peer; SQQQ/SOXS are shadow
+// entries with no peer computed.
+const PEER: Partial<Record<LeveragedShadowSymbol, LeveragedShadowSymbol>> = { SOXL: "TQQQ", TQQQ: "SOXL" };
+
 async function collectOne(symbol: LeveragedShadowSymbol, now: string, supabase: ReturnType<typeof createServiceClient>) {
-  const underlying = LEVERAGED_LONG_SHADOW_UNIVERSE[symbol].underlyingSymbol;
-  const [etf, und, quote, underlyingQuote] = await Promise.all([
-    fetchUsCandles(symbol, NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" })),
-    fetchUsCandles(underlying, NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" })),
+  const underlying = LEVERAGED_SHADOW_UNIVERSE[symbol].underlyingSymbol;
+  const peer = PEER[symbol];
+  const [etf, und, quote, underlyingQuote, peerEtf] = await Promise.all([
+    fetchUsCandles(symbol, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
+    fetchUsCandles(underlying, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
     getQuote(symbol, supabase),
     getQuote(underlying, supabase),
+    peer ? fetchUsCandles(peer, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })) : Promise.resolve(null),
   ]);
   const etfFeatures = computeLeveragedShadowFeatures(etf.candles);
   const undFeatures = computeLeveragedShadowFeatures(und.candles);
+  const correlationToPeer20d = peerEtf ? correlation20d(etf.candles, peerEtf.candles) : null;
 
   const observation = buildLeveragedEtfShadowObservation({
     observedAt: now,
@@ -68,6 +77,7 @@ async function collectOne(symbol: LeveragedShadowSymbol, now: string, supabase: 
     trend20dPct: etfFeatures.trend20dPct,
     underlyingTrend20dPct: undFeatures.trend20dPct,
     dollarVolume: etfFeatures.dollarVolume,
+    correlationToPeer20d,
   });
 
   const { error } = await supabase.from("leveraged_etf_shadow_observations").insert({
@@ -91,7 +101,7 @@ export async function GET(req: NextRequest) {
   }
 
   const results: Array<{ symbol: string; status: string; error?: string }> = [];
-  for (const symbol of Object.keys(LEVERAGED_LONG_SHADOW_UNIVERSE) as LeveragedShadowSymbol[]) {
+  for (const symbol of Object.keys(LEVERAGED_SHADOW_UNIVERSE) as LeveragedShadowSymbol[]) {
     try {
       results.push(await collectOne(symbol, now, supabase));
     } catch (err: any) {

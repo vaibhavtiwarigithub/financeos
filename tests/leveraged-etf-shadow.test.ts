@@ -8,9 +8,23 @@ const input = {
 };
 
 describe("leveraged ETF L1 shadow", () => {
-  it("permits measurement only for the explicit long universe", () => {
+  it("keeps missing features missing instead of recording zero volatility", () => {
+    const observation = buildLeveragedEtfShadowObservation({ ...input, realizedVol20dPct: null, atr14Pct: null });
+    expect(observation.measurementStatus).toBe("incomplete");
+    expect(observation.features.realized_vol_20d_pct).toBeNull();
+    expect(observation.features.atr14_pct).toBeNull();
+    expect(observation.missing).toEqual(expect.arrayContaining(["realized_vol_20d_pct", "atr14_pct"]));
+  });
+  it("permits measurement only for the explicit shadow universe", () => {
     expect(buildLeveragedEtfShadowObservation(input).decision).toBe("observe_only");
-    expect(() => buildLeveragedEtfShadowObservation({ ...input, symbol: "SQQQ" })).toThrow(/long leveraged shadow/);
+    expect(() => buildLeveragedEtfShadowObservation({ ...input, symbol: "AAPL" })).toThrow(/leveraged shadow/);
+  });
+  it("shadow-observes SQQQ/SOXS (inverse) but only ever produces observe_only — no trade door exists for them", () => {
+    const sqqq = buildLeveragedEtfShadowObservation({ ...input, symbol: "SQQQ" });
+    expect(sqqq.decision).toBe("observe_only");
+    const soxs = buildLeveragedEtfShadowObservation({ ...input, symbol: "SOXS", underlyingPrice: 200 });
+    expect(soxs.decision).toBe("observe_only");
+    expect(soxs.underlyingSymbol).toBe("SOXX");
   });
   it("uses America/New_York, not a fixed UTC hour", () => {
     expect(isLeveragedObservationWindow("2026-09-14T15:05:00.000Z")).toBe(true);
