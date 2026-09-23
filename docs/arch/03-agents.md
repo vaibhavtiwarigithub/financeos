@@ -750,6 +750,51 @@ book, mirroring PositionMonitor's role for `us`/`india`.
 
 ---
 
+### Crypto live trading (L4) — 2026-09-23, code-complete, inert
+
+**File:** `app/api/agents/crypto-live/cron/route.ts`, `lib/trading/crypto-live-kernel.ts`,
+`lib/trading/crypto-live-entry.ts`, `lib/robinhood-mcp.ts` (`placeRobinhoodCryptoOrder`,
+`cancelRobinhoodCryptoOrder`, `getRobinhoodCryptoOrder`)
+**Schedule:** `vercel.json`, `35 14 * * *` (entry check) + `35 0 * * *` (monitor/reconcile), every day —
+crypto trades 24/7, no weekday/session restriction like the equity/leveraged doors.
+
+Built same-day as the leveraged sleeve's live door, after confirming via the capability probe
+(`app/api/agents/crypto-capability-probe/route.ts`, extended 2026-09-23) that Robinhood's
+`place_crypto_order` tool has a real `stop_price` property — the hard prerequisite this feature
+was blocked on (`features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md` L4 part 8).
+No enum was declared for the `type` field, so `"market"`/`"stop"` are the best-known values
+(matching the equity convention the same MCP server uses for `place_equity_order`), not
+schema-proven — a wrong guess fails the order cleanly, which the fail-closed flatten logic already
+treats as "could not protect this position."
+
+- **Own decoupled flags** (2026-09-23 lesson from the leveraged sleeve, applied from the start
+  here): `CRYPTO_LIVE_ENABLED` (env, `lib/autonomy.ts`) and `strategy_config.crypto_live_auto_enabled`
+  (DB) are separate from both `AUTONOMOUS_LIVE_ENABLED`/`live_auto_enabled` (core equity) and
+  `LEVERAGED_LIVE_ENABLED`/`leveraged_live_auto_enabled` (leveraged sleeve). `strategy_config.
+  crypto_live_lease_usd` (DB, defaults to 0) is crypto's own fixed-dollar cap, combined across
+  BTC/ETH/SOL, never summed with any other book.
+- **Entry trigger** is the SAME `agent_signals` (`score_source='crypto_native_shadow_v1'`) crypto
+  paper trading already uses — crypto's own dedicated scoring model
+  (`lib/scoring/crypto-score.ts`: trend/structure/volatility), not equity fundamentals/IC. Sizing
+  reuses `computeCryptoGeometry` (paper's own geometry function, unchanged) against the live lease
+  headroom instead of paper NAV.
+- **Does NOT reuse** `lib/protective/placement-worker.ts` (the equity-shaped protective-stop
+  worker `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE`/`protective_orders_enabled` gate) — crypto's stop
+  is placed directly via `placeRobinhoodCryptoOrder(..., type: "stop", stopPrice)` and tracked on
+  `crypto_live_positions.stop_broker_order_id`/`stop_status`, a smaller, crypto-specific mechanism.
+- A failed stop placement, or a stop found no-longer-`active` on reconciliation, always flattens
+  the position via an immediate market SELL — same non-negotiable as the leveraged sleeve.
+- A symbol needs 10 closed paper trades (`crypto_live_overrides` for an explicit, logged
+  per-symbol override) before its live door fires.
+- **Not currently covered by Manual Trade Guardian** — `fetchRobinhoodBrokerAccounts()`
+  (Guardian's holdings source) reads equity positions only, no crypto branch. Crypto live fills
+  ARE logged to `broker_orders` (`learning_scope='risk_policy_only'`) for ledger consistency and
+  future Guardian coverage, but nothing currently reads them for that purpose.
+- Controlled from **Settings → Crypto — Live Trading** (`app/api/settings/crypto-live/route.ts`,
+  `components/dashboard/CryptoLiveSettings.tsx`), its own panel alongside the leveraged sleeve's.
+
+---
+
 #### Crypto paper pool isolation (Stage 3 schema note)
 
 `paper_portfolio`/`paper_positions`/`paper_trades`/`paper_performance` carry a THIRD `market` value,

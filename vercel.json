@@ -168,6 +168,14 @@
       "schedule": "30 21 * 12,1,2 1-5"
     },
     {
+      "path": "/api/agents/crypto-live/cron",
+      "schedule": "35 14 * * *"
+    },
+    {
+      "path": "/api/agents/crypto-live/cron",
+      "schedule": "35 0 * * *"
+    },
+    {
       "path": "/api/agents/global-spillover/collect",
       "schedule": "0 11 * * 1-5"
     },

@@ -303,6 +303,27 @@ signal at the same moment for comparison. Per symbol, per run:
 
 ### 8. Crypto (BTC/ETH/SOL), US-only — same broker-native-stop rule, bigger gap to close
 
+**Resolved, same day (2026-09-23).** The capability question below was
+answered with real evidence, not assumption: extended the existing
+`crypto-capability-probe` route to surface `place_crypto_order`'s declared
+property key names (never the full schema — see the probe's own "persist
+hashes, not untrusted schemas" rule). Triggered it live twice (once for an
+enum check that came back inconclusive, once for the property-key check
+that settled it): the schema genuinely has a `stop_price` field, alongside
+`quantity`, `side`, `symbol`, `type`, `time_in_force`, `rhs_account_number`.
+Crypto live trading is buildable under the no-live-order-without-broker-
+native-stop rule and was built the same day:
+`app/api/agents/crypto-live/cron/route.ts`, `lib/trading/crypto-live-
+kernel.ts`/`crypto-live-entry.ts`, `placeRobinhoodCryptoOrder` in
+`lib/robinhood-mcp.ts`. Unlike the leveraged sleeve, crypto's flags
+(`CRYPTO_LIVE_ENABLED`, `strategy_config.crypto_live_auto_enabled`,
+`crypto_live_lease_usd`) were decoupled from every other book FROM THE
+START — the leveraged sleeve only got there after a near-miss at enable
+time; crypto had the benefit of that lesson already learned. See
+`docs/arch/03-agents.md`'s "Crypto live trading (L4)" section for the full
+design record. The paragraph below is preserved as the original open
+question, for the record.
+
 Owner (2026-09-23, clarifying "including crypto"): the broker-native-stop
 requirement applies to **every symbol traded live in both pipelines** —
 equities/leveraged AND crypto — with no exception. Crypto has no India

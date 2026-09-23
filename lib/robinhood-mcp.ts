@@ -1359,6 +1359,121 @@ export async function cancelRobinhoodOrder(brokerOrderId: string, account: strin
   return { ok: true, raw: redact(res.result) };
 }
 
+// Place a real Robinhood crypto order (market entry/exit, or a stop-loss
+// SELL) via place_crypto_order. Added 2026-09-23 after confirming (capability
+// probe evidence, crypto_universe_runs) the tool's real property keys include
+// stop_price, quantity, side, symbol, type, time_in_force, rhs_account_number
+// — no enum was declared for `type`, so "market"/"stop" are the best-known
+// values (matching the equity convention this same MCP server uses for
+// place_equity_order), not schema-proven. A wrong guess fails the call
+// cleanly (broker rejection), which the caller's fail-closed flatten logic
+// already treats as "could not protect this position" — never a silent
+// false-protected state.
+export async function placeRobinhoodCryptoOrder(opts: {
+  account: string;
+  symbol: string;
+  side: "buy" | "sell";
+  quantity: number;
+  type: "market" | "stop";
+  stopPrice?: number; // required when type === "stop"
+}): Promise<{ ok: true; brokerOrderId: string; raw?: any } | { ok: false; needsReconcile?: boolean; error: string; raw?: any }> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error ?? "session open failed" };
+  const sid = sess.sessionId;
+
+  const tl = await listTools(tk.token, sid);
+  if (!tl.ok) return { ok: false, error: tl.error ?? "listTools failed" };
+  const tools = tl.tools ?? [];
+  const placeTool = tools.find((t: any) => t.name === "place_crypto_order");
+  if (!placeTool) return { ok: false, error: "place_crypto_order not offered by the Robinhood MCP server" };
+
+  const canonical: Record<string, unknown> = {
+    account: opts.account,
+    symbol: opts.symbol,
+    side: opts.side,
+    quantity: opts.quantity,
+    type: opts.type,
+    timeInForce: "gtc",
+  };
+  if (opts.type === "stop") {
+    if (!(opts.stopPrice! > 0)) return { ok: false, error: "stop order requires a positive stopPrice" };
+    canonical.stopPrice = opts.stopPrice;
+  }
+
+  const pArgs = buildArgsFromSchema(placeTool.inputSchema, canonical);
+  if ("__error" in pArgs) return { ok: false, error: `crypto order: ${pArgs.__error}` };
+  if (canonical.account && !["rhs_account_number", "account_number", "account", "account_id"].some(k => k in (pArgs as Record<string, any>))) {
+    return { ok: false, error: "crypto order: account could not be pinned (schema has no account field)" };
+  }
+
+  let place;
+  try {
+    place = await mcpRpc(tk.token, "tools/call", { name: "place_crypto_order", arguments: pArgs }, sid);
+  } catch (e) {
+    return { ok: false, needsReconcile: true, error: `crypto order ambiguous (possible success): ${String(e)} — reconcile via get_crypto_orders` };
+  }
+  if (!place.ok) {
+    if (place.sent) return { ok: false, needsReconcile: true, error: `crypto order ambiguous: ${place.error}` };
+    return { ok: false, error: `crypto order rejected: ${place.error}` };
+  }
+  const content = place.result?.content ?? place.result;
+  const brokerOrderId = extractOrderId(content);
+  if (!brokerOrderId) {
+    return { ok: false, needsReconcile: true, raw: redact(content), error: "crypto order response had no parseable order id — reconcile before any retry" };
+  }
+  return { ok: true, brokerOrderId, raw: redact(content) };
+}
+
+export async function cancelRobinhoodCryptoOrder(orderId: string, account: string): Promise<{ ok: boolean; error?: string; raw?: any }> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error ?? "session open failed" };
+  const res = await mcpRpc(tk.token, "tools/call", {
+    name: "cancel_crypto_order",
+    arguments: { order_id: orderId, account_number: account },
+  }, sess.sessionId);
+  if (!res.ok) return { ok: false, error: res.error, raw: redact(res.result) };
+  return { ok: true, raw: redact(res.result) };
+}
+
+export async function getRobinhoodCryptoOrder(orderId: string): Promise<
+  { ok: true; status: string; filledQty?: number; avgFillPrice?: number; raw?: any } | { ok: false; error: string }
+> {
+  const svc = createServiceClient();
+  const tk = await getValidAccessToken(svc);
+  if (!tk.ok || !tk.token) return { ok: false, error: tk.error ?? "not connected" };
+  const sess = await openSession(tk.token);
+  if (!sess.ok) return { ok: false, error: sess.error ?? "session open failed" };
+  const tl = await listTools(tk.token, sess.sessionId);
+  if (!tl.ok) return { ok: false, error: tl.error ?? "listTools failed" };
+  const getTool = (tl.tools ?? []).find((t: any) => t.name === "get_crypto_orders");
+  if (!getTool) return { ok: false, error: "get_crypto_orders not offered by the Robinhood MCP server" };
+  let res;
+  try {
+    res = await mcpRpc(tk.token, "tools/call", { name: "get_crypto_orders", arguments: { order_id: orderId } }, sess.sessionId);
+  } catch (e) {
+    return { ok: false, error: `get_crypto_orders failed: ${String(e)}` };
+  }
+  if (!res.ok) return { ok: false, error: res.error ?? "get_crypto_orders failed" };
+  const content = res.result?.content ?? res.result;
+  const record = Array.isArray(content) ? content[0] : content;
+  const status = String(record?.state ?? record?.status ?? "").toLowerCase();
+  const filledQty = Number(record?.filled_asset_quantity ?? record?.filled_quantity ?? record?.quantity);
+  const avgFillPrice = Number(record?.average_price ?? record?.price);
+  return {
+    ok: true, status,
+    filledQty: Number.isFinite(filledQty) ? filledQty : undefined,
+    avgFillPrice: Number.isFinite(avgFillPrice) ? avgFillPrice : undefined,
+    raw: redact(content),
+  };
+}
+
 // Kill switch: wipe local tokens regardless of remote reachability. (The
 // metadata exposes no revocation_endpoint, so there is no remote revoke to
 // call — Robinhood's own Agentic Trading dashboard is the authoritative revoke.)

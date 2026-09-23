@@ -43,6 +43,15 @@ export const AUTONOMOUS_LIVE_ENABLED = process.env.AUTONOMOUS_LIVE_ENABLED === "
 // the leveraged sleeve; core-equity AutonomousLive is untouched by this flag.
 export const LEVERAGED_LIVE_ENABLED = process.env.LEVERAGED_LIVE_ENABLED === "true";
 
+// Deployment-level flag for CRYPTO's own live door (BTC/ETH/SOL —
+// app/api/agents/crypto-live/cron/route.ts). Its own flag, same reasoning
+// as LEVERAGED_LIVE_ENABLED above: never share a live-enable flag across
+// books. Set CRYPTO_LIVE_ENABLED=true in Vercel env, plus
+// strategy_config.crypto_live_auto_enabled=true in DB, to unlock ONLY
+// crypto; neither the leveraged sleeve nor core-equity AutonomousLive is
+// touched by this flag.
+export const CRYPTO_LIVE_ENABLED = process.env.CRYPTO_LIVE_ENABLED === "true";
+
 function rank(level: string): number {
   const i = (AUTONOMY_LEVELS as readonly string[]).indexOf(level);
   return i < 0 ? -1 : i;
