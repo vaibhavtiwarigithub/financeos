@@ -71,12 +71,12 @@
     },
     "L4LIVE": {
       "label": "L4 live trading (proposed)",
-      "description": "features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md's L4 section. Owner-approved 2026-09-23 for SOXL/TQQQ/SQQQ/SOXS plus crypto (BTC/ETH/SOL, US-only) — proposal drafted, NOT implemented. Reuses existing dormant live machinery (9-gate kernel, Execution Gateway, 605420660 allowlist) rather than parallel infra. Corrected same day: the broker-native protective stop is NOT new work — lib/protective/placement-worker.ts + lib/robinhood-mcp.ts's placeRobinhoodGtcStop already place a real GTC stop-market at Robinhood for US equities, fully built with reconciliation and cancel/replace, gated off behind two false-by-default flags (PROTECTIVE_PLACEMENT_WORKER_AVAILABLE, strategy_config.protective_orders_enabled). L4 reuses this worker. Crypto has no declared stop-order capability in Robinhood's capability matrix — that question is still open and blocks crypto-live specifically, not equities.",
+      "description": "app/api/agents/leveraged-live/cron/route.ts. features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md's L4 section. Owner-approved 2026-09-23 for SOXL/TQQQ/SQQQ/SOXS (crypto still proposal-only — no live order path exists for it). CODE-COMPLETE as of 2026-09-23, same day as approval, but inert: FIVE independent conditions must all hold before any order fires (AUTONOMOUS_LIVE_ENABLED env, strategy_config.live_auto_enabled, strategy_config.protective_orders_enabled, PROTECTIVE_PLACEMENT_WORKER_AVAILABLE source constant, leveraged_sleeve_live_lease_usd > 0 — defaults to 0). Reuses lib/protective/placement-worker.ts's placeRobinhoodGtcStop for a real, already-built GTC stop-market at Robinhood — no new broker integration. A failed stop placement always flattens the just-filled position. New leveraged_live_positions table (one open row per symbol, isolated from paper and from core-equity AutonomousLive). A symbol also needs 10 closed paper trades (or an explicit logged override) before its live door fires. Crypto has no declared stop-order capability in Robinhood's capability matrix — crypto-live remains unbuilt.",
       "addedAt": "2026-09-23",
-      "addReason": "Owner: 'Paper and live trading for th[ese] needs to be enabled... dont push back enable now', confirmed via structured choice for all four symbols plus crypto, approved after proposal review.",
-      "status": "new",
-      "changedAt": null,
-      "changeReason": null,
+      "addReason": "Owner: 'Paper and live trading for th[ese] needs to be enabled... dont push back enable now', confirmed via structured choice for all four symbols plus crypto, approved after proposal review, then explicitly asked to continue building the live cron.",
+      "status": "changed",
+      "changedAt": "2026-09-23",
+      "changeReason": "Proposal implemented same day: leveraged-live cron, kernel gate, live sleeve headroom, and leveraged_live_positions table all written and deployed, still inert behind five independent false/zero defaults.",
       "removedAt": null,
       "removeReason": null
     },
@@ -904,6 +904,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-09-23",
+      "event": "changed",
+      "nodeId": "L4LIVE",
+      "label": "Implemented same day as approval: app/api/agents/leveraged-live/cron/route.ts, the gate kernel, live sleeve headroom, and leveraged_live_positions table. Code-complete, inert behind 5 independent false/zero defaults."
+    },
     {
       "date": "2026-09-23",
       "event": "added",

@@ -7,6 +7,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isUnsupportedAdrProxy } from "@/lib/instruments/adrs";
 
+// Named, narrow carve-out for the leveraged sleeve's OWN dedicated live door
+// (features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md L4,
+// owner-approved 2026-09-23). Exactly these four symbols, exactly this one
+// caller class. Every other path (research, generic paper, the generic
+// Execution Gateway) passes no such option and is unaffected — see
+// symbol-policy.test.ts's "default behavior unchanged" assertion.
+const LEVERAGED_SLEEVE_LIVE_SYMBOLS = new Set(["SOXL", "TQQQ", "SQQQ", "SOXS"]);
+
 // Leveraged (2x/3x) + inverse US ETFs. NSE has effectively no leveraged ETFs, so
 // this is US-centric; the DB blocklist covers any India-specific names.
 export const LEVERAGED_INVERSE_ETFS = new Set<string>([
@@ -38,13 +46,14 @@ export async function isSymbolBlocked(
   svc: SupabaseClient,
   symbol: string,
   market: "us" | "india",
-  opts: { failClosed?: boolean } = {},
+  opts: { failClosed?: boolean; leveragedSleeveCaller?: boolean } = {},
 ): Promise<{ blocked: boolean; reason?: string }> {
   const sym = symbol.trim().toUpperCase();
   if (market === "us" && isUnsupportedAdrProxy(sym)) {
     return { blocked: true, reason: "retired or unsupported OTC ADR proxy; use the reviewed US exchange listing" };
   }
-  if (market === "us" && isLeveragedInverseEtf(sym)) {
+  const leveragedSleeveExempt = opts.leveragedSleeveCaller === true && market === "us" && LEVERAGED_SLEEVE_LIVE_SYMBOLS.has(sym);
+  if (market === "us" && isLeveragedInverseEtf(sym) && !leveragedSleeveExempt) {
     return { blocked: true, reason: "leveraged/inverse ETF (unfit for swing hold; long-only)" };
   }
   try {

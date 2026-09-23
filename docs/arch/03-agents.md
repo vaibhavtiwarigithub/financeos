@@ -1146,14 +1146,25 @@ that gate.
 - `leveraged-etf-shadow/collect` continues shadow-observing all four (`decision='observe_only'`)
   independently of their paper doors, including SOXL<->TQQQ trailing-20-session return correlation
   (`correlation_to_peer_20d`), informational only — it never gates sizing or entry.
-- **Live trading:** proposed (L4, `features/leveraged-etf-and-intraday-execution/
-  FEATURE_ARCHITECTURE.md`), owner-approved, **not yet implemented**. Reuses the EXISTING broker-
-  native stop placement worker (`lib/protective/placement-worker.ts`, `placeRobinhoodGtcStop` in
-  `lib/robinhood-mcp.ts` — see `features/hybrid-stop/FEATURE_ARCHITECTURE.md`), a real GTC
-  stop-market placement at Robinhood already fully built with reconciliation and cancel/replace,
-  currently gated off behind two false-by-default flags. Covers equities only — Robinhood's
-  declared capability matrix (`lib/protective/robinhood-capabilities.ts`) has no crypto entry, so
-  crypto's stop-order capability is still an open question the L4 proposal flags explicitly.
+- **Live trading:** `app/api/agents/leveraged-live/cron/route.ts` (L4, `features/leveraged-etf-
+  and-intraday-execution/FEATURE_ARCHITECTURE.md`), owner-approved AND CODE-COMPLETE as of
+  2026-09-23 — but inert by construction, not by a single flag. One shared route loops all four
+  symbols; the entry/monitor/exit sequence (`lib/trading/leveraged-live-kernel.ts`,
+  `leveraged-live-entry.ts`, `leveraged-sleeve-risk-live.ts`) is gated by FIVE independent
+  conditions that must ALL hold: `AUTONOMOUS_LIVE_ENABLED` (env), `strategy_config.live_auto_enabled`
+  (DB), `strategy_config.protective_orders_enabled` (DB), `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE`
+  (source constant), and `strategy_config.leveraged_sleeve_live_lease_usd` (DB, defaults to 0 = zero
+  capacity). Reuses the EXISTING broker-native stop placement worker
+  (`lib/protective/placement-worker.ts`, `placeRobinhoodGtcStop` in `lib/robinhood-mcp.ts` — see
+  `features/hybrid-stop/FEATURE_ARCHITECTURE.md`), a real GTC stop-market placement at Robinhood
+  already built with reconciliation and cancel/replace — no new broker integration was written. A
+  failed protective-stop placement always flattens the just-filled position via an immediate market
+  SELL. Live positions tracked in `leveraged_live_positions` (new table, one open row per symbol
+  max, isolated from paper and from core-equity `AutonomousLive`). A symbol also needs 10 closed
+  paper trades (`leveraged_live_overrides` for an explicit, logged per-symbol override) before its
+  live door will fire. Covers equities only — Robinhood's declared capability matrix
+  (`lib/protective/robinhood-capabilities.ts`) has no crypto entry, so crypto live trading remains
+  unbuilt and its stop-order capability unverified.
 
 ---
 
