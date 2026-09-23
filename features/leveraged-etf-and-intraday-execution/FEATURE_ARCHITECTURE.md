@@ -1,5 +1,299 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## L4: live trading for SOXL/TQQQ/SQQQ/SOXS + SQQQ/SOXS paper doors — proposal 2026-09-23 (AWAITING APPROVAL, NOT IMPLEMENTED)
+
+Owner (2026-09-23, same day as the TQQQ paper approval above): "Paper and live
+trading for th[ese, all four symbols] needs to be enabled... dont push back
+enable now," then, asked directly, confirmed via structured choice: live
+trading for **all four** — SOXL, TQQQ, SQQQ, **and SOXS** — and asked for this
+proposal to be drafted immediately for review.
+
+This reverses two standing decisions on the record, and that reversal is
+being stated plainly rather than absorbed silently:
+1. SQQQ/SOXS move from "shadow-only, not up for reconsideration" (this
+   file's section above, written hours earlier) to approved-for-a-live-and-
+   paper build. The owner's own words override that line explicitly.
+2. `lib/trading/symbol-policy.ts`'s blanket leveraged/inverse block, which
+   this file has repeatedly called "off-limits to touch as a shortcut," gets
+   a **named, narrow carve-out** for these four symbols on ONE dedicated
+   path only (below) — the block itself, and its effect on every other path
+   (research, the generic Execution Gateway, PaperTrader), is unchanged.
+
+### What "enable now" actually requires — read before approving
+
+A live survey of this codebase (2026-09-23) found:
+
+- **No live order has ever been placed autonomously for anything in this
+  app.** `AutonomousLive`'s 9-gate kernel and Kelly sizing are built and
+  code-complete, but the deployment flag `AUTONOMOUS_LIVE_ENABLED` is false
+  in production — it has never fired. The only live order this system has
+  ever sent was one **manual, human-clicked** Robinhood order on 2026-07-07
+  (`features/live-trading-hardening/FEATURE_ARCHITECTURE.md`).
+- **No broker-native protective stop exists anywhere in this codebase.**
+  `lib/brokers/robinhood/rest-client.ts` exposes exactly one order function,
+  `rhPlaceMarketOrder` — no stop, no stop-limit, no bracket/OCO. Every
+  protective exit in this app today (paper AND the live-shadow
+  `LiveExitMonitor`) is an app-side cron polling a price and deciding to
+  sell later. That is adequate for paper (nothing real is at risk). It is
+  not adequate for live 3x leveraged capital: a gap or an outage between
+  cron runs has no broker-side floor under it. `features/live-trading-
+  hardening/FEATURE_ARCHITECTURE.md`'s own P5 ("broker-side protective
+  stops — the real live-risk fix") already flagged this and is still
+  unbuilt.
+- So: **leveraged/inverse instruments would be the very first thing this
+  app ever trades autonomously with real money, using a protective
+  mechanism (broker-native stops) that doesn't exist yet, on instruments
+  (SQQQ/SOXS) that have zero paper track record.** That is the honest
+  starting position. This proposal builds the missing pieces rather than
+  arguing the order again — the owner has ruled — but the risk stated above
+  is real and doesn't go away by proceeding; it goes away by building the
+  protective-stop mechanism BEFORE any live order, which is non-negotiable
+  in this proposal regardless of urgency.
+
+### 1. Reuse existing live machinery — do not build a parallel stack
+
+Everything below already exists, dormant, and is reused unchanged:
+
+| Piece | File | Reused as |
+|---|---|---|
+| Multi-broker order lifecycle | `app/api/broker/orders/route.ts`, `lib/brokers/registry.ts` | The live order path for the new leveraged-sleeve door |
+| 9-gate authorization kernel | `lib/trading/execution-kernel.ts` (`evaluateAutonomousExecution`) | Gates every live leveraged fill, same 9 checks (lease, policy version, flags/token/allowlist, kill switches/alerts, proposal freshness, fresh NAV/positions, qty validation, cap minimum, portfolio limits) |
+| Kelly sizing | `computeAutonomousSizing` | NOT reused for the leveraged sleeve — see part 4; a fixed small lease replaces Kelly here deliberately |
+| Shared exit decision core | `lib/trading/exit-ladder.ts` (`decideExitLadder`) | Same function paper SOXL/TQQQ already use — live cannot diverge from paper's protective logic by construction |
+| Order/account infra | `broker_orders` table, `605420660` allowlist (`broker_accounts`, migration 093) | Unchanged; the leveraged sleeve places orders through the SAME allowlisted account, no new account |
+| Deployment + DB dual gate | `AUTONOMOUS_LIVE_ENABLED` (env) AND `strategy_config.live_auto_enabled` (DB) | Both still required; a THIRD gate is added below, specific to the leveraged sleeve |
+
+No new broker adapter, no new account, no new order table.
+
+### 2. The narrow symbol-policy carve-out
+
+`isSymbolBlocked()` in `lib/trading/symbol-policy.ts` is NOT relaxed
+generally. A new optional parameter is added:
+
+```ts
+export async function isSymbolBlocked(
+  svc: SupabaseClient, symbol: string, market: "us" | "india",
+  opts: { failClosed?: boolean; leveragedSleeveCaller?: boolean } = {},
+): Promise<{ blocked: boolean; reason?: string }>
+```
+
+When `leveragedSleeveCaller` is true AND the symbol is one of exactly
+`SOXL`/`TQQQ`/`SQQQ`/`SOXS`, the leveraged/inverse check is skipped (DB
+blocklist check still applies — an owner blocklist entry still wins). Every
+existing caller (research candidate selection, PaperTrader, the generic
+Execution Gateway, the generic paper path) passes no such option and is
+completely unaffected — this is checked by a new test asserting the default
+(no option) behavior is byte-for-byte unchanged. Only the NEW leveraged-
+sleeve live route (part 3) and its paper-door siblings (part 5) pass
+`leveragedSleeveCaller: true`. This is the entire scope of the symbol-policy
+change — four named symbols, one named caller class, nothing else moves.
+
+### 3. Broker-native protective stop (build first, gates everything else)
+
+New `rhPlaceStopOrder` in `lib/brokers/robinhood/rest-client.ts`, mirroring
+`rhPlaceMarketOrder`'s existing shape but submitting a stop-loss order
+(Robinhood's orders API accepts `trigger: "stop"`, `stop_price`, `type:
+"market"` for a stop-market, or `type: "limit"` + `price` for a stop-limit —
+stop-market is the right default here: certainty of exit matters more than
+price precision for a protective floor).
+
+Sequencing for every live leveraged fill:
+1. Submit the entry as a market order (existing `rhPlaceMarketOrder`,
+   unchanged).
+2. On confirmed fill (poll `getOrder` until `filled`, bounded retries),
+   IMMEDIATELY submit the protective stop order via `rhPlaceStopOrder`.
+3. Poll the stop order's own status until it is confirmed `queued`/`open` at
+   the broker (not just "request accepted" — actually resting).
+4. If step 2 or 3 fails, or times out, **do not leave the position naked**:
+   immediately submit a market SELL to flatten the just-opened position, log
+   a critical `agent_alerts` row, and stop. A failed protective stop is
+   treated as a failed entry, not a "we'll retry the stop later" — every
+   other protective mechanism in this codebase (SOXL/TQQQ paper, the
+   semiconductor/sleeve caps) fails closed the same way.
+5. Every subsequent live-exit-monitor cycle (part 6) reconciles: does the
+   broker still show an open, resting stop order for this position? If not
+   (cancelled externally, filled, broker-side error), the SAME fail-closed
+   flatten in step 4 fires rather than leaving a silently-unprotected
+   position running until the next scheduled check.
+
+This is new work, not a config flip — reconciliation-grade broker
+protection does not exist today for anything in this app, and building it
+correctly is the actual prerequisite "enable now" requires.
+
+### 4. Lease size — fixed, small, NOT Kelly-sized, NOT the paper 5%
+
+The paper sleeve's 5%-of-$10k-NAV cap ($500 notional headroom, combined
+SOXL+TQQQ) is a paper-experiment risk envelope, not a live-money
+recommendation — it was sized to make paper learning meaningful, not to
+survive a live gap on a 3x fund with zero live track record. For live:
+
+- A NEW, separate, fixed-dollar lease — **not** a percentage of live NAV,
+  **not** Kelly-sized (Kelly sizing assumes a validated edge; none exists
+  yet for any of these four instruments, they have zero or (for TQQQ) a
+  handful of paper cycles) — owner sets the number explicitly before this
+  ships; this proposal recommends starting at $100–$250 total, combined,
+  across all four symbols, specifically because it is small enough that a
+  worst-case total loss is a rounding error, not a real financial event,
+  while the live pipeline (fill → stop → reconcile) proves itself.
+- The combined-sleeve accounting from the paper cap
+  (`leveraged-sleeve-risk.ts`) is reused conceptually but reads LIVE
+  positions/NAV via `broker_orders`/`live_position_state`, not
+  `paper_positions` — a new `lib/trading/leveraged-sleeve-risk-live.ts` thin
+  wrapper, same headroom math, different data source. Paper and live
+  leverage exposure are never summed together.
+
+### 5. SQQQ/SOXS get paper doors first — same pattern as SOXL/TQQQ
+
+Before either gets a live door, they get what SOXL/TQQQ already have:
+`lib/trading/sqqq-lifecycle.ts` / `soxs-lifecycle.ts` (mirrors `tqqq-
+lifecycle.ts` exactly — same `decideExitLadder` reuse; buying shares of an
+inverse ETF is an ordinary long position in that instrument, not a short
+sale, so the existing long-only exit ladder applies unchanged), `execute_
+sqqq_paper_fill` / `execute_soxs_paper_fill` RPCs (`position_role=
+'sqqq_paper'`/`'soxs_paper'`), dedicated cron doors with their own ET
+windows (11:40–11:54 and 12:00–12:14, continuing the 15-minute offset
+pattern from SOXL/TQQQ), capacity via the SAME shared
+`leveragedSleeveHeadroom()` (now genuinely four-way combined, still 5% of
+paper NAV total). `leveraged-etf-shadow.ts` already observes these two; the
+paper doors are the only new paper-side work.
+
+**Recommended (not mandatory) sequencing gate:** a symbol needs at least 10
+closed paper trades with `resolveDecisionContext`-clean evidence before its
+live door is allowed to fire, mirroring the LearnerAgent's own "10+ closed
+trades before Phase 1" rule elsewhere in this codebase. SOXL/TQQQ can likely
+clear this within days; SQQQ/SOXS start at zero today. This is a default in
+the code (a `min_paper_trades_before_live` check per symbol in the 9-gate
+kernel extension, part 6), not a hard block — the owner can override it
+per-symbol via the same `strategy_config` flags that gate everything else
+here, consistent with how every other override in this codebase works
+(explicit, logged, reversible), not a silent bypass.
+
+### 6. Live leveraged-sleeve door
+
+New `app/api/agents/leveraged-live/cron/route.ts`, one route for all four
+symbols (unlike the paper doors' one-route-per-symbol pattern — live's
+extra gating makes a shared route with a symbol loop the better shape here,
+since every symbol goes through the identical 9-gate-plus-stop-
+reconciliation sequence). Entry windows reuse each symbol's existing paper
+window (11:00/11:20/11:40/12:00 ET) so live and paper evaluate the same
+signal at the same moment for comparison. Per symbol, per run:
+
+1. `evaluateAutonomousExecution` (existing 9-gate kernel) — unchanged gates,
+   PLUS the new `min_paper_trades_before_live` check (part 5) as a 10th
+   gate, PLUS `leveragedSleeveCaller` symbol-policy carve-out (part 2).
+2. If held: reconcile the broker-side stop (part 3, step 5); on a real
+   stop/target hit, submit the live exit through the existing Execution
+   Gateway.
+3. If flat and all gates pass: the SAME entry-planning logic each paper
+   lifecycle module already computes (`planTqqqEntry`-shaped output) sizes
+   against the LIVE lease headroom (part 4) instead of the paper cap, then
+   executes the market-fill-then-stop sequence (part 3).
+4. Every decision — gate pass/fail per gate, fill, stop placement,
+   reconciliation outcome — is written to `broker_orders` /
+   `live_position_state` with the same fields `LiveExitMonitor` already
+   uses, so this door is visible in the exact same places the dormant
+   equity live path would be, not a separate invisible pipeline.
+
+### 7. Acceptance criteria
+
+- `AUTONOMOUS_LIVE_ENABLED=false` (or `live_auto_enabled=false`) makes this
+  entire route a no-op, identical to every other live path today.
+- No live order for these four symbols can be submitted without a
+  confirmed, broker-resting protective stop within the bounded window; a
+  failed stop always flattens rather than leaves a naked position.
+- `isSymbolBlocked()`'s default behavior (no `leveragedSleeveCaller` option)
+  is unchanged for every existing caller — enforced by a new test.
+- Live and paper leveraged notional are never summed into one cap; each has
+  its own headroom check against its own data source.
+- A symbol below `min_paper_trades_before_live` cannot fire live unless the
+  owner explicitly overrides that symbol's flag — the override itself is
+  logged (who, when, which symbol) the same way every other manual override
+  in this codebase is.
+- Combined live leveraged-sleeve exposure across SOXL/TQQQ/SQQQ/SOXS never
+  exceeds the owner-set lease (part 4).
+
+### 8. Crypto (BTC/ETH/SOL), US-only — same broker-native-stop rule, bigger gap to close
+
+Owner (2026-09-23, clarifying "including crypto"): the broker-native-stop
+requirement applies to **every symbol traded live in both pipelines** —
+equities/leveraged AND crypto — with no exception. Crypto has no India
+counterpart (confirmed by owner) — `market='crypto'` stays its own pool, as
+it already is in paper.
+
+This is not a small addition to part 3's pattern. Crypto starts from a
+materially emptier position than the equity leveraged sleeve did:
+
+- **No live crypto order execution path exists at all today**, anywhere in
+  this codebase. `lib/brokers/robinhood/rest-client.ts` (the serverless-safe
+  adapter `AutonomousLive`/cron paths use) is equities-only — no
+  `rhPlaceCryptoOrder` function exists. The crypto research/paper pipeline
+  (`CryptoPaperTrader`, `crypto-position-monitor`) never calls a broker at
+  all; it is a pure internal ledger. The Robinhood MCP path
+  (`lib/brokers/crypto-capability.ts`, `place_crypto_order` /
+  `preview_crypto_order` / `cancel_crypto_order`) is capability-DETECTION
+  only (does the connected account's MCP session currently advertise these
+  tools) — it has never been called to submit a real order, and per this
+  session's earlier research, that MCP path needs a live human-authenticated
+  session that a serverless cron cannot hold, the same constraint that
+  forced the equities REST-adapter build in the first place. A crypto
+  equivalent of that REST adapter does not exist and would need to be built
+  from whatever Robinhood exposes outside the MCP surface (needs
+  verification — Robinhood's public crypto trading API access is not
+  confirmed available to this account/integration; this is a real open
+  question, not a formality).
+- **Whether Robinhood crypto orders even support a stop order type is
+  UNVERIFIED.** Nothing in this codebase currently records the accepted
+  parameters of `place_crypto_order` (order type enum, whether `stop_price`
+  is a supported field). Many retail crypto venues support market/limit
+  only, no native stop. This must be confirmed against the actual tool
+  schema (or Robinhood's crypto API docs directly) BEFORE any other crypto-
+  live work starts, because it determines whether this is buildable at all
+  under the owner's own non-negotiable (part 3: no live order without a
+  confirmed broker-resting protective stop; a failed stop always flattens,
+  never left naked). **If Robinhood crypto has no native stop order type,
+  crypto live trading does not ship** until either Robinhood adds one or a
+  different venue with native crypto stops is used — there is no app-side-
+  polling fallback for crypto, same as equities.
+- Crypto is 24/7; the equity leveraged sleeve's ET entry-window pattern
+  (part 6) doesn't transfer directly. A crypto live door needs its own
+  session model — likely closer to `LiveExitMonitor`'s continuous-cadence
+  reconciliation than the equity sleeve's narrow windows — designed once the
+  order/stop capability question above is answered, not before.
+
+**Sequencing:** the crypto broker capability question (stop-order support)
+gets verified FIRST, as its own short, scoped investigation, before any
+crypto-live design work continues. If the answer is "yes, supported,"
+part 3's pattern (fill → confirm → stop → reconcile → fail-closed flatten)
+extends to crypto with a new `rhPlaceCryptoStopOrder`-equivalent and its own
+lease (part 4's fixed-dollar approach, sized separately from the equity
+leveraged sleeve — never summed with it). If "no," this section is blocked
+and says so rather than shipping a weaker protection for crypto than for
+equities.
+
+### 9. Explicit non-goals
+
+- No change to core-equity `AutonomousLive`'s own gates, lease, or Kelly
+  sizing — this is a fully separate door reusing shared infrastructure, not
+  a modification to the existing (still-dormant) equity live path.
+- No margin, no options, no short sale of bare stock — SQQQ/SOXS remain
+  ordinary long positions in inverse-tracking instruments.
+- No relaxation of `symbol-policy.ts`'s block for any symbol outside these
+  four, on any path outside the two named callers.
+- Kelly sizing is explicitly NOT used for the leveraged sleeve at this
+  stage (part 4) — flag if this should be revisited once real trade history
+  exists.
+- No India crypto — crypto stays US-only, its own pool, never summed with
+  equity leverage or India.
+
+**Status:** proposal only, drafted per explicit owner request. Implementation
+requires (a) the owner setting the actual lease dollar amount(s) (part 4,
+and separately for crypto per part 8), (b) verifying Robinhood crypto's
+stop-order capability (part 8) before crypto-specific work proceeds, and
+(c) an explicit "Approved" / "Proceed" on this specific section, per this
+project's Architecture-First Mode — the same gate every prior phase in this
+file went through, now applied to a live-money change instead of a paper
+one.
+
 ## TQQQ paper sleeve + SQQQ/SOXS shadow-only + GLD/SLV deferral — proposal 2026-09-23 (AWAITING APPROVAL, NOT IMPLEMENTED)
 
 Owner asked (2026-09-23): "similar to SOXL i want the app to learn and become

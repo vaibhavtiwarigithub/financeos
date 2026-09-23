@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import EdgeIcHistoryChart from "@/components/dashboard/EdgeIcHistoryChart";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,12 @@ export default async function EdgesPage() {
     svc.from("edge_catalog").select("*").order("category").order("edge_id"),
     svc.from("edge_signals").select("symbol, edge_id, market, raw_value, z_value, date").order("date", { ascending: false }).limit(500),
     svc.from("edge_universe_members").select("universe_id, market, symbol"),
-    svc.from("edge_ic_history").select("edge_id, market, window_end, horizon, ic, ic_ir, t_stat, status_after, n_obs, universe_size, evidence_quality").order("window_end", { ascending: false }).limit(1000),
+    // Limit raised from 1000 -> 6000 (2026-09-23): the scorecard above only
+    // needs the latest window, but the IC history chart needs the FULL
+    // series. Production is ~2,532 rows total (11 weeks); 6000 covers a
+    // couple years of growth at the current weekly cadence before this
+    // needs revisiting.
+    svc.from("edge_ic_history").select("edge_id, market, window_end, horizon, ic, ic_ir, t_stat, status_after, n_obs, universe_size, evidence_quality").order("window_end", { ascending: false }).limit(6000),
     svc.from("edge_market_status").select("edge_id, market, status, latest_window_end, n_obs_min, evidence_quality"),
     svc.from("edge_readiness_status").select("edge_id,market,horizon,policy_version,stage,windows_observed,windows_required,positive_windows,median_ic,median_t_stat,min_n_obs,latest_window_end,validation_windows_observed,validation_windows_required,median_net_of_fee_ic,next_action,evaluated_at").order("market").order("edge_id").order("horizon"),
   ]);
@@ -167,6 +173,15 @@ export default async function EdgesPage() {
             </table>
           )}
         </div>
+
+        {/* IC history — is it getting better over time, or stuck? */}
+        <div style={{ fontSize: "11px", color: T.muted, marginBottom: "6px" }}>
+          US and India only — crypto has no equivalent rank-IC measurement yet (crypto_geometry_shadows records eligible/refused decisions, not a per-window IC series like edge_ic_history). Adding one is separate, unbuilt work.
+        </div>
+        <EdgeIcHistoryChart
+          rows={icAll.map(r => ({ edge_id: r.edge_id, market: r.market, window_end: r.window_end, horizon: r.horizon, ic: r.ic, t_stat: r.t_stat }))}
+          edges={catalog.map(e => ({ edge_id: e.edge_id, name: e.name }))}
+        />
 
         {/* IC scorecard (P1) — does an edge actually predict forward returns? */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "16px", marginBottom: "16px", overflowX: "auto" }}>
