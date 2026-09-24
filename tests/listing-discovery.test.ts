@@ -3,8 +3,12 @@ import { candidateRowForFiling, candidateStateForFiling } from "@/lib/listings/d
 import { edgarDailyIndexUrl, parseEdgarMasterIndex } from "@/lib/listings/sec-edgar";
 import { capability, preflightRow } from "@/lib/brokers/preflight";
 
+// Header matches SEC's real format (space in "File Name"), confirmed against
+// a live fetch 2026-09-24 -- the fixture previously used "Filename" (no
+// space), the same wrong string the production code searched for, so this
+// test passed while masking a real bug that broke every production run.
 const INDEX = `Description: Master Index of EDGAR Dissemination Feed
-CIK|Company Name|Form Type|Date Filed|Filename
+CIK|Company Name|Form Type|Date Filed|File Name
 --------------------------------------------------------------------------------
 0002000001|Example Issuer Inc|S-1|2026-09-08|edgar/data/2000001/0002000001-26-000001.txt
 0002000002|Already Listed Inc|10-K|2026-09-08|edgar/data/2000002/0002000002-26-000002.txt

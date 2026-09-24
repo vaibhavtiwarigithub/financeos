@@ -15,7 +15,13 @@ export type EdgarListingFiling = {
 
 /** Parse the SEC master-index body without treating a failed/changed page as zero filings. */
 export function parseEdgarMasterIndex(body: string): EdgarListingFiling[] {
-  const header = "CIK|Company Name|Form Type|Date Filed|Filename";
+  // Confirmed against a real live fetch 2026-09-24: SEC's actual header has a
+  // space in "File Name", not "Filename" as this constant previously read.
+  // That one-character mismatch meant indexOf() never matched, so this threw
+  // "missing its column header" on every run for weeks regardless of the
+  // real data being perfectly valid -- the test fixture below had the same
+  // wrong header baked in, so tests passed while being wrong the whole time.
+  const header = "CIK|Company Name|Form Type|Date Filed|File Name";
   const headerAt = body.indexOf(header);
   if (headerAt < 0) throw new Error("SEC daily master index is missing its column header");
   const rows: EdgarListingFiling[] = [];
