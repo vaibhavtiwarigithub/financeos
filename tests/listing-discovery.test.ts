@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candidateRowForFiling, candidateStateForFiling } from "@/lib/listings/discovery";
-import { edgarDailyIndexUrl, parseEdgarMasterIndex } from "@/lib/listings/sec-edgar";
+import { edgarDailyIndexUrl, parseEdgarMasterIndex, publishedEdgarIndexDates, collectEdgarIndexes } from "@/lib/listings/sec-edgar";
 import { capability, preflightRow } from "@/lib/brokers/preflight";
 
 // Header matches SEC's real format (space in "File Name"), confirmed against
@@ -16,6 +16,19 @@ CIK|Company Name|Form Type|Date Filed|File Name
 `;
 
 describe("new-listing evidence discovery", () => {
+  it("never requests tonight's not-yet-published index", () => {
+    expect(publishedEdgarIndexDates(new Date("2026-09-25T23:35:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-24");
+    expect(publishedEdgarIndexDates(new Date("2026-09-26T08:35:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-25");
+    expect(publishedEdgarIndexDates(new Date("2026-09-26T06:00:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-24");
+  });
+  it("preserves available filings when another index is unavailable", async () => {
+    const result = await collectEdgarIndexes(new Date("2026-09-26T08:35:00Z"), async date => {
+      if (date.getUTCDate() === 25) throw new Error("403");
+      return parseEdgarMasterIndex(INDEX);
+    });
+    expect(result.map(r => r.status)).toEqual(["unavailable", "available", "available"]);
+    expect(result[1].filings).toHaveLength(2);
+  });
   it("retains only allowed registration/prospectus forms with immutable SEC identity", () => {
     const filings = parseEdgarMasterIndex(INDEX);
     expect(filings).toHaveLength(2);

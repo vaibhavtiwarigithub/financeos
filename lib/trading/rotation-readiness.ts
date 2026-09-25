@@ -36,6 +36,7 @@ export interface RotationP1Readiness {
 }
 
 function finite(value: unknown): number | null {
+  if (value == null || typeof value === "boolean" || (typeof value === "string" && value.trim() === "")) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -119,15 +120,35 @@ export function measureCandidatePostSwapCorrelation(
 }
 
 export function estimateRotationFrictionPct(sellNotional: number, buyNotional: number): number | null {
-  if (!(sellNotional > 0) || !(buyNotional > 0)) return null;
-  const gross = sellNotional + buyNotional;
+  if (![sellNotional, buyNotional].every(n => Number.isFinite(n) && n > 0)) return null;
   // Paper fills currently apply 5 bps adverse slippage per leg. Spread, impact,
   // fees, and tax are deliberately not guessed here and remain separate blockers.
-  return ((sellNotional * 0.0005) + (buyNotional * 0.0005)) / gross * 100;
+  // Expected edge is a return on BUY capital, not sell+buy turnover. An equal
+  // sized replacement incurs 10 bps across two 5-bps legs, not 5 bps.
+  return ((sellNotional * 0.0005) + (buyNotional * 0.0005)) / buyNotional * 100;
+}
+
+/** Executed rotations only. Ordinary entries/exits and shadow plans aren't churn. */
+export function rotationTurnoverNotional(rows: Array<{ status: string; sell_notional: unknown; buy_notional: unknown }>): number {
+  return rows.reduce((sum, row) => {
+    if (row.status !== "paper_executed") return sum;
+    const sell = finite(row.sell_notional), buy = finite(row.buy_notional);
+    if (sell == null || buy == null || sell <= 0 || buy <= 0) throw new Error("rotation turnover contains an invalid executed notional");
+    const total = sum + sell + buy;
+    if (!Number.isFinite(total)) throw new Error("rotation turnover overflow");
+    return total;
+  }, 0);
 }
 
 export function assessRotationP1Readiness(input: RotationP1ReadinessInput): RotationP1Readiness {
   const blockers: string[] = [];
+  // NaN makes every comparison false and must never become ready=true.
+  const numbers = [input.persistencePriorRuns, input.persistenceRequiredRuns,
+    input.turnoverBudgetMonthlyPct, input.monthlyTurnoverUsedPct, input.proposedTurnoverPct,
+    input.expectedEdgePct, input.frictionPct];
+  if (numbers.some(n => n != null && !Number.isFinite(n))) blockers.push("invalid_numeric_evidence");
+  if ([input.persistencePriorRuns, input.persistenceRequiredRuns].some(n => !Number.isInteger(n) || n < 0)
+    || [input.monthlyTurnoverUsedPct, input.proposedTurnoverPct, input.frictionPct].some(n => n != null && n < 0)) blockers.push("invalid_numeric_evidence");
   if (input.persistencePriorRuns < input.persistenceRequiredRuns) blockers.push("persistence_not_met");
   if (input.turnoverBudgetMonthlyPct == null || input.turnoverBudgetMonthlyPct <= 0) blockers.push("turnover_budget_not_configured");
   if (input.monthlyTurnoverUsedPct == null || input.proposedTurnoverPct == null) blockers.push("turnover_usage_unavailable");
@@ -140,6 +161,11 @@ export function assessRotationP1Readiness(input: RotationP1ReadinessInput): Rota
   if (input.frictionPct == null) blockers.push("friction_unavailable");
   if (input.postSwapAllowed !== true) blockers.push(input.postSwapAllowed == null ? "post_swap_gate_unavailable" : "post_swap_gate_failed");
   if (input.correlation.status !== "ok") blockers.push("candidate_correlation_unavailable");
+  else if (!Number.isFinite(input.correlation.maxAbsCorrelation) || input.correlation.maxAbsCorrelation == null
+    || input.correlation.maxAbsCorrelation < 0 || input.correlation.maxAbsCorrelation > 1
+    || input.correlation.pairCount !== input.correlation.expectedPairCount || input.correlation.pairCount < 1) {
+    blockers.push("candidate_correlation_unavailable");
+  }
 
   const netExpectedEdgePct = input.expectedEdgePct != null && input.frictionPct != null
     ? input.expectedEdgePct - input.frictionPct

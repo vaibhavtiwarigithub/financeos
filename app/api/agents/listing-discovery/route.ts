@@ -2,22 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { candidateRowForFiling, LISTING_DISCOVERY_POLICY } from "@/lib/listings/discovery";
-import { fetchEdgarListingFilings, isFilingDay, type EdgarListingFiling } from "@/lib/listings/sec-edgar";
+import { collectEdgarIndexes, type EdgarListingFiling } from "@/lib/listings/sec-edgar";
 import { createServiceClient } from "@/lib/supabase/service";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 async function ownerOrCron(req: NextRequest) { return verifyCronSecret(req) ? null : requireOwner(); }
-
-function priorWeekdays(now = new Date(), count = 3): Date[] {
-  const dates: Date[] = [];
-  for (let offset = 0; dates.length < count && offset < 10; offset++) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset));
-    if (isFilingDay(d)) dates.push(d);
-  }
-  return dates;
-}
 
 async function persistFiling(svc: any, filing: EdgarListingFiling) {
   const now = new Date();
@@ -69,22 +61,30 @@ async function persistFiling(svc: any, filing: EdgarListingFiling) {
 async function runDiscovery() {
   const svc = createServiceClient();
   const startedAt = new Date().toISOString();
-  const dates = priorWeekdays();
-  const fetched = await Promise.all(dates.map(async date => ({ date: date.toISOString().slice(0, 10), filings: await fetchEdgarListingFilings(date) })));
+  const fetched = await collectEdgarIndexes();
   const byAccession = new Map<string, EdgarListingFiling>();
   for (const batch of fetched) for (const filing of batch.filings) byAccession.set(filing.accessionNumber, filing);
   let created = 0;
   for (const filing of byAccession.values()) if ((await persistFiling(svc, filing)).created) created++;
-  const summary = { policy: LISTING_DISCOVERY_POLICY, source: "sec_edgar_daily_index", dates: fetched.map(x => x.date), filings_seen: byAccession.size, candidates_created: created, influence: "none" };
+  const available = fetched.filter(x => x.status === "available").length;
+  const status = available === fetched.length ? "completed" : available > 0 ? "partial" : "error";
+  const summary = { policy: LISTING_DISCOVERY_POLICY, source: "sec_edgar_daily_index", status,
+    dates: fetched.map(x => x.date), indexes: fetched.map(({ filings, ...index }) => ({ ...index, filing_count: index.status === "available" ? filings.length : null })),
+    filings_seen: byAccession.size, candidates_created: created, influence: "none" };
   // agent_runs is operational health only; it is not used as listing evidence.
-  await svc.from("agent_runs").insert({ agent_type: "listing_discovery", market: "us", status: "completed", started_at: startedAt, completed_at: new Date().toISOString(), result_summary: JSON.stringify(summary), symbols: [] });
+  const { error: runError } = await svc.from("agent_runs").insert({ agent_type: "listing_discovery", market: "us", status, started_at: startedAt, completed_at: new Date().toISOString(), result_summary: JSON.stringify(summary), symbols: [] });
+  if (runError) throw new Error(`listing discovery run recording failed: ${runError.message}`);
+  if (status === "completed") await resolveIssue("listing-discovery:us", svc);
+  else await reportIssue({ issueKey: "listing-discovery:us", severity: "warn", category: "data",
+    title: "SEC filing discovery has unavailable indexes",
+    detail: fetched.filter(x => x.status === "unavailable").map(x => `${x.date}: ${x.error}`).join("; ") }, svc);
   return summary;
 }
 
 export async function POST(req: NextRequest) {
   const gate = await ownerOrCron(req); if (gate) return gate;
   if (req.nextUrl.searchParams.get("market") !== "us") return NextResponse.json({ error: "only US evidence-only discovery is available" }, { status: 400 });
-  try { return NextResponse.json(await runDiscovery()); }
+  try { const result = await runDiscovery(); return NextResponse.json(result, { status: result.status === "error" ? 502 : 200 }); }
   catch (error) {
     const message = error instanceof Error ? error.message : "listing discovery failed";
     // An unavailable regulator source must be visible as an errored run; no row

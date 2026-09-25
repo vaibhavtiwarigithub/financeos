@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const migration = readFileSync("supabase/migrations/20260807160000_property_parcel_evidence_stage1.sql", "utf8");
 const worker = readFileSync("scripts/python/property_bulk_ingest.py", "utf8");
-const workflow = readFileSync(".github/workflows/property-evidence.yml", "utf8");
+const workflow = readFileSync(".github/workflows/property-evidence.yml", "utf8").replace(/\r\n/g, "\n");
 const route = readFileSync("app/api/property/valuation-evidence/route.ts", "utf8");
 
 describe("Property valuation Stage 1 safety contract", () => {

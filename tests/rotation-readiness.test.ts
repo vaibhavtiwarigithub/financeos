@@ -3,6 +3,7 @@ import {
   assessRotationP1Readiness,
   estimateRotationFrictionPct,
   measureCandidatePostSwapCorrelation,
+  rotationTurnoverNotional,
   type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 
@@ -33,7 +34,16 @@ describe("capital rotation P1 readiness", () => {
   });
 
   it("uses the existing five-basis-point adverse fill model on each leg", () => {
-    expect(estimateRotationFrictionPct(1_000, 1_000)).toBeCloseTo(0.05, 8);
+    expect(estimateRotationFrictionPct(1_000, 1_000)).toBeCloseTo(0.10, 8);
+  });
+
+  it("charges turnover only for executed rotations and rejects invalid ledger values", () => {
+    expect(rotationTurnoverNotional([
+      { status: "planned", sell_notional: 10000, buy_notional: 10000 },
+      { status: "paper_executed", sell_notional: 500, buy_notional: 600 },
+    ])).toBe(1100);
+    expect(() => rotationTurnoverNotional([{ status: "paper_executed", sell_notional: null, buy_notional: 600 }])).toThrow();
+    expect(estimateRotationFrictionPct(Infinity, 100)).toBeNull();
   });
 
   it("fails closed on every unproven economic and portfolio input", () => {

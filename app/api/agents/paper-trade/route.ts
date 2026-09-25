@@ -25,7 +25,7 @@ import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-po
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
-import { paperAllocationSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
+import { paperAllocationSpend, paperIntendedSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
@@ -471,8 +471,47 @@ export async function POST(req: NextRequest) {
       await q;
     };
 
+    // Freeze only research-qualified, priceable long entries that clear normal
+    // safety checks and then fail a capacity or cash gate. Measurement failures
+    // must not turn a normal safe rejection into a paper fill or a crash.
+    const recordMissedEntry = async (args: {
+      signal: any; market: "us" | "india"; currency: "USD" | "INR"; runId: string | null;
+      referencePrice: number; fillPrice: number; qty: number | null; notional: number | null;
+      source: string; retrievedAt: string; decisionAt: string; stopLoss: number; priceTarget: number; horizon: number;
+      riskPlan: unknown; reason: string; detail: Record<string, unknown>;
+    }) => {
+      const score = Number(args.signal.analyst_score);
+      const threshold = mandateByMarket.get(args.market)?.score_threshold ?? 60;
+      if (args.signal.direction !== "long" || args.signal.session_validated !== true
+        || args.signal.score_source !== "deterministic_v1" || args.signal.rank_rejected === true
+        || !Number.isFinite(score) || score < threshold || !Number.isFinite(args.referencePrice) || args.referencePrice <= 0
+        || !Number.isFinite(args.fillPrice) || args.fillPrice <= 0
+        || !Number.isFinite(args.stopLoss) || !Number.isFinite(args.priceTarget)) return;
+      const attemptKey = `${args.market}:${args.signal.id}:${args.runId ?? "manual"}`;
+      const { error } = await supabase.from("paper_missed_opportunities").upsert({
+        attempt_key: attemptKey, signal_id: args.signal.id, run_id: args.runId,
+        market: args.market, symbol: String(args.signal.symbol).toUpperCase(),
+        decision_at: args.decisionAt,
+        reference_price: args.referencePrice, hypothetical_fill_price: args.fillPrice,
+        hypothetical_qty: args.qty, hypothetical_notional: args.notional,
+        currency: args.currency, entry_score: score, block_reason: args.reason,
+        block_detail: args.detail, price_source: args.source, price_retrieved_at: args.retrievedAt,
+        stop_loss: args.stopLoss, price_target: args.priceTarget, horizon_sessions: args.horizon,
+        risk_plan: args.riskPlan,
+      }, { onConflict: "attempt_key", ignoreDuplicates: true });
+      if (error) {
+        try { await logStage(supabase, { signal_id: args.signal.id, symbol: args.signal.symbol, market: args.market,
+          stage: "missed_entry_ledger", outcome: "unavailable", reason: "snapshot_write_failed", detail: { error: error.message } }); }
+        catch { /* diagnostic write failures must never block an otherwise-valid paper decision */ }
+      }
+    };
+
+    const rotatedMarkets = new Set<string>();
     for (const signal of signals) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
+      // A committed replacement invalidates this run's cached cash/book/name
+      // snapshots. The next scheduled run reloads them before another entry.
+      if (rotatedMarkets.has(market)) continue;
       const currency = market === "india" ? "INR" : "USD";
       const portfolio = poolByMarket.get(market);
       if (!portfolio) {
@@ -529,11 +568,9 @@ export async function POST(req: NextRequest) {
       // Sector cap
       const candSector = await resolveSector(signal.symbol, signal.research_packet_id ?? null);
       const sectorCount = sectorCountByMarket.get(market) ?? {};
-      if (candSector && (sectorCount[candSector] ?? 0) >= maxPerSector) {
-        await revertClaim(signal.id);
-        skipped.push({ symbol: signal.symbol, reason: `sector_cap (${candSector} already at ${maxPerSector})` });
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sector_gate", outcome: "rejected", reason: "sector_cap", detail: { sector: candSector, max: maxPerSector, current: sectorCount[candSector] ?? 0 } });
-        continue;
+      const atSectorCap = Boolean(candSector && (sectorCount[candSector] ?? 0) >= maxPerSector);
+      if (atSectorCap) {
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sector_gate", outcome: "deferred", reason: "sector_cap_rotation_candidate", detail: { sector: candSector, max: maxPerSector, current: sectorCount[candSector!] ?? 0 } });
       }
 
       // Re-entry cooldown: block same-symbol BUY within 3 trading days of a close.
@@ -783,7 +820,6 @@ export async function POST(req: NextRequest) {
       const noRoom = constructorOutcome === "no_room";
       if (noRoom) {
         const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
-        skipped.push({ symbol: signal.symbol, reason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, rotation_candidate: true, book: constructorBookSnapshot } });
         // NB: the claim is deliberately NOT reverted here. The rotation block
         // below owns it and reverts on every non-executing path.
@@ -792,7 +828,7 @@ export async function POST(req: NextRequest) {
       // one — `paperEntryQuantity` returns null at zero spend and would `continue`
       // before rotation is ever consulted. Cash and per-trade caps still apply
       // inside paperAllocationSpend.
-      const sizedPct = noRoom ? proposedSizePct : rawSizedPct;
+      const sizedPct = noRoom || atNameCap || atSectorCap ? proposedSizePct : rawSizedPct;
       if (!noRoom) {
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments, book: sizedPct < proposedSizePct ? constructorBookSnapshot : undefined } });
       }
@@ -800,26 +836,33 @@ export async function POST(req: NextRequest) {
       // finalSizePct is a percentage of this market-local NAV. Available cash
       // and the per-order limit are hard caps, not allocation denominators.
       const perTradeCapPaper = market === "india" ? perTradeCapInrPaper : perTradeCapUsdPaper;
-      const maxSpend = paperAllocationSpend(
+      const intendedSpend = paperIntendedSpend(constructorNavByMarket.get(market), sizedPct, perTradeCapPaper);
+      const cashShort = intendedSpend != null && intendedSpend > Number(portfolio.cash_balance);
+      const needsRotation = atNameCap || atSectorCap || noRoom || cashShort;
+      const maxSpend = needsRotation ? intendedSpend : paperAllocationSpend(
         constructorNavByMarket.get(market),
         portfolio.cash_balance,
         sizedPct,
         perTradeCapPaper,
       );
-      const qty = paperEntryQuantity(market as "us" | "india", maxSpend, fillPrice);
+      let qty = paperEntryQuantity(market as "us" | "india", maxSpend, fillPrice);
       if (qty == null) {
+        await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
+          referencePrice: price, fillPrice, qty: null, notional: null, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget,
+          horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+          reason: market === "us" ? "below_minimum_fractional_order" : "cash_below_one_share",
+          detail: { intendedSpend, availableCash: Number(portfolio.cash_balance), proposedSizePct, blockType: "minimum_order_size" } });
         await revertClaim(signal.id);
         const reason = market === "us" ? "insufficient_cash_for_fractional_share" : "insufficient_cash_for_1_share";
         skipped.push({ symbol: signal.symbol, reason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason, detail: { maxSpend, fillPrice } });
         continue;
       }
-      const totalCost = qty * fillPrice;
+      let totalCost = qty * fillPrice;
       // Rotation is evaluated when the book cannot take this candidate as-is:
       // either it is out of cash (original trigger) or it is out of name slots
       // (added — this is the trigger that actually binds in practice).
-      const cashShort = !Number.isFinite(totalCost) || totalCost > portfolio.cash_balance;
-      if (atNameCap || cashShort || noRoom) {
+      if (needsRotation) {
         if (earningsRisk) {
           try {
             await recordEarningsRiskObservation(supabase, {
@@ -838,12 +881,16 @@ export async function POST(req: NextRequest) {
           score: Number(signal.analyst_score ?? 0),
           targetNotional: totalCost,
           cash: Number(portfolio.cash_balance ?? 0),
+          fillPrice,
         };
         // Always log the shadow evaluation (measurement). Its P1 readiness
         // contract is the sole authorization input for a paper rotation; a raw
         // score margin never reaches the execution function by itself.
         let rotationP1Readiness: Awaited<ReturnType<typeof recordCapitalRotationShadow>>["readiness"] | null = null;
         let rotationP1EvaluatedAt: string | null = null;
+        let rotationP1Plan: Awaited<ReturnType<typeof recordCapitalRotationShadow>>["plan"] = null;
+        let feasibleCounterfactualNotional: number | null = null;
+        let feasibleReplacementSource: string | null = null;
         try {
           const rotationShadow = await recordCapitalRotationShadow(supabase, {
             runId,
@@ -857,9 +904,23 @@ export async function POST(req: NextRequest) {
             book: bookByMarket.get(market) ?? [],
             portfolioLimits: marketLimits,
             existingPositionsPolicy: tradingMandate.existing_positions_policy,
+            maxPerSector,
           });
           rotationP1Readiness = rotationShadow.readiness;
           rotationP1EvaluatedAt = rotationShadow.evaluatedAt;
+          rotationP1Plan = rotationShadow.plan;
+          if (rotationShadow.evaluation.source
+            && (rotationShadow.evaluation.gates.replacement_capacity as Array<{ symbol: string; reason: string | null }> | undefined)
+              ?.some(row => row.symbol === rotationShadow.evaluation.source!.symbol && row.reason == null)) {
+            feasibleCounterfactualNotional = rotationShadow.evaluation.buyNotional;
+            feasibleReplacementSource = rotationShadow.evaluation.source.symbol;
+          }
+          if (rotationShadow.plan) {
+            // The recorded plan is already rounded to an executable quantity.
+            qty = Math.round(rotationShadow.plan.buyNotional / fillPrice * (market === "us" ? 1_000_000 : 1)) / (market === "us" ? 1_000_000 : 1);
+            totalCost = qty * fillPrice;
+            rotCandidate.targetNotional = totalCost;
+          }
         } catch (e: any) {
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "capital_rotation", outcome: "rejected", reason: "rotation_shadow_log_failed", detail: { error: e?.message ?? String(e) } });
         }
@@ -881,8 +942,18 @@ export async function POST(req: NextRequest) {
             scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
             p1Readiness: rotationP1Readiness,
             p1EvaluatedAt: rotationP1EvaluatedAt,
+            p1Plan: rotationP1Plan,
+            entryPolicy: {
+              maxOpenNames: tradingMandate.max_open_positions, maxSectorNames: maxPerSector,
+              perTradeCap: perTradeCapPaper,
+              dailyNotionalCap: market === "india" ? dailyCapInrPaper : dailyCapUsdPaper,
+              dayStart: cutoffByMarket.get(market) ?? null,
+              mandateId: (signal as any).mandate_id ?? null, mandateVersion: tradingMandate.version,
+              mandateSnapshot: snapshot, horizonDays: resolvedHorizonDays,
+            },
           });
           if (rot.executed) {
+            rotatedMarkets.add(market);
             rotationsThisRun.set(market, (rotationsThisRun.get(market) ?? 0) + 1);
             filled.push({ symbol: signal.symbol, qty, price: fillPrice, via: "capital_rotation", sold: rot.sourceSymbol });
             await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `capital_rotation: sold ${rot.sourceSymbol} to fund ${signal.symbol}`, detail: { soldSymbol: rot.sourceSymbol, qty, fillPrice } });
@@ -897,7 +968,17 @@ export async function POST(req: NextRequest) {
           ? `max_open_names (${marketNameCap})`
           : noRoom
             ? "portfolio_constructor_no_room"
+            : atSectorCap
+              ? "sector_cap"
             : "insufficient_cash";
+        const counterfactualQty = feasibleCounterfactualNotional == null ? null
+          : paperEntryQuantity(market as "us" | "india", feasibleCounterfactualNotional, fillPrice);
+        await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
+          referencePrice: price, fillPrice, qty: counterfactualQty, notional: feasibleCounterfactualNotional,
+          source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget, horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+          reason: blockReason, detail: { atNameCap, atSectorCap, noRoom, cashShort, cash: portfolio.cash_balance,
+            intendedNotional: intendedSpend, feasibleCounterfactualNotional, replacementSource: feasibleReplacementSource,
+            rotationReason: rotReason, rotationReadiness: rotationP1Readiness?.blockers ?? null } });
         skipped.push({ symbol: signal.symbol, reason: blockReason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: blockReason, detail: { totalCost, cash: portfolio.cash_balance, atNameCap, cashShort, noRoom, rotReason } });
         continue;
@@ -915,6 +996,10 @@ export async function POST(req: NextRequest) {
           .gte("executed_at", dayStartIso);
         const spentToday = (todayFills ?? []).reduce((s: number, r: any) => s + Number(r.total_value ?? 0), 0);
         if (spentToday + totalCost > Number(dailyCapPaper)) {
+          await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
+            referencePrice: price, fillPrice, qty, notional: totalCost, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget,
+            horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+            reason: "daily_paper_notional_cap", detail: { spentToday, dailyCap: Number(dailyCapPaper), proposedNotional: totalCost } });
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "daily_paper_notional_cap" });
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_notional_cap", detail: { spentToday, totalCost, cap: Number(dailyCapPaper) } });

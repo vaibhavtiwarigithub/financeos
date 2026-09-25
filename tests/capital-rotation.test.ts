@@ -36,6 +36,22 @@ const candidate = {
 };
 
 describe("evaluateCapitalRotationShadow", () => {
+  it("considers the next weakest holding when the weakest cannot free the required capacity", () => {
+    const result = evaluateCapitalRotationShadow({ candidate, config,
+      holdings: [baseHolding(), baseHolding({ id: "second", symbol: "SECOND", score: 65 })],
+      sizeForSource: h => h.symbol === "WEAK"
+        ? { buyNotional: 0, reason: "post_swap_sector_count_cap" }
+        : { buyNotional: 400, reason: null },
+    });
+    expect(result.eligible).toBe(true);
+    expect(result.source?.symbol).toBe("SECOND");
+    expect(result.buyNotional).toBe(400);
+  });
+
+  it.each([75, 140])("leaves an already-crossed stop/target to the exit engine (%s)", currentPrice => {
+    const result = evaluateCapitalRotationShadow({ candidate, config, holdings: [baseHolding({ currentPrice })] });
+    expect(result.reason).toBe("no_sellable_holding");
+  });
   it("plans a shadow rotation only when edge and funding clear", () => {
     const result = evaluateCapitalRotationShadow({
       candidate,

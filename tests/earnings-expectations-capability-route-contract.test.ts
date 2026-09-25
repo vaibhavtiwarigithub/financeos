@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-const route = readFileSync("app/api/calendar/earnings/expectations/capability/route.ts", "utf8");
+const route = readFileSync("app/api/calendar/earnings/expectations/capability/route.ts", "utf8").replace(/\r\n/g, "\n");
 
 describe("earnings expectations capability route safety contract", () => {
   it("is owner-gated and makes GET planning-only", () => {
