@@ -1,13 +1,13 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: APPROVED — owner instruction, 2026-09-18
+Status: IMPLEMENTED — production-verified 2026-09-26 (owner approval 2026-09-18)
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
 
 ## Decision
 
-Every Upgrade Path entry must show one of four explicit attribution states:
+Every Upgrade Path entry must show one of five explicit attribution states:
 
 1. `measured` — a predeclared baseline-versus-variant comparison exists on the
    same market, common evaluation window, same eligible population, and cost
@@ -22,6 +22,10 @@ Every Upgrade Path entry must show one of four explicit attribution states:
 4. `invalid` — a purported result failed provenance, common-window, baseline,
    cost, independence, or version checks. It is visible as invalid and cannot
    make a path review-ready.
+5. `producer_missing` — a path is eligible for performance attribution but no
+   verified producer yet writes its portfolio-level paired replay. This is not
+   equivalent to `collecting`: an active UI card or shadow event stream alone is
+   not an attribution data pipeline.
 
 `ready_for_review` continues to mean only that the path's declared evidence
 gate is met. It is not a return forecast, approval, or deployment action.
@@ -61,6 +65,42 @@ Purely operational paths are permanently `not_attributable`. They may report
 data coverage, outage avoidance or correctness proof, but never a hypothetical
 portfolio uplift.
 
+## Implemented producer and current scope
+
+The first scheduled producer is intentionally narrow: the predeclared US
+international-allocation diagnostic compares 100% VOO buy-and-hold against an
+80% VOO / 20% VXUS allocation rebalanced monthly on the first matched session
+close. It reads only cached adjusted-close bars, applies a fixed one-way 5 bp
+cost assumption, requires at least 756 matched sessions, rejects interior
+session gaps, and reports common-window gross/net arm returns, turnover,
+drawdown, and a 95% Student-t interval/t-statistic over non-overlapping 63-session
+active-return blocks. It is a **synthetic fixed-allocation diagnostic**, not a
+replay of Kairos paper or live holdings, and it cannot authorize a policy or
+trade.
+
+The producer is `/api/allocation/international/replay`, scheduled by the
+market-specific pg_cron job `kairos-international-allocation-replay-us`
+(`45 23 * * 1-5`). It persists immutable run inputs/results and writes the
+paired attribution row through the append-only writer. The run's
+`cron_authenticated` value proves the request passed the cron secret; the
+separately queried active `cron.job` entry proves the schedule exists. Neither
+claim should be confused with evidence that every scheduled invocation
+succeeded.
+
+PostgREST can cap a response at 1,000 rows even when `.range()` asks for more.
+Therefore each benchmark history must be fetched in bounded pages until a short
+page is returned; a single wide range is not complete-history evidence. A
+production run must end at the latest common cached session and the persisted
+matched-session count must agree with the source cohort. The immutable ledger
+may retain earlier corrected/partial measurements; consumers use the newest
+`as_of_session` and creation time, and the row must disclose its actual window.
+
+Only this diagnostic currently has a verified scheduled portfolio-level
+producer. Other performance-eligible paths must remain `producer_missing` until
+their own paired portfolio replay is implemented, deployed, scheduled, and
+validated against production evidence. Shadow observations or symbol-level IC
+are not substitutes for portfolio attribution.
+
 ## UI
 
 Each Upgrade Path card gains an **Attribution** section:
@@ -85,3 +125,7 @@ P&L total or from aggregate portfolio performance after multiple releases.
 4. Tests reject mixed markets, version drift, mismatched windows, gross/net
    comparisons, missing costs, and overlapping-session claims.
 5. No writer or consumer may promote/enable a strategy from attribution alone.
+6. Every performance-eligible path without a verified producer reports
+   `producer_missing`, not `collecting` or a stale aggregate P&L estimate.
+7. The international-allocation result is labeled synthetic and never
+   represented as historical Kairos portfolio performance.
