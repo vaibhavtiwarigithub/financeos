@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       configuration,
       source_data_fingerprint: sourceDataFingerprint,
       result,
-      trigger_source: scheduled ? "scheduled" : "owner_manual",
+      trigger_source: scheduled ? "cron_authenticated" : "owner_manual",
     })
     .select("id, created_at")
     .single();
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
         drawdownDeltaPct: attribution.row.drawdown_delta_pct,
       } : null,
     },
-    trigger: scheduled ? "scheduled" : "owner_manual",
+    trigger: scheduled ? "cron_authenticated" : "owner_manual",
     safeguards: {
       policyStatus: policy.status,
       targetConfigured: policy.target_pct != null,

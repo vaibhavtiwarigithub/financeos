@@ -459,7 +459,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("assessment_status,proposed_action,created_at").gte("created_at", since90).limit(500),
     svc.from("international_allocation_replay_runs")
       .select("status,source_end_date,matched_sessions,result,created_at")
-      .eq("trigger_source", "scheduled")
+      .eq("trigger_source", "cron_authenticated")
       .order("created_at", { ascending: false }).limit(1),
     svc.from("strategy_config")
       .select("live_auto_enabled,live_auto_mode_us,live_auto_mode_india,allocation_enabled").limit(1).maybeSingle(),
@@ -1359,7 +1359,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
           reason: allocationReplay
             ? allocationReplay.status === "insufficient_history"
               ? String(result?.reason ?? `The verified scheduled producer ran, but only ${count}/${floor} same-session adjusted-close bars are available; no P&L claim is made.`)
-              : "A completed scheduled replay exists but no matching immutable attribution row was found. Treat this as a failed append/contract check, not as collecting evidence; inspect the replay endpoint result and database constraints."
+              : "A completed cron-authenticated replay exists but no matching immutable attribution row was found. Treat this as a failed append/contract check, not as collecting evidence; inspect the replay endpoint result and database constraints."
             : "A dedicated scheduled cache-only producer is registered; waiting for its first verified run. No performance result exists yet.",
         };
       }
