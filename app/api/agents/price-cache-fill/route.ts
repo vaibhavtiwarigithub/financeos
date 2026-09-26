@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { fillCoverage, shouldSkipFill } from "@/lib/markets/price-cache-universe";
+import { replayHistoryNeedsRefresh } from "@/lib/allocation/replay-history-refresh";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -298,19 +299,21 @@ async function fetchYahooReplayRange(symbol: string): Promise<Bar[] | null> {
 async function backfillAllocationReplayHistory(
   svc: ReturnType<typeof createServiceClient>,
   started: number,
-): Promise<{ attempted: string[]; filled: string[]; remaining: string[]; bars: number }> {
+): Promise<{ attempted: string[]; filled: string[]; remaining: string[]; bars: number; observedLatest: Record<string, string | null> }> {
+  const expectedLatestDate = mostRecentWeekday();
   const satisfiedBefore = ymd(new Date(Date.now() - 5 * 365 * 86_400_000 + 7 * 86_400_000));
   const needs: string[] = [];
+  const observedLatest: Record<string, string | null> = {};
 
   for (const symbol of ALLOCATION_REPLAY_SYMBOLS) {
-    const { data: oldest } = await svc
-      .from("price_cache")
-      .select("date")
-      .eq("symbol", symbol)
-      .order("date", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (!oldest || (oldest as { date: string }).date > satisfiedBefore) needs.push(symbol);
+    const [{ data: oldest }, { data: latest }] = await Promise.all([
+      svc.from("price_cache").select("date").eq("symbol", symbol).order("date", { ascending: true }).limit(1).maybeSingle(),
+      svc.from("price_cache").select("date").eq("symbol", symbol).order("date", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    const oldestDate = oldest ? (oldest as { date: string }).date : null;
+    const latestDate = latest ? (latest as { date: string }).date : null;
+    observedLatest[symbol] = latestDate;
+    if (replayHistoryNeedsRefresh({ oldestDate, latestDate, expectedLatestDate, oldestAcceptableDate: satisfiedBefore })) needs.push(symbol);
   }
 
   const attempted: string[] = [];
@@ -326,7 +329,39 @@ async function backfillAllocationReplayHistory(
     filled.push(symbol);
     barCount += bars.length;
   }
-  return { attempted, filled, remaining: needs.filter((symbol) => !filled.includes(symbol)), bars: barCount };
+  const remaining: string[] = [];
+  for (const symbol of needs) {
+    const [{ data: oldest }, { data: latest }] = await Promise.all([
+      svc.from("price_cache").select("date").eq("symbol", symbol).order("date", { ascending: true }).limit(1).maybeSingle(),
+      svc.from("price_cache").select("date").eq("symbol", symbol).order("date", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    const oldestDate = oldest ? (oldest as { date: string }).date : null;
+    const latestDate = latest ? (latest as { date: string }).date : null;
+    observedLatest[symbol] = latestDate;
+    if (replayHistoryNeedsRefresh({ oldestDate, latestDate, expectedLatestDate, oldestAcceptableDate: satisfiedBefore })) remaining.push(symbol);
+  }
+  return { attempted, filled, remaining, bars: barCount, observedLatest };
+}
+
+async function reportAllocationReplayFreshness(
+  svc: ReturnType<typeof createServiceClient>,
+  expected: string,
+  backfill: Awaited<ReturnType<typeof backfillAllocationReplayHistory>>,
+): Promise<void> {
+  const issueKey = "allocation-replay-history-stale";
+  if (backfill.remaining.length) {
+    const observed = backfill.remaining.map((symbol) => `${symbol}=${backfill.observedLatest[symbol] ?? "missing"}`).join(", ");
+    await reportIssue({
+      issueKey,
+      severity: "warn",
+      category: "data",
+      title: "Allocation replay price history is stale or incomplete",
+      detail: `Expected VOO/VXUS cache through ${expected} and at least five years of history. Unresolved: ${observed}. Attempted: ${backfill.attempted.join(", ") || "none (wall-clock budget)"}; filled this tick: ${backfill.filled.join(", ") || "none"}. Attribution remains explicitly as-of its latest matched session.`,
+      autoExpireAt: nextUtcMidnight(),
+    }, svc);
+    return;
+  }
+  await resolveIssue(issueKey, svc);
 }
 
 // Persist the fetched bars. Returns the error message on failure so the caller
@@ -349,11 +384,13 @@ async function run(force: boolean) {
   const started = Date.now();
   const svc = createServiceClient();
   const apiKey = process.env.MASSIVE_API_KEY;
+  const expected = mostRecentWeekday();
   if (!apiKey) {
-    return { ok: false, error: "MASSIVE_API_KEY not configured", filled: 0 };
+    const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, started);
+    await reportAllocationReplayFreshness(svc, expected, allocationReplayBackfill);
+    return { ok: false, error: "MASSIVE_API_KEY not configured", filled: 0, allocationReplayBackfill };
   }
 
-  const expected = mostRecentWeekday();
   const issueKey = "price-cache-fill-degraded";
 
   // Idempotency: skip only when the ENTIRE universe already has the most-recent
@@ -385,6 +422,7 @@ async function run(force: boolean) {
       // The daily session is already cached, but sector HISTORY may still be
       // draining — spend this tick's budget on the backfill rather than no-op.
       const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, started);
+      await reportAllocationReplayFreshness(svc, expected, allocationReplayBackfill);
       const backfill = await backfillHistoricalSeries(svc, apiKey, started);
       return {
         ok: true,
@@ -433,6 +471,7 @@ async function run(force: boolean) {
   // backfilled sector is daily-filled by the same request, and the fallback's
   // "already have this session" query then skips it.
   const allocationReplayBackfill = await backfillAllocationReplayHistory(svc, started);
+  await reportAllocationReplayFreshness(svc, expected, allocationReplayBackfill);
   const backfill = await backfillHistoricalSeries(svc, apiKey, started);
 
   // ── Fallback path: sequential per-symbol /prev, paced + bounded + resumable ──

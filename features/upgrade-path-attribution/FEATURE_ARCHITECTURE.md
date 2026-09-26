@@ -87,6 +87,16 @@ separately queried active `cron.job` entry proves the schedule exists. Neither
 claim should be confused with evidence that every scheduled invocation
 succeeded.
 
+The separate `price-cache-fill` collector owns both replay series. It refreshes
+history when either the five-year start bound is short **or the latest bar is
+behind the expected completed session**; checking only the oldest bar allowed
+VXUS to stop at 2026-07-24 while VOO advanced to 2026-09-25. If either bar depth
+or freshness remains short after a collector tick, System Health raises
+`allocation-replay-history-stale` with the symbol and observed latest date. The
+replay remains explicitly as-of its latest matched session, never presented as
+current-to-date. Public Yahoo history is confined to this cache-only diagnostic
+collector; it is not a scoring, eligibility, or execution source.
+
 PostgREST can cap a response at 1,000 rows even when `.range()` asks for more.
 Therefore each benchmark history must be fetched in bounded pages until a short
 page is returned; a single wide range is not complete-history evidence. A
