@@ -45,7 +45,7 @@ const CRITICAL_SD_MULTIPLE = 3;
  * estimated, it is guessed, and guessing a threshold is exactly what this
  * function exists to avoid doing with a hardcoded IC constant instead.
  */
-export function detectRegressions(cells: CodeVersionCell[]): RegressionAlert[] {
+export function detectRegressions(cells: CodeVersionCell[], comparableSeries?: Set<string>): RegressionAlert[] {
   const byKey = new Map<string, CodeVersionCell[]>();
   for (const cell of cells) {
     if (cell.codeVersion === UNKNOWN_CODE_VERSION) continue;
@@ -58,8 +58,8 @@ export function detectRegressions(cells: CodeVersionCell[]): RegressionAlert[] {
   for (const series of byKey.values()) {
     const ordered = [...series].sort((a, b) => a.firstSeen.localeCompare(b.firstSeen));
     const latest = ordered[ordered.length - 1];
-    if (latest.classification !== "measured_descriptive" || latest.meanIc == null) continue;
-    const priorMeasured = ordered.slice(0, -1).filter((c) => c.classification === "measured_descriptive" && c.meanIc != null);
+    if (latest.classification !== "measured_descriptive" || latest.meanIc == null || !Number.isFinite(latest.meanIc)) continue;
+    const priorMeasured = ordered.slice(0, -1).filter((c) => c.classification === "measured_descriptive" && c.meanIc != null && Number.isFinite(c.meanIc));
     if (priorMeasured.length < MIN_PRIOR_VERSIONS_FOR_BASELINE) continue;
 
     const priorIcs = priorMeasured.map((c) => c.meanIc as number);
@@ -67,6 +67,7 @@ export function detectRegressions(cells: CodeVersionCell[]): RegressionAlert[] {
     const variance = priorIcs.reduce((sum, v) => sum + (v - historicalMean) ** 2, 0) / (priorIcs.length - 1 || 1);
     const historicalSd = Math.sqrt(variance);
     if (!Number.isFinite(historicalSd) || historicalSd <= 0) continue;
+    comparableSeries?.add(`ic-regression:${latest.market}:${latest.dimension}:h${latest.horizonDays}:`);
 
     const deltaInSd = (historicalMean - latest.meanIc) / historicalSd;
     if (deltaInSd < WARN_SD_MULTIPLE) continue;
@@ -104,11 +105,13 @@ function alertToIssue(alert: RegressionAlert): ReportIssueInput {
   };
 }
 
-/** Writes/refreshes an agent_alerts row per active regression and resolves any
- * previously-open regression alert for this market that is no longer active
- * (via lib/system-health.ts reconcileIssues, which owns dedup/auto-resolve). */
+/** Resolve only comparable series. Missing or immature evidence is not recovery. */
 export async function reconcileRegressionAlerts(market: Market, cells: CodeVersionCell[], client?: any): Promise<RegressionAlert[]> {
-  const alerts = detectRegressions(cells);
-  await reconcileIssues(`ic-regression:${market}:`, alerts.map(alertToIssue), client);
+  const comparable = new Set<string>();
+  const alerts = detectRegressions(cells.filter(cell => cell.market === market), comparable);
+  const issues = alerts.map(alertToIssue);
+  for (const prefix of comparable) {
+    await reconcileIssues(prefix, issues.filter(issue => issue.issueKey.startsWith(prefix)), client);
+  }
   return alerts;
 }

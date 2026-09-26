@@ -1,4 +1,34 @@
 # Kairos — Learning Loop
+
+## Missed paper-entry evidence (2026-09-25)
+
+`paper_missed_opportunities` freezes a decision-time record when PaperTrader has a
+deterministic, session-validated, threshold-clearing long signal with a fresh quote
+and bound risk plan, but an observable paper capacity/cash/order-size/daily-cap
+constraint prevents entry. A disabled or refused capital rotation is recorded as a
+blocker only after its own evaluation. Invalid/stale evidence, non-long signals,
+held names, and rejected risk plans are not counted as missed purchases.
+
+The owner-only Paper Trade → Missed Entries view marks each candidate's latest
+append-only raw daily close revision per session from the frozen hypothetical
+fill proxy against the versioned primary market benchmark. The benchmark starts
+from the prior completed session; only exact matched candidate/benchmark dates
+appear, and incomplete coverage is visible. Because candidate and benchmark bases
+are not synchronized, the excess return is a baseline proxy, not exact matched-entry
+alpha. A later paper BUY of the same symbol censors the missed path, including
+when the later entry came from a different signal. Stop/target reporting has two
+distinct outputs: unmanaged horizon mark-to-market and a close-only risk-managed
+proxy that assumes exit at the first daily close beyond a frozen stop/target.
+Both are estimates: daily OHLC evidence cannot prove intraday trigger order,
+executable price, or realized fill.
+
+This is a diagnostic learning dataset, not an automated learning action. It helps
+determine whether capacity, rotation, minimum-order or daily-budget rules repeatedly
+exclude names that later outperform matched alternatives. It does not train the
+scorer, lower admission thresholds, increase sizing, change risk levels, or alter
+paper/live trades. Any future policy change needs a frozen walk-forward comparison,
+same-session eligible-but-untraded controls, mature labels, transaction costs,
+benchmark matching, and overlap-aware independent-session evidence.
 > 2026-09-08: **Score-return IC drift detector shipped (Stage A, detection only).**
 > Owner asked how to know which shipped feature made the score/return
 > correlation better or worse. `lib/learning/code-version-ic.ts` groups
@@ -38,10 +68,14 @@
 > `app/api/agents/ic-regression-ledger/route.ts` (GET read-only, POST
 > cron/owner-triggered reconcile) and `components/dashboard/IcRegressionPanel.tsx`
 > (mounted on `/dashboard/learning`, below Dimension Rank IC) are new. No new
-> table: the ledger computes on read from existing evidence. The POST route
-> was NOT wired into an actual external cron trigger — this repo's dispatch
-> mechanism for `dimension-diagnostics`'s identical contract was not located
-> in `vercel.json` or `.github/workflows/` during this change; see
+> table: the ledger computes on read from existing evidence. Migration
+> `20260925160423_schedule_code_version_ic_reconciliation.sql` now registers
+> separate weekday Supabase pg_cron calls for US at 23:30 UTC and India at
+> 23:35 UTC, after the corresponding dimension-diagnostics jobs. The migration
+> is applied in production and both active jobs are verified. Both market
+> endpoints were called through the production cron dispatcher on 2026-09-25
+> and returned HTTP 200 (US: 975 cells; India: 590; no regressions reported).
+> The first scheduled execution remains to be confirmed. See
 > `features/score-correlation-drift/FEATURE_ARCHITECTURE.md`.
 >
 > 2026-09-01: **`walkForwardFolds` purged in CALENDAR days while claiming market-horizon purge — labels leaked.** `lib/learning/dataset.ts` computed `purgeCutoffMs = testStart - horizonDays * 86400_000`. The horizon is a MARKET-session count (h2/h5/h10/h20/h60/h120), so a nominal 10-day purge spanned only ~6-7 trading sessions and training rows whose label windows still reached into the test window survived it. Every walk-forward result computed with it was optimistically biased.

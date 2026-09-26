@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 
-const SEC_USER_AGENT = "Kairos vterminater@gmail.com";
+// SEC's published sample identifies both the application and its contact.
+const SEC_USER_AGENT = "Kairos Research (contact: vterminater@gmail.com)";
 const IPO_FORMS = new Set(["S-1", "S-1/A", "F-1", "F-1/A", "424B4"]);
 
 export type EdgarListingFiling = {
@@ -53,18 +54,54 @@ export async function fetchEdgarListingFilings(date: Date): Promise<EdgarListing
   let res: Response;
   try {
     res = await fetch(edgarDailyIndexUrl(date), {
-      headers: { "User-Agent": SEC_USER_AGENT, Accept: "text/plain" }, cache: "no-store", signal: timeout,
+      headers: { "User-Agent": SEC_USER_AGENT, Accept: "text/plain", "Accept-Encoding": "gzip, deflate" }, cache: "no-store", signal: timeout,
     });
   } catch (error) {
     // A transport timeout is unavailable evidence, never an empty filing day.
     throw new Error(`SEC daily master index request failed: ${error instanceof Error ? error.name : "transport_error"}`);
   }
-  if (res.status === 404) return []; // non-filing day; caller retains the distinction in its run record.
-  if (!res.ok) throw new Error(`SEC daily master index fetch failed: ${res.status}`);
+  // A missing index is unavailable evidence, not proof of zero filings.
+  if (!res.ok) {
+    // Keep only safe response metadata that helps separate a bad user-agent
+    // from an upstream edge/IP denial; never retain cookies or body text.
+    const trace = ["cf-ray", "x-amz-cf-id", "x-amzn-requestid", "x-request-id"]
+      .map(name => { const value = res.headers.get(name)?.replace(/[^a-zA-Z0-9._:/=-]/g, "").slice(0, 128); return value ? `${name}=${value}` : null; })
+      .filter(Boolean).join(",");
+    const server = res.headers.get("server")?.replace(/[^a-zA-Z0-9._/-]/g, "").slice(0, 64);
+    throw new Error(`SEC daily master index fetch failed: ${res.status}${server ? ` server=${server}` : ""}${trace ? ` ${trace}` : ""}`);
+  }
   return parseEdgarMasterIndex(await res.text());
 }
 
 export function isFilingDay(date: Date): boolean {
   const day = date.getUTCDay();
   return day !== 0 && day !== 6;
+}
+
+/** SEC builds daily indexes starting around 22:00 ET and can take hours.
+ * Use the previous ET date after 03:00 ET, and the date before that earlier.
+ * Weekdays are candidates, not a claim about SEC holiday publication.
+ */
+export function publishedEdgarIndexDates(now = new Date(), count = 3): Date[] {
+  if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error("invalid SEC index lookback");
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const part = (type: string) => Number(parts.find(p => p.type === type)?.value);
+  const last = Date.UTC(part("year"), part("month") - 1, part("day") - (part("hour") >= 3 ? 1 : 2));
+  const dates: Date[] = [];
+  for (let offset = 0; dates.length < count; offset++) {
+    const date = new Date(last - offset * 86400000);
+    if (isFilingDay(date)) dates.push(date);
+  }
+  return dates;
+}
+
+export async function collectEdgarIndexes(now = new Date(), fetchIndex = fetchEdgarListingFilings) {
+  const batches: Array<{ date: string; status: "available" | "unavailable"; filings: EdgarListingFiling[]; error?: string }> = [];
+  // Three bounded requests, sequentially: no failure discards other valid days.
+  for (const date of publishedEdgarIndexDates(now)) {
+    try { batches.push({ date: date.toISOString().slice(0, 10), status: "available", filings: await fetchIndex(date) }); }
+    catch (error) { batches.push({ date: date.toISOString().slice(0, 10), status: "unavailable", filings: [], error: error instanceof Error ? error.message : "SEC index unavailable" }); }
+  }
+  return batches;
 }

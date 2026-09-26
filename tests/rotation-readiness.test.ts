@@ -3,6 +3,7 @@ import {
   assessRotationP1Readiness,
   estimateRotationFrictionPct,
   measureCandidatePostSwapCorrelation,
+  rotationTurnoverNotional,
   type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 
@@ -33,7 +34,16 @@ describe("capital rotation P1 readiness", () => {
   });
 
   it("uses the existing five-basis-point adverse fill model on each leg", () => {
-    expect(estimateRotationFrictionPct(1_000, 1_000)).toBeCloseTo(0.05, 8);
+    expect(estimateRotationFrictionPct(1_000, 1_000)).toBeCloseTo(0.10, 8);
+  });
+
+  it("charges turnover only for executed rotations and rejects invalid ledger values", () => {
+    expect(rotationTurnoverNotional([
+      { status: "planned", sell_notional: 10000, buy_notional: 10000 },
+      { status: "paper_executed", sell_notional: 500, buy_notional: 600 },
+    ])).toBe(1100);
+    expect(() => rotationTurnoverNotional([{ status: "paper_executed", sell_notional: null, buy_notional: 600 }])).toThrow();
+    expect(estimateRotationFrictionPct(Infinity, 100)).toBeNull();
   });
 
   it("fails closed on every unproven economic and portfolio input", () => {
@@ -74,10 +84,24 @@ describe("capital rotation P1 readiness", () => {
       frictionPct: 0.1,
       postSwapAllowed: true,
       correlation: { status: "ok", maxAbsCorrelation: 0.4, maxCorrelationSymbol: "HELD", pairCount: 3, expectedPairCount: 3, minOverlap: 60 },
+      correlationAllowed: true,
     });
     expect(result.ready).toBe(true);
     expect(result.blockers).toEqual([]);
     expect(result.netExpectedEdgePct).toBeCloseTo(1.1, 8);
     expect(result.turnoverAfterPct).toBe(25);
+  });
+
+  it("distinguishes a passing post-swap constructor from a measured correlation breach", () => {
+    const result = assessRotationP1Readiness({
+      persistencePriorRuns: 1, persistenceRequiredRuns: 1,
+      turnoverBudgetMonthlyPct: 20, monthlyTurnoverUsedPct: 0, proposedTurnoverPct: 5,
+      taxSensitivity: "medium", hasExactTaxLots: true, expectedEdgePct: 1, frictionPct: 0.1,
+      postSwapAllowed: true,
+      correlation: { status: "ok", maxAbsCorrelation: 0.85, maxCorrelationSymbol: "HELD", pairCount: 1, expectedPairCount: 1, minOverlap: 60 },
+      correlationAllowed: false,
+    });
+    expect(result.blockers).toContain("candidate_correlation_failed");
+    expect(result.blockers).not.toContain("post_swap_gate_failed");
   });
 });

@@ -3,6 +3,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
+import MissedOpportunitiesPanel from "@/components/dashboard/MissedOpportunitiesPanel";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney, fmtMoneyAbbrev, type Mkt } from "@/lib/format-money";
@@ -839,7 +840,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const [runLog, setRunLog] = useState<string[]>([]);
   const [monitorRunning, setMonitorRunning] = useState(false);
   const [monitorResult, setMonitorResult] = useState<{ checked: number; closed: number; closedDetails: string[]; updated: number } | null>(null);
-  const [tab, setTab] = useState<"queue" | "signals" | "history" | "lanes">("queue");
+  const [tab, setTab] = useState<"queue" | "signals" | "missed" | "history" | "lanes">("queue");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<any[]>(queue);
   const [actionLog, setActionLog] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
@@ -1018,9 +1019,9 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch" }}>
-        {(["queue", "signals", "history", "lanes"] as const).map(t => (
+        {(["queue", "signals", "missed", "history", "lanes"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === t ? T.accent : T.card, color: tab === t ? "#fff" : T.muted, textTransform: "capitalize", flexShrink: 0, whiteSpace: "nowrap" }}>
-            {t === "queue" ? (isIndia ? "Trade Queue (US only)" : `Trade Queue (${queueItems.length})`) : t === "signals" ? `Paper Signals (${pendingSignals.length})` : t === "history" ? `Paper History (${tradeLog.length})` : "Strategy Lanes"}
+            {t === "queue" ? (isIndia ? "Trade Queue (US only)" : `Trade Queue (${queueItems.length})`) : t === "signals" ? `Paper Signals (${pendingSignals.length})` : t === "missed" ? "Missed Entries" : t === "history" ? `Paper History (${tradeLog.length})` : "Strategy Lanes"}
           </button>
         ))}
       </div>
@@ -1131,6 +1132,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
           ))}
         </div>
       )}
+
+      {tab === "missed" && <MissedOpportunitiesPanel market={market} />}
 
       {chartSymbol && (
         <Suspense fallback={null}>

@@ -1,13 +1,49 @@
 # Feature Architecture - Capital Rotation
 
-> Status: **P0 SHADOW BUILT 2026-07-13.** Paper/live execution remains disabled and unbuilt.
+> Status: **P0 shadow and gated P1 paper executor built; execution readiness remains unproven.** Live rotation is unbuilt. Historical rollout notes below do not supersede this status.
 > Scope: deterministic opportunity-cost reallocation for PAPER first, LIVE approval proposals later.
-> Last updated: 2026-07-13
+> Last updated: 2026-09-25
+
+## Approved correction — capacity and evidence integrity (2026-09-25)
+
+The owner authorized review/fixes and specifically asked for BE-like opportunities
+to be considered when the book is full. Capacity pressure includes cash, name
+count, sector count and constructor exposure limits. Each otherwise eligible
+candidate must reach replacement evaluation before a capacity rejection. The
+intended NAV allocation is computed independently of free cash. The evaluator
+considers sellable holdings in score order, sizes the replacement against each
+hypothetical post-sale book, and retains the weakest feasible replacement.
+Normal score margin, persistence, exit precedence, costs, turnover and evidence
+requirements still decide whether that plan may execute.
+
+Rotation turnover counts completed paper rotations only (sell plus buy); ordinary
+entries/exits do not consume that separate mandate budget. Friction is expressed
+against replacement BUY capital, matching the expected-return denominator.
+Missing or non-finite values are unavailable evidence. Execution must use the
+same source, quantity, mark and score that were evaluated; changed evidence
+requires reevaluation. Every proposed purchase uses the post-swap quantity.
+
+The atomic RPC rechecks the proof under the source row lock and passes the same
+mandate snapshot, horizon, name/sector limits and order/day caps as ordinary
+entries into `execute_paper_fill`. A denied buy rolls back the sale. Migration
+`20260925163623_bind_paper_rotation_plan_and_entry_policy.sql` tightens the
+existing signature; old callers without this contract fail closed. Deployment
+does not turn on either execution flag or establish a measured return advantage.
+
+BE's 2026-09-18 record had score 80 versus MPC 70 (margin required: 12), proposed
+allocation 19.55%, post-swap capacity 4.42%, and an incorrectly computed 120.04%
+rotation turnover. These findings establish defects, not a profitable missed-swap
+counterfactual. Existing history stays immutable.
+
+The requested eight-name / 95%-invested policy requires a separate transition
+from the current 15-name books and the 80% gross cap. A one-for-one replacement
+does not consolidate the book. No automatic seven-name liquidation is implied
+by these implementation repairs; cash deployment remains subject to risk limits.
 > Update when built: `docs/arch/03-agents.md`, `docs/arch/04-database-schema.md`, `docs/arch/08-risk-and-safety.md`, `docs/arch/09-learning-loop.md`, `public/agent-diagrams/system-map.json`.
 
 ## One-line decision
 
-Build capital rotation as a **deterministic evaluator inside the existing entry flows**, not as a new autonomous reallocation agent. It may only propose or execute a rotation after the candidate has passed every normal entry gate except cash. PositionMonitor still owns exits. Live rotation is approval-required and two-leg reconciled.
+Build capital rotation as a **deterministic evaluator inside the existing entry flows**, not as a new autonomous reallocation agent. It may propose a replacement after non-capacity entry gates pass; cash, name, sector and exposure capacity are reevaluated on the post-sale book before execution. PositionMonitor still owns exits. Live rotation is unbuilt and would require approval and two-leg reconciliation.
 
 ## Problem
 
@@ -209,7 +245,7 @@ enabled per market only after the new common-window, net-of-cost gate reports a
 passing result. This approval does not authorize live rotation.
 
 **Implemented P1 evidence contract (2026-09-18):** every cash-constrained
-candidate now records (a) a 20% owner-approved monthly gross turnover ceiling,
+or portfolio-capacity-constrained candidate now records (a) a 20% owner-approved monthly gross turnover ceiling,
 (b) a traceable single paper cost-basis lot rather than a merged/add-to-position
 lot, (c) a matched candidate-versus-holding forward-return score-edge estimate
 collapsed to non-overlapping sessions with a positive lower confidence bound,
@@ -218,9 +254,17 @@ correlation coverage. A failed or missing contract blocks execution before the
 book or atomic RPC is touched. `ready_for_review` is evidence readiness only;
 it is not a forecast of portfolio or benchmark outperformance.
 
+**Contract correction, 2026-09-25:** the return RPC must be paged in stable
+symbol/session order because a normal 15-name book exceeds PostgREST's 1,000
+row response cap. A partial paper exit may leave a traceable single-source lot:
+prove the original fill event equals the sum of its closed and remaining open
+lot rows at the same cost basis. Report constructor admissibility and measured
+correlation as separate gates. The current production cohort has too few
+independent score/return windows for execution review.
+
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
 
-**Current enforcement (2026-07-22):** P1 is not approved. A production audit
+**Historical containment (2026-07-22, superseded by later migrations):** P1 was not approved. A production audit
 found the US paper flag enabled while several required gates above were still
 absent. It was reset to false, and migration `20260722185000` adds a database
 constraint that prevents either market from enabling paper rotation. The old

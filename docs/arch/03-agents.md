@@ -1,4 +1,29 @@
 # Kairos — Agents
+
+## Dedicated live sleeves: verification status
+
+The leveraged and crypto live routes are **not activation-ready**. Their presence
+and disabled entry flags do not prove execution safety. The September 24 audit
+found submitted sells recorded as fills, premature local position closure,
+missing durable pending-order recovery, and incomplete replacement protection.
+See `features/leveraged-etf-and-intraday-execution/EXECUTION_REPAIR.md`.
+
+Both routes now use `liveRunHealth` to classify returned failures, skipped
+monitoring, emergency flatten outcomes and estimated exits as errors. This is
+a reporting correction, not evidence that broker reconciliation succeeded.
+An ordinary `no_entry` run remains a completed refusal, not proof of monitoring.
+No enablement flag changes are part of this repair.
+
+The local execution repair now persists an order intent before broker contact,
+serializes sleeve buys, and requires confirmed execution quantities/prices before
+position updates. It rechecks capacity inside the reservation, preserves explicit
+stop geometry, checks cancellation evidence, and replaces protection on confirmed
+remaining holdings. The shared broker schema mapper now preserves stop orders and
+GTC instead of coercing them to market/day orders. Dedicated pending intents stay
+outside the generic equity sync and fail closed for reconciliation. Automatic
+crash recovery and account-scoped crypto holdings verification are still pending;
+none of this is a live activation or broker-certified end-to-end result.
+
 > Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md). This chapter documents responsibilities; it is not permission to enable proposed paths.
 > 2026-09-18: **Short interest wired into the risk-tier shadow** — item #2 (short interest) of the
 > `achaljhawar/1rok` gap-analysis plan. Yahoo's `defaultKeyStatistics` module (`shortPercentOfFloat`,
@@ -657,14 +682,18 @@ are appended to the Research Journal pipeline trail.
 
 **Risk gates (added 2026-07-09):**
 - **Latched controls:** both pause and trading-enabled controls are checked per market; a recovered kill-switch metric cannot silently re-enable entries
-- **Name cap:** `trading_mandates.max_open_positions` per market (default 10), enforced again from the canonical DB value inside the row-locked fill RPC. It gates new names only and never liquidates an over-cap book.
+- **Name cap:** `trading_mandates.max_open_positions` per market, enforced again from the canonical DB value inside the row-locked fill RPC. It gates new names only and never liquidates an over-cap book. Production was configured to 15 names in both markets at the 2026-09-25 review; the owner's requested 8-name limit has not been applied because a safe legacy-book consolidation policy remains unresolved.
 - **Re-entry cooldown:** 5-calendar-day block after a position in a symbol closes
 - **Pyramid gate:** New BUY only if fill price > existing avg_cost (no averaging down)
 - **Long-only for new positions:** SELL signals only apply to symbols already held
 
-**Capital-rotation shadow (added 2026-07-13; containment restored 2026-08-10):** When a candidate cannot be taken as-is — because the book is at its `max_open_names` cap **or** because it lacks cash — PaperTrader calls the deterministic rotation evaluator and writes one `rotation_events` row with the would-be source holding, edge, notional, and gate reasons. This is P0 measurement only. Paper execution is disabled in both market rows after production proved that the P1 executor did not enforce the shadow's economic-readiness result or `rotation_allow_score_only_paper=false`. Live proposals remain disabled.
+**Capital rotation (shadow; execution remains disabled):** When a candidate cannot be entered because of name, sector, gross-risk capacity, or cash, PaperTrader evaluates a replacement and persists a `rotation_events` decision. The evaluator ranks eligible holdings from weakest score upward, checks that the source remains exit-eligible and has a fresh mark, and runs the proposed post-sale book back through portfolio construction before sizing the replacement. The source/candidate, frozen policy, transaction-cost assumptions and every refusal reason are recorded. A committed replacement invalidates the run's cached book so the same run cannot place another stale-book buy.
 
-Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cash` branch. In practice the name cap binds first — the book exhausts its 10 slots long before it runs out of cash — and the cap check `continue`d before the rotation call, so the evaluator was unreachable and `rotation_events` stayed empty for nine days with shadow enabled. The cap check now sets a flag instead of skipping; the candidate flows through the remaining gates (sector cap, re-entry cooldown, pricing, sizing) and is evaluated for rotation at the funding step. Rotation is slot-for-slot, so this cannot grow the book; a candidate with no viable rotation is still skipped with the same `max_open_names` reason.
+The 2026-09-25 review traced Bloom Energy's blocked entry to a real capacity decision: available cash was $1,968.47, but the 80% gross-exposure cap already bound; the proposed 20% allocation was reduced to 12%, and the constructor found no room. A counterfactual sale would have made room for about $442 (4.42% NAV), but BE's score advantage was 10 points against the configured 12-point minimum, so the record does **not** establish that BE should have been bought. The incident demonstrates why capacity and alpha evidence must be evaluated separately.
+
+Paper rotation is still not enabled in either market. The P1 readiness contract must pass persistence, exact cost/tax-lot accounting, score-to-forward-return evidence, post-swap risk, candidate correlation, and turnover-budget gates; database execution switches remain false. Production shadow evidence on 2026-09-25 still showed only 4 overlap-adjusted independent score/return sessions versus 20 required, 13 candidate-correlation observations versus 60, 209.6% monthly turnover usage, no exact tax-lot calculation, and unavailable post-swap/correlation verdicts. Shadow evaluation is measurement, not a promise that the next strongest score replaces a holding. Historical positions are not forcibly liquidated to meet a requested name count or cash target.
+
+**Missed-entry counterfactual ledger (2026-09-25):** A separate `paper_missed_opportunities` row is frozen when a deterministic, session-validated long signal clears its market threshold and risk plan, then cannot be placed because of portfolio capacity, cash, minimum order size, a daily cap, or a disabled/failed rotation. It does not mislabel stale prices, invalid risk plans, shorts, held names or unvalidated signals as missed buys. The owner-only Paper Trade → Missed Entries panel plots the frozen fill proxy against post-decision daily raw closes and the versioned primary benchmark. The benchmark starts from the prior completed session, not a synchronized decision-time quote; benchmark excess is therefore a disclosed baseline proxy rather than exact matched-entry alpha. Unmatched dates remain gaps. A later real buy of the same symbol censors the counterfactual even if another signal caused that buy. It reports unmanaged horizon mark-to-market separately from a close-only risk-managed proxy (first close beyond stop/target, or horizon close if neither is crossed); neither is a realized fill. This diagnostic ledger never mutates scores, sizing, entry eligibility, exit levels, or positions.
 
 **Outputs:**
 - `paper_positions` row (new open position)
@@ -672,6 +701,7 @@ Until 2026-07-22 the evaluator was reachable **only** from the `insufficient_cas
 - `paper_order_events` row (submitted + filled events)
 - Updates `paper_portfolio.cash` and `paper_portfolio.nav`
 - `rotation_events` row when either `max_open_names` or `insufficient_cash` triggers a shadow rotation evaluation
+- `paper_missed_opportunities` row for validated long opportunities rejected by a qualifying capacity/cash/order-size/daily-budget constraint
 
 ---
 

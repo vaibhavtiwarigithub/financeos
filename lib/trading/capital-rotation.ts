@@ -1,13 +1,16 @@
-import { constructPortfolio, DEFAULT_LIMITS, type BookPosition, type PortfolioLimits } from "@/lib/portfolio/constructor";
+import { DEFAULT_LIMITS, type BookPosition, type PortfolioLimits } from "@/lib/portfolio/constructor";
 import { projectPaperExitPlan, type PaperExitPlanState } from "@/lib/trading/paper-exit-plan";
 import { isPaperScoreFresh } from "@/lib/trading/paper-exit-policy";
 import {
   assessRotationP1Readiness,
   estimateRotationFrictionPct,
   measureCandidatePostSwapCorrelation,
+  rotationTurnoverNotional,
   type RotationP1Readiness,
+  type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { replacementCapacity } from "./rotation-capacity";
 import { isEntryCandidateLong, isHoldingReview } from "@/lib/learning/entry-cohort";
 import {
   hasExactPaperTaxLot,
@@ -26,6 +29,7 @@ export interface RotationCandidate {
   cash: number;
   sector?: string | null;
   dailyVol?: number | null;
+  fillPrice?: number;
 }
 
 export interface RotationHolding {
@@ -101,8 +105,10 @@ function sourceRejectReason(h: RotationHolding, cfg: RotationConfig, now: Date):
   if (h.score < cfg.exitScoreThreshold) return "below_exit_threshold";
   const held = daysHeld(h.openedAt, now);
   if (held == null || held < cfg.minHoldingDays) return "min_holding_days";
-  const price = finitePositive(h.currentPrice) ?? finitePositive(h.avgCost);
+  const price = finitePositive(h.currentPrice);
   if (!price) return "missing_price";
+  if (h.stopLoss != null && price <= h.stopLoss) return "stop_exit_due";
+  if (h.priceTarget != null && h.priceTarget > 0 && price >= h.priceTarget) return "target_exit_due";
   if (h.priceTarget != null && h.priceTarget > 0) {
     const distanceToTarget = (h.priceTarget - price) / price;
     if (distanceToTarget >= 0 && distanceToTarget <= cfg.nearTargetPct) return "near_target";
@@ -119,6 +125,7 @@ export function evaluateCapitalRotationShadow(args: {
   holdings: RotationHolding[];
   config: RotationConfig;
   now?: Date;
+  sizeForSource?: (source: RotationHolding) => { buyNotional: number; reason: string | null; adjustments?: string[] };
 }): RotationEvaluation {
   const now = args.now ?? new Date();
   const candidate = args.candidate;
@@ -157,17 +164,32 @@ export function evaluateCapitalRotationShadow(args: {
   }
 
   sellable.sort((a, b) => (a.score ?? 101) - (b.score ?? 101));
-  const source = sellable[0];
+  const considered: Array<{ symbol: string; buyNotional: number; reason: string | null }> = [];
+  let source = sellable[0];
+  let buyNotional = candidate.targetNotional;
+  if (args.sizeForSource) {
+    let feasible = false;
+    for (const holding of sellable) {
+      const sizing = args.sizeForSource(holding);
+      considered.push({ symbol: holding.symbol, ...sizing });
+      if (!sizing.reason && Number.isFinite(sizing.buyNotional) && sizing.buyNotional > 0
+        && sizing.buyNotional <= candidate.targetNotional + 1e-8) {
+        source = holding; buyNotional = sizing.buyNotional; feasible = true; break;
+      }
+    }
+    gates.replacement_capacity = considered;
+    if (!feasible) return { eligible: false, status: "rejected", reason: "no_feasible_replacement", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, gates };
+  }
   const scoreEdge = candidate.score - (source.score ?? 0);
   const sellNotional = holdingNotional(source);
   gates.score_edge = scoreEdge;
   gates.rotation_margin_score = cfg.marginScore;
-  gates.sell_notional_covers_buy = sellNotional + candidate.cash >= candidate.targetNotional;
+  gates.sell_notional_covers_buy = sellNotional + candidate.cash >= buyNotional;
 
   if (scoreEdge < cfg.marginScore) {
-    return { eligible: false, status: "rejected", reason: "score_edge_below_margin", source, scoreEdge, sellNotional, buyNotional: candidate.targetNotional, gates };
+    return { eligible: false, status: "rejected", reason: "score_edge_below_margin", source, scoreEdge, sellNotional, buyNotional, gates };
   }
-  if (sellNotional + candidate.cash < candidate.targetNotional) {
+  if (sellNotional + candidate.cash < buyNotional) {
     return { eligible: false, status: "rejected", reason: "source_does_not_fund_candidate", source, scoreEdge, sellNotional, buyNotional: candidate.targetNotional, gates };
   }
 
@@ -178,7 +200,7 @@ export function evaluateCapitalRotationShadow(args: {
     source,
     scoreEdge,
     sellNotional,
-    buyNotional: candidate.targetNotional,
+    buyNotional,
     gates,
   };
 }
@@ -218,7 +240,7 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
     .eq("market", args.market)
     .gte("ts", since)
     .eq("observation_labels.horizon_days", args.horizonDays)
-    .order("ts", { ascending: true })
+    .order("ts", { ascending: true }).order("id", { ascending: true })
     .range(from, to), "rotation score-edge evidence");
   const outcomes: RotationScoreOutcome[] = [];
   for (const row of rows as any[]) {
@@ -257,11 +279,24 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
   });
 }
 
+/** The return RPC can exceed PostgREST's 1,000-row response cap with 15 names. */
+export async function loadRotationReturnCohort(
+  supabase: any, market: "us" | "india", symbols: string[], since: string,
+): Promise<RotationReturnRow[]> {
+  return fetchAllRows<RotationReturnRow>((from, to) => supabase
+    .rpc("get_rotation_return_cohort", { p_market: market, p_symbols: symbols, p_since: since })
+    .order("symbol", { ascending: true })
+    .order("session_date", { ascending: true })
+    .range(from, to), "rotation return cohort");
+}
+
 export interface RotationShadowRecord {
   evaluation: RotationEvaluation;
   readiness: RotationP1Readiness;
   scoreEdgeEvidence: RotationScoreEdgeEvidence;
   evaluatedAt: string;
+  plan: { sourceId: string; sourceQty: number; sourcePrice: number; sourceScore: number | null;
+    candidateSignalId: string; buyNotional: number } | null;
 }
 
 export async function recordCapitalRotationShadow(supabase: any, args: {
@@ -276,6 +311,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   book: BookPosition[];
   portfolioLimits?: PortfolioLimits;
   existingPositionsPolicy: "grandfather" | "apply";
+  maxPerSector?: number;
 }) {
   const candidate = args.candidate;
   const { data: cfgRow, error: cfgError } = await supabase
@@ -313,7 +349,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     return {
       id: String(p.id), symbol: String(p.symbol), market: candidate.market,
       qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
-      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? null,
+      currentPrice: Number(p.current_price ?? 0), openedAt: p.opened_at ?? null,
       priceTarget: p.price_target == null ? null : Number(p.price_target),
       stopLoss: p.stop_loss == null ? null : Number(p.stop_loss), exitReason: p.exit_reason ?? null,
       score: score?.score ?? null, scoreCreatedAt: score?.createdAt ?? null, exitPlanState: exitPlan.state,
@@ -324,6 +360,13 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   const evaluation = evaluateCapitalRotationShadow({
     candidate,
     holdings,
+    sizeForSource: source => replacementCapacity({
+      book: args.book, sourceSymbol: source.symbol, sellNotional: holdingNotional(source),
+      symbol: candidate.symbol, market: candidate.market, sector: candidate.sector ?? null,
+      dailyVol: candidate.dailyVol ?? null, intendedNotional: candidate.targetNotional,
+      nav: args.portfolioNav, cash: candidate.cash, fillPrice: candidate.fillPrice ?? Number.NaN,
+      limits: args.portfolioLimits ?? DEFAULT_LIMITS, maxPerSector: args.maxPerSector ?? 4,
+    }),
     config: {
       shadowEnabled: (cfgRow as any)?.rotation_shadow_enabled !== false,
       marginScore: Number((cfgRow as any)?.rotation_margin_score ?? 12),
@@ -339,44 +382,36 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   const postSwapBook = sourceSymbol
     ? args.book.filter(position => position.symbol.toUpperCase() !== sourceSymbol.toUpperCase())
     : args.book;
-  const proposedSizePct = args.portfolioNav > 0 ? candidate.targetNotional / args.portfolioNav * 100 : Number.NaN;
-  const constructed = Number.isFinite(proposedSizePct) && proposedSizePct > 0
-    ? constructPortfolio(postSwapBook, [{
-        symbol: candidate.symbol, market: candidate.market, proposedSizePct,
-        sector: candidate.sector ?? null, beta: null, dailyVol: candidate.dailyVol ?? null,
-      }], limits)
-    : null;
-  const sized = constructed?.orders[0];
-  const postSwapAllowed = sized ? sized.finalSizePct + 1e-9 >= proposedSizePct : null;
+  // Capacity sizing already applied the stacked-sector haircut once. Repeating
+  // that sizing operation would shrink the plan again; use its verified result.
+  const postSwapAllowed = sourceSymbol ? (evaluation.gates.replacement_capacity as Array<{ symbol: string; reason: string | null }> | undefined)
+    ?.some(row => row.symbol === sourceSymbol && row.reason == null) ?? false : null;
 
   const symbolsAfterSwap = postSwapBook.map(position => position.symbol);
   const returnCutoff = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 10);
-  const { data: returnRows, error: returnsError } = await supabase.rpc("get_rotation_return_cohort", {
-    p_market: candidate.market,
-    p_symbols: [...new Set([candidate.symbol, ...symbolsAfterSwap])],
-    p_since: returnCutoff,
-  });
-  if (returnsError) throw new Error(`rotation return query failed: ${returnsError.message}`);
-  const correlation = measureCandidatePostSwapCorrelation(returnRows ?? [], candidate.symbol, symbolsAfterSwap);
+  const returnRows = await loadRotationReturnCohort(supabase, candidate.market,
+    [...new Set([candidate.symbol, ...symbolsAfterSwap])], returnCutoff);
+  const correlation = measureCandidatePostSwapCorrelation(returnRows, candidate.symbol, symbolsAfterSwap);
   const correlationAllowed = correlation.status === "ok" && correlation.maxAbsCorrelation != null
     ? correlation.maxAbsCorrelation <= limits.maxAvgPairwiseCorr
     : null;
-  const completePostSwapAllowed = postSwapAllowed == null || correlationAllowed == null
-    ? null
-    : postSwapAllowed && correlationAllowed;
-
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-  const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, scoreEdgeEvidence] = await Promise.all([
+  const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, lotRowsResult, scoreEdgeEvidence] = await Promise.all([
     supabase.from("investment_mandates").select("turnover_budget_monthly, tax_sensitivity")
       .eq("market", candidate.market).eq("active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("paper_order_events").select("total_value", { count: "exact" }).eq("market", candidate.market)
-      .eq("fill_status", "filled").gte("created_at", monthStart).limit(1000),
+    supabase.from("rotation_events").select("status,sell_notional,buy_notional", { count: "exact" }).eq("market", candidate.market)
+      .eq("book_type", "paper").eq("status", "paper_executed").gte("created_at", monthStart).limit(1000),
     supabase.from("rotation_events").select("audit_json").eq("market", candidate.market)
       .eq("candidate_symbol", candidate.symbol).eq("status", "planned").gte("created_at", new Date(Date.now() - 4 * 86400000).toISOString()),
     evaluation.source?.openedAt
-      ? supabase.from("paper_order_events").select("symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
+      ? supabase.from("paper_order_events").select("id,symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
         .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("event_type", "fill").eq("side", "buy")
         .gte("created_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(20)
+      : Promise.resolve({ data: [], count: 0, error: null }),
+    evaluation.source?.openedAt
+      ? supabase.from("paper_trades").select("paper_event_id,qty,fill_price,closed_at,fill_status", { count: "exact" })
+        .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("order_side", "buy")
+        .gte("executed_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(30)
       : Promise.resolve({ data: [], count: 0, error: null }),
     loadRotationScoreEdgeEvidence(supabase, {
       market: candidate.market,
@@ -390,11 +425,25 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   if (persistenceResult.error) throw new Error(`rotation persistence query failed: ${persistenceResult.error.message}`);
   if (lotFillsResult.error) throw new Error(`rotation tax-lot query failed: ${lotFillsResult.error.message}`);
   if ((lotFillsResult.count ?? 0) > (lotFillsResult.data?.length ?? 0)) throw new Error(`rotation tax-lot cohort truncated: ${lotFillsResult.data?.length ?? 0}/${lotFillsResult.count}`);
-  const monthlyTurnover = (turnoverResult.data ?? []).reduce((sum: number, row: any) => sum + Math.max(0, Number(row.total_value ?? 0)), 0);
+  if (lotRowsResult.error) throw new Error(`rotation paper-lot query failed: ${lotRowsResult.error.message}`);
+  if ((lotRowsResult.count ?? 0) > (lotRowsResult.data?.length ?? 0)) throw new Error(`rotation paper-lot cohort truncated: ${lotRowsResult.data?.length ?? 0}/${lotRowsResult.count}`);
+  const monthlyTurnover = rotationTurnoverNotional(turnoverResult.data ?? []);
   const proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
   const persistenceRequiredRuns = Math.max(0, Number((cfgRow as any)?.rotation_persistence_runs ?? 2) - 1);
   const persistencePriorRuns = countDistinctPriorRotationRuns(persistenceResult.data ?? [], args.runId ?? "manual");
   const frictionPct = evaluation.sellNotional == null ? null : estimateRotationFrictionPct(evaluation.sellNotional, evaluation.buyNotional);
+  const exactLots = hasExactPaperTaxLot(evaluation.source ? {
+    symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt,
+    qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
+  } : null, (lotFillsResult.data ?? []).map((row: any) => ({
+    id: Number(row.id), symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty),
+    fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
+  })), (lotRowsResult.data ?? []).map((row: any) => ({
+    paperEventId: row.paper_event_id == null ? null : Number(row.paper_event_id),
+    qty: Number(row.qty), fillPrice: Number(row.fill_price),
+    closedAt: row.closed_at == null ? null : String(row.closed_at),
+    fillStatus: row.fill_status == null ? null : String(row.fill_status),
+  })));
   const readiness = assessRotationP1Readiness({
     persistencePriorRuns,
     persistenceRequiredRuns,
@@ -403,35 +452,33 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     proposedTurnoverPct: args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null,
     taxSensitivity: ["low", "high"].includes(String((mandateResult.data as any)?.tax_sensitivity))
       ? (mandateResult.data as any).tax_sensitivity : "medium",
-    hasExactTaxLots: hasExactPaperTaxLot(evaluation.source ? {
-      symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt, qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
-    } : null, (lotFillsResult.data ?? []).map((row: any) => ({
-      symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty), fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
-    }))),
+    hasExactTaxLots: exactLots,
     // A score gap becomes an executable economic premise only when its matched,
     // session-independent lower confidence bound is positive. The raw mean is
     // retained in the audit but is never used to pass this gate.
     expectedEdgePct: scoreEdgeEvidence.status === "validated" ? scoreEdgeEvidence.lowerConfidenceEdgePct : null,
     frictionPct,
-    postSwapAllowed: completePostSwapAllowed,
+    postSwapAllowed,
     correlation,
+    correlationAllowed,
   });
+  if (!evaluation.eligible) {
+    readiness.ready = false;
+    readiness.blockers.unshift(`candidate_not_eligible:${evaluation.reason}`);
+  }
   evaluation.gates.p1_ready = readiness.ready;
   evaluation.gates.p1_blockers = readiness.blockers;
   evaluation.gates.persistence_prior_runs = persistencePriorRuns;
   evaluation.gates.persistence_required_prior_runs = persistenceRequiredRuns;
-  evaluation.gates.post_swap_allowed = completePostSwapAllowed;
-  evaluation.gates.post_swap_adjustments = sized?.adjustments ?? [];
+  evaluation.gates.post_swap_allowed = postSwapAllowed;
+  evaluation.gates.post_swap_adjustments = (evaluation.gates.replacement_capacity as Array<{ symbol: string; adjustments?: string[] }> | undefined)
+    ?.find(row => row.symbol === sourceSymbol)?.adjustments ?? [];
   evaluation.gates.candidate_correlation = correlation;
   evaluation.gates.candidate_correlation_allowed = correlationAllowed;
   evaluation.gates.monthly_turnover_used_pct = readiness.turnoverAfterPct == null || args.portfolioNav <= 0 ? null : monthlyTurnover / args.portfolioNav * 100;
   evaluation.gates.proposed_turnover_pct = args.portfolioNav > 0 ? proposedTurnover / args.portfolioNav * 100 : null;
   evaluation.gates.exact_tax_lot = {
-    available: hasExactPaperTaxLot(evaluation.source ? {
-      symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt, qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
-    } : null, (lotFillsResult.data ?? []).map((row: any) => ({
-      symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty), fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
-    }))),
+    available: exactLots,
     treatment: "paper_cost_basis_reconciled_not_statutory_tax_calculation",
   };
   evaluation.gates.score_to_return_mapping = scoreEdgeEvidence;
@@ -454,7 +501,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     buy_notional: evaluation.buyNotional,
     turnover_consumed: evaluation.sellNotional != null ? evaluation.sellNotional + evaluation.buyNotional : null,
     cost_model_json: { phase: "p0_shadow", slippage_bps_per_leg: 5, friction_pct: frictionPct, spread_impact_fees_status: "unavailable" },
-    tax_model_json: { phase: "p0_shadow", sensitivity: (mandateResult.data as any)?.tax_sensitivity ?? "medium", exact_lots_available: false, tax_drag_status: "unavailable" },
+    tax_model_json: { phase: "p0_shadow", sensitivity: (mandateResult.data as any)?.tax_sensitivity ?? "medium", exact_lots_available: exactLots, tax_drag_status: "unavailable" },
     gate_results_json: evaluation.gates,
     audit_json: {
       reason: evaluation.reason,
@@ -470,7 +517,11 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   if (error && String(error.code ?? "") !== "23505") {
     throw new Error(`rotation_events insert failed: ${error.message}`);
   }
-  return { evaluation, readiness, scoreEdgeEvidence, evaluatedAt: now.toISOString() } satisfies RotationShadowRecord;
+  const source = evaluation.source;
+  return { evaluation, readiness, scoreEdgeEvidence, evaluatedAt: now.toISOString(),
+    plan: source ? { sourceId: source.id, sourceQty: source.qty, sourcePrice: source.currentPrice,
+      sourceScore: source.score, candidateSignalId: candidate.signalId, buyNotional: evaluation.buyNotional } : null,
+  } satisfies RotationShadowRecord;
 }
 
 // ── Phase 1 PAPER EXECUTION (ENABLED 2026-07-23) ─────────────────────────────
@@ -490,6 +541,12 @@ export interface RotationExecInput {
   /** Read from the immediately preceding append-only shadow event in this run. */
   p1Readiness: RotationP1Readiness | null;
   p1EvaluatedAt: string | null;
+  p1Plan?: RotationShadowRecord["plan"];
+  entryPolicy?: {
+    maxOpenNames: number; maxSectorNames: number; perTradeCap: number | null;
+    dailyNotionalCap: number | null; dayStart: string | null;
+    mandateId: string | null; mandateVersion: number; mandateSnapshot: unknown; horizonDays: number;
+  };
 }
 
 export async function executeCapitalRotationPaper(supabase: any, args: RotationExecInput): Promise<{ executed: boolean; reason: string; sourceSymbol?: string }> {
@@ -527,6 +584,11 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     if (!Number.isFinite(evidenceAgeMs) || evidenceAgeMs < 0 || evidenceAgeMs > 60_000) {
       return { executed: false, reason: "p1_evidence_stale" };
     }
+    const plan = args.p1Plan;
+    if (!plan || plan.candidateSignalId !== c.signalId || !Number.isFinite(c.qty * c.fillPrice)
+      || Math.abs(plan.buyNotional - c.qty * c.fillPrice) > 1e-6
+      || Math.abs(c.targetNotional - plan.buyNotional) > 1e-6) return { executed: false, reason: "p1_plan_mismatch" };
+    if (!args.entryPolicy) return { executed: false, reason: "entry_policy_missing" };
 
     const persistenceRuns = Math.max(1, Number((cfgRow as any)?.rotation_persistence_runs ?? 2));
     const cooldownDays = Math.max(0, Number((cfgRow as any)?.rotation_cooldown_days ?? 3));
@@ -540,7 +602,7 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     // Re-run the deterministic eligibility eval against the current book.
     const { data: positions, error: positionsError } = await supabase
       .from("paper_positions")
-      .select("id, symbol, market, qty, avg_cost, current_price, opened_at, price_target, stop_loss, exit_reason")
+      .select("id, symbol, market, qty, avg_cost, current_price, opened_at, updated_at, price_target, stop_loss, exit_reason")
       .eq("market", c.market)
       .eq("position_role", "alpha");
     if (positionsError) return { executed: false, reason: `positions_query_failed:${positionsError.message}` };
@@ -549,17 +611,21 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
     const holdings: RotationHolding[] = (positions ?? []).map((p: any) => ({
       id: String(p.id), symbol: String(p.symbol), market: c.market,
       qty: Number(p.qty ?? 0), avgCost: Number(p.avg_cost ?? 0),
-      currentPrice: Number(p.current_price ?? p.avg_cost ?? 0), openedAt: p.opened_at ?? null,
+      currentPrice: Number(p.current_price ?? 0), openedAt: p.opened_at ?? null,
+      priceFresh: isPaperScoreFresh(p.updated_at, new Date(), c.market, 1),
       priceTarget: p.price_target == null ? null : Number(p.price_target),
       stopLoss: p.stop_loss == null ? null : Number(p.stop_loss),
       exitReason: p.exit_reason ?? null, score: scores.get(String(p.symbol))?.score ?? null,
     }));
     const evaluation = evaluateCapitalRotationShadow({
-      candidate: c, holdings,
+      candidate: c, holdings: holdings.filter(h => h.id === plan.sourceId),
       config: { shadowEnabled: true, marginScore: margin, minHoldingDays: args.minHoldingDays, exitScoreThreshold: args.scoreThreshold - 10, nearTargetPct: 0.03, nearStopPct: 0.03 },
     });
     if (!evaluation.eligible || !evaluation.source) return { executed: false, reason: `not_eligible:${evaluation.reason}` };
     const source = evaluation.source;
+    if (source.qty !== plan.sourceQty || source.currentPrice !== plan.sourcePrice || source.score !== plan.sourceScore) {
+      return { executed: false, reason: "p1_source_changed" };
+    }
 
     // GATE: per-day cap.
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
@@ -601,7 +667,7 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
       p_candidate_sector: c.sector, p_candidate_score: c.score, p_source_score: source.score,
       p_score_edge: evaluation.scoreEdge, p_idempotency_key: idempotencyKey,
       p_claim_run_id: args.runId,
-      p_gate_json: { ...evaluation.gates, persistence_runs: persistenceRuns, cooldown_days: cooldownDays },
+      p_gate_json: { ...evaluation.gates, persistence_runs: persistenceRuns, cooldown_days: cooldownDays, p1_plan: plan, p1_readiness: args.p1Readiness, p1_evaluated_at: args.p1EvaluatedAt, entry_policy: args.entryPolicy },
     });
     if (rpcErr) return { executed: false, reason: `rpc_error:${rpcErr.message}` };
     if (!(rpc as any)?.ok) return { executed: false, reason: `rpc_denied:${(rpc as any)?.error ?? "unknown"}` };

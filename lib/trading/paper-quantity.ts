@@ -2,6 +2,16 @@ export type PaperQuantityMarket = "us" | "india";
 
 const US_FRACTIONAL_SCALE = 1_000_000;
 
+/** Desired allocation before funding: a cash shortage must reach rotation. */
+export function paperIntendedSpend(portfolioNav: unknown, sizePct: unknown, orderCap?: unknown): number | null {
+  const nav = finitePositive(portfolioNav);
+  const pct = finitePositive(sizePct);
+  const cap = orderCap == null ? Infinity : finitePositive(orderCap);
+  if (nav == null || pct == null || cap == null) return null;
+  const spend = Math.min(nav * pct / 100, cap);
+  return Number.isFinite(spend) && spend > 0 ? spend : null;
+}
+
 function finitePositive(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
