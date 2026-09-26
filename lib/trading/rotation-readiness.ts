@@ -26,6 +26,7 @@ export interface RotationP1ReadinessInput {
   frictionPct: number | null;
   postSwapAllowed: boolean | null;
   correlation: RotationCorrelationResult;
+  correlationAllowed?: boolean | null;
 }
 
 export interface RotationP1Readiness {
@@ -164,6 +165,10 @@ export function assessRotationP1Readiness(input: RotationP1ReadinessInput): Rota
   else if (!Number.isFinite(input.correlation.maxAbsCorrelation) || input.correlation.maxAbsCorrelation == null
     || input.correlation.maxAbsCorrelation < 0 || input.correlation.maxAbsCorrelation > 1
     || input.correlation.pairCount !== input.correlation.expectedPairCount || input.correlation.pairCount < 1) {
+    blockers.push("candidate_correlation_unavailable");
+  } else if (input.correlationAllowed === false) {
+    blockers.push("candidate_correlation_failed");
+  } else if (input.correlationAllowed == null) {
     blockers.push("candidate_correlation_unavailable");
   }
 

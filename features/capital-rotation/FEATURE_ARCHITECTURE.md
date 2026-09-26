@@ -245,7 +245,7 @@ enabled per market only after the new common-window, net-of-cost gate reports a
 passing result. This approval does not authorize live rotation.
 
 **Implemented P1 evidence contract (2026-09-18):** every cash-constrained
-candidate now records (a) a 20% owner-approved monthly gross turnover ceiling,
+or portfolio-capacity-constrained candidate now records (a) a 20% owner-approved monthly gross turnover ceiling,
 (b) a traceable single paper cost-basis lot rather than a merged/add-to-position
 lot, (c) a matched candidate-versus-holding forward-return score-edge estimate
 collapsed to non-overlapping sessions with a positive lower confidence bound,
@@ -253,6 +253,14 @@ collapsed to non-overlapping sessions with a positive lower confidence bound,
 correlation coverage. A failed or missing contract blocks execution before the
 book or atomic RPC is touched. `ready_for_review` is evidence readiness only;
 it is not a forecast of portfolio or benchmark outperformance.
+
+**Contract correction, 2026-09-25:** the return RPC must be paged in stable
+symbol/session order because a normal 15-name book exceeds PostgREST's 1,000
+row response cap. A partial paper exit may leave a traceable single-source lot:
+prove the original fill event equals the sum of its closed and remaining open
+lot rows at the same cost basis. Report constructor admissibility and measured
+correlation as separate gates. The current production cohort has too few
+independent score/return windows for execution review.
 
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
 

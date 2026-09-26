@@ -84,10 +84,24 @@ describe("capital rotation P1 readiness", () => {
       frictionPct: 0.1,
       postSwapAllowed: true,
       correlation: { status: "ok", maxAbsCorrelation: 0.4, maxCorrelationSymbol: "HELD", pairCount: 3, expectedPairCount: 3, minOverlap: 60 },
+      correlationAllowed: true,
     });
     expect(result.ready).toBe(true);
     expect(result.blockers).toEqual([]);
     expect(result.netExpectedEdgePct).toBeCloseTo(1.1, 8);
     expect(result.turnoverAfterPct).toBe(25);
+  });
+
+  it("distinguishes a passing post-swap constructor from a measured correlation breach", () => {
+    const result = assessRotationP1Readiness({
+      persistencePriorRuns: 1, persistenceRequiredRuns: 1,
+      turnoverBudgetMonthlyPct: 20, monthlyTurnoverUsedPct: 0, proposedTurnoverPct: 5,
+      taxSensitivity: "medium", hasExactTaxLots: true, expectedEdgePct: 1, frictionPct: 0.1,
+      postSwapAllowed: true,
+      correlation: { status: "ok", maxAbsCorrelation: 0.85, maxCorrelationSymbol: "HELD", pairCount: 1, expectedPairCount: 1, minOverlap: 60 },
+      correlationAllowed: false,
+    });
+    expect(result.blockers).toContain("candidate_correlation_failed");
+    expect(result.blockers).not.toContain("post_swap_gate_failed");
   });
 });

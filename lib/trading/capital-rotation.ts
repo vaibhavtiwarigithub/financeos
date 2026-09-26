@@ -7,6 +7,7 @@ import {
   measureCandidatePostSwapCorrelation,
   rotationTurnoverNotional,
   type RotationP1Readiness,
+  type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { replacementCapacity } from "./rotation-capacity";
@@ -278,6 +279,17 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
   });
 }
 
+/** The return RPC can exceed PostgREST's 1,000-row response cap with 15 names. */
+export async function loadRotationReturnCohort(
+  supabase: any, market: "us" | "india", symbols: string[], since: string,
+): Promise<RotationReturnRow[]> {
+  return fetchAllRows<RotationReturnRow>((from, to) => supabase
+    .rpc("get_rotation_return_cohort", { p_market: market, p_symbols: symbols, p_since: since })
+    .order("symbol", { ascending: true })
+    .order("session_date", { ascending: true })
+    .range(from, to), "rotation return cohort");
+}
+
 export interface RotationShadowRecord {
   evaluation: RotationEvaluation;
   readiness: RotationP1Readiness;
@@ -377,22 +389,14 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
 
   const symbolsAfterSwap = postSwapBook.map(position => position.symbol);
   const returnCutoff = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 10);
-  const { data: returnRows, error: returnsError } = await supabase.rpc("get_rotation_return_cohort", {
-    p_market: candidate.market,
-    p_symbols: [...new Set([candidate.symbol, ...symbolsAfterSwap])],
-    p_since: returnCutoff,
-  });
-  if (returnsError) throw new Error(`rotation return query failed: ${returnsError.message}`);
-  const correlation = measureCandidatePostSwapCorrelation(returnRows ?? [], candidate.symbol, symbolsAfterSwap);
+  const returnRows = await loadRotationReturnCohort(supabase, candidate.market,
+    [...new Set([candidate.symbol, ...symbolsAfterSwap])], returnCutoff);
+  const correlation = measureCandidatePostSwapCorrelation(returnRows, candidate.symbol, symbolsAfterSwap);
   const correlationAllowed = correlation.status === "ok" && correlation.maxAbsCorrelation != null
     ? correlation.maxAbsCorrelation <= limits.maxAvgPairwiseCorr
     : null;
-  const completePostSwapAllowed = postSwapAllowed == null || correlationAllowed == null
-    ? null
-    : postSwapAllowed && correlationAllowed;
-
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-  const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, scoreEdgeEvidence] = await Promise.all([
+  const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, lotRowsResult, scoreEdgeEvidence] = await Promise.all([
     supabase.from("investment_mandates").select("turnover_budget_monthly, tax_sensitivity")
       .eq("market", candidate.market).eq("active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("rotation_events").select("status,sell_notional,buy_notional", { count: "exact" }).eq("market", candidate.market)
@@ -400,9 +404,14 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     supabase.from("rotation_events").select("audit_json").eq("market", candidate.market)
       .eq("candidate_symbol", candidate.symbol).eq("status", "planned").gte("created_at", new Date(Date.now() - 4 * 86400000).toISOString()),
     evaluation.source?.openedAt
-      ? supabase.from("paper_order_events").select("symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
+      ? supabase.from("paper_order_events").select("id,symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
         .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("event_type", "fill").eq("side", "buy")
         .gte("created_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(20)
+      : Promise.resolve({ data: [], count: 0, error: null }),
+    evaluation.source?.openedAt
+      ? supabase.from("paper_trades").select("paper_event_id,qty,fill_price,closed_at,fill_status", { count: "exact" })
+        .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("order_side", "buy")
+        .gte("executed_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(30)
       : Promise.resolve({ data: [], count: 0, error: null }),
     loadRotationScoreEdgeEvidence(supabase, {
       market: candidate.market,
@@ -416,6 +425,8 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   if (persistenceResult.error) throw new Error(`rotation persistence query failed: ${persistenceResult.error.message}`);
   if (lotFillsResult.error) throw new Error(`rotation tax-lot query failed: ${lotFillsResult.error.message}`);
   if ((lotFillsResult.count ?? 0) > (lotFillsResult.data?.length ?? 0)) throw new Error(`rotation tax-lot cohort truncated: ${lotFillsResult.data?.length ?? 0}/${lotFillsResult.count}`);
+  if (lotRowsResult.error) throw new Error(`rotation paper-lot query failed: ${lotRowsResult.error.message}`);
+  if ((lotRowsResult.count ?? 0) > (lotRowsResult.data?.length ?? 0)) throw new Error(`rotation paper-lot cohort truncated: ${lotRowsResult.data?.length ?? 0}/${lotRowsResult.count}`);
   const monthlyTurnover = rotationTurnoverNotional(turnoverResult.data ?? []);
   const proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
   const persistenceRequiredRuns = Math.max(0, Number((cfgRow as any)?.rotation_persistence_runs ?? 2) - 1);
@@ -425,8 +436,13 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt,
     qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
   } : null, (lotFillsResult.data ?? []).map((row: any) => ({
-    symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty),
+    id: Number(row.id), symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty),
     fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
+  })), (lotRowsResult.data ?? []).map((row: any) => ({
+    paperEventId: row.paper_event_id == null ? null : Number(row.paper_event_id),
+    qty: Number(row.qty), fillPrice: Number(row.fill_price),
+    closedAt: row.closed_at == null ? null : String(row.closed_at),
+    fillStatus: row.fill_status == null ? null : String(row.fill_status),
   })));
   const readiness = assessRotationP1Readiness({
     persistencePriorRuns,
@@ -442,8 +458,9 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     // retained in the audit but is never used to pass this gate.
     expectedEdgePct: scoreEdgeEvidence.status === "validated" ? scoreEdgeEvidence.lowerConfidenceEdgePct : null,
     frictionPct,
-    postSwapAllowed: completePostSwapAllowed,
+    postSwapAllowed,
     correlation,
+    correlationAllowed,
   });
   if (!evaluation.eligible) {
     readiness.ready = false;
@@ -453,7 +470,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   evaluation.gates.p1_blockers = readiness.blockers;
   evaluation.gates.persistence_prior_runs = persistencePriorRuns;
   evaluation.gates.persistence_required_prior_runs = persistenceRequiredRuns;
-  evaluation.gates.post_swap_allowed = completePostSwapAllowed;
+  evaluation.gates.post_swap_allowed = postSwapAllowed;
   evaluation.gates.post_swap_adjustments = (evaluation.gates.replacement_capacity as Array<{ symbol: string; adjustments?: string[] }> | undefined)
     ?.find(row => row.symbol === sourceSymbol)?.adjustments ?? [];
   evaluation.gates.candidate_correlation = correlation;

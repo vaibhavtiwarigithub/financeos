@@ -125,10 +125,19 @@ export interface PaperLotSnapshot {
 }
 
 export interface PaperBuyFill {
+  id?: number;
   symbol: string;
   createdAt: string;
   qty: number;
   fillPrice: number;
+  fillStatus: string | null;
+}
+
+export interface PaperTradeLot {
+  paperEventId: number | null;
+  qty: number;
+  fillPrice: number;
+  closedAt: string | null;
   fillStatus: string | null;
 }
 
@@ -138,7 +147,7 @@ export interface PaperBuyFill {
  * and that buy reconciles to the open position's quantity and cost basis. Any
  * add-to-position, merged basis, missing timestamp or mismatch fails closed.
  */
-export function hasExactPaperTaxLot(position: PaperLotSnapshot | null, fills: PaperBuyFill[]): boolean {
+export function hasExactPaperTaxLot(position: PaperLotSnapshot | null, fills: PaperBuyFill[], lots: PaperTradeLot[] = []): boolean {
   if (!position || !position.openedAt || finite(position.qty) == null || finite(position.avgCost) == null) return false;
   const openedAt = Date.parse(position.openedAt);
   if (!Number.isFinite(openedAt) || position.qty <= 0 || position.avgCost <= 0) return false;
@@ -153,7 +162,20 @@ export function hasExactPaperTaxLot(position: PaperLotSnapshot | null, fills: Pa
   });
   if (matching.length !== 1) return false;
   const fill = matching[0];
-  const quantityMatches = Math.abs(fill.qty - position.qty) <= 1e-8;
   const costMatches = Math.abs(fill.fillPrice - position.avgCost) <= Math.max(1e-6, Math.abs(position.avgCost) * 1e-6);
-  return quantityMatches && costMatches;
+  if (!costMatches || finite(fill.qty) == null || fill.qty <= 0) return false;
+  const sameQuantity = Math.abs(fill.qty - position.qty) <= 1e-8;
+  if (sameQuantity) return true;
+  // A partial exit splits one original buy into closed and open paper_trades
+  // rows. Prove the split against the original fill event before accepting the
+  // remaining cost basis; a timestamp/symbol match alone is insufficient.
+  if (fill.id == null || fill.qty < position.qty || lots.length === 0) return false;
+  if (lots.some(lot => lot.paperEventId !== fill.id || lot.fillStatus !== "filled"
+    || finite(lot.qty) == null || lot.qty <= 0
+    || Math.abs(lot.fillPrice - fill.fillPrice) > Math.max(1e-6, Math.abs(fill.fillPrice) * 1e-6))) return false;
+  const open = lots.filter(lot => lot.closedAt == null);
+  const closed = lots.filter(lot => lot.closedAt != null);
+  return open.length === 1 && closed.length > 0
+    && Math.abs(open[0].qty - position.qty) <= 1e-8
+    && Math.abs(lots.reduce((sum, lot) => sum + lot.qty, 0) - fill.qty) <= 1e-8;
 }

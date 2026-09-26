@@ -50,4 +50,17 @@ describe("paper exact-lot proof", () => {
   it("refuses an unreconciled cost basis", () => {
     expect(hasExactPaperTaxLot(position, [{ ...fill, fillPrice: 99 }])).toBe(false);
   });
+
+  it("reconciles a partial target exit to one original fill and the remaining open lot", () => {
+    const original = { ...fill, id: 248, qty: 20 };
+    const remaining = { ...position, qty: 10 };
+    const lots = [
+      { paperEventId: 248, qty: 10, fillPrice: 100, closedAt: "2026-01-03T15:00:00Z", fillStatus: "filled" },
+      { paperEventId: 248, qty: 10, fillPrice: 100, closedAt: null, fillStatus: "filled" },
+    ];
+    expect(hasExactPaperTaxLot(remaining, [original], lots)).toBe(true);
+    expect(hasExactPaperTaxLot(remaining, [original], [{ ...lots[0], qty: 9 }, lots[1]])).toBe(false);
+    expect(hasExactPaperTaxLot(remaining, [original], [{ ...lots[0], paperEventId: 249 }, lots[1]])).toBe(false);
+    expect(hasExactPaperTaxLot(remaining, [original, { ...original, id: 249 }], lots)).toBe(false);
+  });
 });

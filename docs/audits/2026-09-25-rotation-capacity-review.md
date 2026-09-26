@@ -89,6 +89,41 @@ were both false after the migration; these repairs do not turn them on.
 
 ## Still not established
 
+### P1 contract recheck, 2026-09-25
+
+The latest production `rotation_events` are from the deployment before this
+branch. In the last 30 days there were **zero cash-only candidates** in either
+market; the observed candidates were blocked by portfolio capacity. Calling
+these cash-constrained in the next-step instruction was inaccurate. There were
+25 US and 58 India planned shadow events, none P1-ready.
+
+For India `ALGOQUANT.NS` replacing `GMMPFAUDLR.NS`, the old event counted
+₹210,799.68 of buy notional and 21.41% proposed gross turnover even though the
+constructor had reduced the replacement to roughly 1.88% of NAV. The capacity
+sizing repair in this branch must be observed after deployment before its actual
+notional and turnover can be certified. September had zero `paper_executed`
+rotation events, so the old 209.55% monthly-used figure is not executed churn.
+
+Two additional measurement defects were reproduced directly from production:
+
+- The return RPC emitted more than PostgREST's 1,000-row response cap. Its
+  single-page caller reported 13/14 correlation pairs. A complete, ordered
+  read finds all 14 pairs with at least 68 aligned sessions; the largest
+  absolute candidate correlation is about 0.273, below the current 0.7 bound.
+- The source position had one original 20-share fill, then a documented
+  10-share partial-target exit, leaving 10 shares at the original cost basis.
+  The old exact-lot check rejected this traceable remainder because it compared
+  open quantity with original fill quantity. The revised proof reconciles the
+  original event to both closed and open lot rows and rejects mismatches.
+
+The post-swap constructor and measured correlation now report separate
+verdicts. A missing correlation no longer makes a passing constructor look
+unavailable. These changes fix the contract's accounting, not the statistical
+result: India h10 has 39 qualifying dates but only **4 independent windows
+versus 20 required**, and its current point estimate is **-2.07%**. That
+cannot be made ready by changing a threshold or assuming a positive edge.
+No paper rotation is authorized by these repairs alone.
+
 This is not a validated optimum allocation or a forecast of BE returns. The
 matched score-to-return lower confidence bound, complete remaining-book
 correlation, persistence and exact cost-basis evidence must pass for a concrete
