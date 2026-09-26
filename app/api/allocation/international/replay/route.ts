@@ -7,6 +7,7 @@ import { buildInternationalAllocationAttribution } from "@/lib/allocation/intern
 import { writeAttributionRow } from "@/lib/shadows/attribution-writer";
 import { createServiceClient } from "@/lib/supabase/service";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import { fetchAllPages } from "@/lib/data/fetch-all-pages";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -34,8 +35,8 @@ export async function POST(req: NextRequest) {
   if (!policy || policy.market !== "us") return NextResponse.json({ error: "International allocation policy unavailable" }, { status: 409 });
 
   const [vooResponse, vxusResponse] = await Promise.all([
-    supabase.from("price_cache").select("date, close").eq("symbol", benchmarkSymbolFor("us", "allocation")).order("date", { ascending: true }).range(0, 3_000),
-    supabase.from("price_cache").select("date, close").eq("symbol", "VXUS").order("date", { ascending: true }).range(0, 3_000),
+    fetchAllPages<{ date: string; close: number | string }>((from, to) => supabase.from("price_cache").select("date, close").eq("symbol", benchmarkSymbolFor("us", "allocation")).order("date", { ascending: true }).range(from, to)),
+    fetchAllPages<{ date: string; close: number | string }>((from, to) => supabase.from("price_cache").select("date, close").eq("symbol", "VXUS").order("date", { ascending: true }).range(from, to)),
   ]);
   if (vooResponse.error || vxusResponse.error) {
     return NextResponse.json({ error: vooResponse.error?.message ?? vxusResponse.error?.message ?? "Historical cache query failed" }, { status: 503 });

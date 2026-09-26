@@ -1,6 +1,6 @@
 # Work Log
 
-| Upgrade Path attribution producer completion | Codex | in_progress | 2026-09-26 | Completing a scheduled, cache-only portfolio replay producer for the predeclared international-allocation diagnostic, with explicit synthetic-portfolio labeling, immutable idempotent attribution writes, and truthful missing-producer states for all other paths. No trading or allocation behavior changes. |
+| Upgrade Path attribution producer completion | Codex | in_progress | 2026-09-26 | Production producer deployed and scheduled; first end-to-end run created the initial immutable attribution row. Verification exposed Supabase's 1,000-row response cap truncating both benchmark histories despite a wider range request. Added bounded pagination and exact-page-boundary tests; full suite 3,354 passed / 7 skipped, TypeScript clean. Redeploy and rerun required before marking complete. This producer is a synthetic fixed-allocation diagnostic, not actual Kairos holdings; no trading/allocation behavior changes. |
 
 | Complete P1 rotation evidence contract review | Codex / GPT-6 | completed locally; deployment pending | 2026-09-25 | Production recheck found zero cash-only candidates, 13/14 correlation pairs due silent 1,000-row RPC truncation, and a traceable partial exit falsely rejected as an unavailable lot. Paged return RPC, reconciled split lot to original fill, and separated constructor/correlation verdicts. India h10 remains 4/20 independent windows with -2.07% point estimate; paper execution stays off. |
 
