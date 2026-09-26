@@ -51,6 +51,7 @@ const DEPLOYMENT_META = {
 const ATTRIBUTION_META = {
   measured: { label: "Measured", color: T.green },
   collecting: { label: "Collecting", color: T.yellow },
+  producer_missing: { label: "Producer missing", color: T.red },
   not_attributable: { label: "Not attributable", color: T.blue },
   invalid: { label: "Invalid", color: T.red },
 };
@@ -170,10 +171,13 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
           </div>
           <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>{program.attribution.reason}</div>
           {program.attribution.state === "measured" && <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(3, minmax(0, 1fr))", gap: "8px 14px", marginTop: "10px" }}>
+            <TextBlock label="Baseline portfolio · net" text={fmtPct(program.attribution.baselineNetReturnPct)} />
+            <TextBlock label="Variant portfolio · net" text={fmtPct(program.attribution.variantNetReturnPct)} />
             <TextBlock label="Net portfolio delta" text={fmtPct(program.attribution.netIncrementalReturnPct)} />
             <TextBlock label="Vs benchmark" text={fmtPct(program.attribution.benchmarkRelativeIncrementalReturnPct)} />
-            <TextBlock label="95% interval" text={`${fmtPct(program.attribution.ciLowerPct)} to ${fmtPct(program.attribution.ciUpperPct)}`} />
-            <TextBlock label="Independent sessions" text={program.attribution.independentSessions == null ? "—" : String(program.attribution.independentSessions)} />
+            <TextBlock label={`95% interval · ${program.attribution.uncertaintyLabel ?? "paired replay estimate"}`} text={`${fmtPct(program.attribution.ciLowerPct)} to ${fmtPct(program.attribution.ciUpperPct)}`} />
+            <TextBlock label="Independent return blocks" text={program.attribution.independentSessions == null ? "—" : String(program.attribution.independentSessions)} />
+            <TextBlock label="Block t-statistic" text={program.attribution.tStatistic == null ? "—" : program.attribution.tStatistic.toFixed(2)} />
             <TextBlock label="Turnover" text={fmtPct(program.attribution.turnoverPct)} />
             <TextBlock label="Drawdown delta" text={fmtPct(program.attribution.drawdownDeltaPct)} />
           </div>}

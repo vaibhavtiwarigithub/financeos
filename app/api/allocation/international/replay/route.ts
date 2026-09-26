@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { verifyCronSecret } from "@/lib/auth/cron";
 import { runInternationalAllocationReplay } from "@/lib/allocation/international-replay";
+import { buildInternationalAllocationAttribution } from "@/lib/allocation/international-attribution";
+import { writeAttributionRow } from "@/lib/shadows/attribution-writer";
 import { createServiceClient } from "@/lib/supabase/service";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
@@ -14,9 +17,12 @@ const ONE_WAY_COST_BPS = 5;
 
 // This endpoint is intentionally owner-only and cache-only. It has no provider
 // access, no policy mutation, no candidate construction, and no order authority.
-export async function POST() {
-  const gate = await requireOwner();
-  if (gate) return gate;
+export async function POST(req: NextRequest) {
+  const scheduled = verifyCronSecret(req);
+  if (!scheduled) {
+    const gate = await requireOwner();
+    if (gate) return gate;
+  }
 
   const supabase = createServiceClient();
   const { data: policy, error: policyError } = await supabase
@@ -38,6 +44,7 @@ export async function POST() {
   const voo = (vooResponse.data ?? []).map((row: { date: string; close: number | string }) => ({ date: row.date, close: Number(row.close) }));
   const vxus = (vxusResponse.data ?? []).map((row: { date: string; close: number | string }) => ({ date: row.date, close: Number(row.close) }));
   const result = runInternationalAllocationReplay(voo, vxus, { testWeightPct: TEST_WEIGHT_PCT, oneWayCostBps: ONE_WAY_COST_BPS });
+  const attribution = buildInternationalAllocationAttribution(voo, vxus);
   const configuration = {
     market: "us",
     currency: "USD",
@@ -62,15 +69,49 @@ export async function POST() {
       configuration,
       source_data_fingerprint: sourceDataFingerprint,
       result,
+      trigger_source: scheduled ? "scheduled" : "owner_manual",
     })
     .select("id, created_at")
     .single();
   if (persistError) return NextResponse.json({ error: persistError.message }, { status: 503 });
 
+  let attributionWrite: "inserted" | "already_present" | "collecting" = "collecting";
+  if (attribution.row) {
+    try {
+      attributionWrite = await writeAttributionRow(supabase, attribution.row);
+    } catch (error) {
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : "Attribution write failed",
+        replayRun: persisted,
+        attributionState: "invalid",
+      }, { status: 503 });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     run: persisted,
     result,
+    attribution: {
+      state: attribution.row ? "measured" : "collecting",
+      write: attributionWrite,
+      reason: attribution.reason,
+      asOfSession: attribution.row?.as_of_session ?? result.endDate,
+      portfolioScope: "synthetic fixed allocation; not Kairos paper/live holdings",
+      metrics: attribution.row ? {
+        baselineGrossPct: attribution.row.baseline_portfolio_return_pct,
+        variantGrossPct: attribution.row.variant_portfolio_return_pct,
+        baselineNetPct: attribution.row.baseline_net_portfolio_return_pct,
+        variantNetPct: attribution.row.variant_net_portfolio_return_pct,
+        netDeltaPct: attribution.row.net_incremental_return_pct,
+        intervalPct: [attribution.row.ci_lower_pct, attribution.row.ci_upper_pct],
+        independent63SessionBlocks: attribution.row.independent_sessions,
+        tStatistic: attribution.row.t_statistic,
+        turnoverPct: attribution.row.turnover_pct,
+        drawdownDeltaPct: attribution.row.drawdown_delta_pct,
+      } : null,
+    },
+    trigger: scheduled ? "scheduled" : "owner_manual",
     safeguards: {
       policyStatus: policy.status,
       targetConfigured: policy.target_pct != null,

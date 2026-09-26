@@ -10,6 +10,7 @@ export type AllocationReplayMetrics = {
 export type InternationalAllocationReplay = {
   status: "completed" | "insufficient_history";
   reason?: string;
+  minimumMatchedSessions: number;
   startDate: string | null;
   endDate: string | null;
   sessions: number;
@@ -17,17 +18,26 @@ export type InternationalAllocationReplay = {
   rebalanceFrequency: "monthly";
   oneWayCostBps: number;
   rebalanceCount: number;
+  turnoverPct: number;
   totalCostDragPct: number;
   baseline: AllocationReplayMetrics | null;
   testSleeve: AllocationReplayMetrics | null;
+  baselineGross: AllocationReplayMetrics | null;
+  testSleeveGross: AllocationReplayMetrics | null;
   excessReturnPct: number | null;
   informationRatio: number | null;
+  independentBlocks: number;
+  blockMeanExcessPct: number | null;
+  blockCiLowerPct: number | null;
+  blockCiUpperPct: number | null;
+  blockTStatistic: number | null;
   windows: Array<{ startDate: string; endDate: string; baselineReturnPct: number; testSleeveReturnPct: number }>;
   caveats: string[];
 };
 
 const SESSIONS_PER_YEAR = 252;
 export const MIN_MATCHED_SESSIONS = SESSIONS_PER_YEAR * 3;
+export const ATTRIBUTION_BLOCK_SESSIONS = 63;
 
 function round(value: number, digits = 4): number {
   const scale = 10 ** digits;
@@ -49,6 +59,41 @@ function standardDeviation(values: number[]): number {
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance);
+}
+
+function studentTCritical95(df: number): number {
+  const table = [0, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
+    2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093,
+    2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042];
+  if (df <= 0) return Number.POSITIVE_INFINITY;
+  if (df < table.length) return table[df];
+  const z = 1.96;
+  return z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2);
+}
+
+function blockStatistics(baselineDaily: number[], variantDaily: number[]) {
+  const count = Math.floor(Math.min(baselineDaily.length, variantDaily.length) / ATTRIBUTION_BLOCK_SESSIONS);
+  const differences: number[] = [];
+  for (let block = 0; block < count; block++) {
+    const from = block * ATTRIBUTION_BLOCK_SESSIONS;
+    const to = from + ATTRIBUTION_BLOCK_SESSIONS;
+    const baseline = baselineDaily.slice(from, to).reduce((nav, value) => nav * (1 + value), 1);
+    const variant = variantDaily.slice(from, to).reduce((nav, value) => nav * (1 + value), 1);
+    differences.push((variant - baseline) * 100);
+  }
+  if (differences.length < 2) return { count: differences.length, mean: null, lower: null, upper: null, t: null };
+  const mean = differences.reduce((sum, value) => sum + value, 0) / differences.length;
+  const sd = standardDeviation(differences);
+  const se = sd / Math.sqrt(differences.length);
+  if (se === 0) return { count: differences.length, mean: round(mean), lower: round(mean), upper: round(mean), t: null };
+  const critical = studentTCritical95(differences.length - 1);
+  return {
+    count: differences.length,
+    mean: round(mean),
+    lower: round(mean - critical * se),
+    upper: round(mean + critical * se),
+    t: round(mean / se),
+  };
 }
 
 function metrics(nav: number[], dailyReturns: number[]): AllocationReplayMetrics {
@@ -89,6 +134,7 @@ export function runInternationalAllocationReplay(
 
   const bars = alignedBars(voo, vxus);
   const base = {
+    minimumMatchedSessions: MIN_MATCHED_SESSIONS,
     startDate: bars[0]?.date ?? null,
     endDate: bars.at(-1)?.date ?? null,
     sessions: bars.length,
@@ -96,11 +142,19 @@ export function runInternationalAllocationReplay(
     rebalanceFrequency: "monthly" as const,
     oneWayCostBps,
     rebalanceCount: 0,
+    turnoverPct: 0,
     totalCostDragPct: 0,
     baseline: null,
     testSleeve: null,
+    baselineGross: null,
+    testSleeveGross: null,
     excessReturnPct: null,
     informationRatio: null,
+    independentBlocks: 0,
+    blockMeanExcessPct: null,
+    blockCiLowerPct: null,
+    blockCiUpperPct: null,
+    blockTStatistic: null,
     windows: [],
     caveats: [
       "Cache-only adjusted-close replay; it does not reconstruct Kairos paper or live holdings.",
@@ -116,6 +170,20 @@ export function runInternationalAllocationReplay(
     };
   }
 
+  // The two US-listed ETFs share a session calendar. Ignore trailing VOO rows
+  // after the last VXUS close (the as-of date is the latest common session),
+  // but never bridge an interior missing leg and call it a daily return.
+  const commonEnd = bars.at(-1)!.date;
+  const vooSessions = voo.filter((bar) => bar.date <= commonEnd && Number.isFinite(bar.close) && bar.close > 0).map((bar) => bar.date).sort();
+  const vxusSessions = vxus.filter((bar) => bar.date <= commonEnd && Number.isFinite(bar.close) && bar.close > 0).map((bar) => bar.date).sort();
+  if (vooSessions.length !== vxusSessions.length || vooSessions.some((date, index) => date !== vxusSessions[index])) {
+    return {
+      status: "insufficient_history",
+      reason: "The matched price cache has an interior missing VOO/VXUS session; replay refuses to bridge the gap.",
+      ...base,
+    };
+  }
+
   const targetVxusWeight = testWeightPct / 100;
   const costRate = oneWayCostBps / 10_000;
   let baselineNav = 1;
@@ -126,10 +194,13 @@ export function runInternationalAllocationReplay(
   let grossNav = 1;
   let sleeveNav = 1;
   let rebalanceCount = 0;
+  let turnoverNotional = 0;
   const baselineNavs = [baselineNav];
   const sleeveNavs = [sleeveNav];
+  const grossSleeveNavs = [grossNav];
   const baselineReturns: number[] = [];
   const sleeveReturns: number[] = [];
+  const grossSleeveReturns: number[] = [];
 
   for (let index = 1; index < bars.length; index++) {
     const previous = bars[index - 1];
@@ -145,6 +216,7 @@ export function runInternationalAllocationReplay(
       // For a two-asset fully invested sleeve, this is the one-way notional that
       // changes hands. The matching VOO sale/buy is the funding leg, not double-counted.
       const tradedNotional = Math.abs(currentVxusValue - beforeCost * targetVxusWeight);
+      turnoverNotional += tradedNotional;
       const cost = tradedNotional * costRate;
       afterCost -= cost;
       vooUnits = (afterCost * (1 - targetVxusWeight)) / current.voo;
@@ -159,6 +231,8 @@ export function runInternationalAllocationReplay(
     sleeveNavs.push(sleeveNav);
     baselineReturns.push(baselineReturn);
     sleeveReturns.push(sleeveNavs.at(-1)! / sleeveNavs.at(-2)! - 1);
+    grossSleeveNavs.push(grossNav);
+    grossSleeveReturns.push(grossSleeveNavs.at(-1)! / grossSleeveNavs.at(-2)! - 1);
   }
 
   const excessDaily = sleeveReturns.map((value, index) => value - baselineReturns[index]);
@@ -167,6 +241,9 @@ export function runInternationalAllocationReplay(
   const informationRatio = trackingError === 0 ? null : round((excessMean / trackingError) * Math.sqrt(SESSIONS_PER_YEAR));
   const baselineMetrics = metrics(baselineNavs, baselineReturns);
   const sleeveMetrics = metrics(sleeveNavs, sleeveReturns);
+  const baselineGrossMetrics = metrics(baselineNavs, baselineReturns);
+  const sleeveGrossMetrics = metrics(grossSleeveNavs, grossSleeveReturns);
+  const blocks = blockStatistics(baselineReturns, sleeveReturns);
   const windowSize = Math.floor((bars.length - 1) / 3);
   const windows = [0, 1, 2].map((window) => {
     const start = window * windowSize;
@@ -180,11 +257,19 @@ export function runInternationalAllocationReplay(
     status: "completed",
     ...base,
     rebalanceCount,
+    turnoverPct: round(turnoverNotional * 100),
     totalCostDragPct: round((grossNav - sleeveNav) * 100),
     baseline: baselineMetrics,
     testSleeve: sleeveMetrics,
+    baselineGross: baselineGrossMetrics,
+    testSleeveGross: sleeveGrossMetrics,
     excessReturnPct: round(sleeveMetrics.totalReturnPct - baselineMetrics.totalReturnPct),
     informationRatio,
+    independentBlocks: blocks.count,
+    blockMeanExcessPct: blocks.mean,
+    blockCiLowerPct: blocks.lower,
+    blockCiUpperPct: blocks.upper,
+    blockTStatistic: blocks.t,
     windows,
   };
 }

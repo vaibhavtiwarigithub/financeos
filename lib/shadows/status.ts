@@ -62,11 +62,17 @@ export interface ProgramAttributionStatus {
   windowEnd: string | null;
   programVersion: string | null;
   baselineVersion: string | null;
+  baselineGrossReturnPct: number | null;
+  variantGrossReturnPct: number | null;
+  baselineNetReturnPct: number | null;
+  variantNetReturnPct: number | null;
   incrementalReturnPct: number | null;
   netIncrementalReturnPct: number | null;
   benchmarkRelativeIncrementalReturnPct: number | null;
   ciLowerPct: number | null;
   ciUpperPct: number | null;
+  tStatistic: number | null;
+  uncertaintyLabel: string | null;
   independentSessions: number | null;
   turnoverPct: number | null;
   drawdownDeltaPct: number | null;
@@ -193,8 +199,10 @@ function base(program: ShadowProgramDefinition): ShadowProgramStatus {
       comparisonType: attribution.comparison_type,
       reason: attribution.validity_reason ?? "No attribution status is available.",
       asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null,
+      baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null,
       incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null,
       ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null,
+      tStatistic: null, uncertaintyLabel: null,
     },
     deployment: {
       state: "status_unavailable",
@@ -214,14 +222,14 @@ function numberOrNull(value: unknown): number | null {
 function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttributionRow | null, error: { message?: string } | null): ProgramAttributionStatus {
   const fallback = defaultAttribution(program.attributionClass);
   if (error) {
-    return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   if (!row) {
-    return { state: fallback.state, comparisonType: fallback.comparison_type, reason: fallback.validity_reason ?? "No attribution evidence exists.", asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: fallback.state, comparisonType: fallback.comparison_type, reason: fallback.validity_reason ?? "No attribution evidence exists.", asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   const normalized: UpgradePathAttributionRow = {
     ...row, constraints: row.constraints ?? {},
-    baseline_portfolio_return_pct: numberOrNull(row.baseline_portfolio_return_pct), variant_portfolio_return_pct: numberOrNull(row.variant_portfolio_return_pct), benchmark_return_pct: numberOrNull(row.benchmark_return_pct), incremental_return_pct: numberOrNull(row.incremental_return_pct), net_incremental_return_pct: numberOrNull(row.net_incremental_return_pct), benchmark_relative_incremental_return_pct: numberOrNull(row.benchmark_relative_incremental_return_pct), drawdown_delta_pct: numberOrNull(row.drawdown_delta_pct), turnover_pct: numberOrNull(row.turnover_pct), independent_sessions: numberOrNull(row.independent_sessions), ci_lower_pct: numberOrNull(row.ci_lower_pct), ci_upper_pct: numberOrNull(row.ci_upper_pct), t_statistic: numberOrNull(row.t_statistic),
+    baseline_portfolio_return_pct: numberOrNull(row.baseline_portfolio_return_pct), variant_portfolio_return_pct: numberOrNull(row.variant_portfolio_return_pct), baseline_net_portfolio_return_pct: numberOrNull(row.baseline_net_portfolio_return_pct), variant_net_portfolio_return_pct: numberOrNull(row.variant_net_portfolio_return_pct), benchmark_return_pct: numberOrNull(row.benchmark_return_pct), incremental_return_pct: numberOrNull(row.incremental_return_pct), net_incremental_return_pct: numberOrNull(row.net_incremental_return_pct), benchmark_relative_incremental_return_pct: numberOrNull(row.benchmark_relative_incremental_return_pct), drawdown_delta_pct: numberOrNull(row.drawdown_delta_pct), turnover_pct: numberOrNull(row.turnover_pct), independent_sessions: numberOrNull(row.independent_sessions), ci_lower_pct: numberOrNull(row.ci_lower_pct), ci_upper_pct: numberOrNull(row.ci_upper_pct), t_statistic: numberOrNull(row.t_statistic),
   };
   const validation = validateAttributionRow(normalized);
   const state = normalized.state === "measured" && !validation.valid ? "invalid" : normalized.state;
@@ -230,9 +238,13 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
     reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
     asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
     programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,
+    baselineGrossReturnPct: normalized.baseline_portfolio_return_pct, variantGrossReturnPct: normalized.variant_portfolio_return_pct,
+    baselineNetReturnPct: normalized.baseline_net_portfolio_return_pct, variantNetReturnPct: normalized.variant_net_portfolio_return_pct,
     incrementalReturnPct: normalized.incremental_return_pct, netIncrementalReturnPct: normalized.net_incremental_return_pct,
     benchmarkRelativeIncrementalReturnPct: normalized.benchmark_relative_incremental_return_pct,
     ciLowerPct: normalized.ci_lower_pct, ciUpperPct: normalized.ci_upper_pct,
+    tStatistic: normalized.t_statistic,
+    uncertaintyLabel: typeof normalized.constraints.ci_target_label === "string" ? normalized.constraints.ci_target_label : null,
     independentSessions: normalized.independent_sessions, turnoverPct: normalized.turnover_pct, drawdownDeltaPct: normalized.drawdown_delta_pct,
   };
 }
@@ -372,6 +384,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     earningsRiskRes,
     allocationPolicyRes,
     allocationAssessmentRes,
+    allocationReplayRes,
     strategyConfigRes,
     autonomousProposalRes,
     validationPolicyRes,
@@ -444,6 +457,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("status,target_pct,deadband_pct,updated_at").order("updated_at", { ascending: false }).limit(5),
     svc.from("international_allocation_assessments")
       .select("assessment_status,proposed_action,created_at").gte("created_at", since90).limit(500),
+    svc.from("international_allocation_replay_runs")
+      .select("status,source_end_date,matched_sessions,result,created_at")
+      .eq("trigger_source", "scheduled")
+      .order("created_at", { ascending: false }).limit(1),
     svc.from("strategy_config")
       .select("live_auto_enabled,live_auto_mode_us,live_auto_mode_india,allocation_enabled").limit(1).maybeSingle(),
     svc.from("trade_proposals")
@@ -532,7 +549,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("id,state,first_seen_at,last_seen_at,first_trade_date,latest_preflight_id")
       .eq("market", market).order("last_seen_at", { ascending: false }).limit(5000),
     svc.from("upgrade_path_attribution_runs")
-      .select("program_id,market,program_version,baseline_version,comparison_type,state,as_of_session,window_start,window_end,baseline_portfolio_return_pct,variant_portfolio_return_pct,benchmark_return_pct,incremental_return_pct,net_incremental_return_pct,benchmark_relative_incremental_return_pct,drawdown_delta_pct,turnover_pct,independent_sessions,ci_lower_pct,ci_upper_pct,t_statistic,matched_population_hash,input_snapshot_hash,cost_model_version,validity_reason,constraints,created_at")
+      .select("program_id,market,program_version,baseline_version,comparison_type,state,as_of_session,window_start,window_end,baseline_portfolio_return_pct,variant_portfolio_return_pct,baseline_net_portfolio_return_pct,variant_net_portfolio_return_pct,benchmark_return_pct,incremental_return_pct,net_incremental_return_pct,benchmark_relative_incremental_return_pct,drawdown_delta_pct,turnover_pct,independent_sessions,ci_lower_pct,ci_upper_pct,t_statistic,matched_population_hash,input_snapshot_hash,cost_model_version,validity_reason,constraints,created_at")
       .eq("market", market).order("as_of_session", { ascending: false }).order("created_at", { ascending: false }).limit(500),
   ]) as Array<QueryResult<any>>;
 
@@ -551,6 +568,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const earnings = earningsRiskRes.data ?? [];
   const allocationPolicies = allocationPolicyRes.data ?? [];
   const allocationAssessments = allocationAssessmentRes.data ?? [];
+  const allocationReplay = allocationReplayRes.data?.[0] ?? null;
   const strategyConfig = strategyConfigRes.data ?? null;
   const autonomousProposals = autonomousProposalRes.data ?? [];
   const validationPolicies = validationPolicyRes.data ?? [];
@@ -1271,7 +1289,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.blockers = targetSet ? ["Paper allocation policy still requires owner approval."] : ["No target allocation or deadband is approved.", "Broader family/cost/tax comparison is incomplete."];
       status.nextAction = "Keep observing VXUS; define a target only after the broader policy review.";
       status.details = [`Latest policy status: ${policy?.status ?? "unavailable"}.`, "India/INR is not read or cross-summed."];
-      status.available = !allocationPolicyRes.error && !allocationAssessmentRes.error;
+      status.available = !allocationPolicyRes.error && !allocationAssessmentRes.error && !allocationReplayRes.error;
+      if (allocationReplayRes.error) status.blockers.push(`Historical replay ledger unavailable: ${allocationReplayRes.error.message ?? "unknown database error"}.`);
       return status;
     }
 
@@ -1327,7 +1346,25 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
 
   return statuses.map((status) => {
     const row = attributionRows.find((candidate: any) => candidate.program_id === status.id) as UpgradePathAttributionRow | undefined;
-    const withAttribution = { ...status, attribution: attributionFor(status, row ?? null, attributionRes.error) };
+    let attribution = attributionFor(status, row ?? null, attributionRes.error);
+    if (status.id === "international-allocation" && !row && !attributionRes.error) {
+      const producerSchedule = status.schedules.find((item) => item.job === "kairos-international-allocation-replay-us");
+      if (producerSchedule?.active && !allocationReplayRes.error) {
+        const result = allocationReplay?.result ?? {};
+        const count = Number(allocationReplay?.matched_sessions ?? 0);
+        const floor = Number(result?.minimumMatchedSessions ?? 756);
+        attribution = {
+          ...attribution,
+          state: allocationReplay?.status === "completed" ? "invalid" : "collecting",
+          reason: allocationReplay
+            ? allocationReplay.status === "insufficient_history"
+              ? String(result?.reason ?? `The verified scheduled producer ran, but only ${count}/${floor} same-session adjusted-close bars are available; no P&L claim is made.`)
+              : "A completed scheduled replay exists but no matching immutable attribution row was found. Treat this as a failed append/contract check, not as collecting evidence; inspect the replay endpoint result and database constraints."
+            : "A dedicated scheduled cache-only producer is registered; waiting for its first verified run. No performance result exists yet.",
+        };
+      }
+    }
+    const withAttribution = { ...status, attribution };
     return { ...withAttribution, deployment: deploymentFor(withAttribution) };
   });
 }
