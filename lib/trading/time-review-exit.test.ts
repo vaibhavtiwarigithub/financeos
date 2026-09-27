@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyTimeReview,
   computeTimeReviewOutcome,
+  estimateIncrementalExitCostPct,
   TIME_REVIEW_EXTENSIONS,
   timeReviewIdempotencyKey,
   type TimeReviewInputs,
@@ -87,7 +88,14 @@ describe("time-review matured outcome", () => {
     expect(result?.baselineExitPrice).toBe(111);
     expect(result?.candidateExitPrice).toBe(115);
     expect(result?.incrementalVsBaselinePct).toBeCloseTo(4);
+    expect(result?.estimatedIncrementalCostPct).toBeCloseTo(0.002);
     expect(result?.mechanicalStopHit).toBe(false);
+  });
+
+  it("estimates only the incremental modeled exit friction and fails closed on invalid prices", () => {
+    expect(estimateIncrementalExitCostPct({ entryPrice: 100, baselineExitPrice: 111, candidateExitPrice: 115 })).toBeCloseTo(0.002);
+    expect(estimateIncrementalExitCostPct({ entryPrice: 100, baselineExitPrice: 111, candidateExitPrice: 103 })).toBeCloseTo(-0.004);
+    expect(estimateIncrementalExitCostPct({ entryPrice: 0, baselineExitPrice: 111, candidateExitPrice: 115 })).toBeNull();
   });
 
   it("retains the frozen mechanical stop and truncates the path when hit", () => {

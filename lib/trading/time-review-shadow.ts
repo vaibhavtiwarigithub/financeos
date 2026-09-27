@@ -331,7 +331,7 @@ export async function matureTimeReviewOutcomes(
           mechanical_stop_hit: outcome.mechanicalStopHit,
           mechanical_stop_session: outcome.mechanicalStopSession,
           replacement_candidate_available: review.replacement_candidate_available,
-          estimated_incremental_cost_pct: 0,
+          estimated_incremental_cost_pct: outcome.estimatedIncrementalCostPct,
         });
         if (!insertError || insertError.code === "23505") inserted++;
         else skipped++;

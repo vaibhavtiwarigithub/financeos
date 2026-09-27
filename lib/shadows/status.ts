@@ -18,6 +18,7 @@ import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 import { defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
+import { TIME_REVIEW_POLICY_VERSION } from "@/lib/trading/time-review-exit";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -516,11 +517,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("market,evaluated_at,run_id,would_extend,reason")
       .eq("market", market).gte("evaluated_at", since90).order("evaluated_at", { ascending: false }).limit(10000),
     svc.from("time_review_exit_observations")
-      .select("id,market,review_session,observed_at,candidate_eligible,classification")
-      .eq("market", market).gte("observed_at", since90).order("observed_at", { ascending: false }).limit(10000),
+      .select("id,market,policy_version,review_session,observed_at,candidate_eligible,classification")
+      .eq("market", market).eq("policy_version", TIME_REVIEW_POLICY_VERSION).gte("observed_at", since90).order("observed_at", { ascending: false }).limit(10000),
     svc.from("time_review_exit_outcomes")
-      .select("review_id,extension_days,incremental_vs_baseline_pct,benchmark_relative_return_pct,max_adverse_excursion_pct,mechanical_stop_hit,matured_at,time_review_exit_observations!inner(market,candidate_eligible,review_session)")
-      .eq("time_review_exit_observations.market", market).gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
+      .select("review_id,policy_version,extension_days,incremental_vs_baseline_pct,estimated_incremental_cost_pct,benchmark_relative_return_pct,max_adverse_excursion_pct,mechanical_stop_hit,matured_at,time_review_exit_observations!inner(market,candidate_eligible,review_session)")
+      .eq("time_review_exit_observations.market", market).eq("policy_version", TIME_REVIEW_POLICY_VERSION).gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
     svc.from("exit_stop_shadow_runs")
       .select("market,as_of_date,horizon_days,status,created_at,n_rows,n_dates,effective_observations,mean_paired_diff,paired_diff_t")
       .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
@@ -796,7 +797,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         ? "Build the sealed market-local redeployment simulation; do not change the time stop from per-position averages."
         : "Continue exact-horizon collection and daily outcome maturation.";
       status.details = [
-        "Version 1 compares the incumbent next-session exit with predeclared +5/+10-session candidates.",
+        "Version 2 compares the incumbent next-session exit with predeclared +5/+10-session candidates; v1 rows with hardcoded zero cost are excluded from current readiness.",
+        "Per-position incremental returns remain gross; v2 separately records modeled incremental sell friction at 5 bps per side. This is not measured spread or portfolio-level net P&L.",
         "This is a counterfactual only; its output cannot hold or close a position.",
         `${horizonExtensions.length} legacy daily one-day-extension rows are retained as historical context but excluded from readiness.`,
       ];

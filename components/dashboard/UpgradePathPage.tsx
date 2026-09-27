@@ -212,6 +212,12 @@ function ProgramPanel({ program, mobile, market, collection }: {
         <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
           <TextBlock label="Observed benefit" text={program.benefitEvidence} />
         </div>
+        {program.details.length > 0 && <div style={{ marginTop: "12px", padding: "10px 12px", border: `1px solid ${T.border}`, borderRadius: "6px", background: T.surface }}>
+          <SectionLabel icon={<Database size={14} />} text="Evidence notes" />
+          {program.details.map((detail, index) => <div key={`${index}-${detail}`} style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginTop: index === 0 ? "0" : "5px" }}>
+            {detail}
+          </div>)}
+        </div>}
         <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "7px" }}>
             <div style={{ color: T.muted, fontSize: "11px", fontWeight: 750, textTransform: "uppercase" }}>Causal attribution</div>

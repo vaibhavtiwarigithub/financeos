@@ -12,13 +12,17 @@ consumer, and the unconditional time stop remains active.
 
 ## What shipped
 
-- `time-review-v1` deterministic classifier with fail-closed score, direction,
+- `time-review-v2` deterministic classifier with fail-closed score, direction,
   profitability, high-water drawdown, initial-stop-distance, active-stop, and
   target vetoes.
 - Exact position/session idempotency and immutable market-local observation and
   outcome ledgers.
 - Matched incumbent-next-session versus +5/+10-session outcomes with benchmark
   return, MFE/MAE, retained-stop result, and replacement-candidate attribution.
+- v2 stores modeled incremental sell friction separately from gross per-position
+  incremental return. The earlier v1 ledger hardcoded this field to zero, so its
+  rows remain immutable but are excluded from v2 progress/readiness; neither
+  version is portfolio-level net-P&L attribution.
 - Upgrade Path counts only exact review sessions with both outcomes matured.
   Legacy daily one-day-extension rows remain visible context but cannot advance
   readiness.
