@@ -46,6 +46,62 @@ describe("Upgrade Path liveness contracts", () => {
     expect(missing.verdict).toBe("empty");
   });
 
+  it("treats time-review observations as event-driven while still requiring its scheduled runner", () => {
+    const program = SHADOW_PROGRAMS.find((candidate) => candidate.id === "horizon-extension")!;
+    const probe = SHADOW_EVIDENCE_PROBES[program.id];
+    expect(program.cronJobs).toEqual(["kairos-position-monitor", "kairos-position-monitor-india"]);
+    const noCheckpoint = evaluateShadowLiveness({
+      program, market: "us", probe, count: 0, lastWrite: null,
+      cronRows: activeCronRows(program.marketCronJobs?.us ?? []),
+      nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(noCheckpoint.verdict).toBe("waiting_for_input");
+
+    const missingRunner = evaluateShadowLiveness({
+      program, market: "us", probe, count: 0, lastWrite: null,
+      cronRows: [], nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(missingRunner.verdict).toBe("missing_schedule");
+
+    const wrongMarketOnly = evaluateShadowLiveness({
+      program, market: "us", probe, count: 0, lastWrite: null,
+      cronRows: activeCronRows(program.marketCronJobs?.india ?? []),
+      nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(wrongMarketOnly.verdict).toBe("missing_schedule");
+  });
+
+  it("treats setup-expert rows as event-driven but proves the market-local ResearchAgent ran", () => {
+    const program = SHADOW_PROGRAMS.find((candidate) => candidate.id === "setup-experts")!;
+    const probe = SHADOW_EVIDENCE_PROBES[program.id];
+    expect(program.marketCronJobs).toEqual({
+      us: ["kairos-research"],
+      india: ["kairos-research-india"],
+    });
+
+    const waiting = evaluateShadowLiveness({
+      program, market: "us", probe, count: 0, lastWrite: null,
+      cronRows: activeCronRows(program.marketCronJobs?.us ?? []),
+      nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(waiting.verdict).toBe("waiting_for_input");
+    expect(waiting.schedules).toHaveLength(1);
+
+    const missingCollector = evaluateShadowLiveness({
+      program, market: "india", probe, count: 0, lastWrite: null,
+      cronRows: activeCronRows(program.marketCronJobs?.us ?? []),
+      nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(missingCollector.verdict).toBe("missing_schedule");
+
+    const staleCollector = evaluateShadowLiveness({
+      program, market: "us", probe, count: 0, lastWrite: null,
+      cronRows: [{ jobname: "kairos-research", schedule: "0 13,14 * * 1-5", active: true, last_started_at: "2026-09-20T14:00:00Z", last_status: "succeeded" }],
+      nowMs: Date.parse("2026-09-27T12:00:00Z"),
+    });
+    expect(staleCollector.verdict).toBe("stale_schedule_run");
+  });
+
   it("does not call an unregistered or inactive scheduled collector live", () => {
     const program = SHADOW_PROGRAMS.find((candidate) => candidate.id === "score-exit-shadow")!;
     const missing = evaluateShadowLiveness({
@@ -163,5 +219,6 @@ describe("Upgrade Path liveness contracts", () => {
     expect(migration).toContain("revoke all on function public.get_shadow_cron_health() from public, anon, authenticated");
     expect(migration).toContain("grant execute on function public.get_shadow_cron_health() to service_role");
     expect(route).toContain('rpc("get_shadow_cron_health")');
+    expect(route).toContain("cron_jobs: scheduledJobsForMarket(program, market)");
   });
 });

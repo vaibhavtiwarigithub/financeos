@@ -13,6 +13,7 @@ describe("shadow registry governance contract", () => {
   const shell = readFileSync("components/dashboard/DashboardShell.tsx", "utf8");
   const upgradePage = readFileSync("components/dashboard/UpgradePathPage.tsx", "utf8");
   const statusAdapter = readFileSync("lib/shadows/status.ts", "utf8");
+  const retiredHorizonCronMigration = readFileSync("supabase/migrations/20260927202139_retire_horizon_extension_shadow_jobs.sql", "utf8");
 
   it("uses stable unique IDs and complete descriptive boundaries", () => {
     const ids = SHADOW_PROGRAMS.map((program) => program.id);
@@ -43,6 +44,26 @@ describe("shadow registry governance contract", () => {
     for (const id of ["score-price-divergence", "live-exit-ladder-parity", "archetype-ic", "technical-calibration", "specialist-feature-packs", "earnings-risk", "autonomous-live"]) {
       expect(SHADOW_PROGRAMS.find((program) => program.id === id)?.attributionClass).toBe("operational_only");
     }
+  });
+
+  it("binds time-review liveness to the real market-local PositionMonitor and retires the obsolete comparator jobs", () => {
+    const program = SHADOW_PROGRAMS.find((candidate) => candidate.id === "horizon-extension")!;
+    expect(program.marketCronJobs).toEqual({
+      us: ["kairos-position-monitor"],
+      india: ["kairos-position-monitor-india"],
+    });
+    expect(retiredHorizonCronMigration).toContain("cron.unschedule(v_job_id)");
+    expect(retiredHorizonCronMigration).toContain("kairos-horizon-extension-shadow-us");
+    expect(retiredHorizonCronMigration).toContain("kairos-horizon-extension-shadow-india");
+  });
+
+  it("binds setup-expert evidence to the market-local ResearchAgent schedules", () => {
+    const program = SHADOW_PROGRAMS.find((candidate) => candidate.id === "setup-experts")!;
+    expect(program.marketCronJobs).toEqual({
+      us: ["kairos-research"],
+      india: ["kairos-research-india"],
+    });
+    expect(program.cronJobs).toEqual(["kairos-research", "kairos-research-india"]);
   });
 
   it("keeps forward descriptive P&L snapshots separate from causal attribution and market-local", () => {
@@ -85,8 +106,8 @@ describe("shadow registry governance contract", () => {
       "kairos-downside-hedge-us",
       "kairos-dimension-diagnostics-us",
       "kairos-dimension-diagnostics-india",
-      "kairos-horizon-extension-shadow-us",
-      "kairos-horizon-extension-shadow-india",
+      "kairos-position-monitor",
+      "kairos-position-monitor-india",
       "kairos-exit-stop-shadow-us",
       "kairos-exit-stop-shadow-india",
       "kairos-archetype-ic-us",

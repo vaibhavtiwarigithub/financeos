@@ -75,9 +75,17 @@ data-capture output:
 
 | Current class | Programs | Meaning |
 |---|---|---|
-| `matched_replay` | exit geometry, horizon extension, ATR exit stop, score exit, setup experts, capital rotation, international allocation | There is a declared baseline-versus-alternative decision policy; the portfolio replay producer is still required. |
+| `matched_replay` | exit geometry, ATR exit stop, score exit, setup experts, capital rotation, international allocation | There is a declared baseline-versus-alternative decision policy; the portfolio replay producer is still required. |
 | `paper_cohort` | strategy challenger validation, downside hedge | A future activated paper cohort can be compared with a frozen control; no current producer is implied. |
-| `operational_only` | listing discovery, broker tradability, score/price divergence, diagnostics, label coverage, live-exit ladder parity, archetype IC, alpha diagnostics, evidence router, degradation guard, India news evidence, technical calibration, PIT fundamentals, specialist packs, earnings risk, exogenous risk, autonomous-live execution | The current output proves collection, readiness, reliability, or descriptive signal behavior, not an isolated portfolio policy. |
+| `operational_only` | listing discovery, broker tradability, score/price divergence, diagnostics, label coverage, horizon extension (retired comparator; descriptive checkpoint only), live-exit ladder parity, archetype IC, alpha diagnostics, evidence router, degradation guard, India news evidence, technical calibration, PIT fundamentals, specialist packs, earnings risk, exogenous risk, autonomous-live execution | The current output proves collection, readiness, reliability, or descriptive signal behavior, not an isolated portfolio policy. |
+
+**Policy correction (2026-09-27):** the unconditional time stop was removed on
+2026-09-10, so the horizon-extension arm's next-session-sale baseline is no
+longer the incumbent exit. That program was reclassified from `matched_replay`
+to `operational_only`; its historical +5/+10 outcomes remain immutable and
+cannot count toward attribution or readiness. The registry now has eight
+performance-eligible programs: international allocation has the only verified
+producer, leaving seven with explicit `producer_missing` blockers.
 
 Every currently eligible path other than international allocation exposes an
 individual producer blocker in the registry and Upgrade Path card. Examples:
@@ -156,7 +164,7 @@ This is deliberately not called a producer: it does not derive any program's
 baseline or challenger decisions, persist evidence, or run from a schedule.
 Consequently the production state remains unchanged: one synthetic
 international-allocation producer exists, actual Kairos stock-paper
-attribution is absent, and the other eight performance-eligible paths remain
+attribution is absent, and the other seven performance-eligible paths remain
 `producer_missing` until their policy-specific adapters and schedules are
 verified. Source data currently does not preserve enough common decision,
 position-lineage and daily-mark history to manufacture inception-to-date
@@ -185,7 +193,7 @@ allocation writer call, API/UI integration, and per-program adapters remain
 local/unshipped; production currently has no rows in this new snapshot table.
 Therefore this is not yet data collection or a completed new producer. The
 existing international-allocation attribution producer continues to write its
-separate attribution ledger. The other eight missing programs still require
+separate attribution ledger. The other seven missing programs still require
 frozen adapters, market-local schedules, persisted pair history, and a
 production/UI round trip before they can be called producers.
 

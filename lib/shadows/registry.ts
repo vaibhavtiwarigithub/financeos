@@ -58,6 +58,8 @@ export interface ShadowProgramDefinition {
   activationGate: string;
   safetyBoundary: string;
   cronJobs: readonly string[];
+  /** Explicit per-market schedule mapping where job names do not use -us/-india suffixes. */
+  marketCronJobs?: Partial<Readonly<Record<"us" | "india", readonly string[]>>>;
   callAccounting: CallAccountingMode;
   owner: string;
   architectureRef: string;
@@ -204,7 +206,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Exit-geometry shadow",
     category: "Trading",
     attributionClass: "matched_replay",
-    attributionBlocker: "No portfolio replay producer exists. Current MFE/MAE labels lose intrabar ordering; a valid P&L comparison needs the identical eligible entries, full chronological bars, pessimistic stop/target precedence, costs, cash/name limits, and same-market benchmark marks for baseline and each predeclared geometry.",
+    attributionBlocker: "No portfolio replay producer exists. MFE/MAE labels lose intrabar ordering, and a fixed h10 forward return is only a label endpoint—not an executable exit now that the unconditional time stop is removed. A valid comparison must replay identical eligible entries through the current score/stop/target/trailing exit path versus each predeclared geometry, with chronological OHLC, pessimistic double-touch precedence, costs, cash/name limits, and same-market benchmark marks.",
     markets: ["us", "india"],
     purpose: "Measure what alternative stop/target geometries would have produced, before any exit rule is changed.",
     productBenefit: "Turns 'shorten the target' from a guess into a decidable question with a stated evidence threshold.",
@@ -236,7 +238,11 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     maximumInfluence: "A new, separately specified exit-policy challenger only after it declares a baseline matching the current score/stop/target policy and receives owner approval.",
     activationGate: "No activation gate exists for the retired next-session versus +5/+10 comparison. Any replacement hypothesis requires a new approved architecture and matched portfolio replay.",
     safetyBoundary: "Cannot close, hold, size, suppress an exit, change a stop/target or create an order; missing evidence fails closed.",
-    cronJobs: ["kairos-horizon-extension-shadow-us", "kairos-horizon-extension-shadow-india"],
+    cronJobs: ["kairos-position-monitor", "kairos-position-monitor-india"],
+    marketCronJobs: {
+      us: ["kairos-position-monitor"],
+      india: ["kairos-position-monitor-india"],
+    },
     callAccounting: "zero_incremental",
     owner: "Trading / Evidence",
     architectureRef: "features/time-review-exit/FEATURE_ARCHITECTURE.md",
@@ -271,7 +277,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "ATR exit-stop shadow",
     category: "Trading",
     attributionClass: "matched_replay",
-    attributionBlocker: "No portfolio replay producer exists. Per-decision MFE/MAE and t-statistics are not portfolio P&L; replay needs exact entry events, chronological OHLC stop ordering, identical target/time-stop rules, realistic costs, and complete benchmark marks.",
+    attributionBlocker: "No portfolio replay producer exists. Per-decision MFE/MAE and t-statistics are not portfolio P&L; the h10 forward-return cap is not the current exit after the time stop was removed. Replay needs identical entry events and sizing, chronological OHLC, the current score/target/trailing exits plus the 2.8-ATR stop challenger, realistic costs, and complete benchmark marks.",
     markets: ["us", "india"],
     purpose: "Compare one predeclared ATR stop with the live fixed stop while holding target and time-stop rules constant.",
     productBenefit: "Separates premature stop-outs from broader exit-policy effects using paired evidence.",
@@ -440,7 +446,11 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     maximumInfluence: "A validated setup expert may progress through shadow, paper and owner-reviewed live stages.",
     activationGate: "Point-in-time labels, walk-forward net-of-cost validation, stable calibration and an approved promotion lifecycle.",
     safetyBoundary: "No cash, positions, proposals or orders are created from shadow_decisions.",
-    cronJobs: [],
+    cronJobs: ["kairos-research", "kairos-research-india"],
+    marketCronJobs: {
+      us: ["kairos-research"],
+      india: ["kairos-research-india"],
+    },
     callAccounting: "zero_incremental",
     owner: "Scoring / Learner",
     architectureRef: "features/scoring-methodology/FEATURE_ARCHITECTURE.md",

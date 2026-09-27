@@ -47,6 +47,13 @@ export interface ShadowLivenessResult {
   idleHours: number | null;
 }
 
+/** Resolve exactly the schedules assigned to one market; use explicit mappings for non-suffixed job names. */
+export function scheduledJobsForMarket(program: ShadowProgramDefinition, market: "us" | "india"): string[] {
+  return program.marketCronJobs?.[market]
+    ? [...program.marketCronJobs[market]!]
+    : program.cronJobs.filter((job) => !/(?:-|_)(?:us|india)$/i.test(job) || job.toLowerCase().endsWith(market));
+}
+
 /**
  * Every Upgrade Path program needs an explicit collection contract. A missing
  * table is not treated as a zero-row success, and event-driven programs are not
@@ -59,7 +66,7 @@ export const SHADOW_EVIDENCE_PROBES: Readonly<Record<string, ShadowEvidenceProbe
   "dimension-diagnostics": { mode: "scheduled", table: "dimension_diagnostic_runs", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Daily market-local diagnostic run; findings may legitimately be empty." },
   "decision-label-coverage": { mode: "scheduled", table: "observation_labels", tsCol: "matured_at", marketScope: "shared", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Shared label maturation; freshness is checked separately from coverage." },
   "exit-geometry": { mode: "scheduled", table: "observation_labels", tsCol: "matured_at", marketScope: "shared", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Uses shared matured labels; it has no independent writer." },
-  "horizon-extension": { mode: "scheduled", table: "time_review_exit_observations", tsCol: "observed_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Market-local held-position reviews; no qualifying held names can yield no rows." },
+  "horizon-extension": { mode: "event_driven", table: "time_review_exit_observations", tsCol: "observed_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 96, note: "P0 review rows are written only when a held position reaches its exact resolved-horizon checkpoint; the scheduled runner is checked independently, and no checkpoint is a valid wait state." },
   "live-exit-ladder-parity": { mode: "event_driven", table: "live_exit_ladder_shadow", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Hourly monitor is scheduled in market sessions; decisions require a Kairos-managed live position." },
   "exit-stop-shadow": { mode: "scheduled", table: "exit_stop_shadow_runs", tsCol: "created_at", marketCol: "market", expectedIdleHours: 240, expectedRunIdleHours: 240, note: "Weekly market-local fixed-stop versus ATR-stop measurement." },
   "score-exit-shadow": { mode: "scheduled", table: "score_exit_shadow_runs", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Daily market-local score-exit measurement." },
@@ -68,7 +75,7 @@ export const SHADOW_EVIDENCE_PROBES: Readonly<Record<string, ShadowEvidenceProbe
   "evidence-router": { mode: "scheduled", table: "evidence_policy_evaluations", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Scheduled policy evidence evaluations, independent of whether routing is enabled." },
   "degradation-guard": { mode: "event_driven", table: "evidence_degradation_events", tsCol: "created_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 96, note: "Zero degradation rows may mean healthy evidence; scheduled shadow execution is separately verified." },
   "india-news-evidence": { mode: "scheduled", table: "provider_call_ledger", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, equals: { market: "india" }, in: { intent: ["sentiment.news_headlines_shadow", "event.corporate_announcement_shadow"] }, note: "Only India news and corporate-announcement shadow intents count; general provider traffic is not proof." },
-  "setup-experts": { mode: "event_driven", table: "shadow_decisions", tsCol: "ts", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: null, note: "Emitted by eligible research decisions; zero candidate opportunities is not a collector failure." },
+  "setup-experts": { mode: "event_driven", table: "shadow_decisions", tsCol: "ts", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 96, note: "Written as a side effect of market-local ResearchAgent decisions; the active research schedule is checked independently, and zero eligible opportunities is a valid wait state." },
   "technical-calibration": { mode: "scheduled", table: "edge_ic_history", tsCol: "created_at", marketCol: "market", expectedIdleHours: 240, expectedRunIdleHours: 240, note: "Weekly market-local edge IC records; scout freshness is a separate signal." },
   "pit-fundamental-qualification": { mode: "event_driven", table: "fundamental_facts", tsCol: "captured_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: null, note: "Capture-on-fetch provenance; no dedicated refresh job is declared." },
   "specialist-feature-packs": { mode: "inert", table: "instrument_registry", tsCol: "last_observed_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: null, note: "Catalog scaffold only; no specialist feature shadow or scheduled producer exists." },
@@ -95,7 +102,7 @@ export function evaluateShadowLiveness(input: {
   nowMs: number;
 }): ShadowLivenessResult {
   const { program, probe } = input;
-  const marketJobs = program.cronJobs.filter((job) => !/(?:-|_)(?:us|india)$/i.test(job) || job.toLowerCase().endsWith(input.market));
+  const marketJobs = scheduledJobsForMarket(program, input.market);
   const schedules = marketJobs.map((job) => {
     const row = input.cronRows.find((candidate) => candidate.jobname === job);
     return {

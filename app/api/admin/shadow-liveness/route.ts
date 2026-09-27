@@ -10,6 +10,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   evaluateShadowLiveness,
   missingProbeProgramIds,
+  scheduledJobsForMarket,
   SHADOW_EVIDENCE_PROBES,
   type CronEvidence,
 } from "@/lib/shadows/liveness";
@@ -73,7 +74,7 @@ export async function GET() {
         category: program.category,
         attribution_class: program.attributionClass,
         declared_influence: program.currentInfluence,
-        cron_jobs: program.cronJobs.filter((job) => !/(?:-|_)(?:us|india)$/i.test(job) || job.toLowerCase().endsWith(market)),
+        cron_jobs: scheduledJobsForMarket(program, market),
       };
       if (!probe) return { ...base, verdict: "unknown", note: "No collection contract is registered." };
       if (cronResult.error) return { ...base, table: probe.table, verdict: "unknown", note: `Cron schedule truth unavailable: ${cronResult.error.message}` };

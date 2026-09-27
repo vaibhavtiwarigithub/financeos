@@ -27,9 +27,10 @@ describe("time-review shadow integration contract", () => {
     expect(monitor.indexOf("recordTimeReviewObservation(svc")).toBeGreaterThan(0);
     expect(monitor).not.toContain("if (ageDays > horizonDays)");
     expect(monitor).not.toContain("time_stop (");
+    expect(scheduledRoute).not.toContain("runHorizonExtensionShadow");
     expect(scheduledRoute).not.toContain("matureTimeReviewOutcomes(svc");
     expect(scheduledRoute).toContain('status: "paused"');
-    expect(scheduledRoute).toContain("legacy next-session-exit comparator is not the current data-driven exit policy");
+    expect(scheduledRoute).toContain("no new rows are written");
   });
 
   it("Upgrade Path keeps the obsolete next-session comparator descriptive and non-attributable", () => {

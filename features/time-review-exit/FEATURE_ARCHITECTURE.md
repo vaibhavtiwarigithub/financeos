@@ -8,8 +8,10 @@ Last reviewed: 2026-09-27.
 > the horizon”) is no longer the incumbent policy. The old +5/+10 outcomes are
 > immutable hypothetical labels, not a comparison against current exits and not
 > portfolio P&L evidence. Scheduled collection continues only for descriptive
-> exact-horizon review observations; the scheduled route no longer matures new
-> P1 outcomes. Do not use old readiness counts or labels to recommend an exit
+> exact-horizon review observations; legacy horizon-extension cron jobs are
+> removed by migration `20260927202139` (pending production application), while
+> PositionMonitor itself remains the scheduled P0 writer.
+> The scheduled route no longer matures new P1 outcomes. Do not use old readiness counts or labels to recommend an exit
 > change. A new experiment needs its own approved architecture and a baseline
 > that matches the current score/stop/target-driven exit behavior.
 

@@ -1,24 +1,42 @@
 # ATR-scaled exit stop — shadow arm
 
-> Status: **DRAFT — architecture proposal, awaiting owner approval. No code written.**
-> Date: 2026-09-01. Influence if approved: **none while shadow.** Promotion to live would be
-> a money-path change requiring separate approval.
+> Status: **Decision-level shadow implemented; portfolio-level matched P&L producer not implemented.**
+> The old header saying “no code written” was stale. This remains measure-only; no stop,
+> target, score, sizing, paper/live behavior, or strategy promotion is authorized here.
 >
 > Evidence: `docs/audits/2026-09-01-exit-geometry-diagnosis.md` (frozen).
+
+## Implementation truth (2026-09-27)
+
+`app/api/agents/exit-stop-shadow` runs market-local each week and writes
+`exit_stop_shadow_runs`. It compares the current mandate stop with a 2.8-ATR
+stop at the **decision/label level**, using matured MFE/MAE and the h10 forward
+return when neither barrier is touched. That h10 return is an observation
+endpoint, not an executable sale: the unconditional time stop was removed on
+2026-09-10. MFE/MAE also cannot reveal intrabar barrier ordering. Therefore
+these rows are descriptive hypothesis evidence only—not current-policy P&L,
+not a portfolio replay, and not a promotion result.
+
+A portfolio-level producer still needs to replay the current score/target/
+trailing-stop exit path (with no clock exit) against the 2.8-ATR stop variant,
+using identical entries/sizing, complete chronological OHLC and costs. Do not
+use the old “time stop unchanged” text below as a current production contract.
 
 ## The one hypothesis
 
 Everything below tests exactly one claim, declared before any arm is built:
 
-> **H1 — Replacing the fixed 7.5% stop with a 2.8x ATR stop reduces premature stop-outs and
-> raises mean benchmark-neutral return, with the time stop and target left unchanged.**
+> **H1 — Replacing the market-local mandate stop with a 2.8x ATR stop may reduce premature
+> stop-outs. The mandate target is held constant. The legacy h10 label comparison is a
+> screening statistic only; a current-policy portfolio replay is still required.**
 
 Declared **directional** (ATR stop >= fixed stop) and **single**. This is deliberate: the
 diagnosis came from a 14-arm grid, and the whole risk here is re-testing the grid and
 calling the winner a finding.
 
-**Not being tested, and explicitly out of scope:** changing the target, removing or
-shortening the time stop, changing position sizing, changing eligibility.
+**Not being tested, and explicitly out of scope:** changing the target, adding a clock-based
+exit (the unconditional time stop has been removed), changing position sizing, or changing
+eligibility.
 
 ## Why the stop and not the target
 
@@ -32,13 +50,15 @@ not the lever.
 `exit_stop_shadow` — measure-only, one arm, no grid.
 
 1. For each **entry-eligible long** decision with a matured h10 label and ATR available,
-   evaluate two geometries only: **baseline** (stop 7.5%, target 19.2%) and **candidate**
-   (stop 2.8ATR, target 19.2% — target held identical so the stop is the only difference).
+   evaluate two geometries only: **baseline** (the current market mandate stop/target) and
+   **candidate** (stop 2.8ATR, the same mandate target).
 2. Record per decision date: resolution (stop / target / timeout / ambiguous), realized
-   benchmark-neutral return under each arm, and the paired difference.
+   benchmark-neutral label return under each arm, and the paired difference. `timeout` means
+   the h10 observation window ended without a barrier; it is a mark, not an executed exit.
 3. Refuse the date when ATR is missing or the resolution is ambiguous under either arm.
    Ambiguity is not resolved in the candidate's favour.
-4. Write to a new `exit_stop_shadow_runs` table. Nothing reads it but the report.
+4. Write to `exit_stop_shadow_runs`. Nothing reads it but the report. This table does not
+   contain a portfolio-level replay.
 
 Reuses `lib/trading/exit-geometry-shadow.ts` (`evaluateGeometry`) rather than adding a
 second implementation of barrier resolution.
@@ -61,12 +81,12 @@ second implementation of barrier resolution.
 
 ## Promotion gates — all must hold
 
-1. `nEffective >= 12` per market (needs ~120 h10 decision dates; currently 26).
+1. `nEffective >= 12` per market (needs ~120 distinct h10 decision dates).
 2. Mean paired difference positive with Sidak-adjusted significance at 0.00366.
-3. Holds at h5 as well as h10, or the h5 divergence is explained. **Today it does not: the
-   candidate LOSES on US h5 by 0.041pp.** That divergence alone blocks promotion now.
+3. Holds at h5 as well as h10, or the h5 divergence is explained. A retrospective h5/h10
+   label comparison is not forward evidence.
 4. Forward shadow period with no peeking at the grid, on decisions made after the arm is
-   declared.
+   declared, followed by a portfolio-level current-policy replay.
 5. Stop-out reduction confirmed as the mechanism — if the gain appears without fewer
    stop-outs, H1 is wrong even if returns improved.
 
@@ -98,10 +118,10 @@ Failing any gate leaves the arm in shadow. There is no partial promotion.
 
 ## Sequencing
 
-1. Owner approval of this document.
-2. Build the shadow arm + `exit_stop_shadow_runs` migration; verify migration applied.
-3. Weekly cron, both markets, measure-only. Expect `insufficient_evidence` for months.
-4. Revisit when `nEffective >= 12` — roughly 120 h10 decision dates per market.
+1. The decision-level shadow, table and weekly schedules are implemented.
+2. Continue weekly market-local label measurement, measure-only.
+3. Revisit label evidence at `nEffective >= 12`, then require a separate forward
+   portfolio replay and owner decision before any exit-policy proposal.
 
 At the current rate of ~26 dates per 6 weeks, that is approximately **2027-Q1**. Stating
 this plainly so the timeline is not a surprise: this is a slow instrument, and building it
