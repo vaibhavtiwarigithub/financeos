@@ -43,6 +43,23 @@ describe("paired portfolio replay contract", () => {
     expect(result.row.state).toBe("measured");
   });
 
+  it("refuses cash-allocation sizing when costs change which events fit the cash budget", () => {
+    const allocationBuy = {
+      id: "buy-d1", decisionId: "d1", session: sessions[1], symbol: "AAA",
+      kind: "entry" as const, price: 100, cashAllocation: 200, costPct: 0.001,
+    };
+    const tailBuy = {
+      id: "buy-d2", decisionId: "d2", session: sessions[1], symbol: "BBB",
+      kind: "entry" as const, price: 100, cashAllocation: 0.1, costPct: 0,
+    };
+    expect(() => runPairedPortfolioReplay(fixture({
+      policy: { market: "us", currency: "USD", initialCash: 200, maxOpenNames: 8, allowFractionalShares: true },
+      baselineEvents: [allocationBuy, tailBuy], variantEvents: [allocationBuy, tailBuy],
+      marks: sessions.map((session, i) => ({ session, benchClose: 100 + i, prices: { AAA: 100, BBB: 100 } })),
+      baselineDecisionIds: ["d1", "d2"], variantDecisionIds: ["d2", "d1"],
+    }))).toThrow("Gross and net arms accepted different event sets");
+  });
+
   it("mutation-detects a different point-in-time candidate population", () => {
     expect(() => runPairedPortfolioReplay(fixture({ variantDecisionIds: ["d1", "d3"] })))
       .toThrow("exact same unique point-in-time decision population");
