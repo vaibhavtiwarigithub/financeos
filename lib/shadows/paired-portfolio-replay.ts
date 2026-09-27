@@ -85,11 +85,32 @@ function navFor(policy: SimulationPolicy, fills: SimulatedFill[], marks: DailyMa
 function runArm(policy: SimulationPolicy, events: ReplayEntryEvent[], marks: DailyMark[]): Arm {
   const ids = events.map((event) => event.id);
   if (new Set(ids).size !== ids.length) throw new Error("Replay arm contains duplicate event IDs.");
-  if (events.some((event) => !finitePositive(event.quantity))) throw new Error("Every replay fill must use a fixed positive quantity; cash-allocation sizing is not accepted.");
   const net = simulatePortfolio(policy, events);
-  const gross = simulatePortfolio(policy, events.map((event) => ({ ...event, costPct: 0 })));
+  // Resolve each cash-allocation buy once using the net execution price/cost
+  // contract. Reuse that exact quantity in the gross comparison: otherwise a
+  // zero-cost gross arm buys more shares than the net arm and the alleged
+  // "transaction-cost effect" also contains a sizing effect. Keep rejected
+  // allocation events intact in the gross arm so a cost-sensitive difference
+  // in accepted event sets still fails closed below.
+  const netEntryQuantity = new Map(net.fills
+    .filter((fill) => fill.kind === "entry")
+    .map((fill) => [fill.eventId, fill.quantity]));
+  const grossEvents = events.map((event) => {
+    const resolvedQuantity = event.kind === "entry" ? netEntryQuantity.get(event.id) : undefined;
+    if (resolvedQuantity != null) {
+      return { ...event, quantity: resolvedQuantity, cashAllocation: undefined, costPct: 0 };
+    }
+    return { ...event, costPct: 0 };
+  });
+  const gross = simulatePortfolio(policy, grossEvents);
   const signature = (rows: SimulationRejection[]) => rows.map((row) => `${row.eventId}:${row.reason}`).sort().join("|");
   if (signature(net.rejections) !== signature(gross.rejections)) throw new Error("Gross and net arms accepted different event sets.");
+  const fillSignature = (fills: SimulatedFill[]) => fills
+    .map((fill) => `${fill.eventId}:${fill.kind}:${fill.quantity}`)
+    .sort();
+  if (canonicalize(fillSignature(net.fills)) !== canonicalize(fillSignature(gross.fills))) {
+    throw new Error("Gross and net arms must use identical fill events and quantities.");
+  }
   return {
     grossNav: navFor(policy, gross.fills, marks),
     netNav: navFor(policy, net.fills, marks),

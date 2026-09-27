@@ -32,6 +32,17 @@ describe("paired portfolio replay contract", () => {
     expect(result.diagnostics.unpricedSessions).toEqual({ baseline: 0, variant: 0 });
   });
 
+  it("uses the same resolved shares in gross and net arms for cash-allocation buys", () => {
+    const base = fixture();
+    const baselineEvents = [{ ...base.baselineEvents[0], quantity: undefined, cashAllocation: 200 }];
+    const variantEvents = [{ ...base.variantEvents[0], quantity: undefined, cashAllocation: 200 }];
+    const result = runPairedPortfolioReplay(fixture({ baselineEvents, variantEvents }));
+    expect(result.diagnostics.baselineFills).toBe(1);
+    expect(result.diagnostics.variantFills).toBe(1);
+    expect(result.row.turnover_pct).toBeCloseTo(19.98002, 5);
+    expect(result.row.state).toBe("measured");
+  });
+
   it("mutation-detects a different point-in-time candidate population", () => {
     expect(() => runPairedPortfolioReplay(fixture({ variantDecisionIds: ["d1", "d3"] })))
       .toThrow("exact same unique point-in-time decision population");
