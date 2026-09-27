@@ -23,7 +23,7 @@ using identical entries/sizing, complete chronological OHLC and costs. Do not
 use the old “time stop unchanged” text below as a current production contract.
 
 **Data prerequisite repaired 2026-09-27:** production migration
-`20260927212341_capture_entry_risk_levels_for_attribution` now persists the
+`20260927212654_capture_entry_risk_levels_for_attribution` now persists the
 exact initial stop and target passed to `execute_paper_fill` on each new
 `paper_trades` entry lot. It intentionally does not reconstruct old NULL levels.
 This is not an exit replay: daily stop/trail evolution, executable OHLC ordering,

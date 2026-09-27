@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  "supabase/migrations/20260927212341_capture_entry_risk_levels_for_attribution.sql",
+  "supabase/migrations/20260927212654_capture_entry_risk_levels_for_attribution.sql",
   "utf8",
 ).replace(/\r\n/g, "\n");
 
