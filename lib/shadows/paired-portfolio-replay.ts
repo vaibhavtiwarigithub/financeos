@@ -190,6 +190,9 @@ export function runPairedPortfolioReplay(input: PairedPortfolioReplayInput): Pai
   }
   const baseline = runArm(input.policy, input.baselineEvents, input.marks);
   const variant = runArm(input.policy, input.variantEvents, input.marks);
+  if (!baseline.netFills.length && !variant.netFills.length && !(input.policy.initialPositions?.length)) {
+    throw new Error("Neither replay arm produced a fill or started with holdings; empty cash-only books cannot claim portfolio P&L attribution.");
+  }
   for (const nav of [baseline.grossNav, baseline.netNav, variant.grossNav, variant.netNav]) {
     if (nav.unpricedSessions) throw new Error("A held symbol lacks a same-session price mark; measured attribution is refused.");
     if (nav.points.some((p) => p.benchNav == null)) throw new Error("Benchmark marks are incomplete for one or both arms.");

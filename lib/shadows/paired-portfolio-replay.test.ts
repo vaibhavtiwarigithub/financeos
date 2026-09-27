@@ -83,4 +83,9 @@ describe("paired portfolio replay contract", () => {
     expect(() => runPairedPortfolioReplay(fixture({ independenceBlockSessions: 4 })))
       .toThrow("need at least 2");
   });
+
+  it("does not call two empty cash-only books a measured portfolio replay", () => {
+    expect(() => runPairedPortfolioReplay(fixture({ baselineEvents: [], variantEvents: [] })))
+      .toThrow("empty cash-only books cannot claim portfolio P&L attribution");
+  });
 });
