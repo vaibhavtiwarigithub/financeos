@@ -6,6 +6,7 @@ import { routerReadiness, type RouterEvaluationRow } from "@/lib/shadows/status"
 describe("shadow registry governance contract", () => {
   const migration = readFileSync("supabase/migrations/20260729210000_shadow_registry_cron_status.sql", "utf8");
   const route = readFileSync("app/api/upgrade-path/route.ts", "utf8");
+  const bookLedger = readFileSync("lib/shadows/shadow-book-ledger.ts", "utf8");
   const optionsRoute = readFileSync("app/api/options/signal/route.ts", "utf8");
   const optionsSource = readFileSync("lib/options-signal.ts", "utf8");
   const research = readFileSync("lib/research-agent.ts", "utf8");
@@ -29,6 +30,27 @@ describe("shadow registry governance contract", () => {
       expect(program.mainline.reason.length).toBeGreaterThan(30);
       expect(["matched_replay", "paper_cohort", "operational_only"]).toContain(program.attributionClass);
     }
+  });
+
+  it("requires exact blocker text for every performance-eligible path without a verified producer", () => {
+    const missingProducer = SHADOW_PROGRAMS.filter((program) =>
+      program.id !== "international-allocation" && program.attributionClass !== "operational_only");
+    expect(missingProducer.length).toBeGreaterThan(0);
+    for (const program of missingProducer) {
+      expect(program.attributionBlocker, program.id).toBeTruthy();
+      expect(program.attributionBlocker!.length, program.id).toBeGreaterThan(120);
+    }
+    for (const id of ["score-price-divergence", "live-exit-ladder-parity", "archetype-ic", "technical-calibration", "specialist-feature-packs", "earnings-risk", "autonomous-live"]) {
+      expect(SHADOW_PROGRAMS.find((program) => program.id === id)?.attributionClass).toBe("operational_only");
+    }
+  });
+
+  it("keeps forward descriptive P&L snapshots separate from causal attribution and market-local", () => {
+    expect(route).toContain('svc.rpc("get_upgrade_path_shadow_book_latest", { p_market: market })');
+    expect(route).toContain('row.market !== market');
+    expect(upgradePage).toContain("Forward shadow-book P&L · descriptive, not promotion proof");
+    expect(bookLedger).toContain("Daily P&L is descriptive only");
+    expect(upgradePage).toContain("Causal attribution");
   });
 
   it("registers the outstanding feature-pack gates rather than hiding them in docs", () => {
@@ -133,6 +155,8 @@ describe("shadow registry governance contract", () => {
     expect(statusAdapter).toContain("scheduled_idle");
     expect(statusAdapter).toContain("upgrade_path_attribution_runs");
     expect(upgradePage).toContain("Causal attribution");
+    expect(upgradePage).toContain("Collection health · not P&L proof");
+    expect(upgradePage).toContain("/api/admin/shadow-liveness");
   });
 
   it("reports the setup-expert idempotency conflict instead of calling India merely idle", () => {

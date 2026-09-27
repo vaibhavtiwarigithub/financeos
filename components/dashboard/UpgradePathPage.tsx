@@ -17,8 +17,37 @@ type ApiResponse = {
   build: { environment: string; commit: string | null };
   market: "us" | "india";
   summary: { total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number };
-  programs: ShadowProgramStatus[];
+  snapshotLedger: { state: "available" | "unavailable"; reason: string | null };
+  programs: Array<ShadowProgramStatus & { shadowBookSnapshot: ShadowBookSnapshot }>;
+  collection?: Array<{
+    id: string;
+    market: "us" | "india";
+    verdict: string;
+    note: string;
+    last_write: string | null;
+    market_scope?: string;
+    schedules?: Array<{ job: string; schedule: string | null; active: boolean; found?: boolean; lastStartedAt?: string | null; lastStatus?: string | null }>;
+  }>;
 };
+type ShadowBookSnapshot =
+  | { state: "not_attributable" | "none" | "unavailable"; note: string }
+  | {
+      state: "captured";
+      sessionDate: string;
+      windowStart: string;
+      programVersion: string;
+      baselineVersion: string;
+      baselineReturnPct: number;
+      variantReturnPct: number;
+      benchmarkReturnPct: number;
+      netDeltaPct: number;
+      benchmarkRelativeDeltaPct: number;
+      baselineDrawdownPct: number;
+      variantDrawdownPct: number;
+      turnoverPct: number;
+      independentBlocks: number;
+      blockers: string[];
+    };
 type LifecycleFilter = "all" | "active" | "review" | "blocked" | "off";
 
 const LIFECYCLE_META: Record<ShadowLifecycle, { label: string; color: string }> = {
@@ -54,6 +83,21 @@ const ATTRIBUTION_META = {
   producer_missing: { label: "Producer missing", color: T.red },
   not_attributable: { label: "Not attributable", color: T.blue },
   invalid: { label: "Invalid", color: T.red },
+};
+const COLLECTION_META: Record<string, { label: string; color: string }> = {
+  live: { label: "Evidence fresh", color: T.green },
+  waiting_for_input: { label: "Waiting for eligible input", color: T.yellow },
+  expected_empty: { label: "Intentionally off / scaffold", color: T.muted },
+  stale: { label: "Evidence stale", color: T.yellow },
+  frozen: { label: "Evidence frozen", color: T.red },
+  empty: { label: "Scheduled writer has no rows", color: T.red },
+  missing_schedule: { label: "Schedule missing", color: T.red },
+  inactive_schedule: { label: "Schedule inactive", color: T.red },
+  unexpected_schedule: { label: "Unexpected active schedule", color: T.red },
+  never_run: { label: "Schedule has never run", color: T.red },
+  failed_schedule_run: { label: "Latest scheduled run failed", color: T.red },
+  stale_schedule_run: { label: "Scheduled run stale", color: T.red },
+  unknown: { label: "Collection unverified", color: T.yellow },
 };
 
 function useIsMobile(breakpoint = 900) {
@@ -126,7 +170,12 @@ function ProgressBar({ program }: { program: ShadowProgramStatus }) {
   </div>;
 }
 
-function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatus; mobile: boolean; market: "us" | "india" }) {
+function ProgramPanel({ program, mobile, market, collection }: {
+  program: ApiResponse["programs"][number];
+  mobile: boolean;
+  market: "us" | "india";
+  collection?: ApiResponse["collection"] extends (infer T)[] | undefined ? T : never;
+}) {
   const lifecycle = LIFECYCLE_META[program.lifecycle];
   const benefit = BENEFIT_META[program.benefitVerdict];
   const deployment = DEPLOYMENT_META[program.deployment.state];
@@ -185,6 +234,29 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
             Window: {program.attribution.windowStart ?? "—"} to {program.attribution.windowEnd ?? "—"} · As of {program.attribution.asOfSession} · {program.attribution.baselineVersion} → {program.attribution.programVersion}
           </div>}
         </div>
+        {program.attribution.comparisonType !== "operational_only" && <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
+          <SectionLabel icon={<Database size={14} />} text="Forward shadow-book P&L · descriptive, not promotion proof" />
+          {program.shadowBookSnapshot.state !== "captured"
+            ? <div style={{ color: program.shadowBookSnapshot.state === "unavailable" ? T.red : T.muted, fontSize: "12px", lineHeight: 1.55 }}>
+                {program.shadowBookSnapshot.note}
+              </div>
+            : <>
+                <div style={{ color: T.muted, fontSize: "11px", marginBottom: "9px" }}>
+                  {program.shadowBookSnapshot.windowStart} through {program.shadowBookSnapshot.sessionDate} · {program.shadowBookSnapshot.baselineVersion} → {program.shadowBookSnapshot.programVersion}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(3, minmax(0, 1fr))", gap: "8px 14px" }}>
+                  <TextBlock label="Baseline net return" text={fmtPct(program.shadowBookSnapshot.baselineReturnPct)} />
+                  <TextBlock label="Variant net return" text={fmtPct(program.shadowBookSnapshot.variantReturnPct)} />
+                  <TextBlock label="Variant − baseline" text={fmtPct(program.shadowBookSnapshot.netDeltaPct)} />
+                  <TextBlock label="Benchmark return" text={fmtPct(program.shadowBookSnapshot.benchmarkReturnPct)} />
+                  <TextBlock label="Active-return delta" text={fmtPct(program.shadowBookSnapshot.benchmarkRelativeDeltaPct)} />
+                  <TextBlock label="Max drawdown · baseline / variant" text={`${fmtPct(program.shadowBookSnapshot.baselineDrawdownPct)} / ${fmtPct(program.shadowBookSnapshot.variantDrawdownPct)}`} />
+                  <TextBlock label="Turnover" text={fmtPct(program.shadowBookSnapshot.turnoverPct)} />
+                  <TextBlock label="Non-overlapping blocks observed" text={String(program.shadowBookSnapshot.independentBlocks)} />
+                </div>
+                {program.shadowBookSnapshot.blockers.map((blocker) => <div key={blocker} style={{ color: T.yellow, fontSize: "11px", lineHeight: 1.5, marginTop: "7px" }}>• {blocker}</div>)}
+              </>}
+        </div>}
       </div>
       <div style={{ padding: mobile ? "16px" : "18px 20px", display: "flex", flexDirection: "column", gap: "17px" }}>
         <div><SectionLabel icon={<Activity size={14} />} text="Evidence progress" /><ProgressBar program={program} /></div>
@@ -199,12 +271,21 @@ function ProgramPanel({ program, mobile, market }: { program: ShadowProgramStatu
           <div style={{ color: T.muted, fontSize: "12px", lineHeight: 1.5, marginTop: "4px" }}>{program.calls.note}</div>
         </div>
         <div>
-          <SectionLabel icon={<Clock3 size={14} />} text="Schedule" />
+          <SectionLabel icon={<Clock3 size={14} />} text="Collection health · not P&L proof" />
+          {collection && <div style={{ marginBottom: "8px" }}>
+            <StatusPill label={COLLECTION_META[collection.verdict]?.label ?? collection.verdict} color={COLLECTION_META[collection.verdict]?.color ?? T.yellow} />
+            <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginTop: "6px" }}>{collection.note}</div>
+            <div style={{ color: T.muted, fontSize: "11px", marginTop: "4px" }}>
+              Latest source row: {fmtDate(collection.last_write)}{collection.market_scope === "shared_evidence" ? " · shared across markets; not an independent market-local writer" : collection.market_scope === "single_market" ? " · only this market is in scope" : ""}
+            </div>
+          </div>}
+          {!collection && <div style={{ color: T.yellow, fontSize: "12px", marginBottom: "8px" }}>Collection status could not be verified.</div>}
           <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-            {!program.schedules.length && <span style={{ color: T.muted, fontSize: "12px" }}>Triggered inside another agent flow</span>}
-            {program.schedules.map((schedule) => <div key={schedule.job} style={{ color: schedule.active ? T.textSub : T.muted, fontSize: "12px", lineHeight: 1.4 }}>
-              <span style={{ color: schedule.active ? T.green : T.muted }}>●</span>{" "}
+            {!(collection?.schedules?.length ?? program.schedules.length) && <span style={{ color: T.muted, fontSize: "12px" }}>Event-driven or invoked inside another agent flow.</span>}
+            {(collection?.schedules ?? program.schedules).map((schedule) => <div key={schedule.job} style={{ color: schedule.active ? T.textSub : T.muted, fontSize: "12px", lineHeight: 1.4 }}>
+              <span style={{ color: schedule.active ? T.green : T.red }}>●</span>{" "}
               {schedule.job} · {schedule.active ? schedule.schedule ?? "active" : "not scheduled"}
+              {"lastStatus" in schedule && ` · last run ${schedule.lastStatus ?? "never"}`}
             </div>)}
           </div>
         </div>
@@ -269,10 +350,17 @@ export default function UpgradePathPage() {
   const load = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
-      const response = await fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" });
+      const [response, collectionResponse] = await Promise.all([
+        fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" }),
+        fetch("/api/admin/shadow-liveness", { cache: "no-store" }),
+      ]);
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
       const next = await response.json() as ApiResponse;
       if (sequence !== requestSequence.current || next.market !== market) return;
+      if (collectionResponse.ok) {
+        const collectionPayload = await collectionResponse.json() as { programs?: ApiResponse["collection"] };
+        next.collection = collectionPayload.programs?.filter((row) => row.market === market) ?? [];
+      }
       setData(next);
       setError("");
     } catch (reason) {
@@ -354,7 +442,13 @@ export default function UpgradePathPage() {
     }}>{error}. Existing values remain visible where available.</div>}
 
     {loading && !data ? <div style={{ color: T.textSub, padding: "40px 0" }}>Loading live evidence ledgers...</div> : <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      {filtered.map((program) => <ProgramPanel key={program.id} program={program} mobile={mobile} market={data?.market ?? market} />)}
+      {filtered.map((program) => <ProgramPanel
+        key={program.id}
+        program={program}
+        mobile={mobile}
+        market={data?.market ?? market}
+        collection={data?.collection?.find((row) => row.id === program.id && row.market === (data?.market ?? market))}
+      />)}
       {!filtered.length && <div style={{ border: `1px solid ${T.border}`, borderRadius: "8px", padding: "30px", textAlign: "center", color: T.muted }}>No programs match these filters.</div>}
     </div>}
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildInternationalAllocationBookSnapshot } from "./international-attribution";
 import { MIN_MATCHED_SESSIONS, runInternationalAllocationReplay } from "./international-replay";
 
 function series(symbol: "voo" | "vxus", sessions: number, dailyReturn: number) {
@@ -26,5 +27,18 @@ describe("runInternationalAllocationReplay", () => {
     expect(result.testSleeve?.totalReturnPct).toBeGreaterThan(result.baseline?.totalReturnPct ?? 0);
     expect(result.rebalanceCount).toBeGreaterThan(0);
     expect(result.windows).toHaveLength(3);
+  });
+
+  it("builds a separate complete net book snapshot for the existing synthetic allocation", () => {
+    const result = runInternationalAllocationReplay(series("voo", MIN_MATCHED_SESSIONS + 80, 0.001), series("vxus", MIN_MATCHED_SESSIONS + 80, 0.002));
+    const snapshot = buildInternationalAllocationBookSnapshot(result);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.status).toBe("captured");
+    expect(snapshot?.baseline_nav).toBeCloseTo((1 + 0.001) ** (result.sessions - 1), 3);
+    expect(snapshot?.baseline_cumulative_return_pct).toBeCloseTo(result.baseline!.totalReturnPct, 3);
+    expect(snapshot?.variant_cumulative_return_pct).toBeCloseTo(result.testSleeve!.totalReturnPct, 3);
+    expect(snapshot?.independent_blocks).toBe(result.independentBlocks);
+    expect(snapshot?.point_in_time_inputs.syntheticAllocation).toBe(true);
+    expect(snapshot?.blockers).toContain("Daily P&L is descriptive only; program-specific paired replay and its confidence gates are not represented by this snapshot.");
   });
 });

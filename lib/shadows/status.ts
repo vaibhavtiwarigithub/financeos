@@ -225,7 +225,10 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
     return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   if (!row) {
-    return { state: fallback.state, comparisonType: fallback.comparison_type, reason: fallback.validity_reason ?? "No attribution evidence exists.", asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    const reason = fallback.state === "producer_missing"
+      ? program.attributionBlocker ?? fallback.validity_reason ?? "No attribution evidence exists."
+      : fallback.validity_reason ?? "No attribution evidence exists.";
+    return { state: fallback.state, comparisonType: fallback.comparison_type, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   const normalized: UpgradePathAttributionRow = {
     ...row, constraints: row.constraints ?? {},
@@ -235,7 +238,7 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
   const state = normalized.state === "measured" && !validation.valid ? "invalid" : normalized.state;
   return {
     state, comparisonType: normalized.comparison_type,
-    reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
+    reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : state === "producer_missing" ? program.attributionBlocker ?? normalized.validity_reason ?? "No verified portfolio attribution producer is registered." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
     asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
     programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,
     baselineGrossReturnPct: normalized.baseline_portfolio_return_pct, variantGrossReturnPct: normalized.variant_portfolio_return_pct,

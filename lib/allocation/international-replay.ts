@@ -7,6 +7,21 @@ export type AllocationReplayMetrics = {
   maxDrawdownPct: number;
 };
 
+export type AllocationPortfolioPoint = {
+  date: string;
+  baselineVooUnits: number;
+  variantVooUnits: number;
+  variantVxusUnits: number;
+  baselineVooCostBasis: number;
+  variantVooCostBasis: number;
+  variantVxusCostBasis: number;
+  baselineNav: number;
+  variantNav: number;
+  cumulativeTurnoverNotional: number;
+  vooClose: number;
+  vxusClose: number;
+};
+
 export type InternationalAllocationReplay = {
   status: "completed" | "insufficient_history";
   reason?: string;
@@ -32,6 +47,7 @@ export type InternationalAllocationReplay = {
   blockCiUpperPct: number | null;
   blockTStatistic: number | null;
   windows: Array<{ startDate: string; endDate: string; baselineReturnPct: number; testSleeveReturnPct: number }>;
+  portfolioPath: AllocationPortfolioPoint[];
   caveats: string[];
 };
 
@@ -156,6 +172,7 @@ export function runInternationalAllocationReplay(
     blockCiUpperPct: null,
     blockTStatistic: null,
     windows: [],
+    portfolioPath: [],
     caveats: [
       "Cache-only adjusted-close replay; it does not reconstruct Kairos paper or live holdings.",
       "Monthly scheduled rebalances apply a fixed one-way transaction-cost assumption; taxes, bid-ask spreads, and withholding are not modeled.",
@@ -192,6 +209,25 @@ export function runInternationalAllocationReplay(
   let grossVooUnits = vooUnits;
   let grossVxusUnits = vxusUnits;
   let grossNav = 1;
+  const baselineVooUnits = 1 / bars[0].voo;
+  let variantVooUnits = vooUnits;
+  let variantVxusUnits = vxusUnits;
+  let variantVooCostBasis = bars[0].voo;
+  let variantVxusCostBasis = bars[0].vxus;
+  const portfolioPath: AllocationPortfolioPoint[] = [{
+    date: bars[0].date,
+    baselineVooUnits,
+    variantVooUnits,
+    variantVxusUnits,
+    baselineVooCostBasis: bars[0].voo,
+    variantVooCostBasis,
+    variantVxusCostBasis,
+    baselineNav: 1,
+    variantNav: 1,
+    cumulativeTurnoverNotional: 0,
+    vooClose: bars[0].voo,
+    vxusClose: bars[0].vxus,
+  }];
   let sleeveNav = 1;
   let rebalanceCount = 0;
   let turnoverNotional = 0;
@@ -219,8 +255,20 @@ export function runInternationalAllocationReplay(
       turnoverNotional += tradedNotional;
       const cost = tradedNotional * costRate;
       afterCost -= cost;
-      vooUnits = (afterCost * (1 - targetVxusWeight)) / current.voo;
-      vxusUnits = (afterCost * targetVxusWeight) / current.vxus;
+      const nextVooUnits = (afterCost * (1 - targetVxusWeight)) / current.voo;
+      const nextVxusUnits = (afterCost * targetVxusWeight) / current.vxus;
+      if (nextVooUnits > vooUnits) {
+        const added = nextVooUnits - vooUnits;
+        variantVooCostBasis = (vooUnits * variantVooCostBasis + added * current.voo + cost) / nextVooUnits;
+      }
+      if (nextVxusUnits > vxusUnits) {
+        const added = nextVxusUnits - vxusUnits;
+        variantVxusCostBasis = (vxusUnits * variantVxusCostBasis + added * current.vxus + cost) / nextVxusUnits;
+      }
+      vooUnits = nextVooUnits;
+      vxusUnits = nextVxusUnits;
+      variantVooUnits = vooUnits;
+      variantVxusUnits = vxusUnits;
       grossVooUnits = (grossBeforeRebalance * (1 - targetVxusWeight)) / current.voo;
       grossVxusUnits = (grossBeforeRebalance * targetVxusWeight) / current.vxus;
       rebalanceCount++;
@@ -233,6 +281,20 @@ export function runInternationalAllocationReplay(
     sleeveReturns.push(sleeveNavs.at(-1)! / sleeveNavs.at(-2)! - 1);
     grossSleeveNavs.push(grossNav);
     grossSleeveReturns.push(grossSleeveNavs.at(-1)! / grossSleeveNavs.at(-2)! - 1);
+    portfolioPath.push({
+      date: current.date,
+      baselineVooUnits,
+      variantVooUnits,
+      variantVxusUnits,
+      baselineVooCostBasis: bars[0].voo,
+      variantVooCostBasis,
+      variantVxusCostBasis,
+      baselineNav,
+      variantNav: sleeveNav,
+      cumulativeTurnoverNotional: turnoverNotional,
+      vooClose: current.voo,
+      vxusClose: current.vxus,
+    });
   }
 
   const excessDaily = sleeveReturns.map((value, index) => value - baselineReturns[index]);
@@ -271,5 +333,6 @@ export function runInternationalAllocationReplay(
     blockCiUpperPct: blocks.upper,
     blockTStatistic: blocks.t,
     windows,
+    portfolioPath,
   };
 }

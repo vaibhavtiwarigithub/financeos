@@ -52,6 +52,11 @@ export interface LiveExitResult {
   results: Array<{ market: string; symbol: string; qty: number; reason: string; status: string; error?: string }>;
 }
 
+/** The deployment kill flag may disable order execution, never evidence-only shadow evaluation. */
+export function liveExitShadowMode(deploymentExecutionEnabled: boolean, ownerExecutionEnabled: boolean): boolean {
+  return !deploymentExecutionEnabled || !ownerExecutionEnabled;
+}
+
 async function priceFor(market: string, symbol: string, svc: SupabaseClient): Promise<{ price: number; ok: boolean }> {
   try {
     if (market === "india") { const q = await fetchIndiaQuote(symbol); const p = q?.price ?? 0; return { price: p, ok: p > 0 }; }
@@ -63,7 +68,6 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
   const base = { run_id: runId, positions_checked: 0, exits_submitted: 0, results: [] as LiveExitResult["results"] };
   const early = (early_exit: string): LiveExitResult => ({ ...base, early_exit });
 
-  if (!AUTONOMOUS_LIVE_ENABLED) return early("deployment_flag_inactive");
   const { data: cfg, error: cfgError } = await svc.from("strategy_config")
     .select("live_auto_enabled, app_paused, security_locked, active_account_us, active_account_india").limit(1).maybeSingle();
   if (cfgError) throw new Error(`live-exit config read failed: ${cfgError.message}`);
@@ -80,7 +84,10 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
   // live_exit_ladder_shadow, submitting nothing. app_paused and
   // security_locked remain hard stops above: those mean "do not run", not
   // "run without acting".
-  const shadowMode = !(cfg as any).live_auto_enabled;
+  // AUTONOMOUS_LIVE_ENABLED is the deployment-level order kill switch. Keep
+  // shadow collection running when it is false, but require BOTH the deployment
+  // and owner switches before the monitor may enter its executable branch.
+  const shadowMode = liveExitShadowMode(AUTONOMOUS_LIVE_ENABLED, (cfg as any).live_auto_enabled === true);
 
   const results: LiveExitResult["results"] = [];
   let exitsSubmitted = 0;
