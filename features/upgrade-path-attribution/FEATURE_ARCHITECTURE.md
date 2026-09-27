@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PARTIALLY IMPLEMENTED — core attribution contract and international-allocation attribution producer are production-verified. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified; its writer/reader integration remains local and has not yet produced production rows. Eight other eligible portfolio variants still lack verified producers (reviewed 2026-09-27).
+Status: PARTIALLY IMPLEMENTED — core attribution contract and international-allocation attribution producer are production-verified. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified; its writer/reader integration remains local and has not yet produced production rows. As of 2026-09-27, the retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
