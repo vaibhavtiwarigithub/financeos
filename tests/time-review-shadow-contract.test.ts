@@ -8,6 +8,7 @@ describe("time-review shadow integration contract", () => {
   const monitor = readFileSync("app/api/agents/position-monitor/route.ts", "utf8");
   const scheduledRoute = readFileSync("app/api/agents/horizon-extension-shadow/route.ts", "utf8");
   const status = readFileSync("lib/shadows/status.ts", "utf8");
+  const registry = readFileSync("lib/shadows/registry.ts", "utf8");
 
   it("freezes observations/outcomes and gives clients read-only access", () => {
     expect(migration).toContain("time_review_exit_observations_no_mutate");
@@ -26,13 +27,17 @@ describe("time-review shadow integration contract", () => {
     expect(monitor.indexOf("recordTimeReviewObservation(svc")).toBeGreaterThan(0);
     expect(monitor).not.toContain("if (ageDays > horizonDays)");
     expect(monitor).not.toContain("time_stop (");
-    expect(scheduledRoute).toContain("matureTimeReviewOutcomes(svc");
+    expect(scheduledRoute).not.toContain("matureTimeReviewOutcomes(svc");
+    expect(scheduledRoute).toContain('status: "paused"');
+    expect(scheduledRoute).toContain("legacy next-session-exit comparator is not the current data-driven exit policy");
   });
 
-  it("Upgrade Path excludes the legacy daily ledger from readiness", () => {
+  it("Upgrade Path keeps the obsolete next-session comparator descriptive and non-attributable", () => {
     expect(status).toContain("timeReviewObservations");
-    expect(status).toContain("market sessions with exact reviews and both matured outcomes");
-    expect(status).toContain("legacy daily one-day-extension rows are retained as historical context but excluded from readiness");
+    expect(status).toContain("unconditional time stop was removed");
+    expect(status).toContain("Historical v1/v2 outcomes model a hypothetical next-session sale");
+    const timeReviewProgram = registry.split('id: "horizon-extension"')[1]?.split('id: "live-exit-ladder-parity"')[0] ?? "";
+    expect(timeReviewProgram).toContain('attributionClass: "operational_only"');
   });
 
   it("the observer writes only the immutable evidence table", async () => {

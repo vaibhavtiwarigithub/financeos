@@ -12,7 +12,6 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { runHorizonExtensionShadow } from "@/lib/trading/horizon-extension-shadow";
-import { matureTimeReviewOutcomes } from "@/lib/trading/time-review-shadow";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -61,17 +60,20 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   const svc = createServiceClient();
   const market = marketParam(req);
-  // Preserve the v0 daily counterfactual as frozen historical context while
-  // the same scheduled job matures the approved exact-review v1 outcomes.
+  // Preserve descriptive P0 review observations. The historical P1 outcomes
+  // used a next-session sale as baseline, but the unconditional time stop was
+  // removed; that comparator no longer matches the current exit policy.
   const result = await runHorizonExtensionShadow(svc, { market });
-  const maturation = await matureTimeReviewOutcomes(svc, market ?? null);
   return NextResponse.json({
     dry_run: false,
     run_id: result.runId,
     // false means the ledger table is not there yet (migration
     // 20260811150000_horizon_extension_shadow.sql), not that the run failed.
     persisted: result.persisted,
-    time_review_maturation: maturation,
+    time_review_maturation: {
+      status: "paused",
+      reason: "The legacy next-session-exit comparator is not the current data-driven exit policy; historical outcomes remain immutable descriptive context only.",
+    },
     ...summarize(result.rows),
   });
 }

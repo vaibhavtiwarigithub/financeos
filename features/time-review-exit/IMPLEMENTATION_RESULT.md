@@ -2,13 +2,24 @@
 
 Implemented: 2026-09-03
 
+## Current status correction (2026-09-27)
+
+The unconditional time stop was removed by owner decision on 2026-09-10. The
+legacy P1 “next-session sale vs +5/+10 hold” baseline no longer matches the
+current data-driven exit policy. Its immutable rows are historical descriptive
+labels only; they do not establish current-policy benefit, matched portfolio
+P&L, or Upgrade Path readiness. The scheduled route still records P0 review
+observations but no longer matures new P1 outcomes. Upgrade Path classifies this
+program as `operational_only` until a new, owner-approved variant is defined
+against the actual current exit policy. No time-based exit was restored.
+
 ## Outcome
 
-The approved measure-only time-review pipeline is complete. PositionMonitor now
-captures one immutable observation for an alpha position at its exact resolved
-horizon, before the incumbent time stop. The existing horizon-shadow schedule
-matures matched +5/+10-session outcomes. Neither ledger has a money-path
-consumer, and the unconditional time stop remains active.
+The original measure-only implementation captured immutable review observations
+and matured hypothetical +5/+10 outcomes. Current status is described above:
+P0 observation collection remains descriptive, while the scheduled route no
+longer matures the retired P1 comparator. The unconditional time stop was
+removed on 2026-09-10 and is not active.
 
 ## What shipped
 
@@ -17,15 +28,15 @@ consumer, and the unconditional time stop remains active.
   target vetoes.
 - Exact position/session idempotency and immutable market-local observation and
   outcome ledgers.
-- Matched incumbent-next-session versus +5/+10-session outcomes with benchmark
-  return, MFE/MAE, retained-stop result, and replacement-candidate attribution.
+- Historical incumbent-next-session versus +5/+10-session outcomes with
+  benchmark return, MFE/MAE, retained-stop result, and replacement-candidate
+  attribution. These immutable rows do not match the current exit policy.
 - v2 stores modeled incremental sell friction separately from gross per-position
   incremental return. The earlier v1 ledger hardcoded this field to zero, so its
   rows remain immutable but are excluded from v2 progress/readiness; neither
   version is portfolio-level net-P&L attribution.
-- Upgrade Path counts only exact review sessions with both outcomes matured.
-  Legacy daily one-day-extension rows remain visible context but cannot advance
-  readiness.
+- Upgrade Path treats this program as operational-only. Historical review and
+  outcome rows cannot advance performance readiness or establish P&L benefit.
 
 ## Production proof
 
@@ -49,8 +60,8 @@ consumer, and the unconditional time stop remains active.
 
 ## Still gated
 
-No time-stop behavior changed. Twenty market sessions with exact reviews and
-both outcomes only permits the next review. A sealed market-local portfolio
-simulation with redeployment, costs, drawdown, turnover, multiple-trial control,
-adverse-case review, and explicit owner approval remains mandatory before a
-paper-policy change. Live use requires a separate approval.
+The earlier 20-session readiness gate and hypothetical-next-session comparator
+are retired. No time-based exit was restored. Any future policy change requires
+a new approved architecture, a comparator based on the current exit system, a
+sealed market-local portfolio replay, and explicit owner approval. Live use
+requires a separate approval.

@@ -253,6 +253,12 @@ function benchmarkReturn(bars: LabelCandle[], reviewSession: string, exitSession
   return ((exit.close - entry.close) / entry.close) * 100;
 }
 
+/**
+ * @deprecated Historical v1/v2 labeler only. Its next-session baseline ceased
+ * to represent the incumbent after the unconditional time stop was removed.
+ * The scheduled route intentionally no longer calls this function. Keep it only
+ * to preserve the exact historical method for audit/reproduction.
+ */
 export async function matureTimeReviewOutcomes(
   svc: any,
   market: ReviewMarket | null = null,
