@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PARTIALLY IMPLEMENTED — core attribution contract and international-allocation attribution producer are production-verified. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified; its writer/reader integration remains local and has not yet produced production rows. As of 2026-09-27, the retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
+Status: PARTIALLY IMPLEMENTED — the core attribution contract and international-allocation producer have production attribution rows. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is pushed on `codex/upgrade-path-attribution-producer` and passes Vercel Preview for commit `5137f6d6`, but is not merged or collecting in production; the production snapshot table still has zero rows. As of 2026-09-27, the retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
@@ -170,7 +170,7 @@ verified. Source data currently does not preserve enough common decision,
 position-lineage and daily-mark history to manufacture inception-to-date
 portfolio replays for those paths.
 
-### Forward shadow-book snapshot ledger (production schema, local integration; not yet collecting)
+### Forward shadow-book snapshot ledger (production schema; preview integration, not yet collecting in production)
 
 The new `upgrade_path_shadow_book_runs` append-only table is intended to retain
 daily baseline and variant book states from the same starting capital and
@@ -190,7 +190,7 @@ latest-per-market RPC, and mutation trigger are live from migration
 policy, one append-only update/delete trigger, anon read/execute denied, and
 service-role insert/RPC execute allowed. The TypeScript builder, international
 allocation writer call, API/UI integration, and per-program adapters remain
-local/unshipped; production currently has no rows in this new snapshot table.
+on the feature branch and Vercel Preview; production currently has no rows in this new snapshot table because the integration has not been released to production.
 Therefore this is not yet data collection or a completed new producer. The
 existing international-allocation attribution producer continues to write its
 separate attribution ledger. The other seven missing programs still require
