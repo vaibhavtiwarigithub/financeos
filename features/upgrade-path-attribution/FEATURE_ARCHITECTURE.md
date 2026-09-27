@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: IMPLEMENTED — production-verified 2026-09-26 (owner approval 2026-09-18)
+Status: PARTIALLY IMPLEMENTED — the attribution ledger has three production rows, all for the synthetic international-allocation diagnostic; actual Kairos stock-paper attribution is absent. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is pushed on `codex/upgrade-path-attribution-producer` and passes Vercel Preview for commit `5137f6d6`, but is not merged or collecting in production; the production snapshot table still has zero rows. On 2026-09-27, production `execute_paper_fill` was patched by migration `20260927212654` to preserve its exact passed stop/target on entry lots; a transactional source-rewrite test was rolled back, then the migration was applied and `pg_get_functiondef` verified. This repairs a necessary input for future replay, not a portfolio producer. The retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
@@ -65,6 +65,42 @@ Purely operational paths are permanently `not_attributable`. They may report
 data coverage, outage avoidance or correctness proof, but never a hypothetical
 portfolio uplift.
 
+### Registry eligibility audit (2026-09-26)
+
+`attributionClass` describes whether the program has a concrete portfolio
+decision alternative **now**, not whether it could someday influence a trade.
+This distinction corrected seven registry entries which had been marked
+performance-eligible despite having only an IC, diagnostic, safety-parity, or
+data-capture output:
+
+| Current class | Programs | Meaning |
+|---|---|---|
+| `matched_replay` | exit geometry, ATR exit stop, score exit, setup experts, capital rotation, international allocation | There is a declared baseline-versus-alternative decision policy; the portfolio replay producer is still required. |
+| `paper_cohort` | strategy challenger validation, downside hedge | A future activated paper cohort can be compared with a frozen control; no current producer is implied. |
+| `operational_only` | listing discovery, broker tradability, score/price divergence, diagnostics, label coverage, horizon extension (retired comparator; descriptive checkpoint only), live-exit ladder parity, archetype IC, alpha diagnostics, evidence router, degradation guard, India news evidence, technical calibration, PIT fundamentals, specialist packs, earnings risk, exogenous risk, autonomous-live execution | The current output proves collection, readiness, reliability, or descriptive signal behavior, not an isolated portfolio policy. |
+
+**Policy correction (2026-09-27):** the unconditional time stop was removed on
+2026-09-10, so the horizon-extension arm's next-session-sale baseline is no
+longer the incumbent exit. That program was reclassified from `matched_replay`
+to `operational_only`; its historical +5/+10 outcomes remain immutable and
+cannot count toward attribution or readiness. The registry now has eight
+performance-eligible programs: international allocation has the only verified
+producer, leaving seven with explicit `producer_missing` blockers.
+
+Every currently eligible path other than international allocation exposes an
+individual producer blocker in the registry and Upgrade Path card. Examples:
+MFE/MAE labels do not preserve stop/target ordering; holding-score summaries
+do not provide executable exit timestamps; rotation decision events are not a
+matched future portfolio; and no challenger or hedge paper cohort is active.
+These are deliberate `producer_missing` states, not collection waits. A path
+cannot be relabeled `collecting` until a scheduled, versioned producer actually
+writes a valid portfolio-level comparison.
+
+Operational-only status is not a permanent ban on measuring return impact. It
+means the present feature contract contains no frozen behavior-changing policy
+to compare. Define and approve that policy first, then add it as a new versioned
+variant instead of retroactively turning a descriptive metric into P&L proof.
+
 ## Implemented producer and current scope
 
 The first scheduled producer is intentionally narrow: the predeclared US
@@ -111,6 +147,69 @@ their own paired portfolio replay is implemented, deployed, scheduled, and
 validated against production evidence. Shadow observations or symbol-level IC
 are not substitutes for portfolio attribution.
 
+### Shared accounting foundation (local, not a producer)
+
+`lib/shadows/paired-portfolio-replay.ts` now provides a reusable strict replay
+seam for future adapters. It checks that baseline and variant declare the same
+unique point-in-time decision population; every entry event links to that
+population; both arms use the same ordered market-session window, benchmark
+series, marks, starting policy and cost version; gross and net arms accept the
+same event set; held names have a price mark on every session; and at least two
+complete non-overlapping return blocks exist before a measured row can be
+formed. It produces gross/net NAV, benchmark-relative incremental return,
+turnover, drawdown delta and a block-based interval/t-statistic. Mutation tests
+prove the main fail-closed checks.
+
+This is deliberately not called a producer: it does not derive any program's
+baseline or challenger decisions, persist evidence, or run from a schedule.
+Consequently the production state remains unchanged: one synthetic
+international-allocation producer exists, actual Kairos stock-paper
+attribution is absent, and the other seven performance-eligible paths remain
+`producer_missing` until their policy-specific adapters and schedules are
+verified. Source data currently does not preserve enough common decision,
+position-lineage and daily-mark history to manufacture inception-to-date
+portfolio replays for those paths.
+
+**Entry-risk provenance repair (2026-09-27):** the live `execute_paper_fill`
+RPC already received the exact per-fill `p_stop_loss` and `p_price_target`, and
+used them for the new `paper_positions` row, but omitted them from the
+originating `paper_trades` row. Before repair, only 24/104 US and 38/143 India
+alpha buy lots had both levels; among entries on/after 2026-08-27, only 16/28
+US and 28/35 India lots did. Migration
+`20260927212654_capture_entry_risk_levels_for_attribution` uses exact-fragment
+guards to patch the deployed RPC without replacing its safety logic. It records
+the original levels on future entry lots only; it does not backfill historical
+NULLs or change trading behavior. A current-policy portfolio replay still needs
+chronological mark/stop history, partial-lot lineage reconciliation,
+market-local adjusted OHLC, and exact alternative policy adapters.
+
+### Forward shadow-book snapshot ledger (production schema; preview integration, not yet collecting in production)
+
+The new `upgrade_path_shadow_book_runs` append-only table is intended to retain
+daily baseline and variant book states from the same starting capital and
+market session (initial positions may differ when allocation or selection is
+the tested policy). The
+`lib/shadows/shadow-book-ledger.ts` builder refuses mixed markets, mismatched
+candidate populations, incomplete ordered session windows, missing held-name
+marks, or a gross-only cost claim. It records net cumulative book/benchmark
+returns, drawdown, turnover, the common-population hash and source-input hash.
+Its `captured` status explicitly does **not** imply a causal or statistically
+qualified result; the row carries a blocker until a program-specific paired
+replay has produced its confidence statistics.
+
+The append-only table, RLS policy, owner-scoped read grant, service-role insert,
+latest-per-market RPC, and mutation trigger are live from migration
+`20260927182158`. Production checks confirmed RLS enabled, one owner read
+policy, one append-only update/delete trigger, anon read/execute denied, and
+service-role insert/RPC execute allowed. The TypeScript builder, international
+allocation writer call, API/UI integration, and per-program adapters remain
+on the feature branch and Vercel Preview; production currently has no rows in this new snapshot table because the integration has not been released to production.
+Therefore this is not yet data collection or a completed new producer. The
+existing international-allocation attribution producer continues to write its
+separate attribution ledger. The other seven missing programs still require
+frozen adapters, market-local schedules, persisted pair history, and a
+production/UI round trip before they can be called producers.
+
 ## UI
 
 Each Upgrade Path card gains an **Attribution** section:
@@ -121,6 +220,20 @@ Each Upgrade Path card gains an **Attribution** section:
   independent-session count, turnover and drawdown delta when `measured`;
 - exact blocker when `collecting`;
 - explicit explanation when `not_attributable` or `invalid`.
+
+The card separately displays **Collection health**, supplied by the
+owner-only `/api/admin/shadow-liveness` read model. It reports market-local
+evidence freshness, the active schedule and latest recorded cron status. For
+shared label-maturation rows it marks the evidence as shared rather than
+claiming independent US/India freshness. Event-driven evidence with no
+qualifying input is `waiting_for_input`; an old event row alone is not proof of
+current health. Collection status never upgrades attribution state.
+
+The health read model uses the service-only `get_shadow_cron_health()` RPC
+(`20260926191851_shadow_cron_run_health`) to distinguish an active schedule
+from a schedule whose latest invocation failed or has gone stale. The RPC
+returns only job name, schedule, active flag and latest start/status; it is not
+granted to `anon` or `authenticated`.
 
 The page footer repeats that an observed incremental return is historical
 evidence, not a forecast. A path cannot be called beneficial from an unpaired

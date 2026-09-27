@@ -1,40 +1,48 @@
-# Time-Review Exit Policy
+# Time-Review Exit Observations
 
-Status: APPROVED FOR P0 MEASUREMENT ONLY on 2026-08-07
+Status: **P0 descriptive observations only; the old P1 comparator is retired.**
+Last reviewed: 2026-09-27.
 
-## Decision
+> **Supersession notice:** The owner removed the unconditional time stop on
+> 2026-09-10. Therefore the historical P1 baseline (“sell next session after
+> the horizon”) is no longer the incumbent policy. The old +5/+10 outcomes are
+> immutable hypothetical labels, not a comparison against current exits and not
+> portfolio P&L evidence. Scheduled collection continues only for descriptive
+> exact-horizon review observations; legacy horizon-extension cron jobs are
+> removed by migration `20260927202139` (pending production application), while
+> PositionMonitor itself remains the scheduled P0 writer.
+> The scheduled route no longer matures new P1 outcomes. Do not use old readiness counts or labels to recommend an exit
+> change. A new experiment needs its own approved architecture and a baseline
+> that matches the current score/stop/target-driven exit behavior.
+
+## Current decision
 
 Kairos must not close an otherwise healthy profitable position solely because it
-has crossed its configured holding horizon. The current horizon remains a hard
-paper/live exit until a separately governed candidate proves better. The first
-change is therefore a forward-only, append-only time-review shadow, not an exit
-change.
+has crossed its configured holding horizon. The unconditional time stop was
+removed by owner decision on 2026-09-10. The current exit system instead relies
+on its data-driven score/thesis exits and protective stop/target logic. Reaching
+the old horizon is a review checkpoint only; it does not create an incumbent
+sale decision.
 
 ## Problem
 
-`PositionMonitor` currently closes a paper position when its age is greater than
-its resolved horizon. A common ten-session plan therefore closes on session
-eleven even when the position is profitable, has fresh research support, and is
-still trending. That makes the horizon a liquidation timer rather than a review
-point. Existing exit shadows compare static stops, targets, trails, and clocks;
-they cannot reconstruct whether a specific position was healthy at its horizon.
+The original feature was designed while `PositionMonitor` still applied a
+maximum holding horizon. That exit was later removed. The old P1 experiment
+assumed it could compare the incumbent next-session exit with +5/+10-session
+holds; that comparator no longer represents what the app does. The P0 observer
+still records position state at the exact horizon, which remains useful as
+descriptive evidence about holdings and score freshness.
 
-## Product Rule
+## Active P0 contract
 
-The eventual candidate policy is a deterministic time review:
+The active observer is deterministic and descriptive only:
 
-1. Mechanical protection always wins. A protective stop, confirmed thesis/score
-   exit, target handling, or mandatory risk restriction may close first.
-2. At the configured horizon, a profitable alpha position is reviewed, not
-   automatically extended.
-3. It can be retained only when every required review input is fresh and the
-   predeclared health rule passes. A one-session dip, a stale score, or missing
-   evidence does not manufacture a positive result.
-4. Partial-profit logic remains independent: a target can take a bounded partial
-   and move the remaining stop to breakeven. It is not an excuse to keep adding
-   risk or to remove protection.
-5. A fixed maximum extension remains a safety boundary. This design never turns
-   a swing mandate into an indefinite investment.
+1. It records a position when it reaches its resolved-horizon review point.
+2. Existing score/thesis exits, stops, targets, partial exits and risk controls
+   remain independent and authoritative.
+3. The observer cannot hold, close, resize, reopen, or protect a position.
+4. A fresh score and positive review classification are descriptive facts only;
+   they do not imply an extension recommendation or return advantage.
 
 No LLM can select an extension, exit, threshold, or position quantity. LLMs may
 only explain a completed deterministic observation outside the money path.
@@ -49,16 +57,17 @@ price-only path simulations remain useful for static geometry, but are not proof
 for this policy.
 
 P0 must instead write one immutable observation at each real horizon review.
-Future close outcomes are attached only after their market sessions mature.
+The former P1 outcome-maturation design below is retained as historical context
+only; it is not active under the current policy.
 
 ## P0: Collection Only
 
 ### Trigger
 
-The existing per-market `PositionMonitor` run observes each open paper alpha
-position at exactly its resolved horizon, before the incumbent `age > horizon`
-time-stop can fire. Hedge positions are excluded. The observer must be
-best-effort and may never delay, suppress, or alter an exit.
+The existing per-market `PositionMonitor` observes each open paper alpha
+position at exactly its resolved horizon. There is no `age > horizon` exit
+branch. Hedge positions are excluded. The observer is best-effort and may never
+delay, suppress, or alter an exit.
 
 ### Immutable Review Record
 
@@ -76,11 +85,11 @@ Each review record contains:
 The record is append-only, market-local, owner-readable, and written by the
 service role only. US/USD and India/INR records are never combined.
 
-### Initial Candidate Family
+### Retired Candidate Family (Historical Design Only)
 
-The trial family is deliberately small and predeclared:
+The original, now-retired trial family was deliberately small and predeclared:
 
-- baseline: incumbent exit on the next session after the configured horizon;
+- historical baseline: incumbent sale on the next session after the configured horizon;
 - candidate A: extend five market sessions only when profitable, score is fresh,
   score is at or above the hold threshold, direction remains long, and drawdown
   from the stored high-water mark is no greater than one initial stop distance;
@@ -91,24 +100,31 @@ recorded `not_eligible`, never a synthetic healthy state. The candidate never
 widens a stop, raises a position size, reopens a name, or overrides an existing
 score/stop/target exit.
 
-## P1: Outcome Labels And Evaluation
+## Retired P1: Outcome Labels And Evaluation (Do Not Run)
 
-After five or ten completed sessions, a labeler records native-currency return,
+The historical labeler recorded native-currency return after five or ten completed sessions,
 benchmark return over exactly the same dates, excess return, maximum favourable
 and adverse excursion, and whether the candidate would have hit a mechanical
 stop. It also records whether an already-qualified replacement candidate existed
 at the review session. Replacement is an attribution field in P1; it is not
 reconstructed from future signals and does not authorize rotation.
 
-P1 compares each candidate with the incumbent by market only. It reports sample
+This P1 comparison assumed a next-session incumbent sale. That assumption is
+obsolete because the unconditional time stop was removed on 2026-09-10. Existing
+v1/v2 rows are immutable audit history; do not mature new rows or use them for
+readiness or benefit claims. Any future exit experiment requires a new approved
+architecture and a portfolio baseline matching the live score/stop/target policy.
+
+The former P1 design compared each candidate with the incumbent by market only. It reported sample
 size and distinct review sessions, costs, drawdown, turnover, raw and benchmark-
 relative returns, and false retention cases. It does not use a per-trade excess
 average to approve a rule with a different holding period; any activation needs
 an execution-faithful, market-local portfolio simulation with redeployment.
 
-## Activation Gates
+## Retired Activation Gates (Not Applicable To Current P0)
 
-No P0/P1 record changes an exit. A paper-only candidate requires all of:
+No P0 record changes an exit. The following gates applied only to the retired
+P1 candidate and are not a path to activate it:
 
 1. at least twenty distinct review sessions per market and a predeclared trial
    correction across the two extensions;
@@ -124,7 +140,7 @@ kill-switch, mandate, and protective-order gates.
 
 ## Explicit Non-Goals
 
-- no immediate modification to the `PositionMonitor` time stop;
+- no restoration of the removed unconditional time stop;
 - no LLM exit authority;
 - no automatic adaptive extension duration;
 - no cross-market/currency portfolio comparison;
@@ -149,6 +165,7 @@ kill-switch, mandate, and protective-order gates.
 1. Add the append-only review ledger and owner-only RLS.
 2. Add a pure classifier and tests for the predeclared candidate family.
 3. Add a best-effort P0 observer to PositionMonitor with no behavior change.
-4. Add outcome maturation and Upgrade Path readiness reporting.
-5. Build the execution-faithful portfolio simulator only after enough review
-   observations exist; do not activate from static candle evidence.
+4. Keep the scheduled P0 review observations descriptive; do not mature the
+   retired next-session-versus-extension labels.
+5. Require a new approved architecture before implementing any policy-specific
+   outcome or portfolio replay.

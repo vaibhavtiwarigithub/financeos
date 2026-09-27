@@ -253,6 +253,12 @@ function benchmarkReturn(bars: LabelCandle[], reviewSession: string, exitSession
   return ((exit.close - entry.close) / entry.close) * 100;
 }
 
+/**
+ * @deprecated Historical v1/v2 labeler only. Its next-session baseline ceased
+ * to represent the incumbent after the unconditional time stop was removed.
+ * The scheduled route intentionally no longer calls this function. Keep it only
+ * to preserve the exact historical method for audit/reproduction.
+ */
 export async function matureTimeReviewOutcomes(
   svc: any,
   market: ReviewMarket | null = null,
@@ -331,7 +337,7 @@ export async function matureTimeReviewOutcomes(
           mechanical_stop_hit: outcome.mechanicalStopHit,
           mechanical_stop_session: outcome.mechanicalStopSession,
           replacement_candidate_available: review.replacement_candidate_available,
-          estimated_incremental_cost_pct: 0,
+          estimated_incremental_cost_pct: outcome.estimatedIncrementalCostPct,
         });
         if (!insertError || insertError.code === "23505") inserted++;
         else skipped++;

@@ -263,7 +263,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "DST-safe 4:15 PM ET exit and stop checks (US), always after the regular close. Reviews open positions against deterministic score, stop, target, time and partial-profit rules.",
+      "DST-safe 4:15 PM ET exit and stop checks (US), always after the regular close. Reviews open positions against deterministic score, protective stop, target, and partial-profit rules; the unconditional time stop was removed on 2026-09-10.",
     handoff: "→ LearnerAgent (closed trades become learning outcomes)",
     agentRunsType: "position_monitor",
   },
@@ -407,7 +407,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "US leg of the ATR exit-stop shadow. Tests ONE predeclared hypothesis: a 2.8 ATR stop reduces premature stop-outs versus the live fixed 7.5% stop, with the target and time stop held IDENTICAL so the stop is the only varying term. Measure-only - it changes no stop, target, exit or order. Expect insufficient_evidence for months: 26 h10 dates is 2.6 independent observations against a floor of 12.",
+      "US leg of the ATR exit-stop shadow. Tests one predeclared 2.8-ATR stop against the market-local mandate stop with the target held constant. Current storage is decision-level h10 label evidence only: the h10 endpoint is not an executable exit because the unconditional time stop was removed. It is not portfolio P&L and changes no stop, target, exit or order.",
     handoff: "→ exit_stop_shadow_runs (evidence only)",
     agentRunsType: null,
   },
@@ -419,32 +419,8 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "India leg of the ATR exit-stop shadow. Proved separately from the US: India recorded ZERO target hits across 965 observations, so its exit geometry is a different regime and a US result does not transfer. Measure-only.",
+      "India leg of the ATR exit-stop shadow. Measured separately from the US. Existing rows are decision-level h10 label evidence, not portfolio P&L; the h10 endpoint is not an executable exit because the unconditional time stop was removed. Measure-only; no result transfers across markets.",
     handoff: "→ exit_stop_shadow_runs (evidence only)",
-    agentRunsType: null,
-  },
-  {
-    name: "horizon-extension-shadow-us",
-    agent: "horizon-extension-shadow",
-    time: "4:05 PM ET",
-    days: "Weekdays",
-    runner: "Supabase pg_cron → Vercel",
-    editable: false,
-    description:
-      "Measure-only. Records what the conditional horizon-extension policy WOULD have decided for every open US paper position, 10 minutes before PositionMonitor's unconditional time stop fires. Nothing reads its output; it cannot close, hold, size, or suppress an exit. Exists because ~75% of closed US lots exit on the time stop with no reference to P&L, trend or score.",
-    handoff: "→ horizon_extension_shadow (evidence only)",
-    agentRunsType: null,
-  },
-  {
-    name: "horizon-extension-shadow-india",
-    agent: "horizon-extension-shadow",
-    time: "4:35 PM IST",
-    days: "Weekdays",
-    runner: "Supabase pg_cron → Vercel",
-    editable: false,
-    description:
-      "Measure-only India leg of the horizon-extension shadow, 10 minutes before the India PositionMonitor. India's time stop currently harvests winners (66% win rate) where the US clock mostly clears weak positions, which is why the policy decides per position rather than extending globally.",
-    handoff: "→ horizon_extension_shadow (evidence only)",
     agentRunsType: null,
   },
   {

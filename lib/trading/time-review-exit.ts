@@ -2,8 +2,12 @@
 // Measure-only. No function in this file can mutate a position or place an order.
 
 import type { LabelCandle } from "@/lib/learning/label-window";
+import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 
-export const TIME_REVIEW_POLICY_VERSION = "time-review-v1";
+// v2 separates newly cost-labelled outcomes from v1 rows whose cost field was
+// hardcoded to zero. Historical v1 evidence remains immutable, but cannot be
+// counted toward the current cost-aware collection/readiness cohort.
+export const TIME_REVIEW_POLICY_VERSION = "time-review-v2";
 export const TIME_REVIEW_EXTENSIONS = [5, 10] as const;
 
 export type TimeReviewFailure =
@@ -115,10 +119,27 @@ export interface TimeReviewOutcome {
   candidateTotalReturnPct: number;
   candidateReviewReturnPct: number;
   incrementalVsBaselinePct: number;
+  estimatedIncrementalCostPct: number;
   maxFavorableExcursionPct: number;
   maxAdverseExcursionPct: number;
   mechanicalStopHit: boolean;
   mechanicalStopSession: string | null;
+}
+
+/**
+ * Estimated *difference* in sell-side friction between the extended exit and
+ * the incumbent next-session exit, in percentage points of entry notional.
+ * This is an explicit 5 bps/side model, not measured spread or executable P&L.
+ */
+export function estimateIncrementalExitCostPct(input: {
+  entryPrice: number;
+  baselineExitPrice: number;
+  candidateExitPrice: number;
+}): number | null {
+  const { entryPrice, baselineExitPrice, candidateExitPrice } = input;
+  if (!positive(entryPrice) || !positive(baselineExitPrice) || !positive(candidateExitPrice)) return null;
+  const grossIncrementalPct = ((candidateExitPrice - baselineExitPrice) / entryPrice) * 100;
+  return grossIncrementalPct * MODELED_SLIP_FRACTION;
 }
 
 /**
@@ -171,6 +192,11 @@ export function computeTimeReviewOutcome(input: {
     candidateTotalReturnPct: candidateTotal,
     candidateReviewReturnPct: pct(exit.close, reviewPrice),
     incrementalVsBaselinePct: candidateTotal - baselineTotal,
+    estimatedIncrementalCostPct: estimateIncrementalExitCostPct({
+      entryPrice,
+      baselineExitPrice: baseline.close,
+      candidateExitPrice: exit.close,
+    })!,
     maxFavorableExcursionPct: pct(maxHigh, reviewPrice),
     maxAdverseExcursionPct: pct(minLow, reviewPrice),
     mechanicalStopHit: stopSession != null,

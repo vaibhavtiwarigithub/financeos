@@ -46,6 +46,8 @@ export interface ShadowProgramDefinition {
   category: "Data" | "Scoring" | "Trading" | "Risk" | "Portfolio" | "Learning";
   /** Explicit by program: no generic return claim or implicit default is allowed. */
   attributionClass: UpgradePathAttributionClass;
+  /** Exact missing evidence contract shown until a verified producer exists. */
+  attributionBlocker?: string;
   markets: readonly ("us" | "india")[];
   purpose: string;
   productBenefit: string;
@@ -56,6 +58,8 @@ export interface ShadowProgramDefinition {
   activationGate: string;
   safetyBoundary: string;
   cronJobs: readonly string[];
+  /** Explicit per-market schedule mapping where job names do not use -us/-india suffixes. */
+  marketCronJobs?: Partial<Readonly<Record<"us" | "india", readonly string[]>>>;
   callAccounting: CallAccountingMode;
   owner: string;
   architectureRef: string;
@@ -119,7 +123,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "score-price-divergence",
     name: "Score / price divergence",
     category: "Scoring",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Measure when composite conviction and the decision-time price move persistently in opposite directions under one unchanged scoring methodology.",
     productBenefit: "Makes score drift visible on the symbol chart and turns repeated disagreement with price into structured, outcome-labelled evidence.",
@@ -202,6 +206,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Exit-geometry shadow",
     category: "Trading",
     attributionClass: "matched_replay",
+    attributionBlocker: "No portfolio replay producer exists. MFE/MAE labels lose intrabar ordering, and a fixed h10 forward return is only a label endpoint—not an executable exit now that the unconditional time stop is removed. A valid comparison must replay identical eligible entries through the current score/stop/target/trailing exit path versus each predeclared geometry, with chronological OHLC, pessimistic double-touch precedence, costs, cash/name limits, and same-market benchmark marks.",
     markets: ["us", "india"],
     purpose: "Measure what alternative stop/target geometries would have produced, before any exit rule is changed.",
     productBenefit: "Turns 'shorten the target' from a guess into a decidable question with a stated evidence threshold.",
@@ -223,29 +228,33 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "horizon-extension",
     name: "Conditional horizon extension",
     category: "Trading",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "At the exact holding horizon, record whether a healthy position qualifies for predeclared +5/+10-session holds and mature matched outcomes.",
-    productBenefit: "Tests whether the clock is exiting winners or weak positions before any holding-period rule changes.",
-    traderBenefit: "Could let strong winners run while preserving a hard maximum holding period and fail-closed vetoes.",
+    productBenefit: "Preserves exact-horizon holding-condition observations for diagnostics without implying a time-based exit is active.",
+    traderBenefit: "Shows score freshness, trend/price state and replacement availability at the old horizon checkpoint; it does not prescribe a timed sale or extension.",
     evidenceSource: "time_review_exit_observations + time_review_exit_outcomes (legacy horizon_extension_shadow excluded from readiness)",
-    currentInfluence: "Measure-only; no exit path reads this ledger.",
-    maximumInfluence: "Owner-approved, market-local exit-policy challenger bounded by the existing ceiling.",
-    activationGate: "At least 20 market sessions with exact-horizon reviews and both +5/+10 outcomes, then sealed execution-faithful replay, multiple-trial/adverse-case review and owner approval.",
+    currentInfluence: "Descriptive P0 only. The unconditional time stop was removed, so the historical next-session-exit baseline is not the current data-driven exit policy; v1/v2 +5/+10 labels are not current-policy P&L evidence.",
+    maximumInfluence: "A new, separately specified exit-policy challenger only after it declares a baseline matching the current score/stop/target policy and receives owner approval.",
+    activationGate: "No activation gate exists for the retired next-session versus +5/+10 comparison. Any replacement hypothesis requires a new approved architecture and matched portfolio replay.",
     safetyBoundary: "Cannot close, hold, size, suppress an exit, change a stop/target or create an order; missing evidence fails closed.",
-    cronJobs: ["kairos-horizon-extension-shadow-us", "kairos-horizon-extension-shadow-india"],
+    cronJobs: ["kairos-position-monitor", "kairos-position-monitor-india"],
+    marketCronJobs: {
+      us: ["kairos-position-monitor"],
+      india: ["kairos-position-monitor-india"],
+    },
     callAccounting: "zero_incremental",
     owner: "Trading / Evidence",
     architectureRef: "features/time-review-exit/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "984e02bc", enteredAt: "2026-08-11", implementationScope: "measure_only", reason: "Collect a bounded counterfactual for the dominant time-stop exit path before changing holding-period behavior." },
     reviewDate: "2026-11-01",
-    reviewNote: "Have 20 market sessions with exact-horizon reviews and both +5/+10 outcomes? If yes, run sealed replay and decide on promotion.",
+    reviewNote: "Do not promote the legacy +5/+10 labels: their next-session-sale baseline is obsolete. Any new exit-policy test needs a separately approved current-policy baseline.",
   },
   {
     id: "live-exit-ladder-parity",
     name: "Live exit ladder parity shadow",
     category: "Trading",
-    attributionClass: "paper_cohort",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Prove the live exit engine reaches parity with the paper ladder (partial target + trailing runner stop) BEFORE live_auto_enabled is ever flipped.",
     productBenefit: "Removes a silent behavioral gap: live closed a winner entirely at target and never trailed its stop, while paper banked half and protected the runner.",
@@ -268,6 +277,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "ATR exit-stop shadow",
     category: "Trading",
     attributionClass: "matched_replay",
+    attributionBlocker: "No portfolio replay producer exists. Per-decision MFE/MAE and t-statistics are not portfolio P&L; the h10 forward-return cap is not the current exit after the time stop was removed. Replay needs identical entry events and sizing, chronological OHLC, the current score/target/trailing exits plus the 2.8-ATR stop challenger, realistic costs, and complete benchmark marks.",
     markets: ["us", "india"],
     purpose: "Compare one predeclared ATR stop with the live fixed stop while holding target and time-stop rules constant.",
     productBenefit: "Separates premature stop-outs from broader exit-policy effects using paired evidence.",
@@ -290,6 +300,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Holding score-exit shadow",
     category: "Trading",
     attributionClass: "matched_replay",
+    attributionBlocker: "No portfolio replay producer exists. Current rows summarize decision-time score offsets against label returns; attribution requires the timestamped holding-score path, next executable exit prices, identical initial holdings, later entry/cash rules, costs, and market benchmarks.",
     markets: ["us", "india"],
     purpose: "Test whether fresh, session-validated holding scores identify positions that should exit, without confusing held-position reviews with entry selection.",
     productBenefit: "Makes the score-exit rule earn its place with immutable, market-local counterfactual evidence.",
@@ -311,7 +322,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "archetype-ic",
     name: "Archetype weighting IC",
     category: "Scoring",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Grade predeclared setup weighting arms against the champion composite on the same entry-eligible long observations.",
     productBenefit: "Shows whether market-local weighting improves ranking without confusing descriptive IC with promotion evidence.",
@@ -425,6 +436,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Setup expert comparison",
     category: "Scoring",
     attributionClass: "matched_replay",
+    attributionBlocker: "No portfolio replay producer exists. Expert IC and would-enter flags do not quantify portfolio impact; replay must join the same point-in-time candidate set to matured prices, apply both champion/expert rankings under identical capital, name caps, sizing and costs, then report each market separately.",
     markets: ["us", "india"],
     purpose: "Compare asset/setup-specific score formulas with the v1 actionable score on the same opportunities.",
     productBenefit: "Shows whether one universal score should eventually be replaced by setup-aware experts.",
@@ -434,7 +446,11 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     maximumInfluence: "A validated setup expert may progress through shadow, paper and owner-reviewed live stages.",
     activationGate: "Point-in-time labels, walk-forward net-of-cost validation, stable calibration and an approved promotion lifecycle.",
     safetyBoundary: "No cash, positions, proposals or orders are created from shadow_decisions.",
-    cronJobs: [],
+    cronJobs: ["kairos-research", "kairos-research-india"],
+    marketCronJobs: {
+      us: ["kairos-research"],
+      india: ["kairos-research-india"],
+    },
     callAccounting: "zero_incremental",
     owner: "Scoring / Learner",
     architectureRef: "features/scoring-methodology/FEATURE_ARCHITECTURE.md",
@@ -446,7 +462,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "technical-calibration",
     name: "Technical edge calibration",
     category: "Scoring",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Measure every registered price/volume technical edge, including the existing composite, MACD/ATR, signed ADX, momentum, breakout and relative-strength challengers.",
     productBenefit: "Prevents indicator changes from being made because they sound plausible rather than because they improve ranking.",
@@ -493,7 +509,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "specialist-feature-packs",
     name: "Specialist instrument packs",
     category: "Scoring",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Define separate data contracts for banks, REITs and leveraged ETFs rather than applying generic company fundamentals to incompatible instruments.",
     productBenefit: "Keeps instrument-specific analysis extensible without silently widening the universal five-dimension score.",
@@ -516,6 +532,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Capital rotation",
     category: "Trading",
     attributionClass: "matched_replay",
+    attributionBlocker: "No portfolio replay producer is registered. Rotation events and contract gates record decisions, not matched portfolio outcomes; replay must pair the same candidate/source book state, use exact sized buys and reconciled lots, simulate both future books with costs/tax/turnover/correlation guards, and include missed/blocked proposals without look-ahead.",
     markets: ["us", "india"],
     purpose: "Evaluate replacing the weakest sellable holding when a materially better candidate appears and the book is full or cash-constrained.",
     productBenefit: "Makes opportunity cost explicit instead of treating a full book as a permanent no-op.",
@@ -548,7 +565,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "earnings-risk",
     name: "Earnings event risk",
     category: "Risk",
-    attributionClass: "matched_replay",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Measure whether a planned swing crosses earnings and, for US names, whether the analytical stop sits inside the option-implied move.",
     productBenefit: "Adds an auditable event-risk layer without inventing a directional options signal.",
@@ -614,7 +631,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     id: "autonomous-live",
     name: "Autonomous live execution",
     category: "Trading",
-    attributionClass: "paper_cohort",
+    attributionClass: "operational_only",
     markets: ["us", "india"],
     purpose: "Dry-run the deterministic nine-gate execution kernel against qualifying signals before any autonomous broker submission is allowed.",
     productBenefit: "Proves the execution envelope and audit trail independently from broker money movement.",
@@ -637,6 +654,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Strategy challenger validation",
     category: "Learning",
     attributionClass: "paper_cohort",
+    attributionBlocker: "No portfolio-cohort producer is registered, and production currently has no active shadow_paper challenger. After one is active, baseline and challenger must share the frozen eligible candidate population, capital/capacity rules, price marks, costs, and distinct non-overlapping evaluation windows.",
     markets: ["us", "india"],
     purpose: "Validate learner-proposed challengers and route at most one passing version per market into non-executing shadow evidence.",
     productBenefit: "Turns strategy improvement into a controlled lifecycle rather than direct weight mutation.",
@@ -659,6 +677,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "Downside hedge",
     category: "Risk",
     attributionClass: "paper_cohort",
+    attributionBlocker: "No portfolio-cohort producer is registered; the hedge campaign is disabled and has no evaluation events. A valid comparison needs the frozen stress-trigger/hedge rule, contemporaneous hedge instrument prices and carry/costs, identical underlying holdings, and market-local drawdown/return paths.",
     markets: ["us"],
     purpose: "Evaluate a small, time-bounded inverse-ETF hedge when deterministic portfolio and macro stress gates agree.",
     productBenefit: "Provides a governed alternative to ad hoc discretionary hedging.",

@@ -17,7 +17,8 @@ import {
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
-import { defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
+import { benefitVerdictFromPairedAttribution, defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
+import { TIME_REVIEW_POLICY_VERSION } from "@/lib/trading/time-review-exit";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -225,7 +226,10 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
     return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   if (!row) {
-    return { state: fallback.state, comparisonType: fallback.comparison_type, reason: fallback.validity_reason ?? "No attribution evidence exists.", asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    const reason = fallback.state === "producer_missing"
+      ? program.attributionBlocker ?? fallback.validity_reason ?? "No attribution evidence exists."
+      : fallback.validity_reason ?? "No attribution evidence exists.";
+    return { state: fallback.state, comparisonType: fallback.comparison_type, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   const normalized: UpgradePathAttributionRow = {
     ...row, constraints: row.constraints ?? {},
@@ -235,7 +239,7 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
   const state = normalized.state === "measured" && !validation.valid ? "invalid" : normalized.state;
   return {
     state, comparisonType: normalized.comparison_type,
-    reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
+    reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : state === "producer_missing" ? program.attributionBlocker ?? normalized.validity_reason ?? "No verified portfolio attribution producer is registered." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
     asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
     programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,
     baselineGrossReturnPct: normalized.baseline_portfolio_return_pct, variantGrossReturnPct: normalized.variant_portfolio_return_pct,
@@ -513,11 +517,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("market,evaluated_at,run_id,would_extend,reason")
       .eq("market", market).gte("evaluated_at", since90).order("evaluated_at", { ascending: false }).limit(10000),
     svc.from("time_review_exit_observations")
-      .select("id,market,review_session,observed_at,candidate_eligible,classification")
-      .eq("market", market).gte("observed_at", since90).order("observed_at", { ascending: false }).limit(10000),
+      .select("id,market,policy_version,review_session,observed_at,candidate_eligible,classification")
+      .eq("market", market).eq("policy_version", TIME_REVIEW_POLICY_VERSION).gte("observed_at", since90).order("observed_at", { ascending: false }).limit(10000),
     svc.from("time_review_exit_outcomes")
-      .select("review_id,extension_days,incremental_vs_baseline_pct,benchmark_relative_return_pct,max_adverse_excursion_pct,mechanical_stop_hit,matured_at,time_review_exit_observations!inner(market,candidate_eligible,review_session)")
-      .eq("time_review_exit_observations.market", market).gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
+      .select("review_id,policy_version,extension_days,incremental_vs_baseline_pct,estimated_incremental_cost_pct,benchmark_relative_return_pct,max_adverse_excursion_pct,mechanical_stop_hit,matured_at,time_review_exit_observations!inner(market,candidate_eligible,review_session)")
+      .eq("time_review_exit_observations.market", market).eq("policy_version", TIME_REVIEW_POLICY_VERSION).gte("matured_at", since90).order("matured_at", { ascending: false }).limit(10000),
     svc.from("exit_stop_shadow_runs")
       .select("market,as_of_date,horizon_days,status,created_at,n_rows,n_dates,effective_observations,mean_paired_diff,paired_diff_t")
       .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(500),
@@ -765,39 +769,22 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     if (program.id === "horizon-extension") {
       const reviewDates = new Set(timeReviewObservations.map((row: any) => String(row.review_session))).size;
       const eligible = timeReviewObservations.filter((row: any) => row.candidate_eligible === true);
-      const outcomeByReview = new Map<string, Set<number>>();
-      for (const row of timeReviewOutcomes) {
-        const set = outcomeByReview.get(String(row.review_id)) ?? new Set<number>();
-        set.add(Number(row.extension_days));
-        outcomeByReview.set(String(row.review_id), set);
-      }
-      const fullyMatured = timeReviewObservations.filter((row: any) => {
-        const horizons = outcomeByReview.get(String(row.id));
-        return horizons?.has(5) && horizons.has(10);
-      });
-      const maturedDates = new Set(fullyMatured.map((row: any) => String(row.review_session))).size;
-      const usableDates = Math.min(reviewDates, maturedDates);
       const latest = timeReviewObservations[0]?.observed_at ?? horizonExtensions[0]?.evaluated_at ?? null;
-      const ready = usableDates >= 20;
-      status.lifecycle = timeReviewObservations.length ? (ready ? "ready_for_review" : "collecting") : "idle";
-      status.benefitVerdict = "insufficient";
-      status.benefitEvidence = `${timeReviewObservations.length} exact-horizon review(s) across ${reviewDates} market session(s); ${eligible.length} qualified. ${fullyMatured.length} review(s) have matched +5 and +10 outcomes across ${maturedDates} session(s).`;
-      status.progress = progress(usableDates, 20, "market sessions with exact reviews and both matured outcomes", 90);
+      status.lifecycle = timeReviewObservations.length ? "collecting" : "idle";
+      status.benefitVerdict = "operational_only";
+      status.benefitEvidence = `${timeReviewObservations.length} descriptive exact-horizon review(s) across ${reviewDates} market session(s); ${eligible.length} met the recorded review conditions. ${timeReviewOutcomes.length} historical +5/+10 label(s) are retained but are not a current-policy P&L comparison.`;
+      status.progress = progress(reviewDates, null, "market sessions with descriptive review observations", 90);
       status.calls = calls("zero_incremental", "Reuses prices, scores and risk inputs already fetched by the position-monitor flow.");
       status.latestAt = latest;
-      status.blockers = [];
-      if (reviewDates < 20) status.blockers.push(`${reviewDates}/20 exact horizon-review market sessions collected.`);
-      if (maturedDates < 20) status.blockers.push(`${maturedDates}/20 market sessions have both +5 and +10 outcomes matured.`);
-      if (ready) status.blockers.push("Execution-faithful portfolio replay, multiple-trial correction, adverse-case review and owner approval remain required.");
-      status.nextAction = ready
-        ? "Build the sealed market-local redeployment simulation; do not change the time stop from per-position averages."
-        : "Continue exact-horizon collection and daily outcome maturation.";
+      status.blockers = ["The legacy next-session exit comparator no longer matches the current data-driven exit policy because the unconditional time stop was removed; do not use v1/v2 labels as performance evidence."];
+      status.nextAction = "Keep P0 review observations descriptive. Any new holding/exit experiment must first define a distinct variant against the current score/stop/target baseline and receive an approved architecture.";
       status.details = [
-        "Version 1 compares the incumbent next-session exit with predeclared +5/+10-session candidates.",
-        "This is a counterfactual only; its output cannot hold or close a position.",
-        `${horizonExtensions.length} legacy daily one-day-extension rows are retained as historical context but excluded from readiness.`,
+        "The portfolio's unconditional time stop has been removed. Crossing the old horizon does not trigger any exit; exact-horizon rows are diagnostic observations only.",
+        "Historical v1/v2 outcomes model a hypothetical next-session sale versus +5/+10 holds, not the current data-driven baseline. They remain immutable and are excluded from attribution/readiness.",
+        "v2's modeled incremental sell friction is not measured spread or portfolio-level net P&L; it does not repair the obsolete comparator.",
+        `${horizonExtensions.length} legacy daily one-day-extension rows remain historical context only.`,
       ];
-      status.available = !timeReviewObservationRes.error && !timeReviewOutcomeRes.error;
+      status.available = !timeReviewObservationRes.error;
       return status;
     }
 
@@ -1097,7 +1084,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const readyForValidationBuild = readiness.some((row: any) => row.stage === "ready_for_validation_build");
       const reviewMilestone = readyForShadowReview || readyForValidationBuild;
       status.lifecycle = reviewMilestone ? "ready_for_review" : edgeSignals.length ? "collecting" : "idle";
-      status.benefitVerdict = reviewMilestone ? "promising" : "insufficient";
+      status.benefitVerdict = "operational_only";
       status.benefitEvidence = reviewMilestone
         ? `At least one technical edge reached ${readyForShadowReview ? "shadow review" : "validation-build review"}; no scoring change is authorized.`
         : `${edgeSignalRes.count ?? edgeSignals.length} technical edge observations in 7 days; weekly stability windows remain incomplete.`;
@@ -1178,7 +1165,6 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       const liveEnabled = rotationConfig.some((row: any) => row.book_type === "live" && row.rotation_live_proposals_enabled === true);
       const paperExecuted = rotationEvents.filter((row: any) => row.status === "paper_executed").length;
       const closedOutcomes = rotationTrades.filter((row: any) => row.closed_at != null);
-      const pnl = closedOutcomes.reduce((sum: number, row: any) => sum + Number(row.realized_pnl ?? 0), 0);
       const contractEvents = rotationEvents.filter((row: any) => Array.isArray(row.gate_results_json?.p1_blockers));
       const latestContract = [...contractEvents].sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0] ?? null;
       const latestBlockers = Array.isArray(latestContract?.gate_results_json?.p1_blockers)
@@ -1188,10 +1174,12 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       // "Ready" is evidence ready for owner review, never a promised return or
       // automatic activation. Historical paper rotations predate this contract.
       status.lifecycle = paperEnabled ? "paper_active" : p1Ready > 0 ? "ready_for_review" : rotationEvents.length ? "collecting" : "idle";
-      status.benefitVerdict = closedOutcomes.length >= 10 ? (pnl > 0 ? "promising" : "not_beneficial") : "insufficient";
+      // Individual executed lots omit the rejected replacement and rest of the
+      // portfolio path; only the matched attribution ledger may grade benefit.
+      status.benefitVerdict = "insufficient";
       status.benefitEvidence = p1Ready > 0
         ? `${p1Ready} current P1 contract(s) passed. Portfolio-versus-benchmark improvement is still unmeasured until a predeclared, matched paper replay or sufficient post-activation outcomes exist.`
-        : `${paperExecuted} historical paper rotation(s) in 45 days; ${closedOutcomes.length} closed rotation outcome(s). No trustworthy portfolio-versus-benchmark improvement estimate exists yet.`;
+        : `${paperExecuted} historical paper rotation(s) in 45 days; ${closedOutcomes.length} closed rotation outcome(s). Individual sell-lot P&L is descriptive only; no matched portfolio-versus-benchmark estimate exists yet.`;
       status.progress = progress(rotationEvents.length, null, "rotation evaluations", 45);
       status.calls = calls("zero_incremental", "Uses candidate/holding scores and prices already fetched by the paper-trade flow.");
       status.latestAt = latestIso(rotationEvents, "created_at");
@@ -1364,7 +1352,20 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         };
       }
     }
-    const withAttribution = { ...status, attribution };
+    const benefitVerdict: BenefitVerdict = attribution.comparisonType === "operational_only"
+      ? "operational_only"
+      : benefitVerdictFromPairedAttribution({
+        state: attribution.state,
+        ciLowerPct: attribution.ciLowerPct,
+        ciUpperPct: attribution.ciUpperPct,
+        independentSessions: attribution.independentSessions,
+      });
+    const benefitEvidence = attribution.state === "measured" && attribution.comparisonType !== "operational_only"
+        ? `Matched portfolio comparison: net incremental return ${attribution.netIncrementalReturnPct == null ? "unavailable" : `${attribution.netIncrementalReturnPct.toFixed(2)}%`}; benchmark-relative delta ${attribution.benchmarkRelativeIncrementalReturnPct == null ? "unavailable" : `${attribution.benchmarkRelativeIncrementalReturnPct.toFixed(2)}%`}; 95% interval ${attribution.ciLowerPct == null || attribution.ciUpperPct == null ? "unavailable" : `${attribution.ciLowerPct.toFixed(2)}% to ${attribution.ciUpperPct.toFixed(2)}%`}.`
+        : attribution.comparisonType === "operational_only"
+          ? `${status.benefitEvidence} Operational evidence only; this program has no portfolio-performance verdict.`
+          : `${status.benefitEvidence} No portfolio benefit verdict is inferred from isolated outcomes or readiness alone.`;
+    const withAttribution = { ...status, attribution, benefitVerdict, benefitEvidence };
     return { ...withAttribution, deployment: deploymentFor(withAttribution) };
   });
 }

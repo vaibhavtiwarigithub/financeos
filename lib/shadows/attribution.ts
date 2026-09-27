@@ -44,6 +44,21 @@ export interface AttributionValidation {
   reasons: string[];
 }
 
+/** A performance verdict may only come from paired portfolio attribution. */
+export function benefitVerdictFromPairedAttribution(input: {
+  state: AttributionState;
+  ciLowerPct: number | null;
+  ciUpperPct: number | null;
+  independentSessions: number | null;
+}): "promising" | "not_beneficial" | "insufficient" {
+  if (input.state !== "measured" || !Number.isInteger(input.independentSessions) || (input.independentSessions ?? 0) < 2
+    || input.ciLowerPct == null || input.ciUpperPct == null
+    || !Number.isFinite(input.ciLowerPct) || !Number.isFinite(input.ciUpperPct)) return "insufficient";
+  if (input.ciLowerPct > 0) return "promising";
+  if (input.ciUpperPct < 0) return "not_beneficial";
+  return "insufficient";
+}
+
 const EPSILON = 0.000001;
 const isFiniteNumber = (value: number | null): value is number => value != null && Number.isFinite(value);
 const hasText = (value: string | null | undefined) => typeof value === "string" && value.trim().length > 0;

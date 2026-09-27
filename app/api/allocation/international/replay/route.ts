@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { runInternationalAllocationReplay } from "@/lib/allocation/international-replay";
-import { buildInternationalAllocationAttribution } from "@/lib/allocation/international-attribution";
+import { buildInternationalAllocationAttribution, buildInternationalAllocationBookSnapshot } from "@/lib/allocation/international-attribution";
 import { writeAttributionRow } from "@/lib/shadows/attribution-writer";
+import { writeShadowBookSnapshot } from "@/lib/shadows/shadow-book-ledger";
 import { createServiceClient } from "@/lib/supabase/service";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { fetchAllPages } from "@/lib/data/fetch-all-pages";
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
   const vxus = (vxusResponse.data ?? []).map((row: { date: string; close: number | string }) => ({ date: row.date, close: Number(row.close) }));
   const result = runInternationalAllocationReplay(voo, vxus, { testWeightPct: TEST_WEIGHT_PCT, oneWayCostBps: ONE_WAY_COST_BPS });
   const attribution = buildInternationalAllocationAttribution(voo, vxus);
+  const shadowBookSnapshot = buildInternationalAllocationBookSnapshot(result);
   const configuration = {
     market: "us",
     currency: "USD",
@@ -59,6 +61,11 @@ export async function POST(req: NextRequest) {
     .update(JSON.stringify({ voo, vxus, configuration }))
     .digest("hex");
 
+  let shadowBookWrite: "inserted" | "already_present" | "collecting" = "collecting";
+  // The full path is already hashed and the daily shadow-book snapshot is
+  // persisted separately; keep the replay-run JSON bounded to summary fields.
+  const { portfolioPath: _portfolioPath, ...resultSummary } = result;
+
   const { data: persisted, error: persistError } = await supabase
     .from("international_allocation_replay_runs")
     .insert({
@@ -69,12 +76,28 @@ export async function POST(req: NextRequest) {
       matched_sessions: result.sessions,
       configuration,
       source_data_fingerprint: sourceDataFingerprint,
-      result,
+      result: resultSummary,
       trigger_source: scheduled ? "cron_authenticated" : "owner_manual",
     })
     .select("id, created_at")
     .single();
   if (persistError) return NextResponse.json({ error: persistError.message }, { status: 503 });
+
+  // Persist the source replay first so a book snapshot can never exist without
+  // its auditable input run. If this append fails, the replay run remains as
+  // evidence and the route returns an explicit retryable failure.
+  if (shadowBookSnapshot) {
+    try {
+      shadowBookWrite = await writeShadowBookSnapshot(supabase, shadowBookSnapshot);
+    } catch (error) {
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : "Shadow-book snapshot write failed",
+        replayRun: persisted,
+        attributionState: "snapshot_write_failed",
+        asOfSession: result.endDate,
+      }, { status: 503 });
+    }
+  }
 
   let attributionWrite: "inserted" | "already_present" | "collecting" = "collecting";
   if (attribution.row) {
@@ -92,7 +115,14 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     run: persisted,
-    result,
+    result: resultSummary,
+    shadowBookSnapshot: {
+      state: shadowBookSnapshot ? "captured" : "collecting",
+      write: shadowBookWrite,
+      reason: shadowBookSnapshot ? null : result.reason ?? "Matched history is still insufficient for a complete book snapshot.",
+      asOfSession: result.endDate,
+      scope: "synthetic fixed allocation; not Kairos paper/live holdings",
+    },
     attribution: {
       state: attribution.row ? "measured" : "collecting",
       write: attributionWrite,

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { canonicalize } from "@/lib/analytics/alpha-diagnostic-contract";
 import type { UpgradePathAttributionRow } from "@/lib/shadows/attribution";
-import { MIN_MATCHED_SESSIONS, runInternationalAllocationReplay, type AllocationReplayBar } from "@/lib/allocation/international-replay";
+import { buildShadowBookSnapshot, type ShadowBookSnapshotRow } from "@/lib/shadows/shadow-book-ledger";
+import { ATTRIBUTION_BLOCK_SESSIONS, MIN_MATCHED_SESSIONS, runInternationalAllocationReplay, type AllocationReplayBar } from "@/lib/allocation/international-replay";
 
 export const INTERNATIONAL_ALLOCATION_PROGRAM_VERSION = "us-voo-vxus-monthly-80-20-v1";
 export const INTERNATIONAL_ALLOCATION_BASELINE_VERSION = "us-voo-buy-hold-v1";
@@ -87,4 +88,82 @@ export function buildInternationalAllocationAttribution(
     },
   };
   return { row, reason: "Complete matched replay with independent-block uncertainty.", replay };
+}
+
+/** Daily book-level P&L snapshot for the existing fixed-allocation diagnostic. */
+export function buildInternationalAllocationBookSnapshot(
+  replay: ReturnType<typeof runInternationalAllocationReplay>,
+): ShadowBookSnapshotRow | null {
+  if (replay.status !== "completed" || !replay.startDate || !replay.endDate || replay.portfolioPath.length < MIN_MATCHED_SESSIONS) return null;
+  const first = replay.portfolioPath[0];
+  const last = replay.portfolioPath.at(-1)!;
+  const initialDate = first.date;
+  const baselineInitialState = {
+    market: "us" as const, session: initialDate, cash: 0,
+    positions: [{ symbol: "VOO", quantity: first.baselineVooUnits, costBasis: first.baselineVooCostBasis }],
+  };
+  const variantInitialState = {
+    market: "us" as const, session: initialDate, cash: 0,
+    positions: [
+      { symbol: "VOO", quantity: first.variantVooUnits, costBasis: first.variantVooCostBasis },
+      { symbol: "VXUS", quantity: first.variantVxusUnits, costBasis: first.variantVxusCostBasis },
+    ],
+  };
+  const baselineState = {
+    market: "us" as const, session: last.date, cash: 0,
+    positions: [{ symbol: "VOO", quantity: last.baselineVooUnits, costBasis: last.baselineVooCostBasis }],
+  };
+  const variantState = {
+    market: "us" as const, session: last.date, cash: 0,
+    positions: [
+      { symbol: "VOO", quantity: last.variantVooUnits, costBasis: last.variantVooCostBasis },
+      { symbol: "VXUS", quantity: last.variantVxusUnits, costBasis: last.variantVxusCostBasis },
+    ],
+  };
+  const navHistory = replay.portfolioPath.map((point) => ({
+    session: point.date,
+    baselineState: {
+      market: "us" as const, session: point.date, cash: 0,
+      positions: [{ symbol: "VOO", quantity: point.baselineVooUnits, costBasis: point.baselineVooCostBasis }],
+    },
+    variantState: {
+      market: "us" as const, session: point.date, cash: 0,
+      positions: [
+        { symbol: "VOO", quantity: point.variantVooUnits, costBasis: point.variantVooCostBasis },
+        { symbol: "VXUS", quantity: point.variantVxusUnits, costBasis: point.variantVxusCostBasis },
+      ],
+    },
+    prices: { VOO: point.vooClose, VXUS: point.vxusClose },
+    benchmarkClose: point.vooClose,
+  }));
+  const matchedDecisionIds = replay.portfolioPath.map((point) => `international-allocation:${point.date}`);
+
+  return buildShadowBookSnapshot({
+    programId: "international-allocation",
+    market: "us",
+    programVersion: INTERNATIONAL_ALLOCATION_PROGRAM_VERSION,
+    baselineVersion: INTERNATIONAL_ALLOCATION_BASELINE_VERSION,
+    sessionDate: replay.endDate,
+    windowStart: replay.startDate,
+    expectedSessions: replay.portfolioPath.map((point) => point.date),
+    independenceBlockSessions: ATTRIBUTION_BLOCK_SESSIONS,
+    baselineInitialState,
+    variantInitialState,
+    baselineState,
+    variantState,
+    navHistory,
+    turnoverNotional: last.cumulativeTurnoverNotional,
+    costModelVersion: INTERNATIONAL_ALLOCATION_COST_MODEL,
+    costsApplied: true,
+    baselineDecisionIds: matchedDecisionIds,
+    variantDecisionIds: matchedDecisionIds,
+    pointInTimeInputs: {
+      provider: "price_cache",
+      adjustedClose: true,
+      syntheticAllocation: true,
+      testWeightPct: 20,
+      oneWayCostBps: 5,
+      initialEntryCostExcludedEqually: true,
+    },
+  });
 }

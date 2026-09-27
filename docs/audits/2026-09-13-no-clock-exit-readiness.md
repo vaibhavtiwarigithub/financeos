@@ -1,5 +1,16 @@
 # No-clock exit readiness audit — 2026-09-13
 
+## Follow-up correction (2026-09-27)
+
+This dated snapshot remains historically accurate, but the redundant
+`kairos-horizon-extension-shadow-us/india` schedules are now being retired by
+`supabase/migrations/20260927202139_retire_horizon_extension_shadow_jobs.sql`.
+The endpoint returns an explicit paused response and writes no new legacy rows.
+P0 exact-horizon observations continue inside PositionMonitor; Upgrade Path
+liveness is scoped to the US and India PositionMonitor jobs and treats a market
+with no position at its exact review checkpoint as `waiting_for_input`. The
+migration is not yet applied to production in this branch.
+
 ## Scope and verdict
 
 Read-only audit of the paper no-clock exit evidence path. No exit, target, stop,
