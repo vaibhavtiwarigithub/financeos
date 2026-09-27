@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PARTIALLY IMPLEMENTED — the core attribution contract and international-allocation producer have production attribution rows. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is pushed on `codex/upgrade-path-attribution-producer` and passes Vercel Preview for commit `5137f6d6`, but is not merged or collecting in production; the production snapshot table still has zero rows. As of 2026-09-27, the retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
+Status: PARTIALLY IMPLEMENTED — the attribution ledger has three production rows, all for the synthetic international-allocation diagnostic; actual Kairos stock-paper attribution is absent. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is pushed on `codex/upgrade-path-attribution-producer` and passes Vercel Preview for commit `5137f6d6`, but is not merged or collecting in production; the production snapshot table still has zero rows. On 2026-09-27, production `execute_paper_fill` was patched by migration `20260927212341` to preserve its exact passed stop/target on entry lots; a transactional source-rewrite test was rolled back, then the migration was applied and `pg_get_functiondef` verified. This repairs a necessary input for future replay, not a portfolio producer. The retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
@@ -169,6 +169,19 @@ attribution is absent, and the other seven performance-eligible paths remain
 verified. Source data currently does not preserve enough common decision,
 position-lineage and daily-mark history to manufacture inception-to-date
 portfolio replays for those paths.
+
+**Entry-risk provenance repair (2026-09-27):** the live `execute_paper_fill`
+RPC already received the exact per-fill `p_stop_loss` and `p_price_target`, and
+used them for the new `paper_positions` row, but omitted them from the
+originating `paper_trades` row. Before repair, only 24/104 US and 38/143 India
+alpha buy lots had both levels; among entries on/after 2026-08-27, only 16/28
+US and 28/35 India lots did. Migration
+`20260927212341_capture_entry_risk_levels_for_attribution` uses exact-fragment
+guards to patch the deployed RPC without replacing its safety logic. It records
+the original levels on future entry lots only; it does not backfill historical
+NULLs or change trading behavior. A current-policy portfolio replay still needs
+chronological mark/stop history, partial-lot lineage reconciliation,
+market-local adjusted OHLC, and exact alternative policy adapters.
 
 ### Forward shadow-book snapshot ledger (production schema; preview integration, not yet collecting in production)
 
