@@ -99,7 +99,8 @@ describe("paper-trade zero-size handling (contract)", () => {
     const constructor = source.indexOf("const constructed = constructPortfolio(");
     const rotation = source.indexOf("recordCapitalRotationShadow(supabase");
     expect(branch).toBeGreaterThan(0);
-    expect(branch).toBeLessThan(constructor);
+    expect(branch).toBeGreaterThan(constructor); // after the pure call: correlation-shadow boundary forbids skips before it
+    expect(branch).toBeLessThan(source.indexOf("classifyConstructorSize(rawSizedPct)"));
     expect(branch).toBeLessThan(rotation);
     const block = source.slice(source.lastIndexOf("if (Number.isFinite(proposedSizePct) && proposedSizePct <= 0)", branch), branch + 400);
     expect(block).toContain("revertClaim(signal.id)");

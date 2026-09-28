@@ -770,6 +770,14 @@ export async function POST(req: NextRequest) {
         });
       } catch { /* shadow only — never affects the fill */ }
 
+      const constructorBook = bookByMarket.get(market) ?? [];
+      const constructed = constructPortfolio(
+        constructorBook,
+        [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
+        marketLimits
+      );
+      // (Placed after the pure constructor call: the correlation-shadow boundary test
+      // forbids any skip between the shadow and the constructor.)
       // Half-Kelly returns 0 when the calibrated model sees no positive edge. That
       // is a sizing verdict, not a capacity or cash block: the candidate is not
       // "otherwise valid and blocked only by capacity", so it must not reach the
@@ -787,12 +795,6 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const constructorBook = bookByMarket.get(market) ?? [];
-      const constructed = constructPortfolio(
-        constructorBook,
-        [{ symbol: signal.symbol, market: market as "us" | "india", proposedSizePct, sector: candSector, beta: null, dailyVol }],
-        marketLimits
-      );
       // A rejected/shrunk candidate's adjustment string carries only the
       // combined book+candidates percentage (e.g. "92.45%, cap 80%"), which
       // cannot be decomposed back into which holdings produced it once the
