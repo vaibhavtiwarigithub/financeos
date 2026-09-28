@@ -22,6 +22,17 @@ invocation exists; `price_cache` has no raw-OHLC rows so the ATR collector canno
 Production build was not run. Nothing committed, pushed, deployed, or applied; no order,
 score, threshold, or rotation setting touched. The seven performance-eligible paths
 still have no verified portfolio-level producer; the overall queue is NOT complete.
+**Migrations applied (2026-09-28, owner-approved, FinanceOS project `dionkikgdmlaotvtbnfr`):**
+`upgrade_path_producer_runs` (+ `get_upgrade_path_producer_runs_latest`, service_role-only
+execute) and `corporate_action_source_coverage` were applied via `apply_migration` and
+verified: both tables exist with RLS on, one owner-read policy each, no anon grants,
+authenticated SELECT only, service_role write; the function is executable by service_role
+only; the security advisor flags neither table. The two schedule migrations were NOT
+applied: all six weekly cron jobs already exist in production with identical schedules.
+The producer code that writes these tables is still unmerged/undeployed, so both tables
+are empty and no successful producer run exists yet. Applied under Supabase-assigned
+version stamps, not the repo filenames' stamps; align the filenames if the repo
+convention requires (see commit 3951fc19).
 
 **A0 session-integrity correction (2026-09-27):** Alpha Diagnostic Lab now
 grades canonical EOD performance rows against the exchange calendar. Intraday
