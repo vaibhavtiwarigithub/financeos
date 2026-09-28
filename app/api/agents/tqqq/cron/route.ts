@@ -13,6 +13,9 @@
 // two dedicated doors never contend for the same cron minute.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { doorQuoteForPlan, doorQuoteNote } from "@/lib/trading/leveraged-door-quote";
+import { evaluateLeveragedResearchGate, loadLatestResearchSignal } from "@/lib/trading/leveraged-door-signal";
+import { loadTradingMandate } from "@/lib/trading-mandate";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { getQuote } from "@/lib/data/quotes";
@@ -214,10 +217,21 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     symbol: String(p.symbol), marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0),
   }));
 
+  // Routed design: research must currently endorse this symbol (see lib/trading/leveraged-door-signal.ts).
+  const [{ signal: researchSignal, error: researchSignalError }, mandate] = await Promise.all([
+    loadLatestResearchSignal(supabase, "TQQQ"),
+    loadTradingMandate(supabase, "us"),
+  ]);
+  if (researchSignalError) return fail({ status: "error", reason: `research_signal_query_failed: ${researchSignalError}` });
+  const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now });
+  if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}` });
+  // Real bid/ask when the provider has one; otherwise a modeled conservative spread (paper only).
+  const doorQuote = doorQuoteForPlan({ bid: quote.bid, ask: quote.ask, price: quote.price }, tqqqQuoteTime(quote, now));
+
   const plan = planTqqqEntry({
     policy: TQQQ_POLICY,
     now,
-    quote: { bid: quote.bid ?? NaN, ask: quote.ask ?? NaN, observedAt: tqqqQuoteTime(quote, now) },
+    quote: doorQuote,
     signalAt: Date.parse(`${signalSession}T00:00:00Z`),
     lastExitAt,
     signalSession,
@@ -247,7 +261,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     p_bid: quote.bid, p_ask: quote.ask, p_spread: quote.bid && quote.ask ? quote.ask - quote.bid : null,
     p_stop_loss: plan.stop, p_price_target: plan.target,
     p_policy_version: plan.version,
-    p_rationale: `TQQQ paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)}`,
+    p_rationale: `TQQQ paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}]${doorQuoteNote(doorQuote, quote.source)}`,
   });
   if (rpcErr) {
     await reportIssue({ issueKey: "tqqq-entry-cron-failed", severity: "warn", category: "execution", title: "TQQQ paper entry RPC failed", detail: rpcErr.message }, supabase);

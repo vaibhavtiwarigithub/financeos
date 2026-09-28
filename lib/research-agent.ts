@@ -23,6 +23,7 @@ import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext 
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
 import { classifyInstrumentPolicy } from "@/lib/scoring/instrument-taxonomy";
+import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { loadInstrumentFamilyEvidence, loadOilExposureEvidence } from "@/lib/scoring/instrument-family-evidence";
 import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
 import { cryptoCompletedCandles } from "@/lib/data/crypto-session";
@@ -784,6 +785,14 @@ export async function gatherSymbols(
 
   // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
   for (const sym of watchlist.usOther) addCandidate(sym, "watchlist");
+
+  // Leveraged sleeve (SOXL/TQQQ/SQQQ/SOXS): always scored so the dedicated paper doors
+  // have a fresh research verdict to gate on. Scoring grants no trading authority here:
+  // PaperTrader still refuses these symbols (symbol-policy) and capital rotation only
+  // acts on alpha positions, so the only path to a fill is the sleeve's own door,
+  // which re-checks this signal, its own trend/liquidity/stop geometry and the 5%
+  // combined sleeve cap.
+  if (includeUs) for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate(sym, "watchlist");
 
   const screenerMax = parseInt(process.env.RESEARCH_SCREENER_MAX ?? "6");
   let screenerAdded = 0;

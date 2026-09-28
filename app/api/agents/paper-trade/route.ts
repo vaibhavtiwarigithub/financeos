@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
+import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
 import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { fetchIndiaQuote } from "@/lib/india-data";
@@ -288,6 +289,11 @@ export async function POST(req: NextRequest) {
       for (const s of signals) {
         const pol = await isSymbolBlocked(supabase, s.symbol, (s.market ?? "us") as "us" | "india");
         if (!pol.blocked) kept.push(s);
+        else if ((s.market ?? "us") === "us" && LEVERAGED_SLEEVE_SYMBOLS.has(String(s.symbol).toUpperCase())) {
+          // Routed design: research scores the leveraged sleeve, but only the dedicated
+          // doors may trade it. Say so instead of dropping the signal silently.
+          await logStage(supabase, { signal_id: s.id, symbol: s.symbol, market: "us", stage: "portfolio_constructor", outcome: "deferred", reason: "routed_to_leveraged_door", detail: { note: "generic PaperTrader and capital rotation never trade the leveraged sleeve; the dedicated door consumes this research signal" } });
+        }
       }
       signals.length = 0;
       signals.push(...kept);

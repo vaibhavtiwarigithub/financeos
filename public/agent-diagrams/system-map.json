@@ -5,23 +5,23 @@
   "nodes": {
     "SOXLCRON": {
       "label": "SOXL paper cron",
-      "description": "Owner-approved 2026-09-22 dedicated door for SOXL paper trading. Entry+mid-day window 11:00-11:14 ET, after-close monitor 16:15 ET (added 2026-09-23 after a gap was found: a single morning check only saw the partial day's range). Capacity gated by semiconductorCapacity() — 25%-of-NAV sector concentration cap using real full-book symbol_profiles.sector classification. execute_soxl_paper_fill RPC, position_role='soxl_paper'. Not routed through ResearchAgent/PaperTrader; symbol-policy.ts's leveraged/inverse block still applies to every other path.",
+      "description": "Owner-approved 2026-09-22 dedicated door for SOXL paper trading. Entry+mid-day window 11:00-11:14 ET, after-close monitor 16:15 ET (added 2026-09-23 after a gap was found: a single morning check only saw the partial day's range). Capacity gated by semiconductorCapacity() — 25%-of-NAV sector concentration cap using real full-book symbol_profiles.sector classification. execute_soxl_paper_fill RPC, position_role='soxl_paper'. Not routed through ResearchAgent/PaperTrader; symbol-policy.ts's leveraged/inverse block still applies to every other path. [2026-09-28] Scheduled via pg_cron (kairos-<sym>-entry/close-edt/close-est; the vercel.json entries never ran). Entry additionally requires a fresh session-validated deterministic long research signal >= US entry threshold (routed design); quote is real bid/ask when present else a modeled +/-10bps around the provider price (paper only).",
       "addedAt": "2026-09-22",
       "addReason": "Owner asked to enable automatic PAPER trading for SOXL with instrument-specific research, sizing, protection.",
       "status": "changed",
-      "changedAt": "2026-09-23",
-      "changeReason": "Added the after-close monitor window and real full-book sector classification (was previously blocked closed on almost every entry by an incomplete static semiconductor list).",
+      "changedAt": "2026-09-28",
+      "changeReason": "Doors never ran (not scheduled in pg_cron; entry always invalid_quote). Now scheduled, modeled quote fallback, research gate.",
       "removedAt": null,
       "removeReason": null
     },
     "TQQQCRON": {
       "label": "TQQQ paper cron",
-      "description": "Owner-approved 2026-09-23 dedicated door for TQQQ paper trading, mirroring SOXL's own cron structure exactly. Entry+mid-day window 11:20-11:34 ET (15 min after SOXL's, so the two never share a cron minute), after-close monitor 16:20 ET, shipped from day one (unlike SOXL, which only got it post-launch). Capacity gated by leveragedSleeveHeadroom() — the shared SOXL+TQQQ 5%-of-NAV ceiling, not its own independent cap. execute_tqqq_paper_fill RPC, position_role='tqqq_paper'.",
+      "description": "Owner-approved 2026-09-23 dedicated door for TQQQ paper trading, mirroring SOXL's own cron structure exactly. Entry+mid-day window 11:20-11:34 ET (15 min after SOXL's, so the two never share a cron minute), after-close monitor 16:20 ET, shipped from day one (unlike SOXL, which only got it post-launch). Capacity gated by leveragedSleeveHeadroom() — the shared SOXL+TQQQ 5%-of-NAV ceiling, not its own independent cap. execute_tqqq_paper_fill RPC, position_role='tqqq_paper'. [2026-09-28] Scheduled via pg_cron (kairos-<sym>-entry/close-edt/close-est; the vercel.json entries never ran). Entry additionally requires a fresh session-validated deterministic long research signal >= US entry threshold (routed design); quote is real bid/ask when present else a modeled +/-10bps around the provider price (paper only).",
       "addedAt": "2026-09-23",
       "addReason": "Owner: 'similar to SOXL i want the app to learn and become best at trading TQQQ' — approved after an architecture proposal (features/leveraged-etf-and-intraday-execution/FEATURE_ARCHITECTURE.md).",
-      "status": "new",
-      "changedAt": null,
-      "changeReason": null,
+      "status": "changed",
+      "changedAt": "2026-09-28",
+      "changeReason": "Doors never ran (not scheduled in pg_cron; entry always invalid_quote). Now scheduled, modeled quote fallback, research gate.",
       "removedAt": null,
       "removeReason": null
     },
@@ -49,23 +49,23 @@
     },
     "SQQQCRON": {
       "label": "SQQQ paper cron",
-      "description": "Owner-approved 2026-09-23 dedicated door for SQQQ paper trading (reverses this same feature's earlier same-day 'shadow-only, not up for reconsideration' line). Mirrors TQQQ's cron exactly. Entry+mid-day window 11:40-11:54 ET (15 min after TQQQ's), after-close monitor 16:25 ET. Capacity gated by leveragedSleeveHeadroom() — the shared 4-way ceiling. execute_sqqq_paper_fill RPC, position_role='sqqq_paper'. Buying SQQQ shares is an ordinary long position in an inverse-tracking instrument, not a short sale.",
+      "description": "Owner-approved 2026-09-23 dedicated door for SQQQ paper trading (reverses this same feature's earlier same-day 'shadow-only, not up for reconsideration' line). Mirrors TQQQ's cron exactly. Entry+mid-day window 11:40-11:54 ET (15 min after TQQQ's), after-close monitor 16:25 ET. Capacity gated by leveragedSleeveHeadroom() — the shared 4-way ceiling. execute_sqqq_paper_fill RPC, position_role='sqqq_paper'. Buying SQQQ shares is an ordinary long position in an inverse-tracking instrument, not a short sale. [2026-09-28] Scheduled via pg_cron (kairos-<sym>-entry/close-edt/close-est; the vercel.json entries never ran). Entry additionally requires a fresh session-validated deterministic long research signal >= US entry threshold (routed design); quote is real bid/ask when present else a modeled +/-10bps around the provider price (paper only).",
       "addedAt": "2026-09-23",
       "addReason": "Owner: 'Paper and live trading for th[ese, all four symbols] needs to be enabled... dont push back enable now' — explicit reversal of the standing inverse-fund refusal.",
-      "status": "new",
-      "changedAt": null,
-      "changeReason": null,
+      "status": "changed",
+      "changedAt": "2026-09-28",
+      "changeReason": "Doors never ran (not scheduled in pg_cron; entry always invalid_quote). Now scheduled, modeled quote fallback, research gate.",
       "removedAt": null,
       "removeReason": null
     },
     "SOXSCRON": {
       "label": "SOXS paper cron",
-      "description": "Owner-approved 2026-09-23 dedicated door for SOXS paper trading, mirroring SQQQ's cron exactly. Entry+mid-day window 12:00-12:14 ET (15 min after SQQQ's), after-close monitor 16:30 ET. Capacity gated by leveragedSleeveHeadroom() — the shared 4-way ceiling. execute_soxs_paper_fill RPC, position_role='soxs_paper'.",
+      "description": "Owner-approved 2026-09-23 dedicated door for SOXS paper trading, mirroring SQQQ's cron exactly. Entry+mid-day window 12:00-12:14 ET (15 min after SQQQ's), after-close monitor 16:30 ET. Capacity gated by leveragedSleeveHeadroom() — the shared 4-way ceiling. execute_soxs_paper_fill RPC, position_role='soxs_paper'. [2026-09-28] Scheduled via pg_cron (kairos-<sym>-entry/close-edt/close-est; the vercel.json entries never ran). Entry additionally requires a fresh session-validated deterministic long research signal >= US entry threshold (routed design); quote is real bid/ask when present else a modeled +/-10bps around the provider price (paper only).",
       "addedAt": "2026-09-23",
       "addReason": "Same owner reversal as SQQQCRON.",
-      "status": "new",
-      "changedAt": null,
-      "changeReason": null,
+      "status": "changed",
+      "changedAt": "2026-09-28",
+      "changeReason": "Doors never ran (not scheduled in pg_cron; entry always invalid_quote). Now scheduled, modeled quote fallback, research gate.",
       "removedAt": null,
       "removeReason": null
     },
@@ -2056,6 +2056,13 @@
       "nodeId": "ROTATION,PAPER",
       "label": "Rotation executor status made truthful; zero-size candidates no longer routed as capacity blocks; RPC bound to evaluator ledger",
       "reason": "US candidates with a zero half-Kelly size were reported as portfolio_constructor_denied / insufficient_cash_for_fractional_share (62% cash) and written to paper_missed_opportunities as below_minimum_fractional_order; they now skip as sizing_no_positive_edge before the constructor. execute_paper_rotation now requires the owner score-only key and a matching append-only planned/p1_ready rotation_events row (migration 20260928165556). Score-edge lower bound uses Student-t (was normal 1.96). Agents > Rotation shows the executor key state instead of EXECUTION MISCONFIGURED. No order, score, threshold or flag changed."
+    },
+    {
+      "date": "2026-09-28",
+      "event": "modify",
+      "nodeId": "SOXLCRON,TQQQCRON,SQQQCRON,SOXSCRON,RESEARCH,PAPER",
+      "label": "Leveraged paper doors scheduled + routed from research",
+      "reason": "0 agent_runs and 0 leveraged paper trades: schedules were vercel.json only (Hobby) and planners required a bid/ask production never has. Added 12 pg_cron jobs, modeled-spread quote fallback, research gate per door, research always scores the four symbols, PaperTrader logs routed_to_leveraged_door. Generic PaperTrader and rotation still never trade them."
     }
   ]
 }
