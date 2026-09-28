@@ -183,6 +183,27 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
 // QuarterlyRevenueGrowthYOY, 52WeekHigh, Sector, Symbol) so India stocks run
 // through the exact same computeScores path as US stocks. Missing fields are
 // left blank so the scorer falls back to its neutral baseline honestly.
+/**
+ * Return on equity from primitives Yahoo does publish for small caps when its own
+ * `financialData.returnOnEquity` is an empty object (measured 2026-09-28: 48 of 893
+ * fresh never-researched India names had ROE, so the screener's value bucket
+ * silently excluded the rest: `Number(null) > 0` is false). ROE = TTM net income to
+ * common / (book value per share x shares outstanding), i.e. period-end equity, so it
+ * is an approximation of Yahoo's figure, not an identical definition. Returns null
+ * unless every input is a finite positive-equity number and the result is plausible.
+ */
+export function deriveReturnOnEquity(input: { netIncomeToCommon: unknown; bookValue: unknown; sharesOutstanding: unknown }): number | null {
+  const ni = Number(input.netIncomeToCommon);
+  const bv = Number(input.bookValue);
+  const shares = Number(input.sharesOutstanding);
+  if (![ni, bv, shares].every((v) => Number.isFinite(v))) return null;
+  const equity = bv * shares;
+  if (!(equity > 0)) return null;
+  const roe = ni / equity;
+  // Beyond +/-10 (1,000%) the equity base is near zero or the inputs are wrong.
+  return Number.isFinite(roe) && Math.abs(roe) <= 10 ? roe : null;
+}
+
 export async function fetchIndiaOverview(
   symbol: string,
   opts: { maxAgeDays?: number; forceRefresh?: boolean } = {},
@@ -219,6 +240,12 @@ export async function fetchIndiaOverview(
     if (margin != null) ov.ProfitMargin = String(margin);
     const roe = num(fd.returnOnEquity);
     if (roe != null) ov.ReturnOnEquityTTM = String(roe);
+    else {
+      // Kept under a SEPARATE key so scoring, which reads ReturnOnEquityTTM, is
+      // unchanged; only the screen cache consumes the derived value.
+      const derived = deriveReturnOnEquity({ netIncomeToCommon: num(ks.netIncomeToCommon), bookValue: num(ks.bookValue), sharesOutstanding: num(ks.sharesOutstanding) });
+      if (derived != null) ov.ReturnOnEquityDerived = String(derived);
+    }
     const eps = num(ks.trailingEps) ?? num(pr.epsTrailingTwelveMonths);
     if (eps != null) ov.EPS = String(eps);
     const revG = num(fd.revenueGrowth);
