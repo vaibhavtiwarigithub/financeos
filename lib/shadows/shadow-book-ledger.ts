@@ -5,6 +5,8 @@ export interface ShadowBookPosition {
   symbol: string;
   quantity: number;
   costBasis: number;
+  /** Optional program-specific replay state; preserved in JSONB, never used by execution. */
+  replayState?: Record<string, unknown>;
 }
 
 export interface ShadowBookState {
@@ -23,6 +25,8 @@ export interface ShadowBookSnapshotInput {
   windowStart: string;
   /** Complete, ordered market sessions from windowStart through sessionDate. */
   expectedSessions: string[];
+  /** A one-session seed anchor has no return interval and can never be measured. */
+  seedOnly?: boolean;
   independenceBlockSessions: number;
   baselineInitialState: ShadowBookState;
   variantInitialState: ShadowBookState;
@@ -142,7 +146,8 @@ export function buildShadowBookSnapshot(input: ShadowBookSnapshotInput): ShadowB
     throw new Error("Shadow-book window or independent-block length is invalid.");
   }
   const sessions = input.expectedSessions;
-  if (sessions.length < 2 || sessions[0] !== input.windowStart || sessions[sessions.length - 1] !== input.sessionDate
+  const minimumSessions = input.seedOnly ? 1 : 2;
+  if (sessions.length < minimumSessions || sessions[0] !== input.windowStart || sessions[sessions.length - 1] !== input.sessionDate
     || sessions.some((session, i) => !/^\d{4}-\d{2}-\d{2}$/.test(session) || (i > 0 && session <= sessions[i - 1]))) {
     throw new Error("Snapshot requires the complete ordered market-session window including both endpoints.");
   }
@@ -174,6 +179,10 @@ export function buildShadowBookSnapshot(input: ShadowBookSnapshotInput): ShadowB
     || canonicalize(input.navHistory[history.length - 1].baselineState) !== canonicalize(input.baselineState)
     || canonicalize(input.navHistory[history.length - 1].variantState) !== canonicalize(input.variantState)) {
     throw new Error("Initial and final book states must exactly match the persisted replay endpoints.");
+  }
+  if (input.seedOnly && (sessions.length !== 1
+    || canonicalize(input.baselineInitialState) !== canonicalize(input.variantInitialState))) {
+    throw new Error("A seed-only snapshot must contain one session and identical baseline/variant starting books.");
   }
   const initialNav = history[0].baselineNav;
   if (Math.abs(history[0].variantNav - initialNav) > 0.000001) throw new Error("Both replay arms must start at identical initial portfolio value.");
@@ -231,6 +240,7 @@ export function buildShadowBookSnapshot(input: ShadowBookSnapshotInput): ShadowB
     cost_model_version: input.costModelVersion,
     point_in_time_inputs: pointInTimeInputs,
     blockers: [
+      ...(input.seedOnly ? ["Seed anchor only; no post-seed return interval has been observed."] : []),
       ...(independentBlocks < 2 ? ["Fewer than two complete non-overlapping return blocks; the period is still accumulating."] : []),
       "Daily P&L is descriptive only; program-specific paired replay and its confidence gates are not represented by this snapshot.",
     ],

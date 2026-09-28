@@ -1,6 +1,258 @@
 # Work Log
 
+**Independent audit pass of the Upgrade Path attribution work (Claude, 2026-09-27, local only):**
+Re-derived state from the current tree rather than prior notes. Verified locally:
+`npx tsc --noEmit` exit 0; full Vitest 400 files / 3,468 passed, 7 skipped (run
+before the edit below; focused `tests/atr-stop-forward-replay.test.ts` + `lib/shadows`
+rerun after it: pass); `git diff --check` clean. Defect fixed: the ATR replay stepper
+applied a same-session split then multiplied the dividend by the POST-split share
+count, while its own type doc says "per share held immediately before the ex-date";
+providers disagree on the convention and a wrong guess misstates cash by the split
+ratio. A held symbol with both actions in one session now fails closed
+(`atr-stop-forward-replay.ts`), with split-only, dividend-only, and refusal tests.
+Checked and found correct (no change): rotation turnover counts only
+`paper_executed` rows and the proposed turnover is the sized sell+buy notional
+(`capital-rotation.ts`, `rotation-readiness.ts`); stale `running` producer rows are
+cut off at 15 min in `app/api/upgrade-path/route.ts`; the schedule migrations preserve
+the production cadence verified 2026-09-27. Minor: the allocation-replay producer row
+hard-codes `market: "us"`. NOT verified (Supabase MCP was disconnected this session,
+so no production reads): migrations `20260927231311`, `20260928002211`, `20260928101500`,
+`20260928104500` remain unapplied/unconfirmed; no successful post-deploy producer
+invocation exists; `price_cache` has no raw-OHLC rows so the ATR collector cannot run.
+Production build was not run. Nothing committed, pushed, deployed, or applied; no order,
+score, threshold, or rotation setting touched. The seven performance-eligible paths
+still have no verified portfolio-level producer; the overall queue is NOT complete.
+
+**A0 session-integrity correction (2026-09-27):** Alpha Diagnostic Lab now
+grades canonical EOD performance rows against the exchange calendar. Intraday
+operational snapshots and holidays are excluded from the daily NAV cohort, but
+an expected regular session with no EOD row remains a hard A0 failure. This
+addresses the production US run's 2026-09-07 holiday-only row versus the genuine
+2026-09-11 missing EOD record; it does not backfill or waive the latter. The
+PositionMonitor's idempotent paper-position and portfolio reads now make two
+bounded retries on transient Supabase failures, retaining fail-closed behavior
+after exhaustion. The Upgrade Path summary now distinguishes its synthetic fixed-
+allocation diagnostic from Kairos-book attribution. Focused Alpha Diagnostic and
+retry tests (42), the full suite (3,460 passed, 7 skipped), `npx tsc --noEmit`,
+and `git diff --check` pass. Not deployed; the 2026-09-11 historical session remains unrepairable
+without contemporaneous source evidence. This does not close the larger
+attribution-producer task: seven performance-eligible paths still have no
+verified portfolio-level producer.
+
+**Production source-capability audit (2026-09-27, read-only):** The live
+database still contains only `upgrade_path_attribution_runs` and
+`upgrade_path_shadow_book_runs`; neither `upgrade_path_producer_runs` nor
+`corporate_action_source_coverage` exists. Among rows for currently held US
+and India symbols, `price_cache` has 0 rows marked `raw_ohlc` and 7,166 marked
+`adjusted`; latest held-name bars reach 2026-09-25. The local ATR stepper cannot
+consume persisted `price_cache` OHLC as executable barrier data, and its new
+corporate-action coverage contract cannot be verified in production. A future
+ATR collector must fetch and persist a raw-OHLC, action-reconciled
+market-local session series (or remain visibly blocked); it must not
+reinterpret adjusted bars as raw. Production currently has 15 paper positions
+per market, 331 US and 358 India EOD position marks covering 2026-08-17 through
+2026-09-25, 8,455 US and 2,650 India scored observations since early July, and
+rotation events through 2026-09-18 in US / 2026-09-25 in India. These histories
+do not themselves supply a complete paired portfolio replay for any of the
+seven missing programs.
+
+**ATR schedule provenance corrected (2026-09-27):** Read-only production SQL
+showed that both `kairos-exit-stop-shadow-us/india` jobs already existed and
+were active, contrary to the initial repository-only diagnosis. Both ran
+successfully on 2026-09-27 and persisted decision-level h10 rows (US: 591 rows,
+44 dates, 4.40 overlap-adjusted observations; India: 472 rows, 54 dates, 5.40
+effective observations; both correctly `insufficient_evidence`). Added a
+repository migration to capture the verified production schedule without
+changing its cadence (Sunday 04:20/04:30 UTC), and corrected the app schedule
+catalog to match. The weekly collector does not produce portfolio P&L. The
+local producer-run health migration is not applied, so producer invocation
+health remains unavailable from that ledger. Route run-health code records the
+maximum source-observation session separately from the UTC collection date.
+Verification: shadow registry/liveness, producer-run, and paired-ATR suites (40
+passed on the latest focused rerun); full Vitest (3,456 passed, 7 skipped); `npx tsc --noEmit` and
+`git diff --check` pass. Build remains unverified: the isolated Next build
+failed on the host's 4GB memory allocation during compilation.
+
+**Second scheduler audit pass (2026-09-27):** Repository-only inspection had
+suggested four missing declarations for weekly US/India Alpha Diagnostic Lab
+and archetype-IC jobs. Production SQL disproved the claim: all four jobs were
+active and their latest 2026-09-27 invocations succeeded. Added
+`20260928104500_schedule_upgrade_path_diagnostics.sql` to capture the existing
+Sunday UTC schedules in source control, with separate market parameters and
+bounded timeouts. This is evidence-collection liveness only; none produces
+matched portfolio P&L. The migration is local/unapplied, but production schedule
+existence and latest successful invocations were verified directly. A registry
+test audits every declared `kairos-*` job against repository migrations and
+`vercel.json` to make future schedule drift visible.
+
+**ATR baseline/challenger accounting adapter (2026-09-27, local only):**
+Added a pure adapter that feeds the existing daily ATR-stop stepper into the
+shared matched portfolio replay. Both arms must receive the same ordered
+market-local sessions, starting paper book, candidate entries, raw OHLC,
+corporate actions, external recorded fills, cost contract, and benchmark marks;
+any mismatch or unsupported event refuses attribution. Recorded paper fills
+are treated as already slipped (no double charge), while replay-priced exits
+retain the declared sell cost. This still has no source loader, API route,
+scheduled invocation, persistent replay result, or production verification, so
+it does not close the producer gap. Verification: paired ATR/stepper tests (23
+passed), typecheck clean, and full Vitest (3,453 passed, 7 skipped). The
+isolated Next production build failed with `memory allocation of
+4026531840 bytes failed` during compilation; its Node process was responsive
+and consuming CPU/memory before exiting, so this is an environment/build
+resource failure, not a source diagnostic. Production Supabase reads timed out
+earlier; no migrations, production data, push, or deploy were changed.
+
+**ATR replay external-fill cost correction (2026-09-27, local only):** Traced
+the paper exit contract: `PositionMonitor` calls `computeExitFillPrice()` before
+`execute_paper_exit`, and paper rotation likewise applies its modeled 5-bps
+haircut before persisting the lot fill. The ATR replay had then charged another
+5 bps on those same external ledger fills. It now treats recorded external
+prices as already-slipped; model-priced stop/target/score exits still incur the
+declared replay sell cost. Added regression assertions for proceeds and cost
+ledger. Verification: ATR replay, paper-lot event and paired replay suites
+(32 tests), `npx tsc --noEmit`, and `git diff --check` pass. No production write
+or deployment; still no stock-book attribution producer. The full suite also
+passes: 3,448 passed, 7 skipped (395 passed files, one skipped).
+
+**Attribution reporting separation (2026-09-27, local only):** The Upgrade Path
+header previously summarized operational lifecycle readiness only, so a user
+could see programs marked “Review ready” without an aggregate view showing that
+portfolio attribution still lacked producers. Added a separate API/UI summary
+for performance-eligible, measured, collecting, producer-missing, invalid, and
+operational-only paths; it explicitly states that operational “Review ready” is
+not a portfolio-P&L verdict. Added tests proving the denominator excludes
+operational-only programs and that all performance-eligible states reconcile.
+Verification: 77 focused governance/attribution tests pass, `npx tsc --noEmit`
+and `git diff --check` pass. This improves reporting only; it does not create a
+producer, add a schedule, or change production evidence. A read-only production
+SQL retry timed out, so current production counts remain unverified in this
+turn. The broader producer objective remains in progress.
+After that entry was drafted, the full Vitest suite completed: 3,448 passed,
+7 skipped across 395 passed test files and one skipped file.
+
+**Upgrade Path attribution continuation (2026-09-27):** Added invocation
+health recording to the scheduled market-local ATR-stop and holding-score-exit
+shadow collectors. Persisted calls now record program, market, trigger source,
+code version, collection status and blockers in the service-only producer-run
+ledger. The Upgrade Path API now calls a market-scoped latest-per-program SQL
+function rather than looking only at a fixed last 100 invocations, avoiding
+silent omission of infrequent programs as schedules grow. The UI shows evidence
+type, output-row count, persisted confirmation, and result-state counts. This is
+collector liveness only; both paths remain `producer_missing`
+for portfolio P&L attribution. Persisted ATR-stop requests require explicit
+`market=us|india` to prevent pooling; read-only GET behavior is unchanged.
+Producer response normalization treats empty output as blocked and never
+mistakes wall-clock `asOfDate` for an observed completed market session.
+Verification so far: focused producer-run tests (4 passed), `npx tsc --noEmit`
+clean; full Vitest suite passes (3,427 passed, 7 skipped across 392 passed test
+files and 1 skipped file); `git diff --check` clean. The isolated production
+build remains unverified because the preceding run failed from host memory
+allocation (4 GB), without a source diagnostic. No migration applied,
+production data changed, push, or deploy.
+
+**Replay-calendar foundation (2026-09-27, local only):** Added
+`expectedMarketSessionsBetween()` to the shared market calendar. It enumerates
+regular sessions across the market-specific timezone calendar, skips known
+weekends/holidays, excludes unsupported special sessions, and refuses unknown
+calendar years, invalid endpoints, and overlong windows. This closes the
+calendar-completeness primitive needed by replay producers; it is not itself a
+producer or P&L evidence. Verification: `tests/market-calendar.test.ts` (30
+passed), `npx tsc --noEmit`, and `git diff --check` pass. No production change.
+
+**Matched-replay calendar gate (2026-09-27, local only):** Wired that calendar
+into `runPairedPortfolioReplay()`. A caller can no longer pass an internally
+consistent but incomplete list of dates and receive measured attribution: the
+supplied window must now exactly equal every regular market session including
+both endpoints. Added a regression test that removes a session while keeping
+its marks/events internally aligned; the replay rejects it. Verification:
+paired replay + calendar suites (39 passed), `npx tsc --noEmit`, and
+`git diff --check` pass. This hardens all future producers but is not a
+program-specific producer or production evidence.
+
+**Corporate-action completeness prerequisite (2026-09-27, local only):** Added
+`corporate_action_source_coverage` as an append-only per-symbol/per-action
+ledger so a validated empty response is distinguishable from absent, malformed,
+stale, or failed source data. The existing collector now limits each run to five
+symbols (at most ten Alpha Vantage endpoints, still subject to the shared hard
+daily budget), validates every returned split/dividend record, processes all
+records instead of silently slicing at ten, and returns failure when event
+upserts fail. A pure validator checks the provider's response shape and original
+`fetched_at`, with tests for fresh-empty, missing, stale, and malformed cases;
+coverage batching fairly rotates by the least-recent split/dividend check.
+The migration is not applied, and no deployment has occurred. Final verification:
+full suite 3,433 passed / 7 skipped (393 test files passed, one skipped),
+`npx tsc --noEmit`, and `git diff --check` all pass. This closes a
+data-integrity prerequisite only: it does not yet certify replay-window
+coverage, implement an ATR portfolio producer, or satisfy the broader
+eligible-program attribution goal.
+
+**Liveness false-green correction (2026-09-27, local only):** The shared
+producer-run normalizer previously called any HTTP-200 response with non-empty
+`results` “collected,” even when the payload explicitly said `success:false` or
+a row was `stale`, `invalid`, `blocked`, or `error`. It now preserves usable
+`insufficient` measurement rows as collected, but marks explicit invalid/stale
+states blocked and per-row transport failures errored. Regression tests cover
+HTTP-200 failure arrays, stale rows, and per-row errors. Together with the
+corporate-action prerequisite, this improves liveness truth but does not add
+portfolio-attribution producers.
+
+Liveness regression verification: the updated producer-run and corporate-action
+coverage suites pass (12 tests), `npx tsc --noEmit` passes, and
+`git diff --check` passes after the false-green classification fix.
+
+The corporate-action migration was recreated via Supabase CLI 2.118.0
+(`supabase migration new corporate_action_source_coverage`) after discovering
+the CLI was not globally installed. Latest targeted verification after adding
+strict calendar-date validation: 13 tests pass across the two focused suites;
+TypeScript and diff checks pass. The full suite was not rerun after these latest
+test additions.
+
+**ATR seed lineage resolved (2026-09-27, local only):** the paper-exit
+migration explicitly marks each residual open lot produced by a partial exit
+with `partial_exit_lot=true`; this is reliable evidence for the replay ladder's
+`partialTaken` flag. Added `buildAtrReplaySeed`, which requires market-local
+positions/lots, exact lot-to-position quantity reconciliation, cash + marked
+position NAV reconciliation, valid persisted high-water marks, and preserves
+legacy NULL stop/target values. It fails closed on orphan/duplicate role states
+instead of guessing. Six focused tests pass, including partial-state recovery,
+legacy null levels, lot/NAV mismatches, and missing high-water marks; TypeScript
+and diff checks pass. A production aggregate recheck found 15 India / 13 US
+positions, zero invalid high-water marks, zero missing/mismatched open-lot
+groups, and confirms residual-lot markers for 8 India / 2 US positions; the
+same 8 India / 2 US still have legacy-null stop or target geometry, which the
+seed intentionally preserves. The full suite passes 3,442 tests / 7 skipped
+(394 passed files, one skipped), TypeScript and diff checks pass. This clears
+the seed partial-exit ambiguity but remains a pure adapter, not a scheduled or
+portfolio attribution producer.
+
+**Fresh replay-source audit (2026-09-27, production read-only):** current open
+alpha book is 13 US / 15 India positions. Each matched a decision observation
+on its open date; decision-time ATR14 was present for 12/13 US and 15/15 India
+rows. Current stop+target are present for 11/13 US but only 7/15 India. Cached
+price rows for these holdings reach 2026-09-25 but are tagged `adjusted`, or a
+mixture of `adjusted`/`unknown`—none can be trusted as executable raw-OHLC
+barriers. `corporate_actions` has no persisted coverage rows. This materially
+narrows the ATR producer's safe start: a current identical-book seed is
+possible, but the first post-seed replay window must certify raw bars and
+corporate-action coverage; legacy null risk levels must remain null in both
+arms, never be backfilled. The app still has no production invocation table
+because the liveness migration is local-only.
+
 | Upgrade Path liveness + complete matched attribution producers | Codex | in_progress | 2026-09-26 | Auditing every registry-declared performance-eligible program against production schedules, evidence freshness, point-in-time decision contracts, price coverage, and UI attribution. Build program-specific paired P&L producers only where a defensible baseline/variant portfolio can be reconstructed; preserve operational-only paths and do not change trading behavior or promote a strategy. |
+
+**Claude handoff prompt (2026-09-28):** wrote `docs/audits/CLAUDE_PROMPT_2026-09-28_upgrade-path-attribution-completion.md` to request an independent three-day verification and completion pass. It requires preserving the current dirty worktree, auditing code/schema/schedules/runs separately, implementing defensible per-path attribution end-to-end, and reporting remaining blockers without enabling trading or claiming unsupported gains. Prompt creation does not change the in-progress status of the underlying attribution work.
+
+**Production recheck (2026-09-27):** the attribution ledger has 3 rows and all are synthetic US international-allocation diagnostics; `upgrade_path_shadow_book_runs` has 0 rows. The international-allocation replay schedule is active, but there is no verified producer for Kairos stock-book P&L. Production has 13 US and 15 India open equity alpha positions (3 crypto positions excluded); 2 US and 8 India open positions lack current `initial_stop_loss` or `price_target`, so any seed producer must preserve them identically with null barriers and must not fabricate levels. The corporate-action table has 0 rows (no fetched timestamp), so a producer cannot certify action completeness from the persisted ledger yet. Enabled primary benchmarks are VOO (US) and ^NSEI (India). These findings keep all stock-book attribution unproven and determine the next implementation: add durable per-market producer-run health plus a market-local replay collector that seeds only from reconciled EOD marks, explicitly records action-coverage/legacy-risk gaps, and never emits a measured result until the complete paired gate passes. No production writes were made.
+
+**Producer-liveness foundation (2026-09-27, local only):** added migration `20260927231311_upgrade_path_producer_runs` for durable invocation status (`running/collected/blocked/error`) with expected/observed session, blockers, code version, trigger source and details; RLS permits owner read and only service-role writes. Integrated it with the existing international-allocation replay route and exposed latest run health separately from attribution/P&L on Upgrade Path. Added tests proving success, blocked and thrown-error outcomes persist independently of a measured result. Production read-only check confirms `kairos-international-allocation-replay-us` is active at `45 23 * * 1-5`, but `cron.job_run_details` has no invocation yet; `kairos-international-allocation-shadow` last succeeded 2026-09-21. The invocation ledger is not yet applied/deployed and does not create producers for the seven other eligible paths. Verification: `npx tsc --noEmit`, `git diff --check`, full suite 3,425 passed / 7 skipped. Isolated Next production build failed in the build tool with `memory allocation of 4026531840 bytes failed`; build remains unverified. No production writes, score/position/config changes, push or deployment.
+
+**Continuation (2026-09-27):** kept the goal in progress after confirming the ATR code was only a replay core and not a producer. Added a market-neutral Yahoo chart v8 raw-replay source adapter that requests raw OHLC plus split/dividend events in one response, validates candle geometry/session order, and refuses malformed provider output. Extended the ATR stepper to apply split ratios to share count, basis and price barriers, credit explicitly gross dividend cash, and leave its prior anchor unmutated; tax/withholding remains unmodeled and is disclosed, so this is not an after-tax result. Re-ordered explicit non-mechanical sales after same-session entries (without exposing a new lot to earlier intraday highs/lows) and surfaced unmatched sell quantity for reconciliation rather than silently dropping it. Focused tests pass (32/32 across raw source, ATR replay, and snapshot ledger), `npx tsc --noEmit` and `git diff --check` pass; the full suite passes 3,415 tests / 7 skipped. Read-only production inspection confirms 13 open US and 14 open India equity positions, separate US/India paper books, and paper_trades is a lot ledger (exits are captured on original buy lots via exit_at/exit_price, with residual lots on partials), not a sell-event table. No code is committed or deployed, no route or schedule exists for these new components, and no stock-paper attribution row is produced. Seven non-allocation eligible paths remain without verified portfolio-level producers; international allocation is synthetic, not Kairos stock-book performance. Next implementation is the owner-only, market-local producer with persisted replay state, reconciliation to the lot ledger and live baseline, raw-bar/action reconciliation, snapshot+attribution writes, plus a scheduled/UI round trip; unresolved tax, action, source, or lot gaps remain blockers—not return estimates.
+
+**ATR forward replay progress (2026-09-27, local only):** added a pure session-step engine for the predeclared 2.8×ATR stop challenger and JSONB encode/decode of its full per-position trailing/target state through the existing append-only shadow-book contract. Review caught and fixed a material mismatch: production paper exits use OHLC high/low only for US, India uses close-only checks, and stop fills use the existing `paperStopFillPrice(close, stop)` contract; replay now mirrors those semantics and rejects malformed entry-time stop/target geometry. The replay also mirrors the deployed paper RPC's pyramiding behavior: additional fills update weighted average and quantity without resetting original risk levels or high-water state. Added an explicit one-session identical-book seed-anchor mode to the descriptive snapshot builder; it records zero return/zero independent blocks and a visible seed-only blocker, never a measured result. Production read-only inspection confirms `decision_observations.features.technical.atr14` is available through signal lineage, but sampled Sep 22–25 fills predate the risk-level provenance migration and still have NULL `paper_trades.stop_loss/take_profit`; no post-migration buy fill has yet been observed. A second provenance defect is now confirmed in code: Yahoo `price_cache` writers use adjusted close with raw open/high/low. The ATR replay explicitly rejects any source not certified as `raw_ohlc`; its producer must fetch a coherent raw OHLC series and must model or fail closed on corporate actions before using those bars. Production `corporate_actions` currently has zero rows, so it cannot yet prove action-free windows. Focused tests pass (ATR replay 12/12, shadow-book ledger 8/8), TypeScript and `git diff --check` pass. **Still not a producer:** no route, scheduled replay, durable per-session source/cost reconstruction, production snapshot, or attribution row has been implemented or verified; no production writes, push, or deploy occurred.
+
+**ATR replay ordering hardening (2026-09-27, local only):** entry and sale adapters now retain the exact fill timestamp. The stepper validates timestamp-to-market-session consistency, orders fills deterministically, rejects sales that precede/interleave same-session entries, and refuses same-session cases where an external sale competes with an OHLC-detected stop/target because daily bars cannot reveal intraday ordering. Focused tests pass (21/21); full suite passes (3,423 passed / 7 skipped); `npx tsc --noEmit` and `git diff --check` pass. Read-only production verification: `upgrade_path_attribution_runs` has 3 rows, all synthetic US `international-allocation` diagnostics; `upgrade_path_shadow_book_runs` exists but has 0 rows; no attribution/shadow-book cron job exists. Thus the ledger is not literally empty, but there is still no verified stock-book attribution producer or schedule. Work remains in progress; no commit, push, schema write, or deployment.
+
+**Production release update (2026-09-27):** merged PR #17 as `afc7c282`; Vercel production deployment is `READY`. Applied `20260927214157_retire_horizon_extension_shadow_jobs` only after deployment; production query confirms the two obsolete comparator crons are absent. The attribution shadow-book writer/UI is now deployed and scheduled through the international-allocation replay, but the table had zero rows at the Sunday check; first post-release run is due Monday 2026-09-28 23:45 UTC. This does not resolve actual Kairos paper-book P&L attribution: only three synthetic international-allocation ledger rows exist, and seven performance-eligible programs still lack verified policy-specific producers. Overall task remains in progress.
 
 **Continuation status (2026-09-27):** This task is still in progress; the earlier “completed” producer entry below covers only international allocation and must not be read as completion of the whole queue. Fixed a false liveness condition for the retired horizon comparator: exact-horizon P0 evidence is event-driven, while market-local PositionMonitor schedules are checked independently. Paused the obsolete endpoint so it cannot append evidence against the removed time-stop baseline, and drafted an idempotent migration to unschedule only its two legacy jobs after the code release. Production recheck confirms legacy cron jobs 123/124 remain active and both US/India PositionMonitor jobs remain active; the migration must be sequenced after code deployment. Full local suite passes (3,394 passed / 7 skipped), `npx tsc --noEmit` and `git diff --check` pass. The isolated Next build grew beyond 5 GB without output and was stopped; build is unverified. Production coverage recheck: 100,124 cached bars / 380 symbols (2021-07-26–2026-09-25), but decision observations only span 72 US sessions and 71 India sessions; entry-eligible, non-holding observations span 63 US and 71 India sessions. This is short of the two 63-session independent blocks required for a measured replay, but does not excuse missing forward producers. The production attribution ledger remains three synthetic international-allocation rows; seven eligible programs still have no verified portfolio-level producer. No trading behavior or settings changed.
 

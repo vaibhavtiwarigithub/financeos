@@ -24,6 +24,35 @@ function input(): ShadowBookSnapshotInput {
 }
 
 describe("shadow book daily ledger", () => {
+  it("allows an explicit one-session seed anchor without claiming a return interval", () => {
+    const state = { market: "us" as const, session: "2026-08-03", cash: 500, positions: [{ symbol: "ABC", quantity: 5, costBasis: 100 }] };
+    const unequalSeed = { ...state, cash: 400, positions: [{ symbol: "ABC", quantity: 6, costBasis: 100 }] };
+    const seed = buildShadowBookSnapshot({
+      programId: "exit-stop-shadow", market: "us", programVersion: "atr-2.8-forward-v1", baselineVersion: "fixed-stop-v1",
+      sessionDate: state.session, windowStart: state.session, expectedSessions: [state.session],
+      independenceBlockSessions: 63, baselineInitialState: state, variantInitialState: state,
+      baselineState: state, variantState: state,
+      navHistory: [{ session: state.session, baselineState: state, variantState: state, prices: { ABC: 100 }, benchmarkClose: 500 }],
+      turnoverNotional: 0, costModelVersion: "fixed-sell-5bps-v1", costsApplied: true,
+      baselineDecisionIds: ["seed:ABC"], variantDecisionIds: ["seed:ABC"], pointInTimeInputs: { seedOnly: true }, seedOnly: true,
+    });
+    expect(seed.baseline_cumulative_return_pct).toBe(0);
+    expect(seed.variant_cumulative_return_pct).toBe(0);
+    expect(seed.independent_blocks).toBe(0);
+    expect(seed.blockers).toContain("Seed anchor only; no post-seed return interval has been observed.");
+
+    expect(() => buildShadowBookSnapshot({
+      programId: "exit-stop-shadow", market: "us", programVersion: "atr-2.8-forward-v1", baselineVersion: "fixed-stop-v1",
+      sessionDate: state.session, windowStart: state.session, expectedSessions: [state.session],
+      independenceBlockSessions: 63, baselineInitialState: state,
+      variantInitialState: unequalSeed,
+      baselineState: state, variantState: unequalSeed,
+      navHistory: [{ session: state.session, baselineState: state, variantState: unequalSeed, prices: { ABC: 100 }, benchmarkClose: 500 }],
+      turnoverNotional: 0, costModelVersion: "fixed-sell-5bps-v1", costsApplied: true,
+      baselineDecisionIds: ["seed:ABC"], variantDecisionIds: ["seed:ABC"], pointInTimeInputs: { seedOnly: true }, seedOnly: true,
+    })).toThrow(/identical baseline\/variant starting books/);
+  });
+
   it("records same-capital market-local net P&L and reports early windows as collecting", () => {
     const row = buildShadowBookSnapshot(input());
     expect(row.initial_nav).toBe(1000);
