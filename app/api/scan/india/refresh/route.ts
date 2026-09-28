@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchNseEquityList } from "@/lib/nse-data";
-import { indiaScreenUniverse } from "@/lib/india-universe";
+import { indiaScreenUniverse, orderUniverseForRefresh } from "@/lib/india-universe";
 import { fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { fetchUpstoxBulkQuotes, applyPrefilter } from "@/lib/data/upstox-bulk";
 import { computeTechnicals } from "@/lib/data/technicals";
@@ -53,14 +53,7 @@ export async function POST(req: NextRequest) {
     const scoredAt = new Map<string, string>();
     for (const r of cachedRows ?? []) scoredAt.set(r.symbol, r.scored_at);
 
-    const ordered = [...universe].sort((a, b) => {
-      const ta = scoredAt.get(a);
-      const tb = scoredAt.get(b);
-      if (ta == null && tb == null) return 0;
-      if (ta == null) return -1;             // never-scored first
-      if (tb == null) return 1;
-      return ta.localeCompare(tb);           // oldest scored_at next (ISO sorts lexically)
-    });
+    const ordered = orderUniverseForRefresh(universe, scoredAt, new Date().toISOString().slice(0, 10));
 
     // ── Upstox eligibility prefilter (additive tier) ────────────────────────
     // This run can afford ~MAX_PER_RUN Yahoo symbol-fetches against a ~2,376-name

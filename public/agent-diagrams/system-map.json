@@ -918,6 +918,12 @@
     {
       "date": "2026-09-28",
       "event": "changed",
+      "nodeId": "RESEARCH",
+      "label": "India screen-cache refresh now rotates its nightly 600-name slice (per-day hash tie-break) instead of taking NSE list order, which had left R-Z (about 1,000 instruments, incl. SDBL) permanently unscreened; candidate read paginated. No trade path changed."
+    },
+    {
+      "date": "2026-09-28",
+      "event": "changed",
       "nodeId": "EXITSTOP",
       "label": "ATR forward paired shadow book (US) added: seeds identical baseline/variant books from the paper book and appends daily snapshots; corporate-action coverage from Massive. Measure-only; India refused (no corporate-action source); no attribution row until two non-overlapping blocks exist."
     },

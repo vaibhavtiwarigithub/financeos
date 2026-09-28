@@ -33,6 +33,37 @@ export const NIFTY_NEXT_50: string[] = [
   "LODHA.NS", "TIINDIA.NS", "CGPOWER.NS", "POLYCAB.NS", "ABB.NS",
 ];
 
+function fnv1a(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Order the full NSE list for the nightly screen-cache refresh: never-scored names
+ * first, then oldest scored_at. Ties are broken by a per-day hash, NOT by input
+ * order. The NSE file is sorted by symbol and the previous comparator returned 0
+ * for two never-scored names, so the stable sort left them alphabetical and every
+ * run's 600-name slice started at A. Measured 2026-09-28: cached names by first
+ * letter ran A 238/267 ... P 104/147, then R 2/112, S 6/347, T 9/137, V 2/85, so
+ * SDBL and most of R-Z were never screened, never researched. The seed changes
+ * daily so the slice walks a different part of the list each night.
+ */
+export function orderUniverseForRefresh(universe: string[], scoredAt: Map<string, string>, seed: string): string[] {
+  const tie = (symbol: string) => fnv1a(`${seed}|${symbol}`);
+  return [...universe].sort((a, b) => {
+    const ta = scoredAt.get(a);
+    const tb = scoredAt.get(b);
+    if (ta == null && tb != null) return -1;
+    if (ta != null && tb == null) return 1;
+    if (ta != null && tb != null && ta !== tb) return ta.localeCompare(tb);
+    return tie(a) - tie(b) || a.localeCompare(b);
+  });
+}
+
 // ~NIFTY-100 union — the India Scanner's screen universe.
 export function indiaScreenUniverse(): string[] {
   return [...new Set([...NIFTY_50, ...NIFTY_NEXT_50])];

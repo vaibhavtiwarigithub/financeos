@@ -1,4 +1,5 @@
 import { callLLM, REASONING_MIN_TOKENS } from "@/lib/llm-router";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { getConfiguredModel } from "@/lib/agent-model-config";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory";
@@ -1054,13 +1055,16 @@ async function fetchIndiaScreenCandidates(svc: any, limit: number): Promise<stri
     // (from a missed nightly refresh) would otherwise be surfaced as current
     // discoveries. scored_at is the cache's discovery/scoring timestamp.
     const freshCutoff = new Date(Date.now() - INDIA_FRESHNESS_HOURS * 3600_000).toISOString();
-    const { data } = await svc
+    // Paginated and ordered: an unordered `.limit(1500)` is silently capped at the
+    // PostgREST server maximum (1000), so on a 1,700-row cache the ranking below
+    // was computed over an arbitrary ~60% of it.
+    const rows: any[] = await fetchAllRows<any>((from, to) => svc
       .from("india_screen_cache")
       .select("symbol, pe, rsi, above_ma50, roe")
       .not("symbol", "is", null)
       .gte("scored_at", freshCutoff)
-      .limit(1500);
-    const rows: any[] = data ?? [];
+      .order("symbol", { ascending: true })
+      .range(from, to), "india screen cache candidates");
     if (!rows.length) return [];
     const momentum = rows
       .filter(r => Number(r.rsi) > 60 && r.above_ma50 === true)
