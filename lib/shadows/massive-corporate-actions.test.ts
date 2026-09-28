@@ -31,9 +31,25 @@ describe("Massive corporate-action normalization", () => {
     expect(normalizeMassiveActions("split", { status: "OK" })).toBeNull();
     expect(normalizeMassiveActions("dividend", { status: "OK", results: [], next_url: "https://x/next" })).toBeNull();
     expect(normalizeMassiveActions("split", { status: "OK", results: [{ execution_date: "2024-06-10", split_from: 0, split_to: 10 }] })).toBeNull();
-    expect(normalizeMassiveActions("dividend", { status: "OK", results: [
-      { ex_dividend_date: "2026-08-10", cash_amount: 0.2 }, { ex_dividend_date: "2026-08-10", cash_amount: 0.1 },
+    expect(normalizeMassiveActions("split", { status: "OK", results: [
+      { execution_date: "2024-06-10", split_from: 1, split_to: 2 }, { execution_date: "2024-06-10", split_from: 1, split_to: 3 },
     ] })).toBeNull();
+  });
+
+  it("sums two cash dividends on one ex-date into a single entitlement", () => {
+    const out = normalizeMassiveActions("dividend", { status: "OK", results: [
+      { ex_dividend_date: "2026-08-25", cash_amount: 0.264928 }, { ex_dividend_date: "2026-08-25", cash_amount: 0.185338 }, { ex_dividend_date: "2026-06-03", cash_amount: 0.134891 },
+    ] });
+    expect(out?.data).toHaveLength(2);
+    expect(out?.data[0]).toEqual({ ex_dividend_date: "2026-08-25", amount: expect.closeTo(0.450266, 6) });
+    expect(assessCorporateActionPayload({ kind: "dividend", payload: out, providerFetchedAt: fetched, now }).status).toBe("complete");
+  });
+
+  it("a non-numeric amount on a duplicate date still fails validation", () => {
+    const out = normalizeMassiveActions("dividend", { status: "OK", results: [
+      { ex_dividend_date: "2026-08-25", cash_amount: 0.2 }, { ex_dividend_date: "2026-08-25", cash_amount: "x" },
+    ] });
+    expect(assessCorporateActionPayload({ kind: "dividend", payload: out, providerFetchedAt: fetched, now }).status).toBe("invalid");
   });
 
   it("a non-positive dividend is flagged invalid by the shared assessor, not silently accepted", () => {

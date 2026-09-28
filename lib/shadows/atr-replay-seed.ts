@@ -88,7 +88,10 @@ export function buildAtrReplaySeed(input: {
     const initialStop = positive(row.initial_stop_loss);
     const target = positive(row.price_target);
     const high = positive(row.highest_price);
-    if (high == null || high + 1e-8 < currentPrice) {
+    // highest_price is a 2-decimal numeric while current_price can carry float
+    // noise (AAPL 2026-09-25: 341.07 vs 341.0700073); half a cent is the rounding
+    // of the stored high-water mark, so anything inside it is equal, not below.
+    if (high == null || high + Math.max(0.005, currentPrice * 1e-6) < currentPrice) {
       throw new Error(`Position ${symbol} lacks a valid high-water mark at or above its current mark.`);
     }
     positions.push({

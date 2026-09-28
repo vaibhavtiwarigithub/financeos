@@ -66,4 +66,17 @@ describe("buildAtrReplaySeed", () => {
       positions: [{ ...base.positions[0], highest_price: "9" }],
     })).toThrow("high-water mark");
   });
+
+  it("treats a stored high-water mark that equals the mark up to float noise as valid, but not a real shortfall", () => {
+    const seeded = buildAtrReplaySeed({
+      ...base,
+      positions: [{ ...base.positions[0], current_price: "11.0000073", highest_price: "11" }],
+      reportedNav: "160.000073",
+    });
+    expect(seeded.book.positions[0].highestPrice).toBe(11);
+    expect(() => buildAtrReplaySeed({
+      ...base,
+      positions: [{ ...base.positions[0], current_price: "11.02", highest_price: "11" }],
+    })).toThrow("high-water mark");
+  });
 });
