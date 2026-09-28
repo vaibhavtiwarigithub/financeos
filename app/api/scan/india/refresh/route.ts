@@ -123,7 +123,9 @@ export async function POST(req: NextRequest) {
             ema50: tech.ema50,
             above_ma50: aboveMa50,
             profit_margin: num(ov?.ProfitMargin),
-            roe: num(ov?.ReturnOnEquityTTM),
+            // Yahoo's own ROE when it publishes one; else the derived approximation
+            // (net income / book equity) so small caps are not silently ROE-less.
+            roe: num(ov?.ReturnOnEquityTTM) ?? num(ov?.ReturnOnEquityDerived),
             rev_growth: num(ov?.QuarterlyRevenueGrowthYOY),
             sector: ov?.Sector ?? null,
             scored_at: new Date().toISOString(),
