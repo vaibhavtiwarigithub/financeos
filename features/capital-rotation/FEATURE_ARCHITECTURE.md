@@ -2,7 +2,25 @@
 
 > Status: **P0 shadow and gated P1 paper executor built; execution readiness remains unproven.** Live rotation is unbuilt. Historical rollout notes below do not supersede this status.
 > Scope: deterministic opportunity-cost reallocation for PAPER first, LIVE approval proposals later.
-> Last updated: 2026-09-25
+> Last updated: 2026-09-28
+
+## Activation keys and verified production state (2026-09-28)
+
+**An enabled switch is not an executed rotation.** A paper swap needs ALL of:
+
+1. `rotation_config.rotation_paper_execute_enabled` (per market, paper book) - ON in both markets since 2026-09-28.
+2. Deployment gate `CAPITAL_ROTATION_PAPER_ENABLED === "true"` - present in the production project; `Agents > Rotation` reports the running deployment's effective value.
+3. Owner key `rotation_allow_score_only_paper` - **OFF in both markets.** The executor refuses before reading the book, and (since migration `20260928165556`) the RPC refuses too. No benchmark-alpha edge path exists, so every current swap is score-based; with this key closed the executor cannot run even if P1 passes. Opening it is a deliberate owner decision, made only after the evidence gate passes, not a config repair.
+4. A passing P1 readiness contract for the exact source/candidate/size, no older than 60 s.
+5. In the RPC: a matching append-only `rotation_events` row (`planned`, `p1_ready=true`, same market/signal/source/buy notional, <120 s old). `p_gate_json` is caller-supplied, so it alone no longer authorizes a swap (`rotation_ledger_binding_v1`).
+
+**Verified state 2026-09-28 (production `dionkikgdmlaotvtbnfr`):** executor inert (key 3 closed); P1 blocked in both markets. Reproduced independently in SQL with the evaluator's own pairing rule (candidate vs holding on the same session, edge >= 12, latest observation per symbol/session, one observation per horizon block): at the 10-session horizon the US has 38 distinct sessions but **4 independent**, mean edge -1.37%, t -1.26; India 40/4, -2.07%, t -0.96 (the 5-session view is also negative in both: -0.54%/-0.52%). This is a measured negative edge on an immature sample, not a data defect. The earlier "US has zero pairs" reading (2026-09-18 events) predates the 2026-09-22 holding-classification fix; the current US cohort has 8,387 matched pairs. India's remaining P1 blocker on its latest event is the mapping alone (turnover, lot, post-swap, correlation and persistence cleared).
+
+**Rotation is currently unreachable in practice, correctly.** The owner-approved consolidation on 2026-09-28 left 8 US / 7 India open names with 62% / 52% cash, so the name cap, sector cap and constructor gross cap no longer bind. US candidates stopped reaching rotation after 2026-09-18 because their half-Kelly size is 0 (no calibrated edge): that is a sizing verdict, not a capacity block. It is now logged as `sizing_no_positive_edge` instead of `portfolio_constructor_denied` / `insufficient_cash_for_fractional_share`, and no longer writes a `below_minimum_fractional_order` row to the missed-entry ledger (8 mislabelled US rows on 2026-09-28).
+
+**Statistics correction:** the score-edge lower confidence bound used the normal 1.96 multiplier while its comment called it conservative; at the 20-session floor the exact Student-t multiplier is 2.093. The gate now uses Student-t (never below the exact value). This can only make the gate stricter.
+
+**Minimum to pass, per market:** >= 20 independent horizon blocks (10-session horizon: ~200 labelled sessions of the same cohort; the current cohort has 38-40) AND a positive Student-t lower bound on the matched candidate-minus-holding return, net of friction. At the current sample's mean the lower bound is negative, so more sessions alone will not pass it unless the true edge is positive. Design options if the owner wants a faster verdict: evaluate a shorter horizon (5 sessions has 9 independent blocks, still negative), or pool markets (forbidden: rotation is market-local). Do not lower the 20-block floor.
 
 ## Approved correction — capacity and evidence integrity (2026-09-25)
 

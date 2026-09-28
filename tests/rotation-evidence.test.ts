@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasExactPaperTaxLot, summarizeRotationScoreEdgeEvidence, type RotationScoreOutcome } from "@/lib/trading/rotation-evidence";
+import { hasExactPaperTaxLot, studentTCritical975, summarizeRotationScoreEdgeEvidence, type RotationScoreOutcome } from "@/lib/trading/rotation-evidence";
 
 function outcomes(sessionCount: number, advantage = 0.02): RotationScoreOutcome[] {
   const rows: RotationScoreOutcome[] = [];
@@ -26,6 +26,32 @@ describe("rotation score-edge evidence", () => {
     expect(result.status).toBe("validated");
     expect(result.lowerConfidenceEdgePct).toBeGreaterThan(0);
     expect(result.meanEdgePct).toBeCloseTo(2, 8);
+  });
+
+  it("uses a Student-t bound: a t≈2.03 sample that the normal 1.96 bound would pass is refused", () => {
+    // 20 independent sessions, edges 1.4% ± 3%: t = 2.03 < t(0.975, 19) = 2.093.
+    const rows: RotationScoreOutcome[] = [];
+    for (let i = 0; i < 20; i++) {
+      const date = new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10);
+      rows.push(
+        { sessionDate: date, observedAt: `${date}T14:00:00Z`, symbol: `C${i}`, role: "candidate", score: 80, forwardReturn: 0.014 + (i % 2 ? 0.03 : -0.03) },
+        { sessionDate: date, observedAt: `${date}T14:00:00Z`, symbol: `H${i}`, role: "holding", score: 60, forwardReturn: 0 },
+      );
+    }
+    const result = summarizeRotationScoreEdgeEvidence(rows, { minScoreEdge: 12, horizonDays: 1, requiredIndependentSessions: 20 });
+    expect(result.independentSessions).toBe(20);
+    expect(result.tStatistic).toBeGreaterThan(1.96);
+    expect(result.tStatistic).toBeLessThan(2.093);
+    expect(result.lowerConfidenceEdgePct).toBeLessThanOrEqual(0);
+    expect(result.status).toBe("not_positive");
+  });
+
+  it("t critical values are never below the exact value and fail closed on invalid df", () => {
+    expect(studentTCritical975(19)).toBe(2.093);
+    expect(studentTCritical975(35)).toBeGreaterThanOrEqual(2.03);
+    expect(studentTCritical975(500)).toBeGreaterThanOrEqual(1.96);
+    expect(studentTCritical975(0)).toBe(Number.POSITIVE_INFINITY);
+    expect(studentTCritical975(Number.NaN)).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("fails a negative score-edge mapping even after enough sessions", () => {

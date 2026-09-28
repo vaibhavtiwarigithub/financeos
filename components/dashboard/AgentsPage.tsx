@@ -529,11 +529,20 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap", marginBottom: "18px" }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: "14px" }}>Capital Rotation Readiness · {market === "india" ? "India" : "US"}</div>
-              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px" }}>Shadow evidence only. PositionMonitor still owns exits and rotation cannot move paper or live money.</div>
+              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px" }}>Paper-only. PositionMonitor still owns exits; a swap needs the DB flag, deployment gate, owner score-only key and a passing P1 contract. Live rotation is unbuilt.</div>
             </div>
-            <div style={{ color: rotationStatus?.executionEnabled ? T.red : T.green, fontSize: "12px", fontWeight: 700 }}>
-              {rotationStatus?.executionEnabled ? "EXECUTION MISCONFIGURED" : "EXECUTION LOCKED OFF"}
-            </div>
+            {(() => {
+              // The DB flag alone is not "enabled": the executor needs three keys and P1 evidence.
+              const s = rotationStatus;
+              const label = !s ? "STATUS UNAVAILABLE"
+                : !s.liveRotationOff ? "LIVE ROTATION FLAG ON — MISCONFIGURED"
+                : s.executor === "disabled" ? "PAPER EXECUTION OFF"
+                : s.executor === "keys_missing" ? "PAPER SWITCH ON · EXECUTOR INERT (KEY CLOSED)"
+                : s.executor === "armed_blocked" ? "PAPER ARMED · EVIDENCE-BLOCKED"
+                : "PAPER ARMED · P1 READY";
+              const color = !s ? T.muted : !s.liveRotationOff ? T.red : s.executor === "armed_ready" ? T.amber : s.executor === "disabled" ? T.green : T.amber;
+              return <div style={{ color, fontSize: "12px", fontWeight: 700 }}>{label}</div>;
+            })()}
           </div>
           {rotationStatus ? (
             <>
@@ -544,6 +553,11 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
                   ["Independent runs", rotationStatus.distinctRuns],
                   ["P1-ready rows", rotationStatus.p1ReadyCount],
                   ["Legacy rows", rotationStatus.incompleteLegacyCount],
+                  ["Paper swaps executed", rotationStatus.paperExecutedCount],
+                  ["DB paper flag", rotationStatus.keys.dbExecuteFlag ? "On" : "Off"],
+                  ["Deployment gate", rotationStatus.keys.deploymentGate ? "Open" : "Closed"],
+                  ["Score-only key", rotationStatus.keys.scoreOnlyAllowed ? "Open" : "Closed"],
+                  ["Live rotation", rotationStatus.liveRotationOff ? "Off" : "ON"],
                   ["Turnover budget", rotationStatus.turnoverBudgetMonthlyPct == null ? "Not configured" : `${rotationStatus.turnoverBudgetMonthlyPct}%`],
                 ].map(([label, value]) => (
                   <div key={String(label)} style={{ border: `1px solid ${T.border}`, borderRadius: "6px", padding: "12px", minWidth: 0 }}>

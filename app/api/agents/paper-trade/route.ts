@@ -770,6 +770,23 @@ export async function POST(req: NextRequest) {
         });
       } catch { /* shadow only — never affects the fill */ }
 
+      // Half-Kelly returns 0 when the calibrated model sees no positive edge. That
+      // is a sizing verdict, not a capacity or cash block: the candidate is not
+      // "otherwise valid and blocked only by capacity", so it must not reach the
+      // constructor (which reported it as "portfolio_constructor_denied: " with no
+      // adjustments), the rotation path, or the missed-entry ledger (which recorded
+      // it as below_minimum_fractional_order — 8 US rows on 2026-09-28). Production
+      // US candidates were skipped as `insufficient_cash_for_fractional_share`
+      // with 62% cash on hand. Behaviour is unchanged (still no order); only the
+      // label and the counterfactual ledger are corrected. NaN is left to the
+      // constructor's fail-closed non-finite branch below.
+      if (Number.isFinite(proposedSizePct) && proposedSizePct <= 0) {
+        await revertClaim(signal.id);
+        skipped.push({ symbol: signal.symbol, reason: "sizing_no_positive_edge" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sizing", outcome: "rejected", reason: "sizing_no_positive_edge", detail: { proposedSizePct, mode: sizing.mode, calibrated_model: !!pwinModel, note: "zero proposed size is a sizing verdict, not a cash/capacity block; not a rotation candidate" } });
+        continue;
+      }
+
       const constructorBook = bookByMarket.get(market) ?? [];
       const constructed = constructPortfolio(
         constructorBook,
@@ -928,12 +945,12 @@ export async function POST(req: NextRequest) {
         // daily-cap gates, then the execute_paper_rotation RPC atomically sells
         // the source and buys the candidate (buy-leg denial rolls back the sell).
         //
-        // NOTE (re-verified 2026-09-18): this is a no-op in production today.
-        // Both paper execution switches are false. Two old July paper rotations
-        // exist, before P1 evidence contracts; they do not qualify the current
-        // path. Turning a flag on remains an owner decision after each current
-        // P1 gate passes (turnover, exact cost basis, matched score→return edge,
-        // post-swap construction and candidate correlation).
+        // NOTE (re-verified 2026-09-28): the per-market DB paper flags are ON, but this
+        // call is still inert in production: the owner score-only key
+        // (rotation_allow_score_only_paper) is false, and the P1 contract is blocked in
+        // both markets (matched score->return edge is negative / under the 20 independent-
+        // session floor). Enabled switch != executed rotation. See
+        // features/capital-rotation/FEATURE_ARCHITECTURE.md "Activation keys".
         let rotReason = "not_attempted";
         try {
           const rot = await executeCapitalRotationPaper(supabase, {

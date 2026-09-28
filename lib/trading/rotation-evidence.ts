@@ -40,6 +40,22 @@ function sampleStdDev(values: number[], average: number): number | null {
   return Math.sqrt(variance);
 }
 
+// t(0.975, df) for df 1..30; larger df use the value of the next-lower tabulated
+// df, so the multiplier is never smaller than the exact one.
+const T975 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+  2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+  2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042];
+
+export function studentTCritical975(df: number): number {
+  if (!Number.isFinite(df) || df < 1) return Number.POSITIVE_INFINITY;
+  const whole = Math.floor(df);
+  if (whole <= 30) return T975[whole - 1];
+  if (whole < 40) return 2.042;
+  if (whole < 60) return 2.021;
+  if (whole < 120) return 2.000;
+  return 1.980;
+}
+
 /**
  * Estimate the forward-return advantage of a rotation score edge.
  *
@@ -97,9 +113,13 @@ export function summarizeRotationScoreEdgeEvidence(
   const stdDev = average == null ? null : sampleStdDev(independentEdges, average);
   const standardError = stdDev == null ? null : stdDev / Math.sqrt(independentEdges.length);
   const tStatistic = average != null && standardError != null && standardError > 0 ? average / standardError : null;
-  // Normal 95% lower confidence bound is intentionally conservative at the
-  // evidence floor (20 sessions); no estimate is emitted below that floor.
-  const lower = average != null && standardError != null ? average - 1.96 * standardError : null;
+  // Two-sided 95% Student-t lower bound. The earlier normal 1.96 multiplier was
+  // labelled conservative but is ~6% too narrow at the 20-session floor
+  // (t = 2.093 at 19 df), which could pass a mapping the sample cannot support.
+  // No estimate is emitted below the floor.
+  const lower = average != null && standardError != null
+    ? average - studentTCritical975(independentEdges.length - 1) * standardError
+    : null;
   const enough = independent.length >= requiredIndependentSessions;
   const lowerPct = enough && lower != null ? lower * 100 : null;
   const status = !enough ? "insufficient" : lowerPct != null && lowerPct > 0 ? "validated" : "not_positive";
