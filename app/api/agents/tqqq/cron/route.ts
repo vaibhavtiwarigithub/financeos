@@ -99,6 +99,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(result.body, { status: result.httpStatus });
 }
 
+// pg_cron reaches agents through kairos_call_agent, which always sends POST (its `method` argument
+// is ignored), so the doors answered 405 and never ran. Same handler, same cron-secret gate.
+export const POST = GET;
+
 async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now: number, priorMonitorVerifiedAt: number | null): Promise<RunResult> {
   const { data: existing, error: existingErr } = await supabase
     .from("paper_positions")

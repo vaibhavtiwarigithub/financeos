@@ -45,6 +45,8 @@ describe("routed design wiring (contract)", () => {
       expect(gateAt).toBeLessThan(planAt);
       expect(route).toContain("quote: doorQuote,");
       expect(route).not.toContain("quote.bid ?? NaN");
+      // kairos_call_agent always POSTs; a GET-only door answers 405 and never runs.
+      expect(route).toContain("export const POST = GET;");
     });
   }
   it("generic paths still block the sleeve and research still scores it", () => {
@@ -56,7 +58,7 @@ describe("routed design wiring (contract)", () => {
 });
 
 describe("pg_cron schedule migration", () => {
-  const sql = readFileSync("supabase/migrations/20260928190000_schedule_leveraged_paper_doors.sql", "utf8");
+  const sql = readFileSync("supabase/migrations/20260928183837_schedule_leveraged_paper_doors.sql", "utf8");
   it("schedules the four paper doors (entry both hours; DST-paired close), GET, never the live door", () => {
     expect((sql.match(/cron\.schedule\(/g) ?? []).length).toBe(12);
     for (const sym of ["soxl", "tqqq", "sqqq", "soxs"]) {

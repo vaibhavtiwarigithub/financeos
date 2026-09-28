@@ -1,3 +1,4 @@
+-- Remote version 20260928183837; applied through Supabase MCP (project dionkikgdmlaotvtbnfr), 12 active jobs verified.
 -- Schedule the four leveraged-sleeve PAPER doors through pg_cron.
 --
 -- They were only listed in vercel.json. Production never ran them (0 agent_runs rows for
