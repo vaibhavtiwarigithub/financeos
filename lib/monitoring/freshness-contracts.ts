@@ -25,6 +25,19 @@ import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
+/**
+ * Symbols the freshness contract requires: recent decisions plus open positions,
+ * minus watchlist names the owner switched research off for (delisted tickers
+ * keep producing decisions for a week and can never have a bar). A held
+ * position always stays in scope: a stale mark on a holding is a real defect.
+ */
+export function requiredPriceScope(decisionSymbols: string[], positionSymbols: string[], researchDisabled: string[]): Set<string> {
+  const norm = (values: string[]) => values.map((value) => String(value ?? "").toUpperCase()).filter(Boolean);
+  const held = new Set(norm(positionSymbols));
+  const disabled = new Set(norm(researchDisabled));
+  return new Set([...norm(decisionSymbols).filter((symbol) => !disabled.has(symbol) || held.has(symbol)), ...held]);
+}
+
 /** Bump when a contract is added, removed, or its thresholds change. */
 export const FRESHNESS_REGISTRY_VERSION = 2;
 
@@ -65,6 +78,15 @@ export interface FreshnessContract {
    * was measured with the generous rule.
    */
   sessionAware?: boolean;
+  /**
+   * Hours after a session's close before this contract demands its bar. The
+   * session-aware rule names the just-closed session the instant the market
+   * closes, but no provider has posted the bar yet and the post-close prewarm
+   * runs ~1.5h later, so a monitor firing in that gap breached every evening and
+   * cleared the next morning (2026-09-15..28: 20:00 UTC alert, resolved ~16:00).
+   * The contract is judged as the session would stand `settleHours` earlier.
+   */
+  settleHours?: number;
   /** Fraction of scopes that must be within grace. 1 = every scope. */
   minCoverage: number;
   /** How far back to read rows when deriving the per-scope watermark. */
@@ -83,7 +105,7 @@ const WEEKEND_SAFE_HOURS = 96;
 export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
   {
     id: "price-cache-us-symbols",
-    version: 1,
+    version: 2,
     table: "price_cache",
     market: "us",
     watermarkColumn: "date",
@@ -92,6 +114,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     scopeUniverse: "active_us_price_symbols",
     graceHours: WEEKEND_SAFE_HOURS,
     sessionAware: true,
+    settleHours: 3,
     // 101/140 symbols were frozen while the table max looked current. At 0.9 the
     // real event trips at 28% coverage and a handful of delisted/retired tickers
     // lagging behind does not.
@@ -221,7 +244,7 @@ export function evaluateFreshness(
   // Everything else keeps the rolling calendar grace, which is the right shape
   // for a timestamp watermark like label maturation.
   const cutoff = contract.sessionAware && contract.watermarkType === "date" && contract.market !== "global"
-    ? toMs(expectedNewestSession(contract.market, now), "date")
+    ? toMs(expectedNewestSession(contract.market, new Date(now.getTime() - (contract.settleHours ?? 0) * 3600_000)), "date")
     : now.getTime() - contract.graceHours * 3600_000;
   const newestByScope = new Map<string, number>();
   const allScopes = new Set<string>();
@@ -318,7 +341,7 @@ export async function checkFreshnessContracts(
       let requiredScopes: Set<string> | null = null;
       if (contract.scopeUniverse === "active_us_price_symbols") {
         const decisionSince = new Date(now.getTime() - 7 * 86400_000).toISOString();
-        const [decisions, positions] = await Promise.all([
+        const [decisions, positions, disabledWatch] = await Promise.all([
           // Paginated: this builds the REQUIRED-SCOPE set, so a truncated read
           // silently shrinks what the monitor considers in scope and turns a
           // stale symbol into a passing contract. 888 rows today, under the cap.
@@ -336,14 +359,16 @@ export async function checkFreshnessContracts(
             .is("exit_reason", null)
             .gt("qty", 0)
             .limit(500),
+          svc.from("watchlist").select("symbol").eq("market", "us").eq("research_enabled", false).limit(500),
         ]);
-        if (decisions.error || positions.error) {
-          throw new Error(`active price scope unavailable: ${decisions.error?.message ?? positions.error?.message}`);
+        if (decisions.error || positions.error || disabledWatch.error) {
+          throw new Error(`active price scope unavailable: ${decisions.error?.message ?? positions.error?.message ?? disabledWatch.error?.message}`);
         }
-        requiredScopes = new Set([
-          ...(decisions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
-          ...(positions.data ?? []).map((row: any) => String(row.symbol ?? "").toUpperCase()),
-        ].filter(Boolean));
+        requiredScopes = requiredPriceScope(
+          (decisions.data ?? []).map((row: any) => row.symbol),
+          (positions.data ?? []).map((row: any) => row.symbol),
+          (disabledWatch.data ?? []).map((row: any) => row.symbol),
+        );
       } else if (contract.scopeUniverse === "enabled_benchmarks") {
         // The observation table is keyed by benchmark UUID and does not carry
         // a market. Build the required population from enabled configuration,
