@@ -16,6 +16,8 @@ import {
 
 export interface NavRow {
   date: string;
+  /** Non-EOD rows are operational snapshots, not completed-session evidence. */
+  snapshotType?: "eod" | "intraday" | null;
   nav: number | null;
   cashBalance: number | null;
   positionsValue: number | null;
@@ -42,10 +44,12 @@ export interface A0Invariant {
 export function runA0DataTruth(
   market: DiagnosticMarket,
   rows: NavRow[],
-  opts: { navTolerance?: number } = {},
+  opts: { navTolerance?: number; expectedSessions?: string[] } = {},
 ): { finding: DiagnosticFinding; invariants: A0Invariant[] } {
   const tol = opts.navTolerance ?? 0.01;
-  const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...rows]
+    .filter(row => row.snapshotType == null || row.snapshotType === "eod")
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   const navMismatch: string[] = [];
   const benchSessionMismatch: string[] = [];
@@ -54,6 +58,7 @@ export function runA0DataTruth(
   const missingComponents: string[] = [];
   const duplicateDates: string[] = [];
   const missingBenchmark: string[] = [];
+  const missingExpectedSession: string[] = [];
   const seenDates = new Set<string>();
   const firstBenchmarkIndex = sorted.findIndex(r => r.benchNav != null);
   let leadingInceptionRows = 0;
@@ -93,6 +98,14 @@ export function runA0DataTruth(
     }
   }
 
+  // A missing database row is just as important as a row with a null
+  // benchmark. Compare the canonical EOD ledger with the exchange calendar;
+  // intraday snapshots cannot fill an absent completed-session mark.
+  const observedDates = new Set(sorted.map(row => row.date));
+  for (const session of opts.expectedSessions ?? []) {
+    if (!observedDates.has(session)) missingExpectedSession.push(session);
+  }
+
   const invariants: A0Invariant[] = [
     { id: "nav_reconciles", ok: navMismatch.length === 0,
       detail: `cash + positions must equal nav within ${tol}`, offendingDates: navMismatch },
@@ -104,6 +117,8 @@ export function runA0DataTruth(
       detail: "a market may have only one performance row per date", offendingDates: duplicateDates },
     { id: "benchmark_coverage", ok: missingBenchmark.length === 0,
       detail: "benchmark is required after the leading cash-only inception rows", offendingDates: missingBenchmark },
+    { id: "expected_eod_session", ok: missingExpectedSession.length === 0,
+      detail: "every expected exchange session must have a canonical EOD performance row", offendingDates: missingExpectedSession },
     { id: "bench_session_matches_row", ok: benchSessionMismatch.length === 0,
       detail: "bench_session_date must equal the row's date", offendingDates: benchSessionMismatch },
     { id: "bench_has_provenance", ok: benchWithoutProvenance.length === 0,

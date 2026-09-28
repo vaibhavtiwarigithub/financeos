@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
 import { routerReadiness, type RouterEvaluationRow } from "@/lib/shadows/status";
@@ -6,6 +6,7 @@ import { routerReadiness, type RouterEvaluationRow } from "@/lib/shadows/status"
 describe("shadow registry governance contract", () => {
   const migration = readFileSync("supabase/migrations/20260729210000_shadow_registry_cron_status.sql", "utf8");
   const route = readFileSync("app/api/upgrade-path/route.ts", "utf8");
+  const scheduleCatalog = readFileSync("lib/schedule.ts", "utf8");
   const bookLedger = readFileSync("lib/shadows/shadow-book-ledger.ts", "utf8");
   const optionsRoute = readFileSync("app/api/options/signal/route.ts", "utf8");
   const optionsSource = readFileSync("lib/options-signal.ts", "utf8");
@@ -14,6 +15,8 @@ describe("shadow registry governance contract", () => {
   const upgradePage = readFileSync("components/dashboard/UpgradePathPage.tsx", "utf8");
   const statusAdapter = readFileSync("lib/shadows/status.ts", "utf8");
   const retiredHorizonCronMigration = readFileSync("supabase/migrations/20260927202139_retire_horizon_extension_shadow_jobs.sql", "utf8");
+  const exitStopScheduleMigration = readFileSync("supabase/migrations/20260928101500_schedule_exit_stop_shadow.sql", "utf8");
+  const diagnosticsScheduleMigration = readFileSync("supabase/migrations/20260928104500_schedule_upgrade_path_diagnostics.sql", "utf8");
 
   it("uses stable unique IDs and complete descriptive boundaries", () => {
     const ids = SHADOW_PROGRAMS.map((program) => program.id);
@@ -117,6 +120,52 @@ describe("shadow registry governance contract", () => {
       "kairos-score-price-divergence-us",
       "kairos-score-price-divergence-india",
     ].forEach((job) => expect(jobs.has(job), `${job} is not registered`).toBe(true));
+  });
+
+  it("requires every registry-declared kairos cron name to exist in an actual scheduler source", () => {
+    const migrationSql = readdirSync("supabase/migrations")
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => readFileSync(`supabase/migrations/${name}`, "utf8"))
+      .join("\n");
+    const schedulerSources = `${migrationSql}\n${readFileSync("vercel.json", "utf8")}`;
+    const declaredJobs = new Set(SHADOW_PROGRAMS.flatMap((program) => [
+      ...program.cronJobs,
+      ...Object.values(program.marketCronJobs ?? {}).flatMap((jobs) => jobs ?? []),
+    ]));
+    for (const job of declaredJobs) {
+      if (job.startsWith("kairos-")) expect(schedulerSources, `${job} is listed but never scheduled`).toContain(job);
+    }
+  });
+
+  it("declares the verified weekly production ATR decision-shadow cadence in source control", () => {
+    expect(exitStopScheduleMigration).toContain("kairos-exit-stop-shadow-us', '20 4 * * 0'");
+    expect(exitStopScheduleMigration).toContain("/api/agents/exit-stop-shadow?market=us");
+    expect(exitStopScheduleMigration).toContain("kairos-exit-stop-shadow-india', '30 4 * * 0'");
+    expect(exitStopScheduleMigration).toContain("/api/agents/exit-stop-shadow?market=india");
+    expect(exitStopScheduleMigration).toContain("'POST'");
+    expect(exitStopScheduleMigration).toContain("Decision-level ATR-stop shadow collector only");
+    expect(exitStopScheduleMigration).not.toContain("upgrade_path_attribution_runs");
+    expect(scheduleCatalog).toContain('name: "exit-stop-shadow-us"');
+    expect(scheduleCatalog).toContain('time: "Sun 4:20 AM UTC"');
+    expect(scheduleCatalog).toContain('name: "exit-stop-shadow-india"');
+    expect(scheduleCatalog).toContain('time: "Sun 4:30 AM UTC"');
+  });
+
+  it("creates the four registered weekly diagnostics jobs and keeps their markets separate", () => {
+    for (const [job, endpoint, market] of [
+      ["kairos-alpha-diagnostics-us", "/api/analytics/alpha-diagnostics", "us"],
+      ["kairos-alpha-diagnostics-india", "/api/analytics/alpha-diagnostics", "india"],
+      ["kairos-archetype-ic-us", "/api/agents/archetype-ic", "us"],
+      ["kairos-archetype-ic-india", "/api/agents/archetype-ic", "india"],
+    ]) {
+      expect(diagnosticsScheduleMigration).toContain(job);
+      expect(diagnosticsScheduleMigration).toContain(`${endpoint}?market=${market}`);
+    }
+    expect(diagnosticsScheduleMigration).toContain("'kairos-alpha-diagnostics-us', '10 4 * * 0'");
+    expect(diagnosticsScheduleMigration).toContain("'kairos-alpha-diagnostics-india', '20 4 * * 0'");
+    expect(diagnosticsScheduleMigration).toContain("'kairos-archetype-ic-us', '40 3 * * 0'");
+    expect(diagnosticsScheduleMigration).toContain("'kairos-archetype-ic-india', '50 3 * * 0'");
+    expect(diagnosticsScheduleMigration.match(/'POST'/g)).toHaveLength(4);
   });
 
   it("keeps schedule truth service-only and removes only the idle autonomous campaign", () => {

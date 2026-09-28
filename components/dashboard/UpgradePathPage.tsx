@@ -16,9 +16,17 @@ type ApiResponse = {
   generatedAt: string;
   build: { environment: string; commit: string | null };
   market: "us" | "india";
-  summary: { total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number };
+  summary: {
+    total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number;
+    attribution?: { performanceEligible: number; measured: number; syntheticMeasured: number; collecting: number; producerMissing: number; invalid: number; notAttributable: number };
+  };
   snapshotLedger: { state: "available" | "unavailable"; reason: string | null };
-  programs: Array<ShadowProgramStatus & { shadowBookSnapshot: ShadowBookSnapshot }>;
+  programs: Array<ShadowProgramStatus & { shadowBookSnapshot: ShadowBookSnapshot; producerRun?: {
+    state: string; status?: string; started_at?: string; finished_at?: string | null;
+    expected_session?: string | null; observed_session?: string | null; trigger_source?: string;
+    blockers?: string[]; code_version?: string | null; note?: string;
+    details?: { evidenceType?: string; resultCount?: number; resultStates?: Record<string, number>; persisted?: boolean; asOfDate?: string | null; performanceAttribution?: string };
+  } }>;
   collection?: Array<{
     id: string;
     market: "us" | "india";
@@ -218,11 +226,31 @@ function ProgramPanel({ program, mobile, market, collection }: {
             {detail}
           </div>)}
         </div>}
+        {program.attribution.comparisonType !== "operational_only" && <div style={{ marginTop: "12px", padding: "10px 12px", border: `1px solid ${T.border}`, borderRadius: "6px", background: T.surface }}>
+          <SectionLabel icon={<Activity size={14} />} text="Producer liveness · not performance evidence" />
+          {program.producerRun && ["running", "collected", "blocked", "error", "stale"].includes(program.producerRun.state) ? <>
+            <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5 }}>
+              Latest run: <span style={{ color: program.producerRun.state === "error" || program.producerRun.state === "stale" ? T.red : program.producerRun.state === "blocked" ? T.yellow : program.producerRun.state === "collected" ? T.green : T.blue }}>{program.producerRun.state}</span> · started {fmtDate(program.producerRun.started_at ?? null)} · {program.producerRun.trigger_source ?? "trigger unknown"}
+              {program.producerRun.expected_session ? ` · expected ${program.producerRun.expected_session}` : ""}
+              {program.producerRun.observed_session ? ` · observed session ${program.producerRun.observed_session}` : ""}
+            </div>
+            {program.producerRun.details?.evidenceType && <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5, marginTop: "5px" }}>
+              Collector evidence: {program.producerRun.details.evidenceType} · {program.producerRun.details.resultCount ?? 0} result rows{program.producerRun.details.persisted ? " persisted" : " not confirmed persisted"}{program.producerRun.details.asOfDate ? ` · run date ${program.producerRun.details.asOfDate}` : ""}
+              {program.producerRun.details.resultStates && Object.keys(program.producerRun.details.resultStates).length > 0
+                ? ` · ${Object.entries(program.producerRun.details.resultStates).map(([state, count]) => `${count} ${state}`).join(", ")}` : ""}
+            </div>}
+            {Array.isArray(program.producerRun.blockers) && program.producerRun.blockers.map((blocker: string, index: number) => <div key={`${index}-${blocker}`} style={{ color: T.yellow, fontSize: "11px", lineHeight: 1.5, marginTop: "5px" }}>• {blocker}</div>)}
+          </> : <div style={{ color: program.producerRun?.state === "unavailable" ? T.red : T.muted, fontSize: "12px", lineHeight: 1.5 }}>
+            {program.producerRun?.note ?? "No producer invocation has been recorded for this program and market."}
+          </div>}
+          {program.producerRun?.code_version && <div style={{ color: T.muted, fontSize: "10px", marginTop: "5px" }}>Code {String(program.producerRun.code_version).slice(0, 12)}</div>}
+        </div>}
         <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "7px" }}>
             <div style={{ color: T.muted, fontSize: "11px", fontWeight: 750, textTransform: "uppercase" }}>Causal attribution</div>
             <StatusPill label={attribution.label} color={attribution.color} />
             <span style={{ color: T.muted, fontSize: "11px" }}>{program.attribution.comparisonType.replace(/_/g, " ")}</span>
+            {program.attribution.measurementScope === "synthetic_diagnostic" && <span style={{ color: T.yellow, fontSize: "11px" }}>synthetic diagnostic · not Kairos holdings</span>}
           </div>
           <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>{program.attribution.reason}</div>
           {program.attribution.state === "measured" && <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(3, minmax(0, 1fr))", gap: "8px 14px", marginTop: "10px" }}>
@@ -428,6 +456,10 @@ export default function UpgradePathPage() {
         <div style={{ fontSize: "11px", color: T.muted, marginTop: "4px", textTransform: "uppercase" }}>{label}</div>
       </div>)}
     </section>}
+
+    {data?.summary.attribution && <div style={{ margin: "-6px 0 18px", padding: "11px 13px", border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, color: T.textSub, fontSize: 12, lineHeight: 1.5 }}>
+      <b style={{ color: T.text }}>Portfolio attribution</b> · {data.summary.attribution.measured}/{data.summary.attribution.performanceEligible} performance-eligible paths measured ({data.summary.attribution.syntheticMeasured} synthetic diagnostic, not Kairos holdings) · {data.summary.attribution.collecting} collecting · {data.summary.attribution.producerMissing} producer missing · {data.summary.attribution.invalid} invalid. <span style={{ color: T.muted }}>{data.summary.attribution.notAttributable} operational-only paths are excluded. This is separate from “Review ready,” which reflects each program’s operational evidence gate.</span>
+    </div>}
 
     <section style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
       {([

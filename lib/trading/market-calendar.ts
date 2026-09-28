@@ -291,6 +291,48 @@ export function expectedLatestSessionDate(market: string, now: Date = new Date()
   return { ...base, date: null, calendarSupported: false };
 }
 
+/**
+ * Enumerate every regular market session in an open-left, closed-right window.
+ * Replay producers use this to prove daily mark completeness; weekday math is
+ * not sufficient because exchange holidays and unsupported calendar years
+ * must fail closed. Special sessions are deliberately excluded because this
+ * calendar does not model their shortened-session close semantics.
+ */
+export function expectedMarketSessionsBetween(
+  market: string,
+  afterSessionExclusive: string,
+  throughSessionInclusive: string,
+  maxCalendarDays = 4000,
+): string[] {
+  const key = marketKey(market);
+  const validDate = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T12:00:00Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if (!validDate(afterSessionExclusive) || !validDate(throughSessionInclusive)
+    || afterSessionExclusive >= throughSessionInclusive) {
+    throw new Error("Market-session window requires valid dates with start before end.");
+  }
+  const start = new Date(`${afterSessionExclusive}T12:00:00Z`);
+  const end = new Date(`${throughSessionInclusive}T12:00:00Z`);
+  const calendarDays = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+  if (calendarDays > maxCalendarDays) throw new Error("Market-session window exceeds the configured enumeration bound.");
+  const sessions: string[] = [];
+  const cursor = new Date(start);
+  while (cursor < end) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const ymd = cursor.toISOString().slice(0, 10);
+    const status = getMarketDayStatus(key, cursor);
+    if (!status.calendarSupported) throw new Error(`Market calendar is unsupported for ${ymd}; replay window cannot be certified.`);
+    if (status.kind === "trading_day") sessions.push(ymd);
+  }
+  if (sessions[sessions.length - 1] !== throughSessionInclusive) {
+    throw new Error(`Replay endpoint ${throughSessionInclusive} is not a regular ${key} market session.`);
+  }
+  return sessions;
+}
+
 /** Plain-language reason today produces no new close, or null on a trading day. */
 export function marketClosedReason(kind: MarketDayKind): string | null {
   switch (kind) {

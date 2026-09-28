@@ -9,6 +9,7 @@ import { evaluateScoreExitShadow, SCORE_EXIT_POLICY_VERSION, type ScoreExitShado
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createServiceClient } from "@/lib/supabase/service";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
+import { producerOutcomeFromResponse, runWithProducerHealth } from "@/lib/shadows/producer-runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,9 +19,7 @@ async function authorize(req: NextRequest) {
   return verifyCronSecret(req) ? null : requireOwner();
 }
 
-async function run(req: NextRequest, persist: boolean) {
-  const gate = await authorize(req);
-  if (gate) return gate;
+async function runAuthorized(req: NextRequest, persist: boolean) {
   const market = new URL(req.url).searchParams.get("market") as TradingMarket | null;
   if (market !== "us" && market !== "india") return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
   const svc = createServiceClient();
@@ -69,6 +68,10 @@ async function run(req: NextRequest, persist: boolean) {
     market, horizonDays, points: points.get(horizonDays) ?? [], stopPct: mandate.stop_loss_pct, targetPct: mandate.target_pct,
   }));
   const asOfDate = new Date().toISOString().slice(0, 10);
+  const observedSession = rows.map((row) => {
+    const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
+    return typeof decision?.ts === "string" ? decision.ts.slice(0, 10) : "";
+  }).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort().at(-1) ?? null;
   if (persist) {
     for (const result of results) {
       const fingerprint = crypto.createHash("sha256").update(JSON.stringify({ market, horizon: result.horizonDays, points: points.get(result.horizonDays) ?? [] })).digest("hex");
@@ -82,7 +85,33 @@ async function run(req: NextRequest, persist: boolean) {
       if (error && error.code !== "23505") return NextResponse.json({ error: `write failed: ${error.message}` }, { status: 500 });
     }
   }
-  return NextResponse.json({ ok: true, persisted: persist, asOfDate, market, results, influence: "Measure-only. No trading path reads score_exit_shadow_runs." });
+  return NextResponse.json({ ok: true, persisted: persist, asOfDate, observedSession, market, results, influence: "Measure-only. No trading path reads score_exit_shadow_runs." });
+}
+
+async function run(req: NextRequest, persist: boolean) {
+  const gate = await authorize(req);
+  if (gate) return gate;
+  const market = new URL(req.url).searchParams.get("market");
+  if (market !== "us" && market !== "india") {
+    return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  }
+  if (!persist) return runAuthorized(req, false);
+
+  const svc = createServiceClient();
+  return runWithProducerHealth({
+    client: svc,
+    programId: "score-exit-shadow",
+    market,
+    triggerSource: verifyCronSecret(req) ? "cron_authenticated" : "owner_manual",
+    codeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    work: async () => {
+      const response = await runAuthorized(req, true);
+      return {
+        value: response,
+        outcome: await producerOutcomeFromResponse(response, "holding_score_decision_label_metrics"),
+      };
+    },
+  });
 }
 
 export async function GET(req: NextRequest) { return run(req, false); }

@@ -11,7 +11,7 @@
 
 export type Runner = "Supabase pg_cron → Vercel" | "Windows Task Scheduler";
 
-export type ScheduleDays = "Weekdays" | "Friday" | "Weekly" | "Daily";
+export type ScheduleDays = "Weekdays" | "Friday" | "Weekly" | "Daily" | "India weekdays via UTC Tuesday–Saturday";
 
 export interface ScheduledJob {
   /** Task name as registered under \Kairos in Task Scheduler (e.g. "brief-morning"). */

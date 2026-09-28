@@ -57,6 +57,7 @@ export interface ProgramRuntimeDeployment {
 export interface ProgramAttributionStatus {
   state: AttributionState;
   comparisonType: AttributionClass;
+  measurementScope: "synthetic_diagnostic" | "paired_portfolio" | "paper_cohort" | null;
   reason: string;
   asOfSession: string | null;
   windowStart: string | null;
@@ -198,6 +199,7 @@ function base(program: ShadowProgramDefinition): ShadowProgramStatus {
     attribution: {
       state: attribution.state,
       comparisonType: attribution.comparison_type,
+      measurementScope: null,
       reason: attribution.validity_reason ?? "No attribution status is available.",
       asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null,
       baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null,
@@ -223,13 +225,13 @@ function numberOrNull(value: unknown): number | null {
 function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttributionRow | null, error: { message?: string } | null): ProgramAttributionStatus {
   const fallback = defaultAttribution(program.attributionClass);
   if (error) {
-    return { state: "invalid", comparisonType: program.attributionClass, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: "invalid", comparisonType: program.attributionClass, measurementScope: null, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   if (!row) {
     const reason = fallback.state === "producer_missing"
       ? program.attributionBlocker ?? fallback.validity_reason ?? "No attribution evidence exists."
       : fallback.validity_reason ?? "No attribution evidence exists.";
-    return { state: fallback.state, comparisonType: fallback.comparison_type, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: fallback.state, comparisonType: fallback.comparison_type, measurementScope: null, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   const normalized: UpgradePathAttributionRow = {
     ...row, constraints: row.constraints ?? {},
@@ -237,8 +239,11 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
   };
   const validation = validateAttributionRow(normalized);
   const state = normalized.state === "measured" && !validation.valid ? "invalid" : normalized.state;
+  const measurementScope = normalized.constraints.synthetic_portfolio_not_kairos_book === true
+    ? "synthetic_diagnostic" as const
+    : normalized.comparison_type === "paper_cohort" ? "paper_cohort" as const : "paired_portfolio" as const;
   return {
-    state, comparisonType: normalized.comparison_type,
+    state, comparisonType: normalized.comparison_type, measurementScope,
     reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : state === "producer_missing" ? program.attributionBlocker ?? normalized.validity_reason ?? "No verified portfolio attribution producer is registered." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
     asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
     programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,

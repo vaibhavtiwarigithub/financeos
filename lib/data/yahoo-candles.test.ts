@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { fetchYahooCandles, yahooRange } from "./yahoo-candles";
+import { fetchYahooCandles, fetchYahooRawReplaySeries, yahooRange } from "./yahoo-candles";
 
 describe("yahooRange", () => {
   it("maps day depths to the smallest covering Yahoo range", () => {
@@ -79,5 +79,50 @@ describe("fetchYahooCandles adjustment", () => {
       }),
     }));
     expect(await fetchYahooCandles("TEST", "1y", { adjusted: true })).toEqual([]);
+  });
+});
+
+describe("fetchYahooRawReplaySeries", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns coherent raw OHLC and explicit corporate actions from one response", async () => {
+    const splitDate = Date.UTC(2026, 0, 5) / 1000;
+    const dividendDate = Date.UTC(2026, 0, 6) / 1000;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ chart: { result: [{
+        timestamp: [Date.UTC(2026, 0, 5) / 1000, Date.UTC(2026, 0, 6) / 1000],
+        indicators: {
+          quote: [{ open: [100, 50], high: [105, 52], low: [98, 49], close: [102, 51], volume: [10, 20] }],
+          adjclose: [{ adjclose: [50, 25] }],
+        },
+        events: {
+          splits: { [splitDate]: { date: splitDate, numerator: 2, denominator: 1, splitRatio: "2:1" } },
+          dividends: { [dividendDate]: { date: dividendDate, amount: 0.25 } },
+        },
+      }] } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const series = await fetchYahooRawReplaySeries("xyz", "1y");
+
+    expect(series).toMatchObject({ source: "yahoo_chart_v8", priceBasis: "raw_ohlc", actionsRequested: true });
+    expect(series?.candles[0]).toMatchObject({ date: "2026-01-05", open: 100, high: 105, low: 98, close: 102 });
+    expect(series?.corporateActions).toEqual([
+      { symbol: "XYZ", session: "2026-01-05", type: "split", splitRatio: 2 },
+      { symbol: "XYZ", session: "2026-01-06", type: "dividend", dividendPerShare: 0.25 },
+    ]);
+    expect(fetchMock.mock.calls[0][0]).toContain("events=div%2Csplits");
+  });
+
+  it("fails closed on missing or internally invalid OHLC", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ chart: { result: [{
+        timestamp: [Date.UTC(2026, 0, 5) / 1000],
+        indicators: { quote: [{ open: [100], high: [95], low: [90], close: [92], volume: [10] }] },
+      }] } }),
+    }));
+    expect(await fetchYahooRawReplaySeries("XYZ")).toBeNull();
   });
 });

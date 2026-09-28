@@ -67,6 +67,23 @@ describe("A0 data truth", () => {
   it("reports insufficient_evidence rather than passing an empty window", () => {
     expect(runA0DataTruth("us", []).finding.status).toBe("insufficient_evidence");
   });
+
+  it("ignores holiday/intraday snapshots but fails a missing expected EOD session", () => {
+    const rows = [
+      navRow({ date: "2026-09-04", benchSessionDate: "2026-09-04", snapshotType: "eod" }),
+      // Labor Day operational snapshot is not an exchange session or canonical NAV row.
+      navRow({ date: "2026-09-07", benchNav: null, benchSessionDate: null, benchSource: null, snapshotType: "intraday" }),
+      navRow({ date: "2026-09-08", benchSessionDate: "2026-09-08", snapshotType: "eod" }),
+      // A real exchange session with only an intraday row is still missing EOD evidence.
+      navRow({ date: "2026-09-09", benchNav: null, benchSessionDate: null, benchSource: null, snapshotType: "intraday" }),
+    ];
+    const { finding, invariants } = runA0DataTruth("us", rows, {
+      expectedSessions: ["2026-09-04", "2026-09-08", "2026-09-09"],
+    });
+    expect(finding.status).toBe("fail");
+    expect(invariants.find(i => i.id === "expected_eod_session")?.offendingDates).toEqual(["2026-09-09"]);
+    expect(invariants.find(i => i.id === "unique_session_date")?.ok).toBe(true);
+  });
 });
 
 describe("A1 funnel", () => {

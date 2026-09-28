@@ -8,8 +8,13 @@
 
 ## Implementation truth (2026-09-27)
 
-`app/api/agents/exit-stop-shadow` runs market-local each week and writes
-`exit_stop_shadow_runs`. It compares the current mandate stop with a 2.8-ATR
+`app/api/agents/exit-stop-shadow` supports persisted market-local POST runs and
+writes `exit_stop_shadow_runs`. Production was queried on 2026-09-27: both US
+and India cron jobs are active, with weekly Sunday runs at 04:20 and 04:30 UTC;
+the latest `job_run_details` show successful invocations on 2026-09-27.
+Migration `20260928101500_schedule_exit_stop_shadow` records that production
+cadence in repository source control; it is local and unapplied. The route
+compares the current mandate stop with a 2.8-ATR
 stop at the **decision/label level**, using matured MFE/MAE and the h10 forward
 return when neither barrier is touched. That h10 return is an observation
 endpoint, not an executable sale: the unconditional time stop was removed on
@@ -29,6 +34,38 @@ exact initial stop and target passed to `execute_paper_fill` on each new
 This is not an exit replay: daily stop/trail evolution, executable OHLC ordering,
 partial-lot cashflows, and an independent portfolio-level baseline/variant
 producer are still required.
+
+**Replay timing guard added 2026-09-27 (local only):** the lot-event adapter now
+retains exact entry/sale timestamps and the replay verifies that each timestamp
+belongs to its declared exchange session. A same-session sale that precedes or
+interleaves a same-symbol entry is rejected. If a same-session external sale and
+daily OHLC both touch a mechanical barrier, the replay refuses the date because
+daily bars cannot establish intraday event order. These are correctness guards
+in the isolated replay core; they do not constitute a scheduled producer or
+prove any portfolio-level result.
+
+**Corporate-action coverage prerequisite (2026-09-27, local only):** the
+corporate-actions collector now validates complete Alpha Vantage split/dividend
+payloads against the original `av_cache.fetched_at`, records per-symbol/per-type
+coverage outcomes (including validated empty results), processes the complete
+validated event list, and rotates through symbols in bounded five-symbol runs.
+Malformed, stale, missing, and failed responses remain explicit blockers. The
+append-only coverage-ledger migration is locally generated but unapplied; there
+is no production collector run or proof of coverage for any ATR replay window.
+This fixes the distinction between “no event reported” and “not fetched,” but
+does not yet reconcile Yahoo replay actions to an authoritative coverage window
+or produce ATR portfolio P&L.
+
+**Seed reconciliation helper (2026-09-27, local only):**
+`lib/shadows/atr-replay-seed.ts` builds a market-local initial book only when
+cash plus marked positions reconcile to reported paper NAV and every aggregate
+position quantity reconciles to the sum of its open `paper_trades` lots. It
+requires a valid persisted high-water mark, preserves legacy NULL stops/targets,
+and derives `partialTaken` from the documented `partial_exit_lot=true` residual
+lot written by `execute_paper_exit`. It rejects duplicate role/symbol states the
+current replay model cannot represent. This resolves one seed-state unknown,
+but is still only a pure adapter: no route, scheduled forward stepping, or
+portfolio attribution result exists yet.
 
 ## The one hypothesis
 

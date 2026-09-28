@@ -34,6 +34,7 @@ import {
   type DiagnosticFinding, type DiagnosticMarket,
 } from "@/lib/analytics/alpha-diagnostic-contract";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { expectedMarketSessionsBetween, getMarketDayStatus } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -41,6 +42,31 @@ export const maxDuration = 120;
 const PLAN_VERSION = "alpha_diagnostic_lab_v2_measurement_integrity";
 const HISTORY_LIMIT = 20;
 const PAGE_SIZE = 1000;
+
+function expectedEodSessions(market: DiagnosticMarket, rows: Array<{ date: string; bench_nav: unknown; tainted: unknown; snapshot_type?: string | null }>): string[] {
+  const clean = rows.filter(row => row.tainted !== true);
+  const firstBench = clean.find(row => (row.snapshot_type == null || row.snapshot_type === "eod") && num(row.bench_nav) != null)?.date;
+  const lastObserved = clean.map(row => row.date).sort().at(-1);
+  if (!firstBench || !lastObserved) return [];
+
+  // The performance window can end on a holiday/weekend because an intraday
+  // operational row was written then. Walk back to the latest supported
+  // regular session; expectedMarketSessionsBetween verifies every date inside
+  // the range and refuses unsupported calendar years.
+  let end = new Date(`${lastObserved}T12:00:00Z`);
+  for (let i = 0; i < 8; i++) {
+    const day = getMarketDayStatus(market, end);
+    if (!day.calendarSupported) throw new Error(`Market calendar is unsupported for ${day.localYmd}; A0 cannot certify EOD coverage.`);
+    if (day.kind === "trading_day") break;
+    end.setUTCDate(end.getUTCDate() - 1);
+  }
+  const endDate = end.toISOString().slice(0, 10);
+  const start = new Date(`${firstBench}T12:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 1);
+  const explicitlyTaintedDates = new Set(rows.filter(row => row.tainted === true).map(row => row.date));
+  return expectedMarketSessionsBetween(market, start.toISOString().slice(0, 10), endDate)
+    .filter(session => !explicitlyTaintedDates.has(session));
+}
 
 async function loadAllRows<T>(fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>): Promise<T[]> {
   const rows: T[] = [];
@@ -179,7 +205,7 @@ export async function POST(req: NextRequest) {
     // ── Load persisted ledgers only. No provider call anywhere below. ────────
     const [perfRes, tradesRes, observationRows, marksRes, posRes] = await Promise.all([
       svc.from("paper_performance")
-        .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, tainted")
+        .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, snapshot_type, tainted")
         .eq("market", market).order("date", { ascending: true }),
       // ALL lots, not just closed. The closed-lot cohorts are derived below;
       // A6 additionally needs OPEN lots, because a calendar replay treats an
@@ -246,6 +272,7 @@ export async function POST(req: NextRequest) {
     const taintedNavRows = perfRows.filter(r => r.tainted === true).length;
     const navRows: NavRow[] = perfRows.filter(r => r.tainted !== true).map(r => ({
       date: r.date,
+      snapshotType: r.snapshot_type ?? "eod",
       nav: num(r.nav), cashBalance: num(r.cash_balance), positionsValue: num(r.positions_value),
       benchNav: num(r.bench_nav), benchSessionDate: r.bench_session_date ?? null,
       benchSource: r.bench_source ?? null,
@@ -270,7 +297,7 @@ export async function POST(req: NextRequest) {
 
     // A0 FIRST and unconditionally. Everything after it is uninterpretable if
     // data truth failed.
-    const a0 = runA0DataTruth(market, navRows);
+    const a0 = runA0DataTruth(market, navRows, { expectedSessions: expectedEodSessions(market, perfRows) });
     findings.push(a0.finding);
 
     if (a0.finding.status === "pass") {

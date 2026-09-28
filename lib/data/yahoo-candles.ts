@@ -40,6 +40,107 @@ export interface YahooCandleOptions {
   adjusted?: boolean;
 }
 
+export interface YahooCorporateAction {
+  symbol: string;
+  session: string;
+  type: "split" | "dividend";
+  /** Shares received for each share held before the effective session. */
+  splitRatio?: number;
+  /** Per-share cash distribution in the instrument's trading currency. */
+  dividendPerShare?: number;
+}
+
+export interface YahooRawReplaySeries {
+  source: "yahoo_chart_v8";
+  priceBasis: "raw_ohlc";
+  actionsRequested: true;
+  candles: Candle[];
+  corporateActions: YahooCorporateAction[];
+}
+
+function validOhlc(candle: Candle): boolean {
+  return [candle.open, candle.high, candle.low, candle.close].every((value) => Number.isFinite(value) && value > 0)
+    && candle.low <= Math.min(candle.open, candle.close)
+    && candle.high >= Math.max(candle.open, candle.close)
+    && candle.low <= candle.high;
+}
+
+/**
+ * Fetch an internally coherent raw OHLC series and Yahoo chart split/dividend
+ * events in one provider response. Replay callers must still compare these
+ * events with their persisted corporate-action ledger and fail closed on a
+ * mismatch; this function does not assert that Yahoo is a complete action
+ * authority.
+ */
+export async function fetchYahooRawReplaySeries(
+  symbol: string,
+  range: YahooRange = "1y",
+): Promise<YahooRawReplaySeries | null> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (!normalizedSymbol) return null;
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalizedSymbol)}?interval=1d&range=${range}&events=div%2Csplits`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const result = (await response.json())?.chart?.result?.[0];
+    if (!result) return null;
+
+    const timestamps: number[] = result.timestamp ?? [];
+    const quote = result.indicators?.quote?.[0] ?? {};
+    if (timestamps.length === 0 || !Array.isArray(quote.open) || !Array.isArray(quote.high)
+      || !Array.isArray(quote.low) || !Array.isArray(quote.close)) return null;
+    const candles: Candle[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const candle: Candle = {
+        date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+        open: Number(quote.open[i]),
+        high: Number(quote.high[i]),
+        low: Number(quote.low[i]),
+        close: Number(quote.close[i]),
+        volume: Number(quote.volume?.[i] ?? 0),
+      };
+      if (!validOhlc(candle)) return null;
+      candles.push(candle);
+    }
+    if (candles.some((candle, index) => index > 0 && candle.date <= candles[index - 1].date)) return null;
+
+    const corporateActions: YahooCorporateAction[] = [];
+    const events = result.events ?? {};
+    for (const event of Object.values(events.splits ?? {}) as Array<Record<string, unknown>>) {
+      const timestamp = Number(event.date);
+      const numerator = Number(event.numerator);
+      const denominator = Number(event.denominator);
+      if (!Number.isFinite(timestamp) || !Number.isFinite(numerator) || numerator <= 0
+        || !Number.isFinite(denominator) || denominator <= 0) return null;
+      corporateActions.push({
+        symbol: normalizedSymbol,
+        session: new Date(timestamp * 1000).toISOString().slice(0, 10),
+        type: "split",
+        splitRatio: numerator / denominator,
+      });
+    }
+    for (const event of Object.values(events.dividends ?? {}) as Array<Record<string, unknown>>) {
+      const timestamp = Number(event.date);
+      const amount = Number(event.amount);
+      if (!Number.isFinite(timestamp) || !Number.isFinite(amount) || amount < 0) return null;
+      corporateActions.push({
+        symbol: normalizedSymbol,
+        session: new Date(timestamp * 1000).toISOString().slice(0, 10),
+        type: "dividend",
+        dividendPerShare: amount,
+      });
+    }
+    corporateActions.sort((a, b) => a.session.localeCompare(b.session) || a.type.localeCompare(b.type));
+    return { source: "yahoo_chart_v8", priceBasis: "raw_ohlc", actionsRequested: true, candles, corporateActions };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Smallest Yahoo range that COVERS `days` of calendar history — never less.
  *

@@ -79,6 +79,13 @@ describe("paired portfolio replay contract", () => {
     expect(() => runPairedPortfolioReplay(fixture({ marks: heldSymbolGap }))).toThrow("lacks a same-session price mark");
   });
 
+  it("refuses an internally consistent but calendar-incomplete session list", () => {
+    const skipped = [sessions[0], sessions[1], sessions[3], sessions[4]];
+    const marks = fixture().marks.filter((mark) => skipped.includes(mark.session));
+    expect(() => runPairedPortfolioReplay(fixture({ expectedSessions: skipped, marks })))
+      .toThrow(/complete regular-session calendar window/);
+  });
+
   it("refuses a one-block claim as insufficient rather than emitting a measured row", () => {
     expect(() => runPairedPortfolioReplay(fixture({ independenceBlockSessions: 4 })))
       .toThrow("need at least 2");

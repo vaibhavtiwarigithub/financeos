@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getShadowProgramStatuses } from "@/lib/shadows/status";
+import { summarizeAttribution } from "@/lib/shadows/summary";
 
 export const dynamic = "force-dynamic";
 
@@ -16,24 +17,39 @@ export async function GET(req: NextRequest) {
 
   const svc = createServiceClient();
   const programs = await getShadowProgramStatuses(svc, market);
+  const producerRunResult = await svc.rpc("get_upgrade_path_producer_runs_latest", { p_market: market });
+  const latestProducerRuns = new Map<string, any>();
+  for (const row of producerRunResult.data ?? []) {
+    if (!latestProducerRuns.has(String(row.program_id))) latestProducerRuns.set(String(row.program_id), row);
+  }
   const snapshotResult = await svc.rpc("get_upgrade_path_shadow_book_latest", { p_market: market });
   const snapshotLedger = snapshotResult.error
     ? { state: "unavailable" as const, reason: "Forward shadow-book snapshot ledger is unavailable; no P&L snapshot is shown." }
     : { state: "available" as const, reason: null };
   const snapshots = new Map<string, any>((snapshotResult.data ?? []).map((row: any) => [String(row.program_id), row]));
   const programsWithSnapshots = programs.map((program) => {
+    const producerRun = producerRunResult.error
+      ? { state: "unavailable" as const, note: "Producer-run health ledger is unavailable; collector liveness cannot be verified." }
+      : latestProducerRuns.has(program.id)
+        ? (() => {
+          const row = latestProducerRuns.get(program.id);
+          const staleRunning = row.status === "running" && Date.now() - Date.parse(row.started_at) > 15 * 60_000;
+          return { ...row, state: staleRunning ? "stale" as const : row.status as string };
+        })()
+        : { state: program.attribution.state === "producer_missing" ? "not_registered" as const : "no_run" as const, note: "No persisted producer invocation is recorded for this program and market." };
     if (program.attribution.comparisonType === "operational_only") {
-      return { ...program, shadowBookSnapshot: { state: "not_attributable" as const, note: "Operational-only path; no portfolio-return snapshot is appropriate." } };
+      return { ...program, producerRun, shadowBookSnapshot: { state: "not_attributable" as const, note: "Operational-only path; no portfolio-return snapshot is appropriate." } };
     }
     if (snapshotLedger.state === "unavailable") {
-      return { ...program, shadowBookSnapshot: { state: "unavailable" as const, note: snapshotLedger.reason } };
+      return { ...program, producerRun, shadowBookSnapshot: { state: "unavailable" as const, note: snapshotLedger.reason } };
     }
     const row = snapshots.get(program.id);
     if (!row || row.market !== market) {
-      return { ...program, shadowBookSnapshot: { state: "none" as const, note: "No forward paired-book P&L snapshot has been captured for this program." } };
+      return { ...program, producerRun, shadowBookSnapshot: { state: "none" as const, note: "No forward paired-book P&L snapshot has been captured for this program." } };
     }
     return {
       ...program,
+      producerRun,
       shadowBookSnapshot: {
         state: "captured" as const,
         sessionDate: row.session_date,
@@ -68,6 +84,7 @@ export async function GET(req: NextRequest) {
       readyForReview: programs.filter((program) => program.lifecycle === "ready_for_review").length,
       blockedOrIdle: programs.filter((program) => ["blocked", "idle", "off"].includes(program.lifecycle)).length,
       trackedCalls7d: trackedCalls,
+      attribution: summarizeAttribution(programsWithSnapshots),
     },
     market,
     snapshotLedger,

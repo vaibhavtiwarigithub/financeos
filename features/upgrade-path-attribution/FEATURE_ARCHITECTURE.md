@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PARTIALLY IMPLEMENTED — the attribution ledger has three production rows, all for the synthetic international-allocation diagnostic; actual Kairos stock-paper attribution is absent. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is pushed on `codex/upgrade-path-attribution-producer` and passes Vercel Preview for commit `5137f6d6`, but is not merged or collecting in production; the production snapshot table still has zero rows. On 2026-09-27, production `execute_paper_fill` was patched by migration `20260927212654` to preserve its exact passed stop/target on entry lots; a transactional source-rewrite test was rolled back, then the migration was applied and `pg_get_functiondef` verified. This repairs a necessary input for future replay, not a portfolio producer. The retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
+Status: PARTIALLY IMPLEMENTED — the attribution ledger has three production rows, all for the synthetic international-allocation diagnostic; actual Kairos stock-paper attribution is absent. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is merged to `main` at `afc7c282` and the Vercel production deployment is `READY`; production still has zero shadow-book rows because the next market-local replay is scheduled for Monday 2026-09-28 at 23:45 UTC. On 2026-09-27, production `execute_paper_fill` was patched by migration `20260927212654` to preserve its exact passed stop/target on entry lots; a transactional source-rewrite test was rolled back, then the migration was applied and `pg_get_functiondef` verified. This repairs a necessary input for future replay, not a portfolio producer. The retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
@@ -114,6 +114,38 @@ active-return blocks. It is a **synthetic fixed-allocation diagnostic**, not a
 replay of Kairos paper or live holdings, and it cannot authorize a policy or
 trade.
 
+**Collector-health instrumentation (local, not P&L producers):** the scheduled
+ATR exit-stop and holding-score-exit routes now write an invocation record to
+`upgrade_path_producer_runs` when called in persist mode. Each record is
+market-local and code-versioned, distinguishes owner/manual from authenticated
+cron, records blocked/error outcomes, and labels its evidence as matured
+decision-label metrics. Its `performanceAttribution` detail is explicitly
+`not_produced_by_this_collector`; these records prove only that a collection
+attempt ran and whether it wrote its decision-level metric rows. They do not
+change either program's `producer_missing` attribution state, and a collector
+wall-clock `asOfDate` is not represented as an observed market session.
+The read model obtains one latest invocation per program through the
+service-only `get_upgrade_path_producer_runs_latest(market)` function, rather
+than a fixed recent-row limit that could eventually hide a low-frequency
+program behind busier schedules. The UI shows the evidence type, row count,
+persisted flag, and result-state distribution so a completed-but-insufficient
+label analysis cannot look like a portfolio result.
+
+**False-green guard (local, not deployed):** collector normalization no longer
+calls every HTTP-200 response with nonempty results “collected.” Explicit
+`success:false`/`ok:false`, and result states `stale`, `invalid`, `blocked`, or
+`error`, are recorded as blocked/errored; legitimate evidence states such as
+`insufficient` remain collected because they describe sample maturity rather
+than a failed fetch. Focused regression tests cover these cases. The producer
+run migration must be deployed with the code before these records can appear in
+production. A production read on 2026-09-27 confirmed that the existing ATR,
+Alpha Diagnostic Lab, and archetype-IC schedules are active and their latest
+scheduled invocations succeeded. It also confirmed that
+`upgrade_path_producer_runs` is absent in production, so the new local health
+ledger is not collecting there. Latest ATR rows remain decision-level label
+statistics (US 4.40 and India 5.40 effective observations at h10), not
+portfolio attribution.
+
 The producer is `/api/allocation/international/replay`, scheduled by the
 market-specific pg_cron job `kairos-international-allocation-replay-us`
 (`45 23 * * 1-5`). It persists immutable run inputs/results and writes the
@@ -147,6 +179,12 @@ their own paired portfolio replay is implemented, deployed, scheduled, and
 validated against production evidence. Shadow observations or symbol-level IC
 are not substitutes for portfolio attribution.
 
+The Upgrade Path header reports portfolio-attribution counts separately from
+operational lifecycle counts: performance-eligible, measured, collecting,
+producer-missing and invalid, plus the number of operational-only programs.
+“Review ready” is an operational evidence gate and must never be interpreted as
+a measured portfolio benefit.
+
 ### Shared accounting foundation (local, not a producer)
 
 `lib/shadows/paired-portfolio-replay.ts` now provides a reusable strict replay
@@ -156,9 +194,12 @@ population; both arms use the same ordered market-session window, benchmark
 series, marks, starting policy and cost version; gross and net arms accept the
 same event set; held names have a price mark on every session; and at least two
 complete non-overlapping return blocks exist before a measured row can be
-formed. It produces gross/net NAV, benchmark-relative incremental return,
+formed. Its supplied session list is independently checked against the
+market-local regular-session calendar, including both endpoints; a caller
+cannot omit a holiday-adjacent trading date while making its marks appear
+internally complete. Unsupported calendar years fail closed. It produces gross/net NAV, benchmark-relative incremental return,
 turnover, drawdown delta and a block-based interval/t-statistic. Mutation tests
-prove the main fail-closed checks.
+prove the main fail-closed checks, including a calendar-gap mutation.
 
 This is deliberately not called a producer: it does not derive any program's
 baseline or challenger decisions, persist evidence, or run from a schedule.
@@ -169,6 +210,106 @@ attribution is absent, and the other seven performance-eligible paths remain
 verified. Source data currently does not preserve enough common decision,
 position-lineage and daily-mark history to manufacture inception-to-date
 portfolio replays for those paths.
+
+**Local ATR-stop replay core (2026-09-27; not a producer):** a pure daily step
+for the predeclared 2.8× decision-time ATR stop now uses the production paper
+ladder, US completed-session OHLC versus India's current close-only exit checks,
+and the existing close/stop fill rule. Its complete stop/target/high-water state
+can round-trip through the existing JSONB shadow-book state. The snapshot
+builder can also create a one-session, identical-book seed row, explicitly
+blocked as having no post-seed return interval. These pieces do not read source
+trades, run on a schedule, persist a replay, or write an attribution row. The
+first production ATR entry still requires post-migration lots with exact stored
+stop/target and linked point-in-time ATR; until then, this remains an unshipped
+adapter foundation and the Upgrade Path state must remain `producer_missing`.
+The session core mirrors the deployed paper RPC's symbol pyramiding contract
+(weighted-average cost/quantity update without resetting original risk levels),
+covered by a focused test. The core also requires the caller to certify raw OHLC
+for barrier checks: current Yahoo paths can persist raw open/high/low with an
+adjusted close, and production `corporate_actions` is empty, so neither may be
+silently treated as a replay-ready executable series.
+
+**Replay-source/accounting hardening (2026-09-27; still local-only):**
+`fetchYahooRawReplaySeries()` now requests Yahoo chart v8 raw OHLC and split /
+dividend events together, validates OHLC consistency and monotonic sessions,
+and returns an explicit `raw_ohlc` source contract. It does not assert Yahoo's
+corporate-action feed is complete or authoritative; a producer must reconcile
+events with the persisted action source and refuse mismatches or missing
+coverage. The ATR stepper now adjusts held quantities, basis, stops, targets,
+and high-water prices for splits, and credits gross dividend cash. Dividend
+tax/withholding is not modeled, so these returns cannot be described as fully
+after-tax P&L. Mutation tests cover raw-vs-adjusted bars, event parsing, split
+unit changes, gross dividend credit, malformed session actions, and explicit
+same-session entry/sale ordering. Non-mechanical sells are applied after buys
+so a fill is not exposed to pre-entry intraday extrema; unmatched sale quantity
+is returned as a reconciliation diagnostic rather than silently discarded.
+There is still no route, schedule, daily snapshot, paired attribution row, or
+deployed verification: the Upgrade Path card must continue to say
+`producer_missing`.
+
+**External fill cost correction (2026-09-27; local-only):** Actual non-mechanical
+paper exit prices in `paper_trades.exit_price` already include the app's modeled
+sell slippage (`computeExitFillPrice()`; rotation RPC also applies 5 bps before
+recording the fill). The ATR replay was charging its 5-bps sell cost again on
+those source-ledger exits. It now treats recorded external fills as all-in
+execution prices and charges replay sell costs only on replay-priced mechanical
+and score exits. Regression tests assert the proceeds and zero additional cost
+for actual recorded fills. This repairs replay arithmetic; it still does not
+provide market data, persistence, schedules, or measured attribution.
+
+**A0 canonical-session correction and monitor read retry (2026-09-27; local-only):**
+The Alpha Diagnostic Lab now compares only canonical EOD rows with the expected
+market-session calendar. Intraday operational snapshots on holidays are not
+counted as missing trading sessions; an expected exchange session without an
+EOD row still fails A0. The production US evidence is therefore split honestly:
+the 2026-09-07 intraday row is a holiday artifact, while 2026-09-11 is a real
+missing EOD record and remains a data-truth failure. No backfill is fabricated.
+PositionMonitor now retries its idempotent paper-position and portfolio reads
+twice on transient Supabase errors; exhaustion still aborts before position
+actions. The diagnostic tests and typecheck pass locally. Neither change is
+deployed, and neither provides any of the seven missing portfolio-attribution
+producers.
+
+The Upgrade Path summary separately counts the synthetic fixed-allocation
+diagnostic so “measured” cannot be misread as “measured on Kairos paper/live
+holdings.” This UI clarification does not change the row's comparison or make
+it evidence for the actual Kairos book.
+
+**ATR baseline/challenger accounting adapter (2026-09-27; local-only):**
+`runAtrStopPairedPortfolioReplay()` now adapts the daily ATR-stop stepper into
+the shared strict portfolio replay. It independently re-runs baseline and
+challenger from the exact same initial book and requires identical ordered
+sessions, daily bars, actions, candidate entries, external fills, cost model,
+and same-window benchmark marks. Source events are converted to simulator fills
+without recharging slippage already embedded in recorded paper fills. Any
+unmatched sale, unsupported corporate action, missing candidate, cross-arm
+input mismatch, or incomplete market session window refuses the measurement.
+Focused adapter tests and full suite pass. This is an accounting seam only: no
+production loader, route, schedule, durable paired input archive, attribution
+writer call, or production verification exists yet; the path must remain
+`producer_missing`.
+
+**Scheduled collector audit (2026-09-27; local-only):** The registry named two
+ATR-stop jobs and the route required cron authentication, but no migration
+actually created the `kairos-exit-stop-shadow-us/india` schedules. Added
+`20260928101500_schedule_exit_stop_shadow.sql` with distinct post-close UTC
+slots; India runs Tuesday-Saturday UTC to collect the prior India-local
+weekday. ATR-stop and score-exit producer records now report the latest source
+observation session separately from the UTC invocation date. The schedule
+migration has not been applied, and schedule/runtime execution remains
+unverified. This repairs a collection-liveness gap only; there is still no
+paired portfolio-P&L producer for ATR stop.
+
+A repository-wide check of the 36 unique schedule names currently declared in
+the Upgrade Path registry found four more missing scheduler declarations:
+the weekly US/India Alpha Diagnostic Lab and archetype-IC jobs. The routes and
+evidence ledgers already existed, but a displayed schedule name did not create
+a cron. Migration `20260928104500_schedule_upgrade_path_diagnostics.sql` now
+declares the four Sunday UTC jobs with distinct market parameters and bounded
+timeouts. Tests tie these job names, endpoints, and UTC times to the registry.
+This migration is also unapplied; deployed execution is unverified. The two
+diagnostic families are liveness/evidence collectors, not matched portfolio
+P&L producers.
 
 **Entry-risk provenance repair (2026-09-27):** the live `execute_paper_fill`
 RPC already received the exact per-fill `p_stop_loss` and `p_price_target`, and
@@ -183,7 +324,7 @@ NULLs or change trading behavior. A current-policy portfolio replay still needs
 chronological mark/stop history, partial-lot lineage reconciliation,
 market-local adjusted OHLC, and exact alternative policy adapters.
 
-### Forward shadow-book snapshot ledger (production schema; preview integration, not yet collecting in production)
+### Forward shadow-book snapshot ledger (production schema and deployed writer; first scheduled collection is pending)
 
 The new `upgrade_path_shadow_book_runs` append-only table is intended to retain
 daily baseline and variant book states from the same starting capital and
@@ -202,13 +343,16 @@ latest-per-market RPC, and mutation trigger are live from migration
 `20260927182158`. Production checks confirmed RLS enabled, one owner read
 policy, one append-only update/delete trigger, anon read/execute denied, and
 service-role insert/RPC execute allowed. The TypeScript builder, international
-allocation writer call, API/UI integration, and per-program adapters remain
-on the feature branch and Vercel Preview; production currently has no rows in this new snapshot table because the integration has not been released to production.
-Therefore this is not yet data collection or a completed new producer. The
-existing international-allocation attribution producer continues to write its
-separate attribution ledger. The other seven missing programs still require
-frozen adapters, market-local schedules, persisted pair history, and a
-production/UI round trip before they can be called producers.
+allocation writer call, and API/UI integration were merged at `afc7c282` and
+deployed `READY` to Vercel production on 2026-09-27. At the Sunday verification
+there were still zero rows: the active market-local international-allocation
+replay is scheduled weekdays at 23:45 UTC, so the first post-release invocation
+is due Monday 2026-09-28 at 23:45 UTC. Until that invocation succeeds and the
+row is verified, report the snapshot producer as deployed/scheduled but not
+yet collecting. The existing international-allocation attribution producer
+continues to write its separate attribution ledger. The other seven missing
+programs still require frozen adapters, market-local schedules, persisted pair
+history, and a production/UI round trip before they can be called producers.
 
 ## UI
 

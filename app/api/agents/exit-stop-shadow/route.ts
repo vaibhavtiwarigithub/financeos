@@ -15,6 +15,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { runStopShadow, type StopShadowPoint } from "@/lib/trading/exit-stop-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
+import { producerOutcomeFromResponse, runWithProducerHealth } from "@/lib/shadows/producer-runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -69,10 +70,7 @@ async function loadPoints(svc: any, horizonDays: number, marketFilter: string | 
   return byMarket;
 }
 
-async function run(req: NextRequest, persist: boolean) {
-  const gate = await authorize(req);
-  if (gate) return gate;
-
+async function runAuthorized(req: NextRequest, persist: boolean) {
   const horizonDays = horizonFrom(req);
   const marketParam = new URL(req.url).searchParams.get("market");
   const marketFilter = marketParam === "us" || marketParam === "india" ? marketParam : null;
@@ -108,6 +106,9 @@ async function run(req: NextRequest, persist: boolean) {
     .map(([market, points]) => runStopShadow(market, horizonDays, points, mandates.get(market)))
     // US and India are never pooled: different benchmarks, sessions, currency.
     .sort((a, b) => a.market.localeCompare(b.market));
+  const observedSession = [...byMarket.values()].flat()
+    .map((point) => point.date).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort().at(-1) ?? null;
 
   if (persist) {
     for (const r of results) {
@@ -134,9 +135,35 @@ async function run(req: NextRequest, persist: boolean) {
   }
 
   return NextResponse.json({
-    ok: true, asOfDate, horizonDays, persisted: persist, results,
+    ok: true, asOfDate, observedSession, horizonDays, persisted: persist, results,
     hypothesis: "H1: a 2.8 ATR stop reduces premature stop-outs and raises mean return, with target and time stop unchanged.",
     influence: "None. Measure-only; no scoring, sizing, stop, target, exit, order or broker path reads this.",
+  });
+}
+
+async function run(req: NextRequest, persist: boolean) {
+  const gate = await authorize(req);
+  if (gate) return gate;
+  if (!persist) return runAuthorized(req, false);
+
+  const market = new URL(req.url).searchParams.get("market");
+  if (market !== "us" && market !== "india") {
+    return NextResponse.json({ error: "persisted shadow runs require market=us or market=india" }, { status: 400 });
+  }
+  const svc = createServiceClient();
+  return runWithProducerHealth({
+    client: svc,
+    programId: "exit-stop-shadow",
+    market,
+    triggerSource: verifyCronSecret(req) ? "cron_authenticated" : "owner_manual",
+    codeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    work: async () => {
+      const response = await runAuthorized(req, true);
+      return {
+        value: response,
+        outcome: await producerOutcomeFromResponse(response, "matured_decision_label_exit_metrics"),
+      };
+    },
   });
 }
 

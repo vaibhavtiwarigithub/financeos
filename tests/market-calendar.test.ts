@@ -8,6 +8,7 @@ import {
   lastCompletedMarketSession,
   expectedLatestSessionDate,
   marketClosedReason,
+  expectedMarketSessionsBetween,
 } from "@/lib/trading/market-calendar";
 
 // Fixed UTC instants → market-local via IANA tz. July = EDT (UTC-4), IST = UTC+5:30.
@@ -163,5 +164,25 @@ describe("market-calendar: expectedLatestSessionDate", () => {
     const at = expectedLatestSessionDate("india", new Date("2026-11-08T08:00:00Z"));
     expect(at.todayKind).toBe("special_session");
     expect(at.date).toBe("2026-11-06"); // the preceding Friday
+  });
+});
+
+describe("market-calendar: replay session enumeration", () => {
+  it("enumerates market-local sessions while skipping weekends and holidays", () => {
+    expect(expectedMarketSessionsBetween("us", "2026-09-03", "2026-09-09"))
+      .toEqual(["2026-09-04", "2026-09-08", "2026-09-09"]); // Sep 7 US holiday
+    expect(expectedMarketSessionsBetween("india", "2026-09-11", "2026-09-15"))
+      .toEqual(["2026-09-15"]); // Sep 14 NSE holiday
+  });
+
+  it("refuses a holiday endpoint, unsupported year, invalid order, and excessive window", () => {
+    expect(() => expectedMarketSessionsBetween("us", "2026-09-04", "2026-09-07"))
+      .toThrow(/not a regular us market session/);
+    expect(() => expectedMarketSessionsBetween("india", "2026-12-31", "2027-01-04"))
+      .toThrow(/unsupported/);
+    expect(() => expectedMarketSessionsBetween("us", "2026-09-09", "2026-09-08"))
+      .toThrow(/valid dates/);
+    expect(() => expectedMarketSessionsBetween("us", "2026-09-01", "2026-09-08", 3))
+      .toThrow(/enumeration bound/);
   });
 });

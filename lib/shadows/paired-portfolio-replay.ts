@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalize } from "@/lib/analytics/alpha-diagnostic-contract";
 import { simulatePortfolio, type SimulationEvent, type SimulationPolicy, type SimulatedFill, type SimulationRejection } from "@/lib/simulation/portfolio-simulator";
 import { markNavSeries, type DailyMark, type HoldingsAt, type NavSeries } from "@/lib/strategy-replay/nav-marker";
+import { expectedMarketSessionsBetween } from "@/lib/trading/market-calendar";
 import type { UpgradePathAttributionRow } from "./attribution";
 
 export type ReplayEntryEvent = SimulationEvent & { decisionId?: string };
@@ -184,6 +185,16 @@ export function runPairedPortfolioReplay(input: PairedPortfolioReplayInput): Pai
   }
   const sessions = input.expectedSessions;
   if (sessions.length < 3 || sessions[0] !== input.windowStart || sessions[sessions.length - 1] !== input.windowEnd || sessions.some((s, i) => i > 0 && s <= sessions[i - 1])) throw new Error("Expected sessions must be the complete ordered market-local window including both endpoints.");
+  const dayBeforeStart = new Date(`${input.windowStart}T12:00:00Z`);
+  dayBeforeStart.setUTCDate(dayBeforeStart.getUTCDate() - 1);
+  const calendarSessions = expectedMarketSessionsBetween(
+    input.market,
+    dayBeforeStart.toISOString().slice(0, 10),
+    input.windowEnd,
+  );
+  if (canonicalize(sessions) !== canonicalize(calendarSessions)) {
+    throw new Error("Expected sessions do not equal the complete regular-session calendar window; missing or extra market dates invalidate attribution.");
+  }
   if (input.marks.length !== sessions.length || input.marks.some((mark, i) => mark.session !== sessions[i] || !finitePositive(mark.benchClose))) throw new Error("Benchmark and price marks must cover every expected market session exactly once.");
   for (const event of [...input.baselineEvents, ...input.variantEvents]) {
     if (!sessions.includes(event.session) || event.session <= input.windowStart || event.session > input.windowEnd) throw new Error("Replay event falls outside the post-anchor common window.");

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
 import { fetchUpstoxBulkQuotes } from "@/lib/data/upstox-bulk";
 import {
@@ -48,6 +49,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const marketOf = (p: any, hasMarketCol: boolean) => (hasMarketCol ? String(p.market ?? "us") : "us");
+type MonitorReadResult = { data: any[] | null; error: any };
 
 // Provenance of a quote accepted this run, kept alongside the bare price so the
 // NAV mark it produces can be attributed afterwards. Before W4 only the number
@@ -89,9 +91,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // returned an error that was never checked, and this route silently did
   // nothing on every single run since — including never refreshing
   // current_price, which is why stale prices lingered for days.
-  const { data: allPositionsRaw, error: positionsError } = await svc
-    .from("paper_positions")
-    .select("*");
+  const { data: allPositionsRaw, error: positionsError } = await withSupabaseRetry<MonitorReadResult>(
+    async () => await svc.from("paper_positions").select("*"),
+    { retries: 2, delayMs: 400 },
+  );
   if (positionsError) throw new Error(`paper_positions read failed: ${positionsError.message}`);
 
   // Scope to one market when the caller asks (India cron runs after the NSE close
@@ -123,7 +126,10 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
 
   // Market detection + per-market pools. Post-057 there are 2+ portfolio rows,
   // so `.single()` would THROW — load them all and key by market instead.
-  const { data: poolRows, error: poolError } = await svc.from("paper_portfolio").select("*");
+  const { data: poolRows, error: poolError } = await withSupabaseRetry<MonitorReadResult>(
+    async () => await svc.from("paper_portfolio").select("*"),
+    { retries: 2, delayMs: 400 },
+  );
   if (poolError) throw new Error(`paper_portfolio read failed: ${poolError.message}`);
   const hasMarketCol = !!poolRows?.[0] && Object.prototype.hasOwnProperty.call(poolRows[0], "market");
   const poolByMarket = new Map<string, any>();

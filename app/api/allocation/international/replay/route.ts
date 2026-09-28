@@ -9,6 +9,7 @@ import { writeShadowBookSnapshot } from "@/lib/shadows/shadow-book-ledger";
 import { createServiceClient } from "@/lib/supabase/service";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { fetchAllPages } from "@/lib/data/fetch-all-pages";
+import { runWithProducerHealth } from "@/lib/shadows/producer-runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -27,6 +28,48 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  try {
+    return await runWithProducerHealth({
+      client: supabase,
+      programId: "international-allocation",
+      market: "us",
+      triggerSource: scheduled ? "cron_authenticated" : "owner_manual",
+      codeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+      work: async () => {
+        const response = await executeReplay(req, scheduled, supabase);
+        const body = await response.clone().json().catch(() => ({}));
+        const asOf = body?.result?.endDate ?? body?.attribution?.asOfSession ?? null;
+        const blockers = response.ok ? [] : [String(body?.error ?? `Replay returned HTTP ${response.status}`)];
+        if (body?.attribution?.state === "invalid") blockers.push(String(body?.attribution?.reason ?? "Attribution validation failed."));
+        return {
+          value: response,
+          outcome: {
+            status: response.status === 409 || body?.attribution?.state === "invalid"
+              ? "blocked" as const
+              : !response.ok ? "error" as const : "collected" as const,
+            // The allocation replay's latest common source date is observed,
+            // not proof of the exchange's expected completed session.
+            expectedSession: null,
+            observedSession: asOf,
+            blockers,
+            details: {
+              httpStatus: response.status,
+              attributionState: body?.attribution?.state ?? null,
+              shadowBookState: body?.shadowBookSnapshot?.state ?? null,
+              trigger: scheduled ? "cron_authenticated" : "owner_manual",
+            },
+          },
+        };
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Producer liveness write failed";
+    return NextResponse.json({ error: message, producerRun: "error" }, { status: 503 });
+  }
+}
+
+async function executeReplay(req: NextRequest, scheduled: boolean, supabase: ReturnType<typeof createServiceClient>) {
+
   const { data: policy, error: policyError } = await supabase
     .from("international_allocation_policies")
     .select("id, market, status, target_pct, deadband_pct")
