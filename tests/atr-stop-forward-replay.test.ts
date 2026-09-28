@@ -239,13 +239,19 @@ describe("forward ATR-stop portfolio replay", () => {
     ] }))).toThrow("Corporate actions must be unique, session-aligned");
   });
 
-  it("drops an entry with unavailable decision-time ATR in both arms", () => {
+  it("holds an entry with unavailable decision-time ATR identically in both arms, on the baseline stop", () => {
     const missingAtr = entry({ atr14AtDecision: Number.NaN });
     const baseline = advanceAtrStopReplaySession(step({ arm: "baseline", entries: [missingAtr] }));
     const variant = advanceAtrStopReplaySession(step({ arm: "atr_2_8", entries: [missingAtr] }));
-    expect(baseline.acceptedEntryIds).toEqual([]);
-    expect(variant.acceptedEntryIds).toEqual([]);
-    expect(baseline.excludedEntries).toEqual(variant.excludedEntries);
+    expect(baseline.acceptedEntryIds).toEqual(variant.acceptedEntryIds);
+    expect(variant.acceptedEntryIds).toEqual([missingAtr.decisionId]);
+    expect(baseline.atrUnavailableEntryIds).toEqual([missingAtr.decisionId]);
+    expect(variant.atrUnavailableEntryIds).toEqual([missingAtr.decisionId]);
+    expect(variant.excludedEntries).toEqual([]);
+    const held = (result: typeof variant) => result.book.positions.find((p) => p.symbol === missingAtr.symbol)!;
+    expect(held(variant).initialStopLoss).toBe(missingAtr.baselineStopLoss);
+    expect(held(variant).applyAtrStop).toBe(false);
+    expect(held(variant)).toEqual(held(baseline));
   });
 
   it("fails closed on missing held-name marks, duplicate bars, and market drift", () => {

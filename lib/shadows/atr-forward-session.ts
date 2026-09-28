@@ -28,7 +28,7 @@ export function buildAtrForwardSession(input: AtrForwardSessionInput): {
   baselineEvents: ReturnType<typeof atrStopStepToPortfolioEvents>["events"];
   variantEvents: ReturnType<typeof atrStopStepToPortfolioEvents>["events"];
   turnoverNotional: number;
-  diagnostics: { baselineExitCount: number; variantExitCount: number; entryCount: number };
+  diagnostics: { baselineExitCount: number; variantExitCount: number; entryCount: number; atrUnavailableEntryIds: string[]; grossDividendCash: number };
 } {
   if (!(input.benchmarkClose > 0) || !Number.isFinite(input.benchmarkClose)) throw new Error("ATR forward session requires a positive same-session benchmark close.");
   const symbols = [...new Set([
@@ -73,8 +73,10 @@ export function buildAtrForwardSession(input: AtrForwardSessionInput): {
   const variantStep = { ...common, arm: "atr_2_8" as const, book: input.variantBook };
   const baseline = advanceAtrStopReplaySession(baselineStep);
   const variant = advanceAtrStopReplaySession(variantStep);
-  const baselineAdapter = atrStopStepToPortfolioEvents({ step: baselineStep, result: baseline });
-  const variantAdapter = atrStopStepToPortfolioEvents({ step: variantStep, result: variant });
+  // NAV comes from the stepper books, which credit dividends and adjust splits;
+  // the events here feed turnover only, so corporate-action sessions are allowed.
+  const baselineAdapter = atrStopStepToPortfolioEvents({ step: baselineStep, result: baseline, allowCorporateActions: true });
+  const variantAdapter = atrStopStepToPortfolioEvents({ step: variantStep, result: variant, allowCorporateActions: true });
   const turnoverNotional = variantAdapter.events
     .reduce((sum, event) => sum + event.price * (event.quantity ?? 0), 0);
 
@@ -85,6 +87,9 @@ export function buildAtrForwardSession(input: AtrForwardSessionInput): {
     baselineEvents: baselineAdapter.events,
     variantEvents: variantAdapter.events,
     turnoverNotional,
-    diagnostics: { baselineExitCount: baseline.exits.length, variantExitCount: variant.exits.length, entryCount: input.entries.length },
+    diagnostics: {
+      baselineExitCount: baseline.exits.length, variantExitCount: variant.exits.length, entryCount: input.entries.length,
+      atrUnavailableEntryIds: variant.atrUnavailableEntryIds, grossDividendCash: variant.grossDividendCash,
+    },
   };
 }

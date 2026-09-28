@@ -15,9 +15,15 @@ export interface AtrStopPairedEvents {
 export function atrStopStepToPortfolioEvents(input: {
   step: AtrStopReplayStepInput;
   result: AtrStopReplayStepResult;
+  /**
+   * The events omit split/dividend cashflows. That is only acceptable when the
+   * caller takes NAV from the stepper's own books (which credit them) and uses
+   * these events for turnover alone, as the forward shadow book does.
+   */
+  allowCorporateActions?: boolean;
 }): AtrStopPairedEvents {
   const { step, result } = input;
-  if (step.corporateActions.length) {
+  if (step.corporateActions.length && !input.allowCorporateActions) {
     throw new Error("Paired portfolio adapter does not yet model split/dividend event cashflows; this window is not attributable.");
   }
   if (result.unmatchedExternalExits.length) {

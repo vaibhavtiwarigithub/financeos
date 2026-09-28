@@ -59,3 +59,28 @@ describe("selectCorporateActionCoverageBatch", () => {
     expect(selectCorporateActionCoverageBatch(["A", "B"], prior, 1)).toEqual(["A"]);
   });
 });
+
+import { symbolsNeedingCoverage } from "@/lib/shadows/corporate-action-coverage";
+
+describe("symbolsNeedingCoverage", () => {
+  const now = new Date("2026-09-28T12:00:00Z");
+  const row = (symbol: string, action_type: string, checked_at: string, status = "complete") => ({ symbol, action_type, status, checked_at });
+
+  it("skips symbols with fresh complete coverage for both kinds", () => {
+    const rows = [row("AAA", "split", "2026-09-27T00:00:00Z"), row("AAA", "dividend", "2026-09-27T00:00:00Z")];
+    expect(symbolsNeedingCoverage(["AAA"], rows, now)).toEqual([]);
+  });
+
+  it("selects never-checked, half-covered, stale and failed-check symbols, oldest first (a missing side ties with never-checked)", () => {
+    const rows = [
+      row("HALF", "split", "2026-09-27T00:00:00Z"),
+      row("OLD", "split", "2026-09-01T00:00:00Z"), row("OLD", "dividend", "2026-09-01T00:00:00Z"),
+      row("BAD", "split", "2026-09-27T00:00:00Z", "error"), row("BAD", "dividend", "2026-09-27T00:00:00Z", "error"),
+    ];
+    expect(symbolsNeedingCoverage(["HALF", "NEW", "OLD", "BAD"], rows, now, 5, 10)).toEqual(["HALF", "NEW", "OLD", "BAD"]);
+  });
+
+  it("bounds the batch", () => {
+    expect(symbolsNeedingCoverage(["A", "B", "C"], [], now, 5, 2)).toHaveLength(2);
+  });
+});

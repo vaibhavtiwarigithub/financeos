@@ -49,6 +49,6 @@ describe("buildAtrForwardSession", () => {
   it("preserves the existing book identically in both arms until new policy entries occur", () => {
     const result = buildAtrForwardSession(input());
     expect(result.baselineBook.positions).toEqual(result.variantBook.positions);
-    expect(result.diagnostics).toEqual({ baselineExitCount: 0, variantExitCount: 0, entryCount: 0 });
+    expect(result.diagnostics).toEqual({ baselineExitCount: 0, variantExitCount: 0, entryCount: 0, atrUnavailableEntryIds: [], grossDividendCash: 0 });
   });
 });

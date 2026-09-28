@@ -732,12 +732,12 @@
     },
     "EXITSTOP": {
       "label": "ATR exit-stop shadow",
-      "description": "Weekly per market (Sun 04:20/04:30 UTC). GET dry-run / POST persists to exit_stop_shadow_runs. Tests ONE predeclared directional hypothesis (H1): a 2.8 ATR stop reduces premature stop-outs versus the live fixed 7.5% stop, with the TARGET and TIME STOP held identical so the stop is the only varying term. Paired and date-clustered: a decision contributes only when BOTH arms resolve, and the statistic is the mean over dates, not rows. H1 was selected from a 14-arm grid, so significance is Sidak-adjusted (alpha 0.00366, |t| > 2.9) and the adjusted alpha is stored on every row. Reuses classifyExit from lib/trading/exit-geometry-shadow.ts rather than reimplementing barrier resolution. MEASURE-ONLY - changes no stop, target, time stop, exit, order or position, and nothing in the money path reads exit_stop_shadow_runs.",
+      "description": "Weekly per market (Sun 04:20/04:30 UTC). GET dry-run / POST persists to exit_stop_shadow_runs. Tests ONE predeclared directional hypothesis (H1): a 2.8 ATR stop reduces premature stop-outs versus the live fixed 7.5% stop, with the TARGET and TIME STOP held identical so the stop is the only varying term. Paired and date-clustered: a decision contributes only when BOTH arms resolve, and the statistic is the mean over dates, not rows. H1 was selected from a 14-arm grid, so significance is Sidak-adjusted (alpha 0.00366, |t| > 2.9) and the adjusted alpha is stored on every row. Reuses classifyExit from lib/trading/exit-geometry-shadow.ts rather than reimplementing barrier resolution. MEASURE-ONLY - changes no stop, target, time stop, exit, order or position, and nothing in the money path reads exit_stop_shadow_runs. 2026-09-28: a US-only forward paired portfolio shadow book (POST /api/agents/atr-stop-forward, daily 22:15 UTC) now seeds identical baseline/variant books from the paper book and appends per-session snapshots to upgrade_path_shadow_book_runs; corporate-action coverage is fed by /api/agents/corporate-action-coverage (Massive). Still measure-only and still no attribution row.",
       "addedAt": "2026-09-01",
       "addReason": "The 2026-09-01 exit-geometry run refuted the intuitive fix: the +19.2% target fires ZERO times across 965 India observations, and tightening it lowers mean return in all four cohorts while raising win rate. The winning grid arm gained entirely through stopping out 131 times instead of 185 with timeouts unchanged - so the recoverable loss is in the STOP, not the target.",
       "status": "active",
-      "changedAt": null,
-      "changeReason": null,
+      "changedAt": "2026-09-28",
+      "changeReason": "Added the US forward paired shadow-book collector and its Massive corporate-action coverage feeder; no trade path changed.",
       "removedAt": null,
       "removeReason": null
     },
@@ -915,6 +915,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-09-28",
+      "event": "changed",
+      "nodeId": "EXITSTOP",
+      "label": "ATR forward paired shadow book (US) added: seeds identical baseline/variant books from the paper book and appends daily snapshots; corporate-action coverage from Massive. Measure-only; India refused (no corporate-action source); no attribution row until two non-overlapping blocks exist."
+    },
     {
       "date": "2026-09-28",
       "event": "changed",

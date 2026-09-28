@@ -100,6 +100,12 @@ export interface AtrStopReplayStepResult {
   sellCost: number;
   grossDividendCash: number;
   excludedEntries: Array<{ decisionId: string; reason: string }>;
+  /**
+   * Accepted entries whose decision-time ATR was unavailable. Both arms keep the
+   * baseline stop for them, so the intervention could not apply; reported so the
+   * measured estimand is disclosed rather than silently narrowed.
+   */
+  atrUnavailableEntryIds: string[];
 }
 
 const positive = (value: number) => Number.isFinite(value) && value > 0;
@@ -212,6 +218,7 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
   const exits: AtrStopReplayStepResult["exits"] = [];
   const unmatchedExternalExits: AtrStopReplayStepResult["unmatchedExternalExits"] = [];
   const excludedEntries: AtrStopReplayStepResult["excludedEntries"] = [];
+  const atrUnavailableEntryIds: string[] = [];
   const positions: AtrStopReplayPosition[] = [];
   let cash = input.book.cash;
   let sellCost = 0;
@@ -386,11 +393,11 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
       excludedEntries.push({ decisionId: entry.decisionId, reason: "entry_contract_incomplete" });
       continue;
     }
+    // A missing decision-time ATR is never guessed. The entry still happened in
+    // the paper book, so dropping it would let the baseline diverge from the real
+    // ledger; both arms instead hold it with the baseline stop.
     const candidateStop = atrStopForEntry(entry.fillPrice, entry.atr14AtDecision);
-    if (candidateStop == null) {
-      excludedEntries.push({ decisionId: entry.decisionId, reason: "decision_time_atr_unavailable_or_invalid" });
-      continue;
-    }
+    if (candidateStop == null) atrUnavailableEntryIds.push(entry.decisionId);
 
     const notional = entry.quantity * entry.fillPrice;
     if (notional > cash + 1e-8) {
@@ -407,7 +414,7 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
       existing.costBasis = (existing.costBasis * existing.quantity + notional) / totalQuantity;
       existing.quantity = totalQuantity;
     } else {
-      const initialStopLoss = input.arm === "atr_2_8" ? candidateStop : entry.baselineStopLoss;
+      const initialStopLoss = input.arm === "atr_2_8" && candidateStop != null ? candidateStop : entry.baselineStopLoss;
       positions.push({
         symbol,
         quantity: entry.quantity,
@@ -416,7 +423,7 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
         currentStop: initialStopLoss,
         priceTarget: entry.priceTarget,
         highestPrice: entry.fillPrice,
-        applyAtrStop: input.arm === "atr_2_8",
+        applyAtrStop: input.arm === "atr_2_8" && candidateStop != null,
         partialTaken: false,
       });
     }
@@ -464,5 +471,6 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
     sellCost,
     grossDividendCash,
     excludedEntries,
+    atrUnavailableEntryIds,
   };
 }

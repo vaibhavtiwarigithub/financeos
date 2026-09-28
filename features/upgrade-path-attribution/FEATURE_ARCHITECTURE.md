@@ -354,6 +354,16 @@ continues to write its separate attribution ledger. The other seven missing
 programs still require frozen adapters, market-local schedules, persisted pair
 history, and a production/UI round trip before they can be called producers.
 
+### US ATR forward paired shadow book (2026-09-28; collector built, first snapshots pending)
+
+`POST /api/agents/atr-stop-forward?market=us` (`lib/shadows/atr-forward-run.ts`) closes the collector gap for the ATR-stop path, US only. It is the first Upgrade Path program with a scheduled, market-local forward producer over the real paper book; it does **not** yet produce an attribution row or a measured result.
+
+- **Estimand.** Identical baseline and variant books start from the reconciled US paper book at one completed session. Both arms then receive the same ordered sessions, raw OHLC, validated corporate actions, actual paper-lot entries and actual non-mechanical sales, cost model and benchmark marks. The only difference is the initial stop of an entry made after the seed that has a decision-time ATR: 2.8x ATR versus the recorded baseline stop. Seeded legacy holdings are identical in both arms and cannot differ; an entry with no decision-time ATR is held identically on the baseline stop and reported, so the measured effect is "ATR stop where decision-time ATR exists".
+- **Sources.** Bars: Yahoo chart v8 raw OHLC (never adjusted close). Benchmark: VOO raw close, same session. Corporate actions: Yahoo events must agree with the persisted ledger and a fresh complete coverage row (fed by `/api/agents/corporate-action-coverage` from Massive splits/dividends, validated by the shared assessor). Entries/sales: `paper_trades` lot ledger via `paperLotReplayEvents`, with the decision-time ATR joined through `signal_id` to `decision_observations.features.technical.atr14`. Mechanical stop/target sales are simulated, not copied.
+- **Fail-closed.** A missing bar, benchmark close, coverage row, ledger disagreement, unreconciled seed, unmatched sale or non-resumable history writes no snapshot and records a `blocked` producer run. Loader/database errors are errors, not evidence. Already-written sessions are kept; the next run resumes (at most five sessions per run).
+- **Persistence.** One append-only `upgrade_path_shadow_book_runs` row per session; the per-session mark (prices, benchmark close), the cumulative matched decision population and cumulative turnover are stored inside the row so history rebuilds exactly from persisted evidence. The first row is a seed anchor and is marked seed-only.
+- **Not done.** No attribution row: that needs at least two complete non-overlapping ten-session blocks plus the paired confidence computation, roughly a month of sessions away, and only entries after the 2026-09-27 entry-risk provenance repair can differ between arms, so the first measurable window may be thin. Dividend tax/withholding is not modeled. India is refused: no corporate-action source covers NSE names. The other six performance-eligible programs are unchanged.
+
 ## UI
 
 Each Upgrade Path card gains an **Attribution** section:

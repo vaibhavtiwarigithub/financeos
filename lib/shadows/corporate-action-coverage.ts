@@ -75,3 +75,25 @@ export function assessCorporateActionPayload(input: {
   }
   return { status: "complete", recordsCount: data.length, reason: null };
 }
+
+/**
+ * Symbols whose split or dividend coverage is missing or older than `maxAgeDays`
+ * (a failed check never counts as fresh), oldest first, bounded by `limit`.
+ * The replay refuses coverage older than its own bound, so the collector must
+ * refresh well inside it instead of re-spending provider calls every run.
+ */
+export function symbolsNeedingCoverage(
+  candidates: string[],
+  priorRows: Array<{ symbol: string; action_type: string; status?: string; checked_at: string }>,
+  now: Date,
+  maxAgeDays = 5,
+  limit = 2,
+): string[] {
+  const cutoff = now.getTime() - maxAgeDays * 86_400_000;
+  const freshComplete = new Set<string>();
+  for (const row of priorRows) {
+    if (row.status === "complete" && Date.parse(row.checked_at) >= cutoff) freshComplete.add(`${row.symbol}:${row.action_type}`);
+  }
+  const needing = [...new Set(candidates)].filter((symbol) => !(freshComplete.has(`${symbol}:split`) && freshComplete.has(`${symbol}:dividend`)));
+  return selectCorporateActionCoverageBatch(needing, priorRows, limit);
+}
