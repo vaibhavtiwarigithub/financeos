@@ -195,3 +195,29 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
     expect(h.priceCacheUpsert).not.toHaveBeenCalled();
   });
 });
+
+describe("the prewarm bypasses the same-day provider cache for symbols it knows are stale", () => {
+  // Production 2026-09-24/25: the 21:35 UTC post-close run wrote ~48 symbols and
+  // failed the same ~78 every day. providerCachedFetch serves any same-UTC-day
+  // av_cache row without a real call, and the 13:00-14:00 UTC research run had
+  // already cached pre-close candles for those symbols, so the "refresh" got the
+  // morning payload back, saw no new session, and counted a failure.
+  it("passes forceRefresh so a pre-close cache row cannot be returned as the refresh", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = async () => ({ data: [], error: null });
+        chain.upsert = async () => ({ error: null });
+        return chain;
+      },
+    };
+    await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
+
+    expect(h.fetchUsCandles).toHaveBeenCalledTimes(1);
+    expect((h.fetchUsCandles.mock.calls[0] as unknown[])[3]).toEqual({ forceRefresh: true });
+  });
+});

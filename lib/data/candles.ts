@@ -26,10 +26,10 @@ export function newestBarIsStale(candles: Candle[]): boolean {
 
 // Yahoo Finance v8 chart — no API key, no observed rate limit, 251 adjusted bars.
 // Works for US (AAPL) and India (RELIANCE.NS). Primary source for fetchUsCandles.
-export async function fetchYahooCandles(symbol: string): Promise<Candle[]> {
+export async function fetchYahooCandles(symbol: string, forceRefresh = false): Promise<Candle[]> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`;
   try {
-    const json = await providerCachedFetch("yahoo", `YAHOO_CANDLES:${symbol}`, url, { timeoutMs: 8000 });
+    const json = await providerCachedFetch("yahoo", `YAHOO_CANDLES:${symbol}`, url, { timeoutMs: 8000, ...(forceRefresh ? { forceRefresh: true } : {}) });
     const result = json?.chart?.result?.[0];
     if (!result) return [];
     const timestamps: number[] = result.timestamp ?? [];
@@ -49,14 +49,14 @@ export async function fetchYahooCandles(symbol: string): Promise<Candle[]> {
 }
 
 // Massive / Polygon aggregates: /v2/aggs/ticker/{t}/range/1/day/{from}/{to}
-export async function fetchMassiveCandles(symbol: string, days = 160): Promise<Candle[]> {
+export async function fetchMassiveCandles(symbol: string, days = 160, forceRefresh = false): Promise<Candle[]> {
   const key = process.env.MASSIVE_API_KEY ?? "";
   if (!key) return [];
   const to = new Date();
   const from = new Date(to.getTime() - days * 2 * 86400000); // 2× calendar for weekends/holidays
   const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${fmtDate(from)}/${fmtDate(to)}?adjusted=true&sort=asc&limit=5000&apiKey=${key}`;
   try {
-    const json = await providerCachedFetch("massive", `MASSIVE_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000 });
+    const json = await providerCachedFetch("massive", `MASSIVE_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000, ...(forceRefresh ? { forceRefresh: true } : {}) });
     const results: any[] = json?.results ?? [];
     return results
       .map((r: any) => ({
@@ -68,13 +68,13 @@ export async function fetchMassiveCandles(symbol: string, days = 160): Promise<C
 }
 
 // EODHD EOD: /api/eod/{SYMBOL}.US?fmt=json — ascending, adjusted_close available.
-export async function fetchEodhdCandles(symbol: string, days = 160): Promise<Candle[]> {
+export async function fetchEodhdCandles(symbol: string, days = 160, forceRefresh = false): Promise<Candle[]> {
   const key = process.env.EODHD_API_KEY ?? "";
   if (!key) return [];
   const from = fmtDate(new Date(Date.now() - days * 2 * 86400000));
   const url = `https://eodhd.com/api/eod/${encodeURIComponent(symbol)}.US?api_token=${key}&fmt=json&order=a&from=${from}`;
   try {
-    const json = await providerCachedFetch("eodhd", `EODHD_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000 });
+    const json = await providerCachedFetch("eodhd", `EODHD_CANDLES:${symbol}:${days}`, url, { timeoutMs: 8000, ...(forceRefresh ? { forceRefresh: true } : {}) });
     const rows: any[] = Array.isArray(json) ? json : [];
     return rows
       .map((r: any) => ({
@@ -87,7 +87,7 @@ export async function fetchEodhdCandles(symbol: string, days = 160): Promise<Can
 }
 
 // Twelve Data time_series: /time_series?symbol=X&interval=1day (returns newest-first).
-export async function fetchTwelveDataCandles(symbol: string, days = 160): Promise<Candle[]> {
+export async function fetchTwelveDataCandles(symbol: string, days = 160, forceRefresh = false): Promise<Candle[]> {
   const key = process.env.TWELVEDATA_API_KEY ?? "";
   if (!key) return [];
   const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=${days}&apikey=${key}`;
@@ -95,6 +95,7 @@ export async function fetchTwelveDataCandles(symbol: string, days = 160): Promis
     const json = await providerCachedFetch("twelvedata", `TD_CANDLES:${symbol}:${days}`, url, {
       timeoutMs: 8000,
       isThrottled: (j) => j?.status === "error",
+      ...(forceRefresh ? { forceRefresh: true } : {}),
     });
     const rows: any[] = json?.values ?? [];
     return rows
@@ -117,16 +118,23 @@ export async function fetchUsCandles(
   symbol: string,
   avFallback: () => Promise<Candle[]>,
   minCandles = 60,
+  // forceRefresh skips the same-UTC-day av_cache hit in every tier. A caller
+  // that already knows its cached bar is behind the expected session (the
+  // post-close prewarm) needs a real call: the day-cache otherwise returns the
+  // pre-close payload fetched by the morning research run, which can never
+  // contain the session that just closed.
+  opts: { forceRefresh?: boolean } = {},
 ): Promise<{ candles: Candle[]; source: string }> {
   const accept = (c: Candle[]) => c.length >= minCandles && !newestBarIsStale(c);
+  const force = opts.forceRefresh === true;
 
-  const y = await fetchYahooCandles(symbol);
+  const y = await fetchYahooCandles(symbol, force);
   if (accept(y)) return { candles: y, source: "yahoo" };
-  const m = await fetchMassiveCandles(symbol);
+  const m = await fetchMassiveCandles(symbol, 160, force);
   if (accept(m)) return { candles: m, source: "massive" };
-  const e = await fetchEodhdCandles(symbol);
+  const e = await fetchEodhdCandles(symbol, 160, force);
   if (accept(e)) return { candles: e, source: "eodhd" };
-  const t = await fetchTwelveDataCandles(symbol);
+  const t = await fetchTwelveDataCandles(symbol, 160, force);
   if (accept(t)) return { candles: t, source: "twelvedata" };
   const av = await avFallback().catch(() => [] as Candle[]);
   // The final fallback is still a provider response, not an exemption from

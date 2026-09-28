@@ -266,10 +266,14 @@ export async function prewarmPriceCache(
     const batch = pending.slice(i, i + 4);
     await Promise.all(batch.map(async (sym) => {
       try {
+        // `pending` holds only symbols whose cached bar is behind freshCutoff, so
+        // a real call is warranted: the same-day av_cache would otherwise hand back
+        // the pre-close payload the morning research run stored.
         const { candles: resolved, source: warmSource } = await fetchUsCandles(
           sym,
           () => fetchAvDailyCandles(sym),
           1,
+          { forceRefresh: true },
         );
         // `fetchUsCandles` rejects materially stale feeds, but its recency
         // guard deliberately allows a long weekend. Prewarm has a stronger
