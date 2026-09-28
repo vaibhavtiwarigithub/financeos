@@ -234,12 +234,15 @@ describe("freshness contracts — cross-run watermark advance", () => {
   it("a single stale enabled benchmark breaches the chart-data contract", () => {
     // All enabled comparators must advance. A table-wide max date is useless:
     // it was precisely how a current QQQ/XLK/XLF series concealed stale VOO.
+    // The benchmark contract includes a three-hour provider-settlement window;
+    // evaluate after it so yesterday's lone VOO watermark is truly stale.
+    const afterSettlement = new Date("2026-08-14T00:00:00Z");
     const r = evaluateFreshness(usBenchmarks, [
       { scope: "voo", watermark: "2026-08-12" },
       { scope: "qqq", watermark: "2026-08-13" },
       { scope: "xlk", watermark: "2026-08-13" },
       { scope: "xlf", watermark: "2026-08-13" },
-    ], NOW);
+    ], afterSettlement);
     expect(usBenchmarks.scopeUniverse).toBe("enabled_benchmarks");
     expect(r.breached).toBe(true);
     expect(r.kind).toBe("coverage");

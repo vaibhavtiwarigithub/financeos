@@ -57,6 +57,18 @@ The requested eight-name / 95%-invested policy requires a separate transition
 from the current 15-name books and the 80% gross cap. A one-for-one replacement
 does not consolidate the book. No automatic seven-name liquidation is implied
 by these implementation repairs; cash deployment remains subject to risk limits.
+
+**Production check (2026-09-28):** US and India paper shadows are enabled, but
+paper execution, score-only paper execution, and live proposals are false for
+both markets. In the prior 60 days there were 201 US / 205 India rotation events
+and zero executed rotations. Latest India P1 events were not ready: HDFCBANK.NS
+was blocked by `score_to_return_mapping_unvalidated`; ITC.NS additionally failed
+score-edge margin and persistence. The P1 executor checks the deployment flag,
+both database flags, fresh P1 readiness, exact plan, and post-swap policy before
+calling the atomic RPC. Do not report a config toggle alone as active rotation.
+Do not weaken the positive-net-edge or evidence gates to make the feature appear
+active. This remains a shadow-only program until an eligible current contract
+passes; passing one contract still does not establish benchmark outperformance.
 > Update when built: `docs/arch/03-agents.md`, `docs/arch/04-database-schema.md`, `docs/arch/08-risk-and-safety.md`, `docs/arch/09-learning-loop.md`, `public/agent-diagrams/system-map.json`.
 
 ## One-line decision

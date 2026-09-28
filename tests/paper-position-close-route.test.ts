@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const route = readFileSync("app/api/paper-positions/close/route.ts", "utf8");
 const migration = readFileSync(
-  "supabase/migrations/20260928161500_atomic_manual_paper_exit_nav.sql",
+  "supabase/migrations/20260928160049_atomic_manual_paper_exit_nav.sql",
   "utf8",
 );
 

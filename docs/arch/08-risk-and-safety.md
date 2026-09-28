@@ -27,6 +27,10 @@
 > A3 reported India percent profit factor 1.438 against currency 0.906. By entry-notional quartile the win rate falls monotonically 60 -> 56 -> 54 -> **38%** as size rises; the smallest quartile earns +5,871 and the largest loses -10,113.
 >
 > **Position size tracks cash available at entry (corr +0.344), not conviction (corr with analyst_score -0.128).** Notional spans 57x on a nominally uniform book: allocation is decided by timing, not by the model.
+
+### Owner-directed paper-book consolidation and learning attribution (2026-09-28)
+
+The owner-approved eight-position limit is persisted in each market's `trading_mandates.max_open_positions` (US v5, India v4) and is consumed by the existing PaperTrader constructor and atomic fill guard. Consolidation uses fresh market quotes, current session-validated research rank, exact position/open-lot parity, and the canonical `execute_paper_exit` ledger. Owner-directed exits use the fixed `manual_owner_consolidation_to_8` reason and are excluded from signal-learning samples, but remain in true portfolio P&L and NAV. A normal protective stop is recorded as `stop_hit` and remains in learning evidence. The owner-only manual-exit database wrapper is applied and verified; its route integration and tests are committed locally as `ea49efdb` but are not yet pushed or deployed. The cap does not imply a 95%-invested floor: cash utilization remains subordinate to gross/name/sector/volatility/correlation and candidate-quality limits.
 >
 > **CORRECTED 2026-08-28 (same day):** the `h10 rank IC +0.105` originally cited here as India's selection edge is the **all-scored** context cohort. Under the measurement-integrity repair (`f95c3951`) the **eligible-long** cohort — the names that could actually be entered — measures **-0.0083** over 17 dates in India and **-0.0768** over 21 in the US, both below the evidence floor. There is no demonstrated selection edge in the entry cohort, so "allocation throws the edge away" is unsupported; only the sizing mechanism above survives. The US/India split asserted below is also wrong in direction: neither market's eligible cohort ranks.
 >
@@ -578,6 +582,16 @@ correlation, or complete query results remain explicit blockers. These fields
 are diagnostic only and cannot relax an entry, exit, cash, position, or order
 gate. Agents -> Rotation exposes the market-local evidence without an enable
 control.
+
+**Production recheck (2026-09-28):** Shadow flags are true, but paper execution,
+score-only paper execution, and live proposals are false in both markets. The
+prior 60-day ledger contains 201 US / 205 India rotation events and zero paper
+executions. The latest India HDFCBANK.NS plan has the core accounting and
+post-swap evidence but is still blocked by the unvalidated score-to-return
+mapping; ITC.NS also fails persistence and score-edge margin. Enabling a database
+flag alone would not activate a trade: the deployment flag, score-only setting,
+fresh P1 contract and exact sized plan are independent gates. Keep all P1 gates
+intact; do not claim readiness or outperformance from shadow plans.
 
 **Per-market pause/kill isolation (migration 171).** The pause and kill-switch
 state was GLOBAL (`strategy_config.app_paused`/`trading_enabled`), so one

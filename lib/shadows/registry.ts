@@ -538,7 +538,8 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     productBenefit: "Makes opportunity cost explicit instead of treating a full book as a permanent no-op.",
     traderBenefit: "Can recycle capital into stronger candidates while respecting holding period, turnover, cost, tax and anti-thrash gates.",
     evidenceSource: "rotation_config + rotation_events + paper_trades",
-    // State as of 2026-08-25, verified against rotation_config AND paper_trades.
+    // State as of 2026-09-28, rechecked against production rotation_config,
+    // rotation_events, and the paper-trade ledger.
     //
     // This line has now been wrong twice, in opposite directions. It read "Paper
     // execution is enabled" while every flag was false; it was then corrected to
@@ -549,7 +550,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     // while status='paper_executed' sat in the same rows. Confirm against the
     // table that records the EFFECT (paper_trades), not the one that records
     // intent. Keep this pinned to observed state, never to intent.
-    currentInfluence: "Shadow only. rotation_paper_execute_enabled=false and rotation_allow_score_only_paper=false on both book_type='paper' rows; both book_type='live' rows false; rotation_live_proposals_enabled=false everywhere. It HAS executed before: two swaps in July 2026 (4 sell lots, exit_reason='capital_rotation'), after which the paper flags were set false on 2026-08-11 for reasons not yet established — see docs/audits/2026-08-25-rotation-unreachable-trace.md before re-enabling.",
+    currentInfluence: "Shadow only as of 2026-09-28. Production read: paper rotation and score-only paper flags are false for US and India; live rotation proposals are false. Over the prior 60 days there were 201 US and 205 India rotation events, zero paper_executed. Two historical July swaps did execute (PLTR→CB and ONGC.NS→TCS.NS; four sell lots). The 2026-08-11 containment was added because execution did not enforce P1 readiness or honor the score-only flag; see docs/audits/2026-08-25-rotation-unreachable-trace.md. Latest India P1 plans remain blocked by an unvalidated score-to-return mapping; no paper execution should be inferred from shadow plans.",
     maximumInfluence: "Two-leg owner-reviewed live rotation proposal after paper evidence and broker reconciliation proof.",
     activationGate: "Positive net paper outcome after costs, stable churn/turnover, tax/lot correctness, live two-leg approval and reconciliation sign-off.",
     safetyBoundary: "PositionMonitor exits have precedence; live rotation proposals remain disabled.",
@@ -559,7 +560,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     architectureRef: "features/capital-rotation/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "ac7ffda0", enteredAt: "2026-07-13", implementationScope: "paper_capable", reason: "Measure opportunity-cost replacements in fully invested paper books; execution remains separately gated after unsafe early P1 behavior." },
     reviewDate: "2026-10-15",
-    reviewNote: "Understand why paper flags were disabled 2026-08-11 (see audits/2026-08-25 trace). If safe to re-enable, re-activate paper and review net outcome after costs.",
+    reviewNote: "Recheck market-local P1 blockers, score-to-return evidence, turnover and exact-lot reconciliation. Keep execution gated until current contracts pass and matched portfolio attribution can evaluate outcomes; never treat shadow plans as realized uplift.",
   },
   {
     id: "earnings-risk",

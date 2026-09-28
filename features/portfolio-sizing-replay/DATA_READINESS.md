@@ -1,4 +1,34 @@
-# Production evidence audit — 2026-09-20
+# Production evidence audit — 2026-09-28
+
+## Current sizing policy and cash-utilization reality
+
+Read-only production recheck on 2026-09-28 (project `dionkikgdmlaotvtbnfr`):
+
+| Market | Alpha positions | Configured open-name limit | Cash | NAV | Cash / NAV | Active mandate max position |
+|---|---:|---:|---:|---:|---:|---:|
+| US | 13 | 15 | $3,079.49 | $9,998.74 | 30.80% | 10% |
+| India | 11 | 15 | ₹450,825.33 | ₹1,056,614.94 | 42.67% | 10% |
+
+The active `trading_mandates.max_open_positions` is 15 for both markets. The
+`strategy_config` custom gross/name/sector/volatility limits are NULL, so the
+paper constructor's code defaults apply: 80% gross exposure, 12% name exposure,
+30% sector exposure and 2% daily portfolio volatility. The separate active
+`investment_mandates.max_position_pct` is 10% and is used by the rotation
+contract. The constructor is explicitly allowed to shrink or deny a buy and
+never force-sells existing holdings. The user's requested 8-name / 5%-cash
+objective is not a current production policy. At present, the 80% gross cap
+alone precludes 95% invested; under the 10% per-position mandate, eight fully
+allocated names would also cap at 80%. Reaching 95% invested across eight names
+would require raising applicable per-name and gross-risk limits (at least
+11.875% average per-name exposure if names were equal), and that arithmetic is
+not a risk approval. A cash target must remain a soft utilization objective: no
+order may breach name/sector/gross/volatility/correlation limits merely to
+reduce cash. The current 13 US / 11 India positions also cannot be reduced to
+eight by one-for-one rotation; doing that needs a separately defined,
+multi-source consolidation policy and an approved transition/replay.
+
+Current config is read-only evidence, not a recommendation to raise risk. No
+positions, mandate limits, or execution settings were changed.
 
 Read-only FinanceOS queries; paper marks and NAV latest through 2026-09-18.
 No trading or database data changed. These are app-ledger observations, not an

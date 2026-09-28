@@ -39,7 +39,7 @@ export function requiredPriceScope(decisionSymbols: string[], positionSymbols: s
 }
 
 /** Bump when a contract is added, removed, or its thresholds change. */
-export const FRESHNESS_REGISTRY_VERSION = 2;
+export const FRESHNESS_REGISTRY_VERSION = 3;
 
 export interface FreshnessContract {
   /** Stable id — forms the alert issue_key. Never reuse for a different table. */
@@ -130,7 +130,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     // while the portfolio chart contained a newer intraday NAV. Monitor the
     // ledger per enabled benchmark, so a missing series stays visible.
     id: "benchmark-observations-us",
-    version: 1,
+    version: 2,
     table: "benchmark_price_observations",
     market: "us",
     watermarkColumn: "date",
@@ -139,6 +139,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     scopeUniverse: "enabled_benchmarks",
     graceHours: WEEKEND_SAFE_HOURS,
     sessionAware: true,
+    settleHours: 3,
     minCoverage: 1,
     lookbackDays: 60,
     impact: "A stale benchmark truncates or misstates portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
@@ -146,7 +147,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
   },
   {
     id: "benchmark-observations-india",
-    version: 1,
+    version: 2,
     table: "benchmark_price_observations",
     market: "india",
     watermarkColumn: "date",
@@ -155,6 +156,7 @@ export const FRESHNESS_CONTRACTS: FreshnessContract[] = [
     scopeUniverse: "enabled_benchmarks",
     graceHours: WEEKEND_SAFE_HOURS,
     sessionAware: true,
+    settleHours: 3,
     minCoverage: 1,
     lookbackDays: 60,
     impact: "A stale benchmark truncates or misstates India portfolio-versus-benchmark returns even when the portfolio NAV itself is current.",
