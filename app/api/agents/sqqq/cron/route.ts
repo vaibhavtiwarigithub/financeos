@@ -45,11 +45,16 @@ async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceCl
 
 async function recordRun(supabase: ReturnType<typeof createServiceClient>, status: "done" | "error", summary: string): Promise<void> {
   const nowIso = new Date().toISOString();
-  await supabase.from("agent_runs").insert({
+  // supabase-js builders are thenables without .catch(): the old `.insert(...).catch(...)` threw a
+  // TypeError on every call (HTTP 500, no run row), so the liveness proof could never be written.
+  try {
+    const { error } = await supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "us", status, symbols: ["SQQQ"],
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
     result_summary: summary.slice(0, 500),
-  } as any).catch(() => undefined);
+  } as any);
+    if (error) console.error(`[sqqq] liveness row write failed: ${error.message}`);
+  } catch (e) { console.error(`[sqqq] liveness row write threw: ${String(e)}`); } // bookkeeping must never break the real response
 }
 
 const NO_AV_FALLBACK = async () => [];

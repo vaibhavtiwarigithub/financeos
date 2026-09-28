@@ -47,6 +47,9 @@ describe("routed design wiring (contract)", () => {
       expect(route).not.toContain("quote.bid ?? NaN");
       // kairos_call_agent always POSTs; a GET-only door answers 405 and never runs.
       expect(route).toContain("export const POST = GET;");
+      // supabase-js builders have no .catch(); `.insert(...).catch` threw TypeError -> 500 and no liveness row.
+      expect(route).not.toMatch(/as any\)\.catch\(/);
+      expect(route).toMatch(/const \{ error \} = await supabase\.from\("agent_runs"\)\.insert/);
     });
   }
   it("generic paths still block the sleeve and research still scores it", () => {
