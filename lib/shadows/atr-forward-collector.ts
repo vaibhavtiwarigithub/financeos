@@ -70,7 +70,10 @@ export function buildSeedSnapshotInput(input: {
       sessionMark,
       decisionIds,
       cumulativeTurnoverNotional: 0,
-      seed: { nav: input.seed.nav, positionCount: input.seed.book.positions.length, priceBasis: "raw_ohlc" },
+      seed: {
+        nav: input.seed.nav, paperNav: input.seed.paperNav, positionCount: input.seed.book.positions.length, priceBasis: "raw_ohlc",
+        markBasis: "shadow marks are official raw closes; composition reconciled to paper NAV via the PositionMonitor's recorded marks",
+      },
     },
   };
 }

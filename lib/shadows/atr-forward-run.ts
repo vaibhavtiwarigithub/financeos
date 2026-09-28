@@ -15,6 +15,10 @@ export interface AtrForwardSeedSource {
   reportedNav: number | string | null;
   /** When the paper book's marks were last written; must be on/after the seed session. */
   marksUpdatedAt: string | null;
+  /** Marks the paper NAV used, keyed by symbol (paper_position_marks for the seed session). */
+  paperMarks: Record<string, number>;
+  /** Session those marks belong to; must equal the seed session. */
+  paperMarksSession: string | null;
   positions: AtrReplaySeedPositionRow[];
   openLots: AtrReplaySeedLotRow[];
 }
@@ -72,13 +76,23 @@ export async function runAtrForwardCollection(deps: AtrForwardDeps): Promise<Atr
     if (!source.marksUpdatedAt || source.marksUpdatedAt.slice(0, 10) < expected) {
       return blocked(expected, null, written, `Paper book marks were last written ${source.marksUpdatedAt ?? "never"}, before session ${expected}; seed refused until they are refreshed.`);
     }
-    const series = await deps.loadRawSeries([deps.benchmarkSymbol]);
+    if (source.paperMarksSession !== expected) {
+      return blocked(expected, null, written, `Recorded paper NAV marks are for ${source.paperMarksSession ?? "no session"}, not ${expected}; seed refused.`);
+    }
+    const series = await deps.loadRawSeries([deps.benchmarkSymbol, ...source.positions.map((position) => position.symbol)]);
     const benchmark = candleOn(series.get(deps.benchmarkSymbol), expected);
     if (!benchmark) return blocked(expected, null, written, `No raw ${deps.benchmarkSymbol} benchmark close for ${expected}.`);
     try {
+      // Shadow marks are official raw closes, the same basis every later step
+      // uses; the paper NAV's own marks are used only to reconcile composition.
+      const positions = source.positions.map((position) => {
+        const close = candleOn(series.get(position.symbol.toUpperCase()), expected)?.close;
+        if (close == null) throw new Error(`No raw close for ${position.symbol} on ${expected}.`);
+        return { ...position, current_price: close };
+      });
       const seed = buildAtrReplaySeed({
         market: deps.market, session: expected, cashBalance: source.cashBalance, reportedNav: source.reportedNav,
-        positions: source.positions, openLots: source.openLots,
+        paperMarks: source.paperMarks, positions, openLots: source.openLots,
       });
       if (!seed.book.positions.length) return blocked(expected, null, written, "No open US paper positions to seed a matched population.");
       const row = buildShadowBookSnapshot(buildSeedSnapshotInput({ market: deps.market, session: expected, seed, benchmarkClose: benchmark.close }));

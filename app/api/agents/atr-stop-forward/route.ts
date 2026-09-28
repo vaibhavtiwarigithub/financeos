@@ -57,7 +57,7 @@ function buildDeps(svc: any, now: Date): AtrForwardDeps {
       .eq("program_id", ATR_FORWARD_PROGRAM_ID).eq("market", "us").eq("program_version", ATR_STOP_FORWARD_PROGRAM_VERSION)
       .order("session_date", { ascending: true }).range(from, to), "ATR forward snapshots"),
     loadSeedSource: async () => {
-      const [portfolio, positions, lots] = await Promise.all([
+      const [portfolio, positions, lots, marks] = await Promise.all([
         svc.from("paper_portfolio").select("cash_balance,nav,updated_at").eq("market", "us").maybeSingle(),
         svc.from("paper_positions")
           .select("symbol,market,position_role,qty,avg_cost,current_price,stop_loss,initial_stop_loss,price_target,highest_price")
@@ -65,13 +65,25 @@ function buildDeps(svc: any, now: Date): AtrForwardDeps {
         svc.from("paper_trades")
           .select("symbol,market,position_role,qty,order_side,closed_at,partial_exit_lot")
           .eq("market", "us").eq("order_side", "buy").is("closed_at", null).limit(2000),
+        // The marks paper NAV itself was computed from at the latest recorded session.
+        svc.from("paper_position_marks").select("symbol,mark_price,session_date,recorded_at")
+          .eq("market", "us").order("session_date", { ascending: false }).order("recorded_at", { ascending: false }).limit(200),
       ]);
-      const failed = portfolio.error ?? positions.error ?? lots.error;
+      const failed = portfolio.error ?? positions.error ?? lots.error ?? marks.error;
       if (failed) throw new Error(`Seed source read failed: ${failed.message}`);
+      const latestSession = (marks.data ?? [])[0]?.session_date ?? null;
+      const paperMarks: Record<string, number> = {};
+      for (const row of marks.data ?? []) {
+        if (row.session_date !== latestSession) continue;
+        const symbol = String(row.symbol).toUpperCase();
+        if (paperMarks[symbol] == null) paperMarks[symbol] = Number(row.mark_price);
+      }
       return {
         cashBalance: portfolio.data?.cash_balance ?? null,
         reportedNav: portfolio.data?.nav ?? null,
         marksUpdatedAt: portfolio.data?.updated_at ?? null,
+        paperMarks,
+        paperMarksSession: latestSession,
         positions: positions.data ?? [],
         openLots: lots.data ?? [],
       };

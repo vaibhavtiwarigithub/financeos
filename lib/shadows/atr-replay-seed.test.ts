@@ -67,6 +67,29 @@ describe("buildAtrReplaySeed", () => {
     })).toThrow("high-water mark");
   });
 
+  it("reconciles composition to the recorded paper marks while marking the book at current_price", () => {
+    const seeded = buildAtrReplaySeed({
+      ...base,
+      // paper NAV was computed from a 9.9 mark; the shadow book is marked at the 10 close.
+      paperMarks: { ABC: 9.9 }, reportedNav: "149",
+    });
+    expect(seeded.paperNav).toBe(149);
+    expect(seeded.nav).toBe(150);
+    expect(seeded.prices).toEqual({ ABC: 10 });
+    expect(() => buildAtrReplaySeed({ ...base, paperMarks: { ABC: 9.9 }, reportedNav: "150" })).toThrow("does not reconcile to paper NAV");
+    expect(() => buildAtrReplaySeed({ ...base, paperMarks: {} })).toThrow("recorded paper NAV mark");
+  });
+
+  it("judges the high-water mark against the paper mark, not the later official close", () => {
+    // stored high 11 was set against the monitor's 10.9 mark; a 11.2 official close must not refuse the seed.
+    const seeded = buildAtrReplaySeed({
+      ...base,
+      positions: [{ ...base.positions[0], current_price: "11.2", highest_price: "11" }],
+      paperMarks: { ABC: 10.9 }, reportedNav: "159",
+    });
+    expect(seeded.book.positions[0].highestPrice).toBe(11);
+  });
+
   it("treats a stored high-water mark that equals the mark up to float noise as valid, but not a real shortfall", () => {
     const seeded = buildAtrReplaySeed({
       ...base,

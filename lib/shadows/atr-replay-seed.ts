@@ -27,8 +27,12 @@ export interface AtrReplaySeedLotRow {
 
 export interface AtrReplaySeedResult {
   book: AtrStopReplayBook;
+  /** Shadow-book marks: each row's current_price, which the caller sets to the official raw close. */
   prices: Record<string, number>;
+  /** Cash plus positions at the shadow-book marks; the initial NAV of both arms. */
   nav: number;
+  /** Cash plus positions at the marks paper NAV itself used; equals reportedNav within tolerance. */
+  paperNav: number;
   partialStateBySymbol: Record<string, boolean>;
 }
 
@@ -52,6 +56,14 @@ export function buildAtrReplaySeed(input: {
   session: string;
   cashBalance: NumericLike;
   reportedNav: NumericLike;
+  /**
+   * Marks the paper NAV was actually computed from (paper_position_marks, the
+   * PositionMonitor's live quotes). paper_positions.current_price can differ from
+   * them by cents, so composition is reconciled and the high-water mark is judged
+   * against these, while `prices`/`nav` use each row's current_price. Omitted =
+   * current_price is used for both.
+   */
+  paperMarks?: Record<string, NumericLike>;
   positions: AtrReplaySeedPositionRow[];
   openLots: AtrReplaySeedLotRow[];
   navTolerance?: number;
@@ -68,6 +80,7 @@ export function buildAtrReplaySeed(input: {
   const positions: AtrStopReplayPosition[] = [];
   const prices: Record<string, number> = {};
   let markedPositions = 0;
+  let paperMarkedPositions = 0;
   for (const row of input.positions) {
     if (row.market !== input.market) throw new Error(`Position ${row.symbol} belongs to ${row.market}, not ${input.market}.`);
     const symbol = row.symbol.trim().toUpperCase();
@@ -75,6 +88,8 @@ export function buildAtrReplaySeed(input: {
     const costBasis = positive(row.avg_cost);
     const currentPrice = positive(row.current_price);
     if (!symbol || !quantity || !costBasis || !currentPrice) throw new Error(`Position ${row.symbol} lacks valid quantity, basis or current mark.`);
+    const paperMark = input.paperMarks == null ? currentPrice : positive(input.paperMarks[symbol]);
+    if (!paperMark) throw new Error(`Position ${symbol} lacks the recorded paper NAV mark needed to reconcile the seed.`);
     const identity = key(symbol, row.position_role);
     if (positionQty.has(identity)) throw new Error(`Duplicate aggregate position for ${identity}; seed requires one canonical position per role.`);
     positionQty.set(identity, quantity);
@@ -84,6 +99,7 @@ export function buildAtrReplaySeed(input: {
     prices[symbol] = currentPrice;
     identityBySymbol.set(symbol, identity);
     markedPositions += quantity * currentPrice;
+    paperMarkedPositions += quantity * paperMark;
     const stop = positive(row.stop_loss);
     const initialStop = positive(row.initial_stop_loss);
     const target = positive(row.price_target);
@@ -91,7 +107,7 @@ export function buildAtrReplaySeed(input: {
     // highest_price is a 2-decimal numeric while current_price can carry float
     // noise (AAPL 2026-09-25: 341.07 vs 341.0700073); half a cent is the rounding
     // of the stored high-water mark, so anything inside it is equal, not below.
-    if (high == null || high + Math.max(0.005, currentPrice * 1e-6) < currentPrice) {
+    if (high == null || high + Math.max(0.005, paperMark * 1e-6) < paperMark) {
       throw new Error(`Position ${symbol} lacks a valid high-water mark at or above its current mark.`);
     }
     positions.push({
@@ -133,15 +149,17 @@ export function buildAtrReplaySeed(input: {
     position.partialTaken = partialByKey.get(identity) ?? false;
   }
   const nav = cash + markedPositions;
+  const paperNav = cash + paperMarkedPositions;
   const tolerance = input.navTolerance ?? Math.max(0.01, reportedNav * 1e-6);
-  if (Math.abs(nav - reportedNav) > tolerance) {
-    throw new Error(`Cash plus marked positions does not reconcile to paper NAV: computed=${nav}, reported=${reportedNav}, tolerance=${tolerance}.`);
+  if (Math.abs(paperNav - reportedNav) > tolerance) {
+    throw new Error(`Cash plus marked positions does not reconcile to paper NAV: computed=${paperNav}, reported=${reportedNav}, tolerance=${tolerance}.`);
   }
   const book: AtrStopReplayBook = { market: input.market, session: input.session, cash, positions };
   return {
     book,
     prices,
     nav,
+    paperNav,
     partialStateBySymbol: Object.fromEntries(positions.map((position) => [position.symbol, position.partialTaken])),
   };
 }

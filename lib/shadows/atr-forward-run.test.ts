@@ -38,7 +38,7 @@ function makeDeps(overrides: Partial<AtrForwardDeps> = {}, written: ShadowBookSn
     expectedLatestSession: () => "2026-09-28",
     sessionsBetween: (a, b) => expectedMarketSessionsBetween("us", a, b),
     loadPriorRows: async () => [seedRow(), ...written],
-    loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z", positions: [], openLots: [] }),
+    loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z", paperMarks: {}, paperMarksSession: "2026-09-25", positions: [], openLots: [] }),
     benchmarkSymbol: "VOO",
     loadRawSeries: async (symbols) => new Map(symbols.map((symbol) => [symbol, raw.get(symbol) ?? null])),
     loadLotRows: async () => [],
@@ -54,15 +54,20 @@ describe("runAtrForwardCollection", () => {
   it("seeds an identical two-arm book at the latest completed session", async () => {
     const written: ShadowBookSnapshotRow[] = [];
     const seedSource = {
-      cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z",
+      cashBalance: 500, reportedNav: 1499, marksUpdatedAt: "2026-09-25T20:15:00Z", paperMarks: { ABC: 99.9 }, paperMarksSession: "2026-09-25",
       positions: [{ symbol: "ABC", market: "us", qty: 10, avg_cost: 90, current_price: 100, stop_loss: 92, initial_stop_loss: 88, price_target: 120, highest_price: 101 }],
       openLots: [{ symbol: "ABC", market: "us", qty: 10, order_side: "buy", closed_at: null }],
     };
     const result = await runAtrForwardCollection(makeDeps({
       expectedLatestSession: () => "2026-09-25", loadPriorRows: async () => [], loadSeedSource: async () => seedSource,
+      loadRawSeries: async (symbols) => new Map(symbols.map((symbol) => [symbol, symbol === "VOO"
+        ? series([["2026-09-25", 500, 501, 499, 500]]) : series([["2026-09-25", 100, 101, 99, 100]])])),
     }, written));
     expect(result).toMatchObject({ status: "collected", written: ["2026-09-25"], details: { mode: "seed", positionCount: 1 } });
     expect(written).toHaveLength(1);
+    // Composition reconciles to paper NAV at the paper marks (1499); the shadow book itself is marked at the official close (1500).
+    expect(written[0].initial_nav).toBeCloseTo(1500);
+    expect((written[0].point_in_time_inputs as any).seed).toMatchObject({ paperNav: 1499, nav: 1500 });
     expect(written[0].blockers.join(" ")).toContain("Seed anchor only");
     expect(written[0].baseline_state).toEqual(written[0].variant_state);
   });
@@ -70,17 +75,26 @@ describe("runAtrForwardCollection", () => {
   it("refuses to seed from marks written before the session, and from an empty book", async () => {
     const stale = await runAtrForwardCollection(makeDeps({
       expectedLatestSession: () => "2026-09-28", loadPriorRows: async () => [],
-      loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z", positions: [], openLots: [] }),
+      loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z", paperMarks: {}, paperMarksSession: "2026-09-25", positions: [], openLots: [] }),
     }));
     expect(stale.status).toBe("blocked");
     expect(stale.blockers[0]).toContain("before session 2026-09-28");
 
     const empty = await runAtrForwardCollection(makeDeps({
       expectedLatestSession: () => "2026-09-25", loadPriorRows: async () => [],
-      loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 500, marksUpdatedAt: "2026-09-25T20:15:00Z", positions: [], openLots: [] }),
+      loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 500, marksUpdatedAt: "2026-09-25T20:15:00Z", paperMarks: {}, paperMarksSession: "2026-09-25", positions: [], openLots: [] }),
     }));
     expect(empty.status).toBe("blocked");
     expect(empty.blockers[0]).toContain("No open US paper positions");
+  });
+
+  it("refuses to seed when the recorded paper marks belong to a different session", async () => {
+    const result = await runAtrForwardCollection(makeDeps({
+      expectedLatestSession: () => "2026-09-25", loadPriorRows: async () => [],
+      loadSeedSource: async () => ({ cashBalance: 500, reportedNav: 1500, marksUpdatedAt: "2026-09-25T20:15:00Z", paperMarks: { ABC: 100 }, paperMarksSession: "2026-09-24", positions: [], openLots: [] }),
+    }));
+    expect(result.status).toBe("blocked");
+    expect(result.blockers[0]).toContain("not 2026-09-25");
   });
 
   it("advances one session with identical arms when there are no entries", async () => {
