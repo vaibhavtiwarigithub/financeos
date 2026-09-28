@@ -1,91 +1,100 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { getQuote } from "@/lib/data/quotes";
+import { getQuote, computeExitFillPrice } from "@/lib/data/quotes";
 import { fetchIndiaQuote } from "@/lib/india-data";
-import { classifyOutcome } from "@/lib/trade-outcome";
 
 export const dynamic = "force-dynamic";
 
-// Manual close — human-initiated only, never cron-callable. PositionMonitor
-// still closes automatically on stop/target/score-decay; this is the
-// override for "I want out now" (a real gap flagged 2026-07-06 — there was
-// no manual close path in the UI before this).
+// Manual paper close — owner-only. Use the same atomic lot/cash ledger as the
+// PositionMonitor; never update trades, positions, and cash independently.
 export async function POST(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
   const body = await req.json().catch(() => ({}));
-  const symbol = String(body.symbol ?? "").toUpperCase();
-  const market: "us" | "india" = body.market === "india" ? "india" : "us";
+  const symbol = String(body.symbol ?? "").trim().toUpperCase();
+  const market = body.market;
+  const requestedReason = body.exit_reason ?? "manual_close";
+  const allowedReasons = new Set(["manual_close", "manual_owner_consolidation_to_8"]);
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
+  if (market !== "us" && market !== "india") {
+    return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  }
+  if (typeof requestedReason !== "string" || !allowedReasons.has(requestedReason)) {
+    return NextResponse.json({ error: "unsupported paper exit reason" }, { status: 400 });
+  }
 
   const svc = createServiceClient();
-
-  let posQ = svc.from("paper_positions").select("*").eq("symbol", symbol);
-  const { data: hasMarketColProbe } = await svc.from("paper_positions").select("market").limit(1);
-  const hasMarketCol = hasMarketColProbe !== null;
-  if (hasMarketCol) posQ = posQ.eq("market", market);
-  const { data: pos } = await posQ.maybeSingle();
+  const { data: pos, error: positionError } = await svc
+    .from("paper_positions")
+    .select("id,symbol,market,qty,avg_cost,position_role")
+    .eq("symbol", symbol)
+    .eq("market", market)
+    .maybeSingle();
+  if (positionError) {
+    return NextResponse.json({ error: `Could not identify a unique open position: ${positionError.message}` }, { status: 409 });
+  }
   if (!pos) return NextResponse.json({ error: `No open ${market.toUpperCase()} position in ${symbol}` }, { status: 404 });
+  if (pos.position_role === "hedge") {
+    return NextResponse.json({ error: "Close a hedge through its hedge-control workflow so its controller state is reconciled." }, { status: 409 });
+  }
 
-  let currentPrice: number | null = pos.current_price ? Number(pos.current_price) : null;
+  let observedPrice: number | null = null;
+  let stale = true;
+  let bid: number | null = null;
+  let source = "unavailable";
+  let observedAt: string | null = null;
   if (market === "india") {
-    const q = await fetchIndiaQuote(symbol);
-    if (q && q.price > 0) currentPrice = q.price;
+    const quote = await fetchIndiaQuote(symbol);
+    if (quote) {
+      observedPrice = quote.price;
+      stale = quote.stale;
+      source = "yahoo";
+      observedAt = quote.retrievedAt;
+    }
   } else {
-    const q = await getQuote(symbol, svc).catch(() => null);
-    if (q?.price) currentPrice = q.price;
+    const quote = await getQuote(symbol, svc).catch(() => null);
+    if (quote) {
+      observedPrice = quote.price;
+      stale = quote.stale;
+      bid = quote.bid;
+      source = quote.source;
+      observedAt = quote.observedAt ?? quote.retrievedAt;
+    }
   }
-  if (!currentPrice) return NextResponse.json({ error: `No live price available for ${symbol} — can't close without a fill price` }, { status: 502 });
-
-  const realizedPnl = (currentPrice - Number(pos.avg_cost)) * Number(pos.qty);
-  const pnlPct = Number(pos.avg_cost) > 0 ? ((currentPrice - Number(pos.avg_cost)) / Number(pos.avg_cost)) * 100 : 0;
-  const outcome = classifyOutcome(pnlPct);
-  const cur = market === "india" ? "₹" : "$";
-
-  let tq = svc.from("paper_trades").select("id, qty, fill_price").eq("symbol", symbol).is("closed_at", null);
-  if (hasMarketCol) tq = tq.eq("market", market);
-  const { data: openTrades } = await tq;
-
-  // Cash credited below is based solely on pos.qty; if it doesn't match the
-  // sum of what we're actually marking closed in paper_trades, cash/NAV would
-  // silently drift from the ledger with no signal. Log loudly rather than
-  // fail the close (the position still needs to go away either way).
-  const openTradesQtySum = (openTrades ?? []).reduce((s: number, t: any) => s + Number(t.qty ?? 0), 0);
-  if (Math.abs(openTradesQtySum - Number(pos.qty)) > 0.001) {
-    console.error(`[paper-positions/close] qty mismatch for ${symbol}: paper_positions.qty=${pos.qty} vs sum(open paper_trades.qty)=${openTradesQtySum} — cash credited off pos.qty may not match what's actually being closed`);
+  if (!observedPrice || !Number.isFinite(observedPrice) || observedPrice <= 0 || stale) {
+    return NextResponse.json({
+      error: `No fresh executable paper mark for ${symbol}; position was not changed.`,
+      quote: { source, observed_at: observedAt, stale },
+    }, { status: 502 });
   }
 
-  for (const t of (openTrades ?? []) as any[]) {
-    const tQty = Number(t.qty ?? 0);
-    const tFill = Number(t.fill_price ?? pos.avg_cost);
-    const tPnl = (currentPrice - tFill) * tQty;
-    const tPnlPct = tFill > 0 ? ((currentPrice - tFill) / tFill) * 100 : 0;
-    const tOutcome = classifyOutcome(tPnlPct);
-    await svc.from("paper_trades").update({
-      exit_price: currentPrice, realized_pnl: tPnl, pnl_pct: tPnlPct,
-      outcome: tOutcome, closed_at: new Date().toISOString(),
-    }).eq("id", t.id);
+  const exitPrice = computeExitFillPrice(observedPrice, bid);
+  const consolidation = requestedReason === "manual_owner_consolidation_to_8";
+  const { data, error } = await svc.rpc("execute_paper_manual_exit", {
+    p_position_id: pos.id,
+    p_exit_price: exitPrice,
+    p_exit_reason: requestedReason,
+  });
+  if (error) return NextResponse.json({ error: `Atomic paper exit failed: ${error.message}` }, { status: 500 });
+  const result = data as any;
+  if (!result?.ok) {
+    return NextResponse.json({ error: `Paper exit refused: ${result?.error ?? "unknown"}` }, { status: 409 });
   }
 
-  await svc.from("paper_positions").delete().eq("id", pos.id);
-
-  let portQ = svc.from("paper_portfolio").select("id, cash_balance");
-  if (hasMarketCol) portQ = portQ.eq("market", market);
-  const { data: portfolio } = await portQ.limit(1).maybeSingle();
-  if (portfolio) {
-    await svc.from("paper_portfolio").update({
-      cash_balance: Number(portfolio.cash_balance) + currentPrice * Number(pos.qty),
-    }).eq("id", portfolio.id);
-  }
-
-  await svc.from("decision_journal").insert({
-    entry_type: "paper_exit", symbol, market,
-    summary: `Manual close (${market.toUpperCase()}): ${pos.qty} × ${symbol} @ ${cur}${currentPrice.toFixed(2)} (user-initiated), P&L ${cur}${realizedPnl.toFixed(2)} (${outcome})`,
-    calculations: { market, qty: pos.qty, exit_price: currentPrice, avg_cost: pos.avg_cost, realized_pnl: realizedPnl, pnl_pct: pnlPct, exit_reason: "manual_close" },
-    has_verified_facts: true, has_calculations: true, resolved: true, resolved_at: new Date().toISOString(),
-  }).then(() => {}, () => {});
-
-  return NextResponse.json({ success: true, symbol, market, closed_at_price: currentPrice, realized_pnl: realizedPnl, pnl_pct: pnlPct, outcome });
+  return NextResponse.json({
+    success: true,
+    symbol,
+    market,
+    exit_price: exitPrice,
+    observed_price: observedPrice,
+    quote_source: source,
+    quote_observed_at: observedAt,
+    realized_pnl: Number(result.realized_pnl ?? 0),
+    closed_qty: Number(result.closed_qty ?? pos.qty),
+    remaining_qty: Number(result.remaining_qty ?? 0),
+    exit_reason: requestedReason,
+    excluded_from_learning: consolidation,
+  });
 }
