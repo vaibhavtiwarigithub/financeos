@@ -1,8 +1,9 @@
 # Paper Cash Deployment: Soft Reserve, Hard No-Leverage Ceiling
 
-Status: approved by owner on 2026-09-29; implementation is in the release branch and
-the paper-only cap migration `20260929215748` is applied. Application rollout remains
-pending deployment verification. This does not enable or alter live trading.
+Status: approved by owner on 2026-09-29; implemented and deployed to production in main
+commit `a9b8c3abae1b4eb1a4edf031ac6d58af7d30d2e7` (Vercel deployment
+`dpl_D3XZ5KminbCmyFTXGxd8XUDXJ4Xh`, READY 2026-09-29). The paper-only cap migration
+`20260929215748` is applied. This does not enable or alter live trading.
 
 ## Why
 

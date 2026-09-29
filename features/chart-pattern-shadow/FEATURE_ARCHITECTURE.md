@@ -166,7 +166,10 @@ pattern is proven until the separate-market report passes its predeclared block 
 ## Implementation status
 
 Source, owner-only report, Upgrade Path/liveness registration, tests, and architecture
-chapter updates are implemented in the release branch. Production schema migration
-`20260929215738` is applied and its RLS/append-only controls are verified. The matching
-application release is still pending; collection and empirical conclusions remain pending until
-the code is deployed and labels mature.
+chapter updates are implemented and deployed to production in main commit
+`a9b8c3abae1b4eb1a4edf031ac6d58af7d30d2e7` (Vercel deployment
+`dpl_D3XZ5KminbCmyFTXGxd8XUDXJ4Xh`, READY 2026-09-29). Production schema migration
+`20260929215738` is applied and its RLS/append-only controls are verified. The shadow is
+collecting prospective evidence only; it has not established predictive value or portfolio
+P&L improvement. Wait for sufficient matured, independent market-local observations before
+considering any separate scoring proposal.
