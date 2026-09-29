@@ -18,7 +18,6 @@ async function readPages(queryFactory: (from: number, to: number) => any, limit:
   }
   return { rows, complete: false };
 }
-
 export async function GET(req: NextRequest) {
   const denied = await requireOwner();
   if (denied) return denied;
