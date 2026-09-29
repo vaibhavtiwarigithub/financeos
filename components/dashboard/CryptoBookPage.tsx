@@ -19,11 +19,12 @@ const dateTime = (value: unknown) => value ? new Date(String(value)).toLocaleStr
 const pct = (value: unknown) => `${Number(value ?? 0).toFixed(2)}%`;
 
 export default function CryptoBookPage({
-  pool, positions, trades, perf, latestUniverse, shadows, strategies, members, viewerMode = false,
+  pool, positions, trades, perf, latestUniverse, shadows, strategies, members, dataWarning = null, viewerMode = false,
 }: {
   pool: { nav: number; cash_balance: number; updated_at: string } | null;
   positions: any[]; trades: any[]; perf: any[];
   latestUniverse: any | null; shadows: any[]; strategies: any[]; members: any[];
+  dataWarning?: string | null;
   viewerMode?: boolean;
 }) {
   const [tab, setTab] = useState<"positions" | "trades" | "research" | "strategy">("positions");
@@ -80,6 +81,8 @@ export default function CryptoBookPage({
           cur="$" startingNAV={CRYPTO_STARTING_NAV} gradientId="cryptoNavGrad"
         />
 
+        {dataWarning && <div role="alert" style={{ background: "#3A2512", border: `1px solid ${T.amber}`, color: T.amber, borderRadius: 10, padding: "10px 14px", margin: "0 0 16px", fontSize: 12, lineHeight: 1.5 }}>{dataWarning}</div>}
+
         <div style={{ display: "flex", gap: "4px", marginBottom: "16px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {([
             ["positions", `Positions (${positions.length})`],
@@ -100,7 +103,7 @@ export default function CryptoBookPage({
                 <table style={{ minWidth: 590, width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ color: T.muted, textAlign: "left" }}>{["Symbol", "Entry", "Mark", "Stop", "Target", "Unrealized"].map(h => <th key={h} style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>{h}</th>)}</tr></thead>
                   <tbody>{positions.map((p: any) => {
-                    const entry = Number(p.entry_price); const mark = Number(p.current_price);
+                    const entry = Number(p.avg_cost); const mark = Number(p.current_price);
                     const returnPct = entry > 0 ? ((mark - entry) / entry) * 100 : 0;
                     return (
                       <tr key={p.symbol} style={{ borderTop: `1px solid ${T.border}` }}>
@@ -124,12 +127,15 @@ export default function CryptoBookPage({
               <>
                 <div style={{ color: T.muted, fontSize: 11, marginBottom: 10 }}>Closed: {closed.length} ({wins}W / {losses}L{breakeven > 0 ? ` / ${breakeven}BE` : ""}) · Realized P&amp;L {fmtSignedMoney(realizedPnl)}</div>
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ minWidth: 480, width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr style={{ color: T.muted, textAlign: "left" }}>{["Symbol", "Outcome", "Realized P&L", "Executed"].map(h => <th key={h} style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>{h}</th>)}</tr></thead>
+                  <table style={{ minWidth: 620, width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ color: T.muted, textAlign: "left" }}>{["Symbol", "Side", "Quantity", "Fill", "Status", "Realized P&L", "Executed"].map(h => <th key={h} style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>{h}</th>)}</tr></thead>
                     <tbody>{trades.map((t: any) => (
                       <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
                         <td style={{ padding: "10px 8px 10px 0", fontWeight: 700 }}><SymbolLink symbol={t.symbol} style={{ color: T.text }} /></td>
-                        <td style={{ color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.muted }}>{t.outcome ?? "open"}</td>
+                        <td style={{ color: t.order_side === "buy" ? T.green : T.textSub }}>{t.order_side ?? "—"}</td>
+                        <td>{Number(t.qty ?? 0).toLocaleString("en-US", { maximumFractionDigits: 8 })}</td>
+                        <td>{usd(t.fill_price)}</td>
+                        <td style={{ color: t.outcome === "win" ? T.green : t.outcome === "loss" ? T.red : T.muted }}>{t.closed_at ? (t.outcome ?? "closed") : "open"}{t.exit_price != null ? ` · exit ${usd(t.exit_price)}` : ""}</td>
                         <td style={{ color: t.realized_pnl != null ? pnlColor(Number(t.realized_pnl)) : T.muted }}>{t.realized_pnl != null ? fmtSignedMoney(Number(t.realized_pnl)) : "—"}</td>
                         <td style={{ color: T.textSub }}>{dateTime(t.executed_at)}</td>
                       </tr>

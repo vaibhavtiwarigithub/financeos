@@ -6,6 +6,25 @@ const root = process.cwd();
 const read = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
 describe("crypto paper Stage 3 cloud contract", () => {
+  it("loads open crypto positions using the real cost-basis column and surfaces portfolio query failures", () => {
+    const page = read("app/dashboard/crypto/page.tsx");
+    const component = read("components/dashboard/CryptoBookPage.tsx");
+    expect(page).toContain('select("symbol,qty,avg_cost,current_price,stop_loss,price_target,updated_at,exit_reason")');
+    expect(page).toContain('.gt("qty", 0).is("exit_reason", null)');
+    expect(page).not.toContain('select("symbol,qty,entry_price,current_price');
+    expect(component).toContain("Number(p.avg_cost)");
+    expect(page).toContain("dataWarning={dataWarning}");
+    expect(component).toContain('role="alert"');
+  });
+
+  it("shows paper fill side, quantity, fill price, and open/closed status in trade history", () => {
+    const page = read("app/dashboard/crypto/page.tsx");
+    const component = read("components/dashboard/CryptoBookPage.tsx");
+    expect(page).toContain('select("id,symbol,order_side,qty,fill_price,outcome,realized_pnl,executed_at,closed_at,exit_price")');
+    expect(component).toContain('"Symbol", "Side", "Quantity", "Fill", "Status"');
+    expect(component).toContain('t.closed_at ? (t.outcome ?? "closed") : "open"');
+  });
+
   it("uses the constrained discovery source separately from native pipeline identity", () => {
     const research = read("app/api/agents/crypto-research-shadow/route.ts");
     expect(research).toContain('source: "screener", score_source: "crypto_native_shadow_v1"');

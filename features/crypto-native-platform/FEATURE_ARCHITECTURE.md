@@ -162,6 +162,11 @@ Add `/dashboard/crypto` rather than hiding crypto in a stock page. It shows:
   reason for buy, refusal, hold, or exit;
 - separate paper/live NAV, cash, positions, realized/unrealized P&L and every
   order lifecycle event;
+- paper open-position rows use `paper_positions.avg_cost` as cost basis and
+  include only positive-quantity rows with no `exit_reason`; data-fetch errors
+  are surfaced as a warning rather than being rendered as an empty book;
+- crypto paper history displays side, quantity, fill price, open/closed status,
+  exit price when present, realized P&L, and execution time from `paper_trades`;
 - benchmark comparison against BTC buy-and-hold plus a frozen, equal-weight
   eligible-universe reference. Neither benchmark is presented as a universal
   crypto market proxy; both have point-in-time constituents and session labels;
