@@ -1,5 +1,9 @@
 # Kairos — Learning Loop
 
+## Shadow decision price provenance
+
+ResearchAgent copies the positive `decision_observations.price_at_decision` into the existing `shadow_decisions.entry_price` field for strategy challengers, archetype experts, and uncapped-score diagnostics. This is the observed research reference price—not a broker quote, fill, or executable price. Missing/invalid values remain null. A replay must still define its fill convention, costs, eligible population, capital/name constraints, exits, and matched baseline before it can claim portfolio P&L. Populating this field alone does not make an Upgrade Path performance-eligible or measured.
+
 ## Missed paper-entry evidence (2026-09-25)
 
 `paper_missed_opportunities` freezes a decision-time record when PaperTrader has a

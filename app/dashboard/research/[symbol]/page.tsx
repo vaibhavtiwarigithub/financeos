@@ -40,6 +40,24 @@ interface Overview {
   AnalystTargetPrice?: string;
 }
 
+interface ChartPatternEvidence {
+  error?: string;
+  influence?: "measure_only";
+  historyWindowCount?: number;
+  historyWindowComplete?: boolean;
+  latestAttempt?: {
+    decisionDate: string | null;
+    detectionStatus: "detected" | "no_pattern" | "insufficient_candles";
+    patternType: "double_top" | "double_bottom" | null;
+    candlesThroughDate: string | null;
+    candleSource: string | null;
+    detectorVersion: string | null;
+    confirmationDate: string | null;
+    confirmationClose: number | null;
+    necklineClose: number | null;
+  } | null;
+}
+
 // ── Indicator Computation ──────────────────────────────────────────────────
 
 function computeEMA(closes: number[], period: number): number[] {
@@ -159,6 +177,8 @@ export default function DeepDivePage() {
   // zero trades still has 56 points here. That is the whole reason this exists.
   const [scorePoints, setScorePoints] = useState<ScorePoint[]>([]);
   const [scoreRuns, setScoreRuns] = useState(0);
+  const [chartPatternEvidence, setChartPatternEvidence] = useState<ChartPatternEvidence | null>(null);
+  const [chartPatternLoading, setChartPatternLoading] = useState(false);
   const [hiddenDims, setHiddenDims] = useState<Set<ScoreDimensionKey>>(new Set());
   const [overview, setOverview] = useState<Overview>({});
   const [loading, setLoading] = useState(true);
@@ -190,6 +210,30 @@ export default function DeepDivePage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
+  }, [symbol, market, role]);
+
+  // Owner-only, measure-only pattern evidence belongs with the symbol's
+  // technical research. It is never included in the Technical score.
+  useEffect(() => {
+    if (!symbol || role !== "owner") {
+      setChartPatternEvidence(null);
+      setChartPatternLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setChartPatternLoading(true);
+    fetch(`/api/agents/chart-pattern-shadow?market=${market}&symbol=${encodeURIComponent(symbol)}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+        return payload as ChartPatternEvidence;
+      })
+      .then(payload => { if (!cancelled) setChartPatternEvidence(payload); })
+      .catch(error => {
+        if (!cancelled) setChartPatternEvidence({ error: error instanceof Error ? error.message : "request failed" });
+      })
+      .finally(() => { if (!cancelled) setChartPatternLoading(false); });
+    return () => { cancelled = true; };
   }, [symbol, market, role]);
 
   // Fetch compare symbol data
@@ -406,6 +450,52 @@ export default function DeepDivePage() {
       {/* ── Price & Technicals Tab ── */}
       {activeTab === "price" && (
         <div className="flex flex-col gap-4">
+          {role === "owner" && (
+            <section className="rounded-lg border bg-card p-4" aria-label="Technical candle-pattern shadow evidence">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <h2 className="text-sm font-semibold">Technical · Candle-pattern evidence</h2>
+                <span className="text-[11px] rounded-full border px-2 py-1 text-muted-foreground">Measure-only shadow</span>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">
+                This prospective detector tests confirmed double tops and bottoms only. It does not add points to
+                the Technical dimension or change the composite score or trades.
+              </p>
+              {chartPatternLoading ? (
+                <div className="text-xs text-muted-foreground">Loading pattern evidence…</div>
+              ) : chartPatternEvidence?.error ? (
+                <div className="text-xs text-amber-600">
+                  Evidence unavailable: {chartPatternEvidence.error}. This is not a “no pattern” result.
+                </div>
+              ) : !chartPatternEvidence?.latestAttempt ? (
+                <div className="text-xs text-muted-foreground">No eligible-long research attempt is recorded for this symbol yet.</div>
+              ) : (
+                <div className="flex flex-col gap-2 text-xs">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <span>Research date: <span className="font-mono">{chartPatternEvidence.latestAttempt.decisionDate ?? "—"}</span></span>
+                    <span>Detection: <span className="font-semibold">
+                      {chartPatternEvidence.latestAttempt.detectionStatus === "detected"
+                        ? chartPatternEvidence.latestAttempt.patternType?.replaceAll("_", " ")
+                        : chartPatternEvidence.latestAttempt.detectionStatus === "no_pattern"
+                          ? "no confirmed pattern"
+                          : "insufficient completed candles"}
+                    </span></span>
+                  </div>
+                  <div className="text-muted-foreground">
+                    Candles through {chartPatternEvidence.latestAttempt.candlesThroughDate ?? "unknown"} · source {chartPatternEvidence.latestAttempt.candleSource ?? "unknown"} · detector {chartPatternEvidence.latestAttempt.detectorVersion ?? "unknown"}
+                  </div>
+                  {chartPatternEvidence.latestAttempt.detectionStatus === "detected" && (
+                    <div className="text-muted-foreground">
+                      Confirmed {chartPatternEvidence.latestAttempt.confirmationDate ?? "—"} at {chartPatternEvidence.latestAttempt.confirmationClose ?? "—"}; neckline {chartPatternEvidence.latestAttempt.necklineClose ?? "—"}.
+                    </div>
+                  )}
+                  <div className="text-muted-foreground">
+                    {chartPatternEvidence.historyWindowCount ?? 0} recent attempt{chartPatternEvidence.historyWindowCount === 1 ? "" : "s"}
+                    {chartPatternEvidence.historyWindowComplete === false ? " (latest 100 only)" : ""}. Candlestick formations such as hammers and engulfing patterns are not part of this experiment.
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
           {/* Price chart */}
           <div className="rounded-lg border bg-card p-4">
             <h2 className="text-sm font-semibold mb-3 text-muted-foreground">

@@ -629,9 +629,43 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     // Exit geometry must refuse readiness if the baseline is unavailable.
   }
 
+  // Isolated optional read: a not-yet-applied shadow migration must not turn
+  // every other Upgrade Path status into unavailable.
+  const chartPatternRes = await svc.from("chart_pattern_shadow_runs")
+    .select("detection_status,pattern_type,created_at,decision_observations!inner(observation_labels(horizon_days,matured_at))")
+    .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(10_000);
+
   const statuses = SHADOW_PROGRAMS.map((program) => {
     const status = base(program);
     status.schedules = scheduleFor(program, cronRows, market);
+
+    if (program.id === "chart-pattern-shadow") {
+      const attempts = chartPatternRes.data ?? [];
+      const detected = attempts.filter((row: any) => row.detection_status === "detected");
+      const matured = detected.reduce((sum: number, row: any) => {
+        const observation = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
+        const labels = observation?.observation_labels ?? [];
+        return sum + ([5, 10, 20].some((horizon) => labels.some((label: any) => Number(label.horizon_days) === horizon)) ? 1 : 0);
+      }, 0);
+      status.lifecycle = attempts.length ? "collecting" : "idle";
+      status.benefitVerdict = "insufficient";
+      status.benefitEvidence = `${attempts.length} eligible-long attempts in the last 90 days (10,000-row cap); ${detected.length} confirmed patterns; ${matured} confirmed decisions have at least one matured forward label. The market-local event report is /api/agents/chart-pattern-shadow?market=${market}.`;
+      status.progress = progress(matured, null, "confirmed pattern events with matured labels; independent-block gate is reported separately", 90);
+      status.calls = calls("zero_incremental", "Uses completed candles already fetched for research and the existing forward-label producer.");
+      status.latestAt = latestIso(attempts, "created_at");
+      status.blockers = [
+        `${detected.length} confirmed pattern(s) and ${matured} matured event(s) are descriptive counts, not evidence of predictive edge.`,
+        "Requires at least 20 non-overlapping horizon-sized blocks with a positive two-sided Student-t lower bound independently in each market, then sealed validation and owner approval.",
+      ];
+      status.nextAction = "Continue per-decision collection; review the market-local report after h5/h10/h20 labels mature. No score or trading path consumes this shadow.";
+      status.details = [
+        "Every eligible-long entry decision records detected, no_pattern, or insufficient_candles so missing candles and producer silence remain distinguishable.",
+        "Future outcomes join observation_labels; the append-only decision-time row is never updated with future information.",
+        "Double-top outcomes are sign-reversed and double-bottom outcomes retain their sign before benchmark-neutral event returns are aggregated into independent blocks.",
+      ];
+      status.available = !chartPatternRes.error;
+      return status;
+    }
 
     if (!program.markets.includes(market)) {
       status.lifecycle = "not_applicable";

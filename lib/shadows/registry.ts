@@ -33,7 +33,7 @@ export type UpgradePathAttributionClass = "matched_replay" | "paper_cohort" | "o
 
 export interface MainlineRelease {
   /** First commit that put the program's runnable or owner-visible implementation on main. */
-  commit: string;
+  commit: string | null;
   enteredAt: string;
   implementationScope: MainlineImplementationScope;
   /** Why code was merged even when its scoring/trading influence remained disabled. */
@@ -294,6 +294,29 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     mainline: { commit: "9f985b0b", enteredAt: "2026-09-01", implementationScope: "measure_only", reason: "Test one ATR-scaled stop against the live fixed stop without changing target or time-stop behavior." },
     reviewDate: "2026-11-15",
     reviewNote: "Have 12 effective independent observations across 4 validation windows matured? If yes, run cost/FDR review and decide on owner approval.",
+  },
+  {
+    id: "chart-pattern-shadow",
+    name: "Confirmed double-reversal pattern shadow",
+    category: "Scoring",
+    attributionClass: "operational_only",
+    markets: ["us", "india"],
+    purpose: "Measure whether a causally confirmed, close-based double top or bottom forecasts signed benchmark-neutral returns in eligible-long entry candidates.",
+    productBenefit: "Separates a plausible chart setup from a repeatable market-local signal before any score change.",
+    traderBenefit: "Could provide deterministic, auditable technical evidence only if it survives matured labels and independent blocks.",
+    evidenceSource: "chart_pattern_shadow_runs joined to immutable decision_observations and matured observation_labels",
+    currentInfluence: "Measure-only. No score, entry, exit, sizing, rotation, or order path reads this ledger.",
+    maximumInfluence: "A separately approved and versioned scoring challenger, only after independent US and India evidence and sealed validation.",
+    activationGate: "At least 20 horizon-sized, non-overlapping blocks per market with a positive Student-t 95% lower bound; then sealed validation and explicit owner approval.",
+    safetyBoundary: "Close-only detector over completed candles already fetched by ResearchAgent; future labels remain outside the decision-time ledger.",
+    cronJobs: ["kairos-research", "kairos-research-india"],
+    marketCronJobs: { us: ["kairos-research"], india: ["kairos-research-india"] },
+    callAccounting: "zero_incremental",
+    owner: "Scoring / Evidence",
+    architectureRef: "features/chart-pattern-shadow/FEATURE_ARCHITECTURE.md",
+    mainline: { commit: null, enteredAt: "2026-09-29", implementationScope: "measure_only", reason: "Prospectively measure one declared pattern family without changing scoring or trading behavior." },
+    reviewDate: "2027-03-29",
+    reviewNote: "Review eligible-long attempt completeness, h5/h10/h20 matured labels, and market-local non-overlapping intervals; do not pool markets or infer portfolio P&L.",
   },
   {
     id: "score-exit-shadow",

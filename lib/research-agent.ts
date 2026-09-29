@@ -26,6 +26,8 @@ import { classifyInstrumentPolicy } from "@/lib/scoring/instrument-taxonomy";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { loadInstrumentFamilyEvidence, loadOilExposureEvidence } from "@/lib/scoring/instrument-family-evidence";
 import { CRYPTO_SYMBOLS } from "@/lib/scoring/instrument-taxonomy";
+import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { CHART_PATTERN_CONFIG, CHART_PATTERN_SHADOW_VERSION, detectConfirmedDoubleReversal } from "@/lib/trading/chart-pattern-shadow";
 import { cryptoCompletedCandles } from "@/lib/data/crypto-session";
 import { fetchCryptoCandles } from "@/lib/data/crypto-quotes";
 import { computeRiskTier } from "@/lib/risk/risk-tier";
@@ -37,6 +39,7 @@ import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification"
 import { applyStrategyTilt, loadTradingMandate, resolveHorizonDays } from "@/lib/trading-mandate";
 import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
 import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
+import { shadowDecisionEntryEvidence } from "@/lib/shadows/decision-evidence";
 import {
   classifyFinancialDatasetsFailure,
   financialDatasetsFailureDetail,
@@ -2515,11 +2518,59 @@ export async function processSymbol(
       // 5 scored dimensions count (applicable also contains options/analyst).
       evidence_confidence: evidenceConfidence,
       universe_snapshot_id: universeSnapshotId ?? null,  // P1: links to universe_snapshots for cross-sectional rank
-    }).select("id").maybeSingle();
+    }).select("id,price_at_decision").maybeSingle();
     if (obsErr && !/does not exist|could not find/i.test(obsErr.message ?? "")) {
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
     }
     insertedObsId = obsRow?.id ?? null;
+
+    // Measure-only pattern evidence reuses the completed candles already fetched
+    // for technical research. No future label is written back to this decision.
+    if (insertedObsId && !isCrypto && isEntryCandidateLong({
+      entryEligible,
+      direction: signalDirection,
+      decisionContext: isHeld ? "holding_review" : "entry_candidate",
+      discoverySource: entry.discovery_source ?? null,
+    })) {
+      const attempt = detectConfirmedDoubleReversal(candles);
+      const pattern = attempt.status === "detected" ? attempt.pattern : null;
+      const { error: patternWriteError } = await supabase.from("chart_pattern_shadow_runs").insert({
+        market,
+        symbol,
+        decision_observation_id: insertedObsId,
+        detection_status: attempt.status,
+        pattern_type: pattern?.patternType ?? null,
+        swing1_date: pattern?.swing1Date ?? null,
+        swing1_close: pattern?.swing1Price ?? null,
+        swing2_date: pattern?.swing2Date ?? null,
+        swing2_close: pattern?.swing2Price ?? null,
+        neckline_date: pattern?.necklineDate ?? null,
+        neckline_close: pattern?.necklinePrice ?? null,
+        confirmation_date: pattern?.confirmationDate ?? null,
+        confirmation_close: pattern?.confirmationPrice ?? null,
+        candles_through_date: attempt.candlesThroughDate,
+        candle_source: candleResult.source,
+        detector_version: CHART_PATTERN_SHADOW_VERSION,
+        detector_config: CHART_PATTERN_CONFIG,
+      });
+      const issueKey = `chart-pattern-shadow-write-failed:${market}:${symbol}`;
+      if (patternWriteError) {
+        console.error("[research-agent] chart-pattern shadow write failed:", patternWriteError.message);
+        // Diagnostics are best-effort too: a shadow or health-write failure
+        // must never interrupt the canonical research decision.
+        try {
+          await reportIssue({
+            issueKey,
+            severity: "warn",
+            category: "data_collection",
+            title: "Chart-pattern shadow evidence is not being recorded",
+            detail: `${market}/${symbol}: ${patternWriteError.message}`,
+          }, supabase);
+        } catch { /* fail soft */ }
+      } else {
+        try { await resolveIssue(issueKey, supabase); } catch { /* fail soft */ }
+      }
+    }
 
     // Dedicated append-only measurement row for bounded family diagnostics.
     // This table is not read by paper/live execution and its absence must not
@@ -2605,6 +2656,7 @@ export async function processSymbol(
           const { error: challengerError } = await supabase.from("shadow_decisions").insert({
             market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
             would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,
+            ...shadowDecisionEntryEvidence(obsRow.price_at_decision),
           });
           if (challengerError) {
             console.error(
@@ -2640,6 +2692,7 @@ export async function processSymbol(
             would_enter: archScore >= (scoreThreshold ?? 60),
             score: archScore,
             setup_type: archetype.id,
+            ...shadowDecisionEntryEvidence(obsRow.price_at_decision),
           };
         });
         if (archetypeRows.length > 0) {
@@ -2677,6 +2730,7 @@ export async function processSymbol(
             would_enter: rawAnalystScore >= (scoreThreshold ?? 60),
             score: rawAnalystScore,
             setup_type: `family_uncapped_v1:${instrumentPolicy.family}`,
+            ...shadowDecisionEntryEvidence(obsRow.price_at_decision),
           });
           if (uncappedError) {
             console.error(
