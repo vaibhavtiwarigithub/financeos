@@ -23,7 +23,7 @@
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.487.0",
     "mermaid": "^10.9.6",
-    "next": "^15.5.20",
+    "next": "^15.5.26",
     "nodemailer": "^10.0.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -37,13 +37,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.22",
+    "eslint-config-next": "15.5.26",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"
   },
   "overrides": {
     "postcss": "8.5.25",
-    "sharp": "0.35.3"
+    "sharp": "0.35.4"
   }
 }
