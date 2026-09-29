@@ -30,7 +30,11 @@ describe("shadow registry governance contract", () => {
       expect(program.safetyBoundary.length).toBeGreaterThan(20);
       expect(program.evidenceSource.length).toBeGreaterThan(3);
       expect(program.mainline.enteredAt).toMatch(/^20\d{2}-\d{2}-\d{2}$/);
-      expect(program.mainline.commit).toMatch(/^[0-9a-f]{8}$/);
+      if (program.mainline.commit == null) {
+        expect(program.mainline.implementationScope).toBe("measure_only");
+      } else {
+        expect(program.mainline.commit).toMatch(/^[0-9a-f]{8}$/);
+      }
       expect(program.mainline.reason.length).toBeGreaterThan(30);
       expect(["matched_replay", "paper_cohort", "operational_only"]).toContain(program.attributionClass);
     }

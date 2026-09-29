@@ -1,4 +1,12 @@
-# Upgrade Path attribution matrix (verified 2026-09-28)
+# Upgrade Path attribution matrix (baseline audit 2026-09-28; production recheck 2026-09-29)
+
+## 2026-09-29 follow-up
+
+Production recheck confirms the attribution ledger remains a synthetic fixed-allocation diagnostic, not Kairos-book P&L. The latest `international-allocation` producer run (2026-09-28, observed session 2026-09-25) refused to append a second immutable attribution row for the same program/version/session because its recomputed snapshot differed from the existing row. The existing result remains unchanged: net incremental return **−6.3191%**, 20 independent 63-session blocks, t = **−0.6947**. This is not evidence to promote international allocation. The source replay fingerprints for the same end date differ between Sep 26 and Sep 28; the underlying historical-price revision has not been identified, so the historical row must not be rewritten or treated as an idempotent retry.
+
+The producer currently mislabeled this integrity refusal as a generic `error` because it inspected a nested field while the route returns top-level `attributionState`. The release branch fixes the classification to `blocked` and records the observed session; the existing historical producer row is retained as-written pending the next verified invocation.
+
+Two approved foundations now have their additive production migrations applied (Supabase versions `20260929215738` and `20260929215748`): the measure-only chart-pattern ledger and the paper-only 100% gross-exposure ceiling. Their application code is in the release branch but is not considered live until the matching code release is deployed. Neither change establishes P&L benefit or authorizes orders.
 
 Observation: production project `dionkikgdmlaotvtbnfr` read at ~13:15-14:00 UTC 2026-09-28; code at `main` `0d6489c2` plus the working branch. Local tests do not count as production evidence. Nothing here enables trading, rotation or promotion, or changes any score, weight or threshold.
 

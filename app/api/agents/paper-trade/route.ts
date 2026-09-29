@@ -86,6 +86,13 @@ export async function POST(req: NextRequest) {
       .select("score_threshold, position_size_pct, stop_loss_pct, target_pct, exit_hysteresis, max_gross_exposure_pct, max_sector_exposure_pct, max_name_exposure_pct, max_portfolio_vol_pct, max_avg_pairwise_corr, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper")
       .limit(1)
       .single();
+    // Additive paper-only capacity. Keep this read separate so an unapplied
+    // migration cannot make the legacy strategy-config query fail wholesale.
+    const { data: paperExposureCfg, error: paperExposureError } = await supabase
+      .from("strategy_config")
+      .select("max_gross_exposure_pct_paper")
+      .limit(1)
+      .single();
     let maxPerSector = 3;
     try {
       const { data: capRow } = await supabase.from("strategy_config").select("max_positions_per_sector").limit(1).single();
@@ -323,7 +330,10 @@ export async function POST(req: NextRequest) {
     // budgeting — see lib/portfolio/constructor.ts). Human-set limits from
     // strategy_config, falling back to DEFAULT_LIMITS when unset/pre-069.
     const portfolioLimits = {
-      maxGrossExposurePct: (cfg as any)?.max_gross_exposure_pct ?? DEFAULT_LIMITS.maxGrossExposurePct,
+      // The soft cash objective may use more of the paper book, but it must
+      // never change the shared/live risk ceiling. Missing migration retains
+      // the existing shared/default behavior.
+      maxGrossExposurePct: (!paperExposureError ? (paperExposureCfg as any)?.max_gross_exposure_pct_paper : null) ?? (cfg as any)?.max_gross_exposure_pct ?? DEFAULT_LIMITS.maxGrossExposurePct,
       maxSectorExposurePct: (cfg as any)?.max_sector_exposure_pct ?? DEFAULT_LIMITS.maxSectorExposurePct,
       maxNameExposurePct: (cfg as any)?.max_name_exposure_pct ?? DEFAULT_LIMITS.maxNameExposurePct,
       maxPortfolioVolPct: (cfg as any)?.max_portfolio_vol_pct ?? DEFAULT_LIMITS.maxPortfolioVolPct,
