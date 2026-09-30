@@ -193,6 +193,8 @@ export async function fetchIndiaEarningsDate(symbol: string): Promise<string | n
  * unless every input is a finite positive-equity number and the result is plausible.
  */
 export function deriveReturnOnEquity(input: { netIncomeToCommon: unknown; bookValue: unknown; sharesOutstanding: unknown }): number | null {
+  const raw = [input.netIncomeToCommon, input.bookValue, input.sharesOutstanding];
+  if (raw.some((value) => value === null || value === undefined || (typeof value === "string" && value.trim() === ""))) return null;
   const ni = Number(input.netIncomeToCommon);
   const bv = Number(input.bookValue);
   const shares = Number(input.sharesOutstanding);
@@ -226,7 +228,20 @@ export async function fetchIndiaOverview(
     const r = json?.quoteSummary?.result?.[0];
     if (!r) return {};
     const sd = r.summaryDetail ?? {}, fd = r.financialData ?? {}, ks = r.defaultKeyStatistics ?? {}, ap = r.assetProfile ?? {}, pr = r.price ?? {};
-    const num = (v: any) => (v && typeof v === "object" && "raw" in v ? v.raw : v);
+    // Yahoo usually wraps quoteSummary numbers as { raw, fmt }, but some fields
+    // arrive as display-only objects (or objects with a nonnumeric raw value).
+    // Never stringify those as "[object Object]" into fundamentals or scoring.
+    const num = (v: unknown): number | null => {
+      const candidate = v !== null && typeof v === "object"
+        ? ("raw" in v ? v.raw : null)
+        : v;
+      if (typeof candidate === "number") return Number.isFinite(candidate) ? candidate : null;
+      if (typeof candidate !== "string" || candidate.trim() === "") return null;
+      const trimmed = candidate.trim();
+      if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) return null;
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
     const ov: Record<string, string> = {};
     ov.Symbol = symbol;
     if (ap.sector) {
