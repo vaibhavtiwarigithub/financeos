@@ -17,6 +17,8 @@ import { primaryBenchmarkContractErrors } from "@/lib/data/benchmark-registry";
 import { admitMarketLocalSlot, expectedLatestSessionDate } from "@/lib/trading/market-calendar";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { loadBenchmarkHistory } from "@/lib/analytics/benchmark-history";
+import { canonicalPortfolioSnapshots } from "@/lib/analytics/benchmark-display";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -24,10 +26,6 @@ export const maxDuration = 60;
 const MARKETS = ["us", "india"] as const;
 const CURRENCY = { us: "USD", india: "INR" } as const;
 type Market = typeof MARKETS[number];
-
-function asLevel(row: any, field: string): LevelPoint {
-  return { date: String(row.date).slice(0, 10), level: row[field] == null ? null : Number(row[field]) };
-}
 
 async function requireOwnerOrCron(req: NextRequest) {
   if (verifyCronSecret(req)) return null;
@@ -69,18 +67,9 @@ async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
   // whose session does not match the row it sits on is a mislabelled
   // observation (VOO's 2026-08-11 close was stored under both 2026-08-12 and
   // 2026-08-13) and must never be promoted into the scorecard series.
-  const query = (cols: string) => svc
-    .from("paper_performance")
-    .select(cols)
-    .eq("market", benchmark.market)
-    .not("bench_nav", "is", null)
-    .order("date", { ascending: true })
-    .limit(500);
-  // Falls back to the legacy shape until the provenance migration is applied.
-  let { data, error } = await query("date, bench_nav, bench_session_date, bench_source");
-  if (error) ({ data, error } = await query("date, bench_nav"));
-  if (error) return;
-  const rows = (data ?? [])
+  const snapshots = await loadCanonicalPaperSnapshots(svc, benchmark.market);
+  const rows = snapshots
+    .filter((r) => r.bench_nav != null)
     .map((r: any) => {
       const date = String(r.date).slice(0, 10);
       const session = r.bench_session_date ? String(r.bench_session_date).slice(0, 10) : null;
@@ -112,18 +101,18 @@ async function upsertPaperObservations(svc: any, benchmark: BenchmarkConfig) {
 }
 
 async function upsertLiveObservations(svc: any, benchmark: BenchmarkConfig) {
-  const { data, error } = await svc
+  const data = await fetchAllRows((from, to) => svc
     .from("live_performance")
-    .select("date, bench_nav, market, currency, book_scope")
+    .select("date, account_id, bench_nav, market, currency, book_scope")
     .eq("market", benchmark.market)
     .eq("currency", benchmark.currency)
     .eq("book_scope", "all_live_accounts")
     .not("bench_nav", "is", null)
     .order("date", { ascending: true })
-    .limit(500);
-  if (error) return;
+    .order("account_id", { ascending: true })
+    .range(from, to), `live ${benchmark.market} benchmark observations`);
   const byDate = new Map<string, number>();
-  for (const r of (data ?? []) as any[]) {
+  for (const r of data as any[]) {
     const close = Number(r.bench_nav);
     if (Number.isFinite(close) && close > 0) byDate.set(String(r.date).slice(0, 10), close);
   }
@@ -259,32 +248,45 @@ async function upsertProviderObservations(
 }
 
 async function loadBenchmarkLevels(svc: any, benchmark: BenchmarkConfig): Promise<LevelPoint[]> {
-  return loadBenchmarkHistory(svc, benchmark.id);
+  return loadBenchmarkHistory(svc, benchmark.id, benchmark.provider_symbol ?? benchmark.symbol ?? benchmark.label);
+}
+
+/** The same canonical untainted EOD snapshots feed every paper benchmark calculation. */
+async function loadCanonicalPaperSnapshots(svc: any, market: "us" | "india"): Promise<any[]> {
+  const rows = await fetchAllRows((from, to) => svc
+    .from("paper_performance")
+    .select("id,date,nav,bench_nav,bench_session_date,bench_source,snapshot_type,tainted,updated_at")
+    .eq("market", market)
+    .eq("snapshot_type", "eod")
+    .eq("tainted", false)
+    .order("date", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to), `canonical ${market} paper performance`);
+  return canonicalPortfolioSnapshots(rows as any[]);
 }
 
 async function loadPaperSeries(svc: any, market: "us" | "india"): Promise<LevelPoint[]> {
-  const { data, error } = await svc
-    .from("paper_performance")
-    .select("date, nav")
-    .eq("market", market)
-    .order("date", { ascending: true })
-    .limit(500);
-  if (error) throw new Error(`paper_performance read failed for ${market}: ${error.message}`);
-  return (data ?? []).map((r: any) => asLevel(r, "nav"));
+  return (await loadCanonicalPaperSnapshots(svc, market))
+    .map((row) => ({ date: row.date, level: row.nav }));
 }
 
 async function loadLiveSeries(svc: any, market: "us" | "india", currency: "USD" | "INR"): Promise<{ levels: LevelPoint[]; missingProvenance: boolean }> {
-  const { data, error } = await svc
+  let data: any[];
+  try {
+    data = await fetchAllRows((from, to) => svc
     .from("live_performance")
-    .select("date, equity, market, currency, book_scope")
+    .select("date, account_id, equity, market, currency, book_scope")
     .eq("market", market)
     .eq("currency", currency)
     .eq("book_scope", "all_live_accounts")
     .order("date", { ascending: true })
-    .limit(1000);
-  if (error) return { levels: [], missingProvenance: true };
+    .order("account_id", { ascending: true })
+    .range(from, to), `live ${market} equity series`);
+  } catch {
+    return { levels: [], missingProvenance: true };
+  }
   const sums = new Map<string, number>();
-  for (const r of (data ?? []) as any[]) {
+  for (const r of data) {
     const equity = Number(r.equity);
     if (!Number.isFinite(equity) || equity <= 0) continue;
     const date = String(r.date).slice(0, 10);

@@ -35,10 +35,18 @@ export interface BenchmarkWindow {
   points: BenchmarkWindowPoint[];
   /** Full-window portfolio return. Independent of which benchmark is selected. */
   portfolioReturnPct: number | null;
-  /** Benchmark return over the OVERLAP only. */
+  /** Portfolio return over the exact sessions shared with the benchmark. */
+  matchedPortfolioReturnPct: number | null;
+  /** Benchmark return over the exact sessions shared with the portfolio. */
   benchReturnPct: number | null;
   /** Portfolio minus benchmark, both measured over the overlap. */
   deltaPct: number | null;
+  /** Actual available portfolio window after the requested timeframe cutoff. */
+  windowStartDate: string | null;
+  windowEndDate: string | null;
+  /** Exact comparison interval used for both matched returns. */
+  comparisonStartDate: string | null;
+  comparisonEndDate: string | null;
   /** Set when the benchmark cannot cover the requested window. */
   truncation: { sessionsLost: number; until: string | null } | null;
 }
@@ -63,21 +71,33 @@ export function buildBenchmarkWindow(
   const inWindow = (r: BenchmarkSeriesRow) =>
     cutoffMs == null || new Date(r.date).getTime() >= cutoffMs;
 
-  const portfolioRows = series.filter((r) => r.nav != null && inWindow(r));
+  const portfolioRows = series
+    .filter((r) => r.nav != null && Number.isFinite(Number(r.nav)) && Number(r.nav) > 0 && inWindow(r))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
   if (portfolioRows.length < 2) {
-    return { points: [], portfolioReturnPct: null, benchReturnPct: null, deltaPct: null, truncation: null };
+    return {
+      points: [], portfolioReturnPct: null, matchedPortfolioReturnPct: null,
+      benchReturnPct: null, deltaPct: null, windowStartDate: null,
+      windowEndDate: null, comparisonStartDate: null, comparisonEndDate: null,
+      truncation: null,
+    };
   }
 
   const navBase = Number(portfolioRows[0].nav);
   const portfolioReturnPct = pctChange(Number(portfolioRows[portfolioRows.length - 1].nav), navBase);
 
-  const overlap = portfolioRows.filter((r) => r.bench_nav != null);
+  const overlap = portfolioRows.filter((r) => r.bench_nav != null && Number.isFinite(Number(r.bench_nav)) && Number(r.bench_nav) > 0);
   const overlapNavBase = overlap.length ? Number(overlap[0].nav) : null;
   const overlapBenchBase = overlap.length ? Number(overlap[0].bench_nav) : null;
 
-  const points: BenchmarkWindowPoint[] = portfolioRows.map((r) => ({
+  const hasComparisonWindow = overlap.length >= 2;
+  const visibleRows = hasComparisonWindow
+    ? portfolioRows.filter((r) => r.date >= overlap[0].date && r.date <= overlap[overlap.length - 1].date)
+    : portfolioRows;
+  const points: BenchmarkWindowPoint[] = visibleRows.map((r) => ({
     date: r.date,
-    portfolio: overlapNavBase != null
+    portfolio: hasComparisonWindow && overlapNavBase != null
       ? pctChange(Number(r.nav), overlapNavBase)
       : pctChange(Number(r.nav), navBase),
     bench: r.bench_nav != null && overlapBenchBase != null
@@ -86,12 +106,18 @@ export function buildBenchmarkWindow(
   }));
 
   let benchReturnPct: number | null = null;
+  let matchedPortfolioReturnPct: number | null = null;
   let deltaPct: number | null = null;
+  let comparisonStartDate: string | null = null;
+  let comparisonEndDate: string | null = null;
   if (overlap.length >= 2 && overlapNavBase != null && overlapBenchBase != null) {
+    const first = overlap[0];
     const last = overlap[overlap.length - 1];
+    matchedPortfolioReturnPct = pctChange(Number(last.nav), Number(first.nav));
     benchReturnPct = pctChange(Number(last.bench_nav), overlapBenchBase);
-    const portfolioAtOverlapEnd = pctChange(Number(last.nav), overlapNavBase);
-    deltaPct = parseFloat((portfolioAtOverlapEnd - benchReturnPct).toFixed(2));
+    deltaPct = parseFloat((matchedPortfolioReturnPct - benchReturnPct).toFixed(2));
+    comparisonStartDate = first.date;
+    comparisonEndDate = last.date;
   }
 
   const lastPortfolioDate = portfolioRows[portfolioRows.length - 1].date;
@@ -103,5 +129,16 @@ export function buildBenchmarkWindow(
         ? { sessionsLost: portfolioRows.length - overlap.length, until: lastOverlapDate }
         : null;
 
-  return { points, portfolioReturnPct, benchReturnPct, deltaPct, truncation };
+  return {
+    points,
+    portfolioReturnPct,
+    matchedPortfolioReturnPct,
+    benchReturnPct,
+    deltaPct,
+    windowStartDate: portfolioRows[0].date,
+    windowEndDate: portfolioRows[portfolioRows.length - 1].date,
+    comparisonStartDate,
+    comparisonEndDate,
+    truncation,
+  };
 }

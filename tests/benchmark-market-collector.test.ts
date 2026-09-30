@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const route = readFileSync("app/api/agents/benchmark-scorecard/route.ts", "utf8");
 const migration = readFileSync("supabase/migrations/20260915130000_market_local_benchmark_collectors.sql", "utf8");
 const scorecard = readFileSync("components/dashboard/AlphaScorecard.tsx", "utf8");
+const performanceSeries = readFileSync("app/api/portfolio/performance-series/route.ts", "utf8");
 
 describe("market-local benchmark collector", () => {
   it("refuses an unscoped collector call", () => {
@@ -20,6 +21,18 @@ describe("market-local benchmark collector", () => {
     expect(route).toContain("verifyMarketCompletion");
     expect(route).toContain('observedSession === expectedSession && sourceStatus === "ok"');
     expect(route).toContain('completion.length > 0 && incomplete.length === 0 ? "done" : "partial"');
+  });
+
+  it("uses paginated clean EOD paper marks instead of a fixed-size mixed snapshot slice", () => {
+    expect(route).toContain("canonicalPortfolioSnapshots");
+    expect(route).toContain('.eq("snapshot_type", "eod")');
+    expect(route).toContain('.eq("tainted", false)');
+    expect(route).toContain("fetchAllRows");
+    expect(route).not.toContain('.limit(500);');
+  });
+
+  it("reads only the selected benchmark's configured component symbol", () => {
+    expect(performanceSeries).toContain('.eq("component_symbol", selected.provider_symbol ?? selected.symbol ?? selected.label)');
   });
 
   it("makes the retry and per-benchmark diagnostic durable", () => {

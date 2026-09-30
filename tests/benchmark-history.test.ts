@@ -30,4 +30,9 @@ describe("benchmark history pagination", () => {
     expect(await loadBenchmarkHistory(svc, "voo")).toHaveLength(500);
     expect(svc.query.range).toHaveBeenCalledTimes(2);
   });
+  it("can restrict history to the exact configured benchmark component", async () => {
+    const svc = client([{ date: "2026-09-11", close: 600, component_symbol: "VOO" }]);
+    await loadBenchmarkHistory(svc, "benchmark-id", "VOO");
+    expect(svc.query.eq).toHaveBeenCalledWith("component_symbol", "VOO");
+  });
 });

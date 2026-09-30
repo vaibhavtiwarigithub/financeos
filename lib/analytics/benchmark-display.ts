@@ -8,6 +8,35 @@ export type DisplayBenchmark = {
 
 export type PortfolioLevel = { date: string; nav: number | null };
 export type BenchmarkLevel = { date: string; close: number | null };
+export type PortfolioSnapshotLevel = PortfolioLevel & {
+  bench_nav?: number | null;
+  snapshot_type: string | null;
+  tainted: boolean | null;
+  updated_at?: string | null;
+};
+
+/**
+ * Historical performance uses only canonical, untainted EOD snapshots. Keep
+ * source rows immutable, and deterministically select the latest update if
+ * duplicate snapshots exist for a session.
+ */
+export function canonicalPortfolioSnapshots(
+  rows: readonly PortfolioSnapshotLevel[],
+): PortfolioSnapshotLevel[] {
+  const byDate = new Map<string, PortfolioSnapshotLevel>();
+  for (const row of rows) {
+    if (typeof row.date !== "string") continue;
+    const nav = row.nav == null ? Number.NaN : Number(row.nav);
+    if (row.snapshot_type !== "eod" || row.tainted !== false || !Number.isFinite(nav) || nav <= 0) continue;
+    const date = row.date.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const prior = byDate.get(date);
+    if (!prior || String(row.updated_at ?? "") > String(prior.updated_at ?? "")) {
+      byDate.set(date, { ...row, date, nav });
+    }
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
 
 export type BenchmarkFreshness = {
   /** RELATIVE only: does the comparator keep up with the book's own sessions? */

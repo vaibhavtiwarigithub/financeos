@@ -49,7 +49,14 @@ describe("portfolio return is benchmark-independent", () => {
     //   portfolio over overlap = (101.345/100.8 - 1)*100 = 0.541%
     //   bench over overlap     = (60.3/60 - 1)*100       = 0.500%
     expect(w.benchReturnPct).toBeCloseTo(0.5, 3);
+    expect(w.matchedPortfolioReturnPct).toBeCloseTo(0.541, 3);
     expect(w.deltaPct).toBeCloseTo(0.04, 2);
+    expect(w.comparisonStartDate).toBe("2026-08-26");
+    expect(w.comparisonEndDate).toBe("2026-08-31");
+    expect(w.windowStartDate).toBe("2026-08-19");
+    expect(w.windowEndDate).toBe("2026-08-31");
+    expect(w.points[0].date).toBe("2026-08-26");
+    expect(w.points.at(-1)?.date).toBe("2026-08-31");
     // And the headline portfolio number is still the FULL window, not 0.541%.
     expect(w.portfolioReturnPct).toBeCloseTo(1.345, 3);
   });
@@ -92,11 +99,12 @@ describe("window and edge cases", () => {
     expect(w.portfolioReturnPct).toBeNull();
   });
 
-  it("does not crash on a zero base", () => {
+  it("rejects zero or invalid NAV marks instead of fabricating a return", () => {
     const w = buildBenchmarkWindow([
       { date: "d1", nav: 0, bench_nav: 0 },
       { date: "d2", nav: 10, bench_nav: 5 },
     ], null);
-    expect(w.portfolioReturnPct).toBe(0);
+    expect(w.portfolioReturnPct).toBeNull();
+    expect(w.points).toEqual([]);
   });
 });

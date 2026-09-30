@@ -127,6 +127,15 @@ Portfolio-vs-benchmark charts are presentation outputs of these canonical rows,
 not independent fetches. A stale chart is a data-contract failure, not a reason to
 silently reuse yesterday's benchmark.
 
+The performance-series contract uses only untainted end-of-day paper NAV snapshots,
+deduplicates each session to its latest canonical snapshot, and paginates the full
+history rather than silently stopping at a fixed row limit. Benchmark observations
+must match the configured benchmark component. When benchmark history starts later
+than portfolio history, the relative-return headline and plotted comparison use the
+same exact overlapping sessions; the portfolio's full-window return is shown
+separately so the two periods cannot be mistaken for a like-for-like comparison.
+Missing benchmark sessions remain gaps rather than being visually bridged.
+
 Upgrade Path attribution is append-only and requires a matched baseline and variant,
 common window/population, frozen versions/hashes, costs, benchmark, independent
 sessions and exact arithmetic. The ledger currently has no valid measured rows for

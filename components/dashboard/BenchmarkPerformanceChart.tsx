@@ -153,17 +153,33 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     }
   }
 
-  const { chartData, portfolioLast, benchLast, delta, truncation } = useMemo(() => {
+  const {
+    chartData,
+    portfolioFullWindow,
+    portfolioMatched,
+    benchLast,
+    delta,
+    truncation,
+    windowStartDate,
+    windowEndDate,
+    comparisonStartDate,
+    comparisonEndDate,
+  } = useMemo(() => {
     // Arithmetic lives in lib/analytics/benchmark-window.ts so the
     // benchmark-independence rule is unit-testable. See that file for the
     // measured bug it prevents.
     const w = buildBenchmarkWindow(series, cutoffFor(tf));
     return {
       chartData: w.points,
-      portfolioLast: w.portfolioReturnPct,
+      portfolioFullWindow: w.portfolioReturnPct,
+      portfolioMatched: w.matchedPortfolioReturnPct,
       benchLast: w.benchReturnPct,
       delta: w.deltaPct,
       truncation: w.truncation,
+      windowStartDate: w.windowStartDate,
+      windowEndDate: w.windowEndDate,
+      comparisonStartDate: w.comparisonStartDate,
+      comparisonEndDate: w.comparisonEndDate,
     };
   }, [series, tf]);
 
@@ -203,6 +219,8 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       : "benchmark is";
   // Today adds no point when the exchange is shut; say so instead of leaving a silent flat end.
   const closedNote = pipeline?.closedReason ? ` · ${pipeline.closedReason} today, no new close` : "";
+  const calendarYearStart = `${new Date().getFullYear()}-01-01`;
+  const partialYtd = tf === "YTD" && !!windowStartDate && windowStartDate > calendarYearStart;
 
   const header = (
     <div style={{ marginBottom: "14px" }}>
@@ -220,6 +238,11 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
               {pipelineBehind
                 ? ` · ${behindLabel} behind the last close${freshness?.pipeline?.expectedSessionDate ? ` (${formatSessionDate(freshness.pipeline.expectedSessionDate)})` : ""}`
                 : closedNote}
+            </div>
+          )}
+          {partialYtd && windowStartDate && (
+            <div style={{ fontSize: "11px", color: T.yellow, marginTop: "5px" }}>
+              Paper history starts {formatSessionDate(windowStartDate)}; YTD shows available history only, not the full calendar year.
             </div>
           )}
           {freshness?.status === "stale" && (
@@ -294,7 +317,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     <div style={CARD}>
       {header}
 
-      {/* Headline: window delta vs benchmark (Portfolio % − Benchmark %) */}
+      {/* The relative headline and both plotted returns use one exact shared interval. */}
       <div style={{ display: "flex", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "12px" }}>
         {delta != null ? (
           <div style={{
@@ -309,25 +332,35 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           <div style={{ fontSize: "12px", color: T.muted }}>{benchLabel} benchmark not recorded for this window yet.</div>
         )}
         <div style={{ fontSize: "12px", color: T.textSub }}>
-          {/* Full-window portfolio return. Does not move when the benchmark changes. */}
-          Portfolio <span style={{ color: (portfolioLast ?? 0) >= 0 ? T.green : T.red, fontWeight: 600 }}>
-            {(portfolioLast ?? 0) >= 0 ? "+" : ""}{(portfolioLast ?? 0).toFixed(2)}%
-          </span>
-          {benchLast != null && (
+          {portfolioMatched != null && benchLast != null ? (
             <>
+              Matched {formatSessionDate(comparisonStartDate) ?? "—"}–{formatSessionDate(comparisonEndDate) ?? "—"}: Portfolio <span style={{ color: portfolioMatched >= 0 ? T.green : T.red, fontWeight: 600 }}>
+                {portfolioMatched >= 0 ? "+" : ""}{portfolioMatched.toFixed(2)}%
+              </span>
               {"  ·  "}{benchLabel} <span style={{ color: benchLast >= 0 ? T.green : T.red, fontWeight: 600 }}>
                 {benchLast >= 0 ? "+" : ""}{benchLast.toFixed(2)}%
               </span>
             </>
+          ) : (
+            <>Portfolio full selected window <span style={{ color: (portfolioFullWindow ?? 0) >= 0 ? T.green : T.red, fontWeight: 600 }}>
+              {(portfolioFullWindow ?? 0) >= 0 ? "+" : ""}{(portfolioFullWindow ?? 0).toFixed(2)}%
+            </span></>
           )}
         </div>
       </div>
 
+      {portfolioMatched != null && portfolioFullWindow != null
+        && (windowStartDate !== comparisonStartDate || windowEndDate !== comparisonEndDate) && (
+        <div style={{ fontSize: "11px", color: T.muted, marginTop: "-6px", marginBottom: "10px" }}>
+          Portfolio full selected window ({formatSessionDate(windowStartDate) ?? "—"}–{formatSessionDate(windowEndDate) ?? "—"}): {portfolioFullWindow >= 0 ? "+" : ""}{portfolioFullWindow.toFixed(2)}%.
+        </div>
+      )}
+
       {truncation && (
         <div style={{ fontSize: "11px", color: T.muted, marginTop: "-6px", marginBottom: "10px" }}>
           {truncation.until
-            ? `${benchLabel} covers only ${truncation.sessionsLost} session(s) fewer than the window — the delta is measured to ${truncation.until}. Portfolio % above is the full window.`
-            : `${benchLabel} has no data in this window — no delta is shown. Portfolio % above is the full window.`}
+            ? `${benchLabel} is missing ${truncation.sessionsLost} portfolio session(s) in this selected window; comparison observations run through ${formatSessionDate(truncation.until) ?? truncation.until}.`
+            : `${benchLabel} has no data in this window — no relative return is shown.`}
         </div>
       )}
 
@@ -344,7 +377,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           <Line type="monotone" dataKey="portfolio" name="Portfolio" stroke={COLORS.portfolio} strokeWidth={2.5} dot={false} />
           {hasBench && (
             <Line type="monotone" dataKey="bench" name={benchLabel} stroke={COLORS.bench} strokeWidth={1.5}
-              dot={false} strokeDasharray="4 2" connectNulls />
+              dot={false} strokeDasharray="4 2" connectNulls={false} />
           )}
         </LineChart>
       </ResponsiveContainer>
