@@ -139,12 +139,14 @@ Missing benchmark sessions remain gaps rather than being visually bridged.
 Upgrade Path attribution is append-only and requires a matched baseline and variant,
 common window/population, frozen versions/hashes, costs, benchmark, independent
 sessions and exact arithmetic. Existing production attribution rows are synthetic
-international-allocation diagnostics, not Kairos paper-book P&L. A local ATR
-paired-book producer now validates complete immutable snapshots and emits only
-net-of-cost evidence after two non-overlapping ten-session blocks; its additive
-schema migration and deployed persistence remain unverified. Other paths remain
-producer-missing unless explicitly proven otherwise. “Collecting” and
-“review-ready” do not mean “proven improvement.”
+international-allocation diagnostics, not Kairos paper-book P&L. The ATR
+paired-book producer is deployed and validates complete immutable snapshots;
+it can emit only net-of-cost evidence after two non-overlapping ten-session
+blocks. Production currently has two paired snapshots (2026-09-25 through
+2026-09-28) and no ATR attribution row; the latest pre-deploy run was blocked
+because the 2026-09-29 bar was unavailable. The additive migration is applied.
+Other paths remain producer-missing unless explicitly proven otherwise.
+“Collecting” and “review-ready” do not mean “proven improvement.”
 
 ## 7. Learning, strategies and shadows
 

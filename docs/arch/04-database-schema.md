@@ -8,9 +8,9 @@ incremental return fields are required and must reconcile; for `net_only`, all
 gross fields must remain NULL while the net incremental return is arithmetically
 verified. This prevents a producer from inferring gross performance by removing
 costs from fills that were already recorded net of modeled execution costs.
-Migration: `20260930193000_attribution_return_basis.sql`. The migration is
-additive; production application must be independently verified before this
-schema status is described as deployed.
+Migration: `20260930193000_attribution_return_basis.sql`, applied and verified in
+FinanceOS production on 2026-09-30. Existing measured rows retain the default
+`gross_and_net` basis and continue to satisfy the integrity constraint.
 
 ## `chart_pattern_shadow_runs` — prospective technical evidence
 
