@@ -165,6 +165,8 @@ export interface LLMCallOpts {
   symbol?: string
   agentLabel?: string   // "claude" | "deepseek" | "gemini"
   maxTokens?: number
+  /** Per-call provider timeout. Defaults to the shared 120s timeout. */
+  timeoutMs?: number
   runId?: string
 }
 
@@ -353,13 +355,13 @@ async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ tex
     }
   }
   // Built-in dispatch
-  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.task)
-  if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-  if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-  if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-  if (model.startsWith("gpt") || /^o[134]/.test(model)) return callOpenAI(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-  if (model.startsWith("glm")) return callGLM(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
-  if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens)
+  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.task, opts.timeoutMs)
+  if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (model.startsWith("gpt") || /^o[134]/.test(model)) return callOpenAI(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (model.startsWith("glm")) return callGLM(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
   throw new Error(`Unknown model: ${model}`)
 }
 
@@ -511,7 +513,8 @@ async function callClaude(
   prompt: string,
   system?: string,
   maxTokens = 4096,
-  task?: LLMTask
+  task?: LLMTask,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens: number; cacheReadTokens: number }> {
   // Use Anthropic SDK directly (server-side, uses ANTHROPIC_API_KEY env).
   // System prompt is sent with cache_control: { type: "ephemeral" } so repeated calls
@@ -525,7 +528,7 @@ async function callClaude(
   // propagate so callLLM's isAuthMissing handler swaps to DeepSeek instead.
   const { default: Anthropic } = await import("@anthropic-ai/sdk")
   // Vault-first key (Settings) → env fallback. undefined lets the SDK read env itself.
-  const client = new Anthropic({ apiKey: (await getProviderKey("anthropic")) ?? undefined })
+  const client = new Anthropic({ apiKey: (await getProviderKey("anthropic")) ?? undefined, timeout: timeoutMs })
   const messages: { role: "user" | "assistant"; content: string }[] = [
     { role: "user", content: prompt },
   ]
@@ -557,7 +560,8 @@ async function callDeepSeek(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("deepseek")
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set")
@@ -573,7 +577,7 @@ async function callDeepSeek(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...deepSeekThinkingConfig(model) }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 
   if (!resp.ok) {
@@ -623,7 +627,8 @@ async function callGroq(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("groq")
   if (!apiKey) throw new Error("GROQ_API_KEY not set")
@@ -639,7 +644,7 @@ async function callGroq(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 
   if (!resp.ok) {
@@ -660,7 +665,8 @@ async function callGrok(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("grok")
   if (!apiKey) throw new Error("XAI_API_KEY not set")
@@ -673,7 +679,7 @@ async function callGrok(
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!resp.ok) {
     const errText = await resp.text()
@@ -690,7 +696,8 @@ async function callGemini(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("gemini")
   if (!apiKey) throw new Error("GEMINI_API_KEY not set")
@@ -705,7 +712,7 @@ async function callGemini(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!resp.ok) {
     const errText = await resp.text()
@@ -726,7 +733,8 @@ async function callOpenAI(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("openai")
   if (!apiKey) throw new Error("OPENAI_API_KEY not set")
@@ -744,7 +752,7 @@ async function callOpenAI(
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!resp.ok) {
     const errText = await resp.text()
@@ -761,7 +769,8 @@ async function callGLM(
   model: string,
   prompt: string,
   system?: string,
-  maxTokens = 4096
+  maxTokens = 4096,
+  timeoutMs = 120_000
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("glm")
   if (!apiKey) throw new Error("GLM_API_KEY not set")
@@ -774,7 +783,7 @@ async function callGLM(
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
   if (!resp.ok) {
     const errText = await resp.text()

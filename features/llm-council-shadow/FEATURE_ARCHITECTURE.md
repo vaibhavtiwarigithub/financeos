@@ -1,148 +1,64 @@
-# LLM Council — Shadow Annotation
+# Multi-LLM Research Council and Scorecard
 
-**Status:** DEFERRED by owner decision, 2026-08-20. Not approved, not implemented.
-**Revive when:** the US equity book clears its own evidence floor (`n >= 60` closed trades with h10 labels AND `nEffective = n/10 >= 12` per market). Until the strategy that already exists is measurable, a second lane multiplies the measurement burden rather than diversifying it.
-**Date:** 2026-08-20
-**Scope:** measure whether a multi-model review would have improved decisions. Writes no direction, no size, no order.
+**Status:** Owner-approved to build on 2026-09-30. Shadow-only until evidence and a later explicit decision permit a trading integration. This supersedes the deferred annotation-only proposal dated 2026-08-20.
 
-## The question this answers
+## Purpose
 
-Not "should an LLM help decide" — that is unanswerable today. The answerable
-question is:
+For selected, already-researched symbols, collect genuinely independent model forecasts, let the selected models challenge and revise those forecasts for a bounded number of rounds, and produce a reproducible composite score plus an orchestrator-written synthesis. Preserve exactly what each model saw, its source timestamps, model identity, token usage, and cost. Then compare every model's score and the composite with realized, benchmark-neutral returns at multiple forward horizons.
 
-> **When the council disagrees with the deterministic scorer, who turns out to be right?**
+This is a testable research lane, not a claim that an LLM ensemble improves returns. It does not fetch facts from model memory as if current, and it does not change stock dimensions, eligibility, sizing, rotation, paper orders, protective orders, or live trading.
 
-That has a real answer, from data we already collect, in about three months. Until
-it is answered, wiring model opinion into the money path is a guess wearing a
-number.
+## User controls and cost guardrails
 
-## Why this shape and not the obvious one
+An owner-only Settings panel controls the council:
 
-The obvious design — several models score a stock, take the median, gate on it —
-does not remove non-determinism. It **moves** it. The median of three stochastic
-estimates is a stochastic estimate with a deterministic wrapper. `PROJECT_DECISIONS`
-already closed this door on 2026-07-15: an LLM `direction` on a held name became an
-executable exit and taught the learner from LLM-created outcomes. The fix made
-direction deterministic (`lib/signal-direction.ts`) and demoted the model's opinion
-to `research_packets.raw_data._original_direction` — advisory, stored, read by
-nothing.
+- master enabled switch; default **off**;
+- 2–3 enabled model participants (any subset of configured supported providers);
+- one orchestrator model, independently selectable and allowed to also be a participant;
+- debate rounds from 0 through 3;
+- maximum 1–5 symbols per market per day and a hard daily USD budget;
+- explicit “shadow / not used for trading” status.
 
-**This proposal is that same pattern, applied deliberately and measured.**
+At least two participants from distinct providers with resolvable provider keys are required to run. The scheduler samples eligible decisions up to the configured cap, orders deterministically, and stops before exceeding its cost estimate/budget. It processes one symbol per invocation to keep work bounded, with five spaced market-local invocations as the default capacity. Each provider call has a 12-second deadline and the route has a 300-second ceiling. No fallback model can silently stand in for a selected participant: if the router returns a different model, that participant is marked failed for this forecast. Actual model identity and billed usage are recorded for every attempt, including failures through the existing `llm_call_log`.
 
-## Where an LLM genuinely adds something
+Estimated calls per symbol are `participants × (1 + debate_rounds) + 1 orchestrator`. Settings shows this estimate before enabling. Initial defaults after owner enables are 2 participants, 1 round, 5 symbols/market/day, and a $2/day cap. These defaults are conservative starting controls, not a performance recommendation.
 
-Worth being precise, because "LLMs are smart" is not an argument.
+## Data and forecast contract
 
-| Dimension | Current input | Can a model add? |
-|---|---|---|
-| Fundamental | P/E, FCF yield, insider buying — real numbers | **No.** Arithmetic on fetched fields. A model would only paraphrase. |
-| Technical | RSI/EMA/ADX/ATR — deterministic | **No.** |
-| Macro | FRED regime, 3/8 indicators | Marginal. |
-| **Sentiment** | StockTwits bull/bear %, GDELT tone | **Yes.** These are thin proxies for "what is actually being said". |
-| **News / events** | not scored at all | **Yes.** M&A, guidance, litigation, supply shocks live in prose. |
+The pipeline runs after a canonical `decision_observations` row exists and only for immutable entry-candidate observations with `entry_eligible=true` and `direction='long'`. It freezes the decision-time `features`, dimension and composite scores, price/date/currency, and source provenance. It enriches that snapshot only from already-stored, point-in-time-safe relationships: `symbol_profiles` only if `updated_at <= decision_ts`; peer `decision_observations` only on the same market/session and `ts <= decision_ts`; peer `price_cache` marks only when their session date is no later than the decision date; and analyst EPS-consensus vintages only when both `available_at` and `snapshot_at <= decision_ts`. The snapshot labels these as app-provided peer/consensus evidence and explicitly distinguishes analyst consensus from company-issued forward guidance. This release does not fetch new news, competitor fundamentals, or management guidance; missing/stale fields remain missing/stale rather than being invented from model memory.
 
-So the council's job is narrow: **read the unstructured evidence the numeric
-pipeline cannot, and say whether it contradicts the score.** Not "rate this stock".
+The independent prompt requests JSON with a numeric **0–100 outlook score**, confidence, a concise thesis, bull and bear cases, key risks, and evidence citations. A score means relative expected attractiveness over the next **10 market sessions**, not a price target or return percentage. That same score is evaluated against h2, h5, h10 and h20 outcomes to test horizon portability; those are separate evaluation cells, not four scores retroactively invented by the model. Facts must cite an existing path in the supplied snapshot and its recorded as-of date (or `unknown`). A model may state uncertainty; parse errors, unsupported scores, stale-only evidence, and provider errors do not get coerced into a numeric prediction.
 
-## Architecture
+Each model first scores independently, without seeing other model outputs. In every configured debate round, it sees peer scores and cited arguments from the preceding stage and may revise its score with an explicit change rationale. The orchestrator sees the original evidence and final participant reports and writes a synthesis, disagreement summary, and risks. The displayed **composite score is the median of valid final participant scores**, not an unconstrained number invented by the orchestrator. The orchestrator's narrative is not scored as another participant.
 
-### The isolation boundary (load-bearing)
+## Point-in-time integrity and evaluation
 
-Modelled on the Property invariant and the risk-research display join (invariant
-R1). **No council output is read by any scorer, eligibility gate, sizing rule,
-order path, exit, promotion gate, or learner.** Enforced by a coupling test in the
-style of `tests/risk-research-annotation.test.ts` — which pins R1 and is itself
-falsification-tested — not by convention.
+The frozen run stores the exact decision observation ID, input JSON/hash, source timestamps, prompt/config version, requested and actual models, stage scores/rationales, call status, token counts, provider-reported/router cost, and final synthesis. Run/prediction records are append-only. Later labels live only in evaluation joins; future returns are never added to the frozen prompt snapshot.
 
-### Flow
+Mature `observation_labels` at h2, h5, h10, and h20 are joined to each forecast. For each model and the composite, the evaluator computes **per-session Spearman rank IC** against `benchmark_neutral_return`; it does not pool all symbols as independent observations. It reports raw observations, qualifying sessions (minimum five symbols per session), the existing overlap adjustment `nEffective = qualifyingSessions / horizonDays`, and a t-stat computed from the per-session IC series using that effective sample size. Under `nEffective < 12`, IC may be shown descriptively but inferential classification/t-stat is null and the row says `insufficient_evidence`. Missing/matured labels, cohort exclusions, and provider/model fallbacks are visible.
 
-1. **Runs AFTER** the deterministic score exists, on entry-eligible decisions only.
-   It never sees a symbol the scorer has not already judged.
-2. **Grounding contract.** The prompt carries ONLY data already fetched this run:
-   the frozen `features` blob, the score breakdown, and the fetched news/sentiment
-   payloads. Each fact carries its own as-of timestamp. Recalled facts are
-   forbidden — the same §1 rule already in the research prompt ("you do not know
-   prices, P&L, RSI values; every number must trace to a tool call made in THIS
-   run").
-3. **N models, independently.** 3 by default from the 7 already wired
-   (`lib/llm-keys.ts`: anthropic, deepseek, groq, gemini, grok, openai, glm).
-   Independent calls, no shared context — otherwise they are one opinion.
-4. **Structured verdict only:** `{ agrees: bool, concern: enum, confidence: 0-1,
-   citation: string }`. Free prose is stored but never parsed into a field —
-   the `parseStrategyNotes` precedent, where model output can only ever land in
-   one string column and that is provable rather than prompt-dependent.
-5. **A referee model** sees the deterministic score, the fetched evidence, and the
-   N verdicts, and emits one `council_verdict`. It is stored. **It decides nothing.**
+The primary prediction is each participant's initial independent score; revised/debated scores and the median composite are separate series. This prevents the system from crediting “independent skill” to a model only after it has copied peers. Every evaluation is descriptive until there are enough independent windows; no result is a causal proof.
 
-### Storage
+## Security and money-path isolation
 
-New table `council_annotations`, append-only, keyed to `observation_id`. A separate
-table — not a column on `decision_observations` — so no existing consumer can pick
-it up by accident, and so it can be dropped wholesale if the answer is "no".
+- All reads/writes use server-side service credentials; owner endpoints require `requireOwner`, scheduled endpoints require `verifyCronSecret`.
+- API keys remain in the existing encrypted key vault and are never returned to the UI or written to council rows.
+- RLS denies browser writes; only owner-scoped reads are exposed through the authenticated API. Service role performs writes.
+- A coupling test forbids council table/score imports from the scoring, paper/live execution, sizing, exits, rotation, promotion, and learner decision modules. The current release adds no consumer to those systems.
+- Enabling the council only enables measurement. A later trading integration requires a separate architecture decision and out-of-sample evidence review.
 
-## Cost — measured, not guessed
+## Delivery sequence
 
-Current volume: **145 observations today, 208 distinct symbols over 7 days, 786
-entry-eligible decisions in 7 days** ≈ 112/day eligible.
+1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.
+2. Bounded shadow collector with independent calls, up to three debate rounds, consensus median, exact provenance, and hard call/cost caps.
+3. Scheduled evaluator over matured h2/h5/h10/h20 labels using the shared cohort and IC methodology; persist each model/composite/horizon result.
+4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity.
+5. Tests: malformed output, provider fallback, stale/missing evidence, idempotency, disabled config, cap enforcement, owner/cron auth, label maturity, cohort integrity, horizon overlap floor, and proof no trading consumer exists.
 
-At 3 models + 1 referee = 4 calls per eligible decision ≈ **450 calls/day**. That
-is the honest number and it is not small. Mitigations, in order:
+## Deliberately not included
 
-- Score **only entry-eligible** decisions (112/day, not 145 × all).
-- DeepSeek is already the default everywhere and is cheap; `llm_call_log` shows
-  only 3 distinct models used in 30 days, so provider spread is a new cost.
-- Cap per run and sample if the cap binds — a sampled measurement still answers
-  the IC question, it just answers it slower.
+No autonomous web research, no new paid data-source calls, no LLM edits to deterministic dimension scores, no model-generated price targets/stops, no trade decisions, no automatic provider/model rotation, no prompt-learning from future labels, and no live/paper money-path coupling. Each would need independent evidence and approval.
 
-**This is the main argument against building it now.** It is worth stating plainly
-rather than burying.
+## Prior draft reconciliation
 
-## Predeclared success criterion — set BEFORE any data
-
-Copying the discipline in `aggregateAtrExitEvidence`:
-
-- The unit of analysis is a **disagreement**: council says `agrees=false` on an
-  entry-eligible decision.
-- Outcome = the existing forward label at h10 (`observation_labels`), so no new
-  labelling machinery.
-- **Date-clustered** — one decision date is one draw; same-day decisions share a
-  market shock.
-- Floor: `n >= 60` disagreements AND `nEffective = n / 10 >= 12` before the
-  comparison may be cited at all.
-- Success = disagreements underperform agreements by a date-clustered `t >= 2`.
-
-### Kill condition, also predeclared
-
-If the floor is met and `|t| < 2`, the lane is **deleted, not tuned**. Written now
-so it cannot be relaxed once the data is in.
-
-## Explicitly NOT in scope
-
-No direction. No sizing. No orders. No exits. No promotion input. No change to
-`analyst_score`, the mandate, or any gate. Nothing here may be read by the money
-path. Cross-model *agreement* is not a green light and is not surfaced as one.
-
-## Operator view
-
-**For:** news and sentiment are genuinely under-served, the models are already
-wired, and shadow measurement risks nothing. If disagreements predict
-underperformance, that is a real edge and you would have earned it honestly.
-
-**Against, and my recommendation:** the equity book has ~16 clean US sessions, no
-demonstrated edge, and sits below the `nEffective >= 12` floor for the strategy
-that already exists. Four separate defects shipped into this system on 2026-08-20
-alone. The binding constraint is not ideas — it is verification capacity. ~450
-LLM calls/day is a real recurring cost for a question that cannot be answered for
-three months.
-
-**I would defer** until the equity book clears its own evidence floor. If built
-anyway, it must stay a shadow lane with the coupling test and the kill condition,
-so it cannot quietly become a sizing input the way the 2026-07-15 exit hole did.
-
-## Open questions for the owner
-
-1. Build now, or defer until the core is measurable? (I recommend defer.)
-2. If now: 3 models, or 2 plus a referee to halve the cost?
-3. US only, or both markets? India's sentiment coverage is already 0% (GDELT
-   sparse), so India is where a model would add most — and where grounding data
-   is thinnest, which cuts both ways.
+The 2026-08-20 draft's recommendation to defer and its binary disagreement-only success test no longer match the owner's explicit 2026-09-30 request. Its essential safety boundary (no money-path consumer) remains. This document implements model-level scores and horizon-specific rank-IC/t evidence instead of treating “agreement vs disagreement” as sufficient evaluation.

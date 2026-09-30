@@ -1793,3 +1793,13 @@ drills pass. Autonomous crypto execution (Stage F) remains a separate decision
 and explicit owner switch.
 
 **Architecture:** `features/crypto-native-platform/FEATURE_ARCHITECTURE.md`.
+
+## Decision 79: Multi-LLM Research Council Shadow (2026-09-30)
+
+**Status:** Approved by Vaibhav for implementation. Shadow-only; no score or output may affect a paper or live money path.
+
+**Decision.** Implement opt-in independent model scores, bounded peer debate (0–3 rounds), a selected orchestrator for evidence-grounded synthesis, deterministic median composite, per-call cost/token provenance, and per-model/composite multi-horizon IC reporting. The council runs only against frozen, entry-eligible point-in-time evidence. A later decision is required before trading integration.
+
+**Controls.** Owner-selectable providers/participants and orchestrator; owner-set rounds, daily symbol cap and USD budget; disabled by default. Provider fallback mismatches do not count as a valid model forecast. Missing/stale evidence is stated, not inferred from model memory.
+
+**Architecture:** `features/llm-council-shadow/FEATURE_ARCHITECTURE.md` (supersedes the deferred 2026-08-20 draft).
