@@ -1,6 +1,6 @@
 # ATR-scaled exit stop — shadow arm
 
-> Status: **Paired-book net attribution producer implemented locally; release and production evidence pending.**
+> Status: **Producer deployed; first post-deploy run/evidence pending.** Production has two paired US snapshots (seed 2026-09-25, latest 2026-09-28) and no attribution row yet; the producer requires 20 complete market sessions (two non-overlapping 10-session blocks). The last pre-deploy collector was blocked because the 2026-09-29 bar was unavailable. PR #29 is merged to `main`, deployment `dpl_AKQ3oM9QEHVAtMztLiLHBpFXVius` is READY, and the attribution-basis migration is applied.
 > The old header saying “no code written” was stale. This remains measure-only; no stop,
 > target, score, sizing, paper/live behavior, or strategy promotion is authorized here.
 >
