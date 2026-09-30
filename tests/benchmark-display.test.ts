@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalPortfolioSnapshots,
   mergePortfolioBenchmarkSeries,
   benchmarkFreshness,
   pipelineFreshness,
@@ -43,6 +44,21 @@ describe("portfolio benchmark display selection", () => {
       latestBenchmarkDate: "2026-09-10",
       missingPortfolioSessions: 1,
     });
+  });
+});
+
+describe("canonical performance snapshots", () => {
+  it("keeps only clean EOD rows and collapses duplicate dates to the latest update", () => {
+    const rows = canonicalPortfolioSnapshots([
+      { date: "2026-09-10", nav: 100, bench_nav: 50, snapshot_type: "eod", tainted: false, updated_at: "2026-09-10T20:00:00Z" },
+      { date: "2026-09-10", nav: 101, bench_nav: 51, snapshot_type: "eod", tainted: false, updated_at: "2026-09-10T21:00:00Z" },
+      { date: "2026-09-11", nav: 102, bench_nav: 52, snapshot_type: "intraday", tainted: false, updated_at: "2026-09-11T16:00:00Z" },
+      { date: "2026-09-12", nav: 103, bench_nav: 53, snapshot_type: "eod", tainted: true, updated_at: "2026-09-12T20:00:00Z" },
+      { date: "2026-09-13", nav: 0, bench_nav: 54, snapshot_type: "eod", tainted: false, updated_at: "2026-09-13T20:00:00Z" },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ date: "2026-09-10", nav: 101, bench_nav: 51 });
   });
 });
 

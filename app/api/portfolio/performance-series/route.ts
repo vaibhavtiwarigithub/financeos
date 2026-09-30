@@ -14,7 +14,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
+  canonicalPortfolioSnapshots,
   mergePortfolioBenchmarkSeries,
   benchmarkFreshness,
   selectDisplayBenchmark,
@@ -69,33 +71,43 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `no_enabled_benchmarks:${market}` }, { status: 503 });
   }
 
-  const [{ data: portfolioRows, error: portfolioError }, { data: observationRows, error: observationError }] = await Promise.all([
-    svc.from("paper_performance")
-      .select("date, nav, bench_nav")
-      .eq("market", market)
-      .order("date", { ascending: true })
-      .limit(1000),
-    svc.from("benchmark_price_observations")
-      .select("date, close")
-      .eq("benchmark_id", selected.id)
-      .eq("source_status", "ok")
-      .order("date", { ascending: true })
-      .limit(1000),
-  ]);
-  if (portfolioError) return NextResponse.json({ error: portfolioError.message }, { status: 500 });
-  if (observationError) return NextResponse.json({ error: observationError.message }, { status: 500 });
+  let portfolioRows: any[];
+  let observationRows: any[];
+  try {
+    [portfolioRows, observationRows] = await Promise.all([
+      fetchAllRows((from, to) => svc.from("paper_performance")
+        .select("id,date,nav,bench_nav,snapshot_type,tainted,updated_at")
+        .eq("market", market)
+        .eq("snapshot_type", "eod")
+        .eq("tainted", false)
+        .order("date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to), `canonical ${market} paper performance`),
+      fetchAllRows((from, to) => svc.from("benchmark_price_observations")
+        .select("date, close")
+        .eq("benchmark_id", selected.id)
+        .eq("component_symbol", selected.provider_symbol ?? selected.symbol ?? selected.label)
+        .eq("source_status", "ok")
+        .order("date", { ascending: true })
+        .range(from, to), `${selected.label} benchmark history`),
+    ]);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "performance history read failed" }, { status: 500 });
+  }
 
-  let levels = (observationRows ?? []).map((row: any) => ({ date: String(row.date), close: row.close == null ? null : Number(row.close) }));
+  const canonicalRows = canonicalPortfolioSnapshots(portfolioRows as any[]);
+
+  let levels = observationRows.map((row: any) => ({ date: String(row.date), close: row.close == null ? null : Number(row.close) }));
   // The primary ledger predates benchmark_price_observations. Preserve an
   // honest fallback while old deployments/backfills catch up; secondary rows
   // never use paper_performance.bench_nav because it contains the primary only.
   if (!levels.length && selected.is_primary) {
-    levels = (portfolioRows ?? []).map((row: any) => ({
+    levels = canonicalRows.map((row: any) => ({
       date: String(row.date),
       close: row.bench_nav == null ? null : Number(row.bench_nav),
     }));
   }
-  const portfolio = (portfolioRows ?? []).map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) }));
+  const portfolio = canonicalRows.map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) }));
   const series = mergePortfolioBenchmarkSeries(
     portfolio,
     levels,
