@@ -277,7 +277,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     name: "ATR exit-stop shadow",
     category: "Trading",
     attributionClass: "matched_replay",
-    attributionBlocker: "US only: a forward paired shadow book (identical baseline and 2.8-ATR books seeded from the reconciled paper book, advanced daily from raw OHLC, Massive-validated corporate actions and actual paper-lot entries/sales) is collecting, but no attribution row exists yet. The paired confidence result needs at least two complete non-overlapping ten-session blocks, and only entries made after the entry-risk provenance repair (2026-09-27) with a decision-time ATR can differ between arms; seeded holdings and entries without an ATR are held identically. India stays blocked: no corporate-action source certifies NSE names. Per-decision MFE/MAE rows are not portfolio P&L.",
+    attributionBlocker: "US only: daily paired shadow-book snapshots are collected from the reconciled paper book. The scheduled collector writes net-only portfolio attribution after two complete non-overlapping ten-session blocks; it leaves gross fields NULL because source paper fills already include execution costs. Only entries after the entry-risk provenance repair (2026-09-27) with decision-time ATR can differ between arms. India remains blocked because no corporate-action source certifies NSE names. Attribution remains shadow evidence—not an activation verdict.",
     markets: ["us", "india"],
     purpose: "Compare one predeclared ATR stop with the live fixed stop while holding target and time-stop rules constant.",
     productBenefit: "Separates premature stop-outs from broader exit-policy effects using paired evidence.",

@@ -1,6 +1,6 @@
 # Kairos current system reference
 
-> Last reviewed: 2026-09-21
+> Last reviewed: 2026-09-30
 >
 > This is the friend-facing, current-state guide. It describes what the code and
 > production contracts do today. A feature marked **shadow**, **collecting**, or
@@ -138,8 +138,13 @@ Missing benchmark sessions remain gaps rather than being visually bridged.
 
 Upgrade Path attribution is append-only and requires a matched baseline and variant,
 common window/population, frozen versions/hashes, costs, benchmark, independent
-sessions and exact arithmetic. The ledger currently has no valid measured rows for
-many paths. “Collecting” and “review-ready” do not mean “proven improvement.”
+sessions and exact arithmetic. Existing production attribution rows are synthetic
+international-allocation diagnostics, not Kairos paper-book P&L. A local ATR
+paired-book producer now validates complete immutable snapshots and emits only
+net-of-cost evidence after two non-overlapping ten-session blocks; its additive
+schema migration and deployed persistence remain unverified. Other paths remain
+producer-missing unless explicitly proven otherwise. “Collecting” and
+“review-ready” do not mean “proven improvement.”
 
 ## 7. Learning, strategies and shadows
 

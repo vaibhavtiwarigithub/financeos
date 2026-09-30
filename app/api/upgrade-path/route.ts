@@ -47,26 +47,41 @@ export async function GET(req: NextRequest) {
     if (!row || row.market !== market) {
       return { ...program, producerRun, shadowBookSnapshot: { state: "none" as const, note: "No forward paired-book P&L snapshot has been captured for this program." } };
     }
+    const snapshot = {
+      state: "captured" as const,
+      sessionDate: row.session_date,
+      windowStart: row.window_start,
+      programVersion: row.program_version,
+      baselineVersion: row.baseline_version,
+      baselineReturnPct: Number(row.baseline_cumulative_return_pct),
+      variantReturnPct: Number(row.variant_cumulative_return_pct),
+      benchmarkReturnPct: Number(row.benchmark_cumulative_return_pct),
+      netDeltaPct: Number(row.net_incremental_return_pct),
+      benchmarkRelativeDeltaPct: Number(row.benchmark_relative_incremental_return_pct),
+      baselineDrawdownPct: Number(row.baseline_drawdown_pct),
+      variantDrawdownPct: Number(row.variant_drawdown_pct),
+      turnoverPct: Number(row.turnover_pct),
+      independentBlocks: Number(row.independent_blocks),
+      blockers: Array.isArray(row.blockers) ? row.blockers.map(String) : [],
+    };
+    if (program.id === "exit-stop-shadow" && program.attribution.state === "producer_missing") {
+      const blocks = snapshot.independentBlocks;
+      const canStillCollect = Number.isFinite(blocks) && blocks < 2;
+      const attribution = {
+        ...program.attribution,
+        state: canStillCollect ? "collecting" as const : "invalid" as const,
+        asOfSession: String(row.session_date),
+        windowStart: String(row.window_start),
+        reason: canStillCollect
+          ? `Paired US book snapshots are collecting: ${Math.max(0, blocks)}/2 complete non-overlapping 10-session blocks; no attribution row is reported before both arms have enough blocks.`
+          : "The persisted paired book has enough blocks for attribution, but its immutable attribution row is missing. Treat this as a producer/write failure, not as a measured result.",
+      };
+      return { ...program, producerRun, attribution, benefitVerdict: "insufficient" as const, benefitEvidence: attribution.reason, shadowBookSnapshot: snapshot };
+    }
     return {
       ...program,
       producerRun,
-      shadowBookSnapshot: {
-        state: "captured" as const,
-        sessionDate: row.session_date,
-        windowStart: row.window_start,
-        programVersion: row.program_version,
-        baselineVersion: row.baseline_version,
-        baselineReturnPct: Number(row.baseline_cumulative_return_pct),
-        variantReturnPct: Number(row.variant_cumulative_return_pct),
-        benchmarkReturnPct: Number(row.benchmark_cumulative_return_pct),
-        netDeltaPct: Number(row.net_incremental_return_pct),
-        benchmarkRelativeDeltaPct: Number(row.benchmark_relative_incremental_return_pct),
-        baselineDrawdownPct: Number(row.baseline_drawdown_pct),
-        variantDrawdownPct: Number(row.variant_drawdown_pct),
-        turnoverPct: Number(row.turnover_pct),
-        independentBlocks: Number(row.independent_blocks),
-        blockers: Array.isArray(row.blockers) ? row.blockers.map(String) : [],
-      },
+      shadowBookSnapshot: snapshot,
     };
   });
   const trackedCalls = programs.reduce((sum, program) =>

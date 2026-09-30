@@ -1,6 +1,6 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PARTIALLY IMPLEMENTED — the attribution ledger has three production rows, all for the synthetic international-allocation diagnostic; actual Kairos stock-paper attribution is absent. The forward shadow-book schema was applied to production as migration `20260927182158`, with RLS/RPC/append-only controls verified. Its writer/reader integration is merged to `main` at `afc7c282` and the Vercel production deployment is `READY`; production still has zero shadow-book rows because the next market-local replay is scheduled for Monday 2026-09-28 at 23:45 UTC. On 2026-09-27, production `execute_paper_fill` was patched by migration `20260927212654` to preserve its exact passed stop/target on entry lots; a transactional source-rewrite test was rolled back, then the migration was applied and `pg_get_functiondef` verified. This repairs a necessary input for future replay, not a portfolio producer. The retired horizon-extension comparator is operational-only; of the eight remaining performance-eligible paths, seven still lack verified producers.
+Status: PAIRED SHADOW-BOOK ATTRIBUTION IMPLEMENTED LOCALLY — release and production verification pending. Production currently has three attribution rows, all from synthetic international-allocation diagnostics; those are not the Kairos paper book. The new ATR forward-shadow producer consumes immutable paired snapshots and writes net-only attribution after at least two complete, non-overlapping ten-session blocks. Gross returns remain NULL because the source paper fill prices already include execution costs. The additive `return_basis` migration, deployed collector, and production rows must all be verified before describing this as operational in production. Other performance-eligible programs remain producer-missing unless their own portfolio replay is verified.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.
@@ -42,6 +42,9 @@ as_of_session}`. The row stores:
   incremental return (`variant - baseline`);
 - net-of-cost incremental return, turnover, maximum drawdown delta, number of
   independent sessions, confidence interval and t-statistic where meaningful;
+- an explicit `return_basis` (`gross_and_net` or `net_only`); gross fields must
+  be NULL, never inferred, when the immutable source ledger cannot reconstruct
+  gross fills;
 - matched population hash, point-in-time input hash, mandate/strategy versions,
   cost-model version, and a validity/reason field.
 
@@ -49,6 +52,26 @@ No result may combine US and India, use a different candidate population on the
 two arms, overlap its nominal independent sessions, compare gross variant return
 to net baseline return, or attribute a result across a mid-window program/mandate
 version change. Any such mismatch writes `invalid` rather than a number.
+
+## Implementation update — paired shadow-book attribution (2026-09-30)
+
+The ATR forward collector now has a local producer which reads the complete
+append-only `upgrade_path_shadow_book_runs` series, validates its common seed,
+market-local session calendar, immutable policy/cost versions, decision
+population hashes, daily marks, NAV reconciliation, and absence of missing
+sessions, then derives paired net portfolio returns. It requires two complete
+non-overlapping ten-session blocks before writing a measured ledger row; until
+then the state is `collecting` with the exact block count. The measured row
+uses `return_basis='net_only'`, keeps all gross-return columns NULL, and records
+the provenance and statistical basis. The migration adding this explicit
+return basis is `20260930193000_attribution_return_basis.sql`.
+
+This descriptive producer does not make ATR eligible for promotion. Existing
+effective-sample, validation-window, costs, multiple-testing, and owner-review
+gates remain independent and fail closed. It also does not imply a producer
+exists for any other program. Release status must be updated only after the
+migration, route deployment, scheduled run, and persisted row are verified in
+the target environment.
 
 ## Program eligibility
 

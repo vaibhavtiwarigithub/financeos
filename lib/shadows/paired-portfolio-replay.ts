@@ -163,6 +163,9 @@ function blockStats(values: number[]) {
   return { mean, lower: mean - critical * se, upper: mean + critical * se, t: se > 0 ? mean / se : null };
 }
 
+/** Shared t/CI calculation for paired, non-overlapping portfolio-return blocks. */
+export const pairedBlockStats = blockStats;
+
 function turnover(fills: SimulatedFill[], initialNav: number): number {
   return fills.reduce((sum, fill) => sum + fill.gross, 0) / initialNav * 100;
 }
@@ -224,6 +227,7 @@ export function runPairedPortfolioReplay(input: PairedPortfolioReplayInput): Pai
     baseline_version: input.baselineVersion,
     comparison_type: input.comparisonType,
     state: "measured",
+    return_basis: "gross_and_net",
     as_of_session: input.asOfSession,
     window_start: input.windowStart,
     window_end: input.windowEnd,

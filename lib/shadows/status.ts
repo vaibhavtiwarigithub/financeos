@@ -57,6 +57,7 @@ export interface ProgramRuntimeDeployment {
 export interface ProgramAttributionStatus {
   state: AttributionState;
   comparisonType: AttributionClass;
+  returnBasis: "gross_and_net" | "net_only" | null;
   measurementScope: "synthetic_diagnostic" | "paired_portfolio" | "paper_cohort" | null;
   reason: string;
   asOfSession: string | null;
@@ -199,6 +200,7 @@ function base(program: ShadowProgramDefinition): ShadowProgramStatus {
     attribution: {
       state: attribution.state,
       comparisonType: attribution.comparison_type,
+      returnBasis: null,
       measurementScope: null,
       reason: attribution.validity_reason ?? "No attribution status is available.",
       asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null,
@@ -225,16 +227,16 @@ function numberOrNull(value: unknown): number | null {
 function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttributionRow | null, error: { message?: string } | null): ProgramAttributionStatus {
   const fallback = defaultAttribution(program.attributionClass);
   if (error) {
-    return { state: "invalid", comparisonType: program.attributionClass, measurementScope: null, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: "invalid", comparisonType: program.attributionClass, returnBasis: null, measurementScope: null, reason: `Attribution ledger unavailable: ${error.message ?? "unknown database error"}.`, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   if (!row) {
     const reason = fallback.state === "producer_missing"
       ? program.attributionBlocker ?? fallback.validity_reason ?? "No attribution evidence exists."
       : fallback.validity_reason ?? "No attribution evidence exists.";
-    return { state: fallback.state, comparisonType: fallback.comparison_type, measurementScope: null, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
+    return { state: fallback.state, comparisonType: fallback.comparison_type, returnBasis: null, measurementScope: null, reason, asOfSession: null, windowStart: null, windowEnd: null, programVersion: null, baselineVersion: null, baselineGrossReturnPct: null, variantGrossReturnPct: null, baselineNetReturnPct: null, variantNetReturnPct: null, incrementalReturnPct: null, netIncrementalReturnPct: null, benchmarkRelativeIncrementalReturnPct: null, ciLowerPct: null, ciUpperPct: null, tStatistic: null, uncertaintyLabel: null, independentSessions: null, turnoverPct: null, drawdownDeltaPct: null };
   }
   const normalized: UpgradePathAttributionRow = {
-    ...row, constraints: row.constraints ?? {},
+    ...row, constraints: row.constraints ?? {}, return_basis: row.return_basis,
     baseline_portfolio_return_pct: numberOrNull(row.baseline_portfolio_return_pct), variant_portfolio_return_pct: numberOrNull(row.variant_portfolio_return_pct), baseline_net_portfolio_return_pct: numberOrNull(row.baseline_net_portfolio_return_pct), variant_net_portfolio_return_pct: numberOrNull(row.variant_net_portfolio_return_pct), benchmark_return_pct: numberOrNull(row.benchmark_return_pct), incremental_return_pct: numberOrNull(row.incremental_return_pct), net_incremental_return_pct: numberOrNull(row.net_incremental_return_pct), benchmark_relative_incremental_return_pct: numberOrNull(row.benchmark_relative_incremental_return_pct), drawdown_delta_pct: numberOrNull(row.drawdown_delta_pct), turnover_pct: numberOrNull(row.turnover_pct), independent_sessions: numberOrNull(row.independent_sessions), ci_lower_pct: numberOrNull(row.ci_lower_pct), ci_upper_pct: numberOrNull(row.ci_upper_pct), t_statistic: numberOrNull(row.t_statistic),
   };
   const validation = validateAttributionRow(normalized);
@@ -243,7 +245,7 @@ function attributionFor(program: ShadowProgramDefinition, row: UpgradePathAttrib
     ? "synthetic_diagnostic" as const
     : normalized.comparison_type === "paper_cohort" ? "paper_cohort" as const : "paired_portfolio" as const;
   return {
-    state, comparisonType: normalized.comparison_type, measurementScope,
+    state, comparisonType: normalized.comparison_type, returnBasis: normalized.return_basis, measurementScope,
     reason: state === "invalid" ? validation.reasons.join(" ") || normalized.validity_reason || "Invalid attribution row." : state === "producer_missing" ? program.attributionBlocker ?? normalized.validity_reason ?? "No verified portfolio attribution producer is registered." : normalized.validity_reason ?? (state === "measured" ? "Matched, versioned historical comparison." : "Evidence is still collecting."),
     asOfSession: normalized.as_of_session ?? null, windowStart: normalized.window_start, windowEnd: normalized.window_end,
     programVersion: normalized.program_version, baselineVersion: normalized.baseline_version,
@@ -558,7 +560,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       .select("id,state,first_seen_at,last_seen_at,first_trade_date,latest_preflight_id")
       .eq("market", market).order("last_seen_at", { ascending: false }).limit(5000),
     svc.from("upgrade_path_attribution_runs")
-      .select("program_id,market,program_version,baseline_version,comparison_type,state,as_of_session,window_start,window_end,baseline_portfolio_return_pct,variant_portfolio_return_pct,baseline_net_portfolio_return_pct,variant_net_portfolio_return_pct,benchmark_return_pct,incremental_return_pct,net_incremental_return_pct,benchmark_relative_incremental_return_pct,drawdown_delta_pct,turnover_pct,independent_sessions,ci_lower_pct,ci_upper_pct,t_statistic,matched_population_hash,input_snapshot_hash,cost_model_version,validity_reason,constraints,created_at")
+      .select("program_id,market,program_version,baseline_version,comparison_type,state,return_basis,as_of_session,window_start,window_end,baseline_portfolio_return_pct,variant_portfolio_return_pct,baseline_net_portfolio_return_pct,variant_net_portfolio_return_pct,benchmark_return_pct,incremental_return_pct,net_incremental_return_pct,benchmark_relative_incremental_return_pct,drawdown_delta_pct,turnover_pct,independent_sessions,ci_lower_pct,ci_upper_pct,t_statistic,matched_population_hash,input_snapshot_hash,cost_model_version,validity_reason,constraints,created_at")
       .eq("market", market).order("as_of_session", { ascending: false }).order("created_at", { ascending: false }).limit(500),
   ]) as Array<QueryResult<any>>;
 
@@ -1391,7 +1393,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         };
       }
     }
-    const benefitVerdict: BenefitVerdict = attribution.comparisonType === "operational_only"
+    const rawBenefitVerdict: BenefitVerdict = attribution.comparisonType === "operational_only"
       ? "operational_only"
       : benefitVerdictFromPairedAttribution({
         state: attribution.state,
@@ -1399,12 +1401,22 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         ciUpperPct: attribution.ciUpperPct,
         independentSessions: attribution.independentSessions,
       });
+    // ATR stop's portfolio attribution is only one promotion prerequisite. Its
+    // predeclared gate also requires the decision-level effective sample,
+    // validation windows, cost/FDR review and owner approval; a two-block CI is
+    // not permission to call the strategy beneficial or activate it.
+    const benefitVerdict: BenefitVerdict = status.id === "exit-stop-shadow" && attribution.state === "measured"
+      ? "insufficient"
+      : rawBenefitVerdict;
     const benefitEvidence = attribution.state === "measured" && attribution.comparisonType !== "operational_only"
         ? `Matched portfolio comparison: net incremental return ${attribution.netIncrementalReturnPct == null ? "unavailable" : `${attribution.netIncrementalReturnPct.toFixed(2)}%`}; benchmark-relative delta ${attribution.benchmarkRelativeIncrementalReturnPct == null ? "unavailable" : `${attribution.benchmarkRelativeIncrementalReturnPct.toFixed(2)}%`}; 95% interval ${attribution.ciLowerPct == null || attribution.ciUpperPct == null ? "unavailable" : `${attribution.ciLowerPct.toFixed(2)}% to ${attribution.ciUpperPct.toFixed(2)}%`}.`
         : attribution.comparisonType === "operational_only"
           ? `${status.benefitEvidence} Operational evidence only; this program has no portfolio-performance verdict.`
           : `${status.benefitEvidence} No portfolio benefit verdict is inferred from isolated outcomes or readiness alone.`;
-    const withAttribution = { ...status, attribution, benefitVerdict, benefitEvidence };
+    const guardedEvidence = status.id === "exit-stop-shadow" && attribution.state === "measured"
+      ? `${benefitEvidence} Portfolio attribution alone does not pass this program's separate effective-sample, validation-window, cost/FDR and owner-approval gates.`
+      : benefitEvidence;
+    const withAttribution = { ...status, attribution, benefitVerdict, benefitEvidence: guardedEvidence };
     return { ...withAttribution, deployment: deploymentFor(withAttribution) };
   });
 }

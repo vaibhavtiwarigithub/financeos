@@ -51,6 +51,7 @@ export function buildInternationalAllocationAttribution(
     baseline_version: INTERNATIONAL_ALLOCATION_BASELINE_VERSION,
     comparison_type: "matched_replay",
     state: "measured",
+    return_basis: "gross_and_net",
     as_of_session: replay.endDate,
     window_start: replay.startDate,
     window_end: replay.endDate,
