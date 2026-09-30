@@ -11,7 +11,7 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
 import { computeCorrelationShadow, loadShadowReturns } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
-import { predictPWin } from "@/lib/validation/calibration";
+import { isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { computeAllocation } from "@/lib/allocation/allocator";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
@@ -439,11 +439,13 @@ export async function POST(req: NextRequest) {
       return { error: { message: "exhausted optional-column retries" } };
     }
 
-    // Phase 2: calibrated conviction-scaled sizing + dynamic MAE/MFE-percentile
-    // R:R, per market. Both are OPTIONAL — absent until model_artifacts/enough
-    // observation_labels exist (needs 60+ matured labels), so this ships dormant
-    // and degrades to the existing flat positionSizePct + profile stop/target.
+    // Phase 2: dynamic MAE/MFE-percentile risk geometry may use matured labels.
+    // Kelly sizing is stricter: an artifact is eligible only when it explicitly
+    // carries executable net-trade outcomes, a matching horizon, and sufficient
+    // independent OOS evidence. Generic benchmark-neutral P(win) artifacts stay
+    // research-only and use the existing flat positionSizePct fallback.
     const pwinModelByMarket = new Map<string, import("@/lib/validation/calibration").CalibrationCoefficients | null>();
+    const pwinArtifactByMarket = new Map<string, { coefficients: import("@/lib/validation/calibration").CalibrationCoefficients | null; calibration: unknown }>();
     const maeMfeByMarket = new Map<string, Awaited<ReturnType<typeof import("@/lib/risk/percentiles").getGlobalMaeMfePercentiles>>>();
     // Build 1 (genome as live control): the promoted champion's genome now
     // governs the exit horizon + MAE/MFE percentiles used to derive dynamic
@@ -455,14 +457,24 @@ export async function POST(req: NextRequest) {
     const horizonByMarket = new Map<string, number>();
     for (const m of activeMarkets) {
       try {
-        const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
-        pwinModelByMarket.set(m, (modelRow as any)?.coefficients ?? null);
-      } catch { pwinModelByMarket.set(m, null); }
+        const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients,calibration").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
+        pwinArtifactByMarket.set(m, {
+          coefficients: (modelRow as any)?.coefficients ?? null,
+          calibration: (modelRow as any)?.calibration ?? null,
+        });
+      } catch { pwinArtifactByMarket.set(m, { coefficients: null, calibration: null }); }
       const g = await loadChampionGenome(supabase, m as "us" | "india");
       genomeByMarket.set(m, g);
       const mandate = mandateByMarket.get(m) ?? await loadTradingMandate(supabase, m as "us" | "india");
       const resolvedHorizon = resolveHorizonDays(mandate, g.source === "champion" ? g.genome.horizon_days : null).days;
       horizonByMarket.set(m, resolvedHorizon);
+      const pwinArtifact = pwinArtifactByMarket.get(m);
+      pwinModelByMarket.set(
+        m,
+        pwinArtifact?.coefficients && isExecutableSizingEvidence(pwinArtifact.calibration, resolvedHorizon)
+          ? pwinArtifact.coefficients
+          : null,
+      );
       maeMfeByMarket.set(
         m,
         await getGlobalMaeMfePercentiles(
@@ -723,6 +735,8 @@ export async function POST(req: NextRequest) {
       const kellyFloorPct = Math.min(sizing.floor_pct, kellyCapPct);
       const pwinModel = pwinModelByMarket.get(market);
       let proposedSizePct = positionSizePct;
+      let pWinForSizing: number | null = null;
+      let payoffRatioForSizing: number | null = null;
       if (sizing.mode === "half_kelly" && pwinModel && maeMfe) {
         const pWin = predictPWin(pwinModel, {
           fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
@@ -734,6 +748,8 @@ export async function POST(req: NextRequest) {
         const targetPctActual = (priceTarget - fillPrice) / fillPrice;
         const stopPctActual = (fillPrice - stopLoss) / fillPrice;
         const payoffRatio = Math.abs(targetPctActual) / Math.max(0.001, Math.abs(stopPctActual));
+        pWinForSizing = pWin;
+        payoffRatioForSizing = payoffRatio;
         // kellyPositionSizePct works in FRACTIONS (0.10 = 10%) and returns a
         // fraction; positionSizePct here is a PERCENT (e.g. 10). Convert the
         // caps to fractions and scale the result back to percent. (Previously
@@ -747,6 +763,27 @@ export async function POST(req: NextRequest) {
           floorPct: kellyFloorPct / 100,
         });
         proposedSizePct = kellyFrac * 100;
+      }
+
+      // A generic calibration curve (the current artifact predicts positive
+      // benchmark-neutral forward return) is not an executable trade-win
+      // probability. Record why we are using the pre-existing flat-size
+      // fallback; do not let that incompatible model silently veto candidates.
+      const pwinArtifact = pwinArtifactByMarket.get(market);
+      if (sizing.mode === "half_kelly" && !pwinModel && pwinArtifact?.coefficients) {
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "sizing", outcome: "fallback", reason: "incompatible_probability_outcome_contract",
+          detail: {
+            mode: sizing.mode,
+            applied: false,
+            fallback: "configured_flat_position_size",
+            model_present: true,
+            required_outcome_contract: "executable_net_trade_pnl_v1",
+            required_horizon_sessions: horizonByMarket.get(market) ?? null,
+            note: "benchmark-neutral return calibration is research evidence, not probability of this stop/target trade closing profitably",
+          },
+        });
       }
 
       // Portfolio Constructor: shrink the (possibly Kelly-scaled) proposed size
@@ -1226,7 +1263,7 @@ export async function POST(req: NextRequest) {
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
         summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, p_win: pWinForSizing, payoff_ratio: payoffRatioForSizing, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });
