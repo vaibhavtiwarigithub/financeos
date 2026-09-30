@@ -317,6 +317,26 @@ Only owner promotion changes lifecycle. Learner/LLM may propose a challenger; it
 - Corporate-action-adjusted prices.
 - Labels mature only after the horizon; late/provider-revised labels are versioned, never overwritten silently.
 
+### Probability used for position sizing
+
+A calibrated probability may feed Kelly sizing only when its binary outcome is the
+same economic event represented by the payoff ratio. The generic label
+`benchmark_neutral_return > 0` answers whether a name beat its benchmark over a
+forward horizon; it does **not** answer whether an order with a particular stop,
+target, costs, and exit policy would have closed profitably. Do not combine that
+probability with a stop/target payoff ratio. Keep such a model available for
+research calibration, but PaperTrader must use the already-approved flat-size
+fallback until an executable-trade-outcome artifact is available.
+
+An executable sizing artifact must identify its outcome-contract version and
+matching horizon, and its walk-forward evidence must use the same deterministic
+entry, stop, target, conservative same-bar ordering, costs, and exit rules as the
+paper execution path. Minimum evidence follows this section's model gate: at
+least 250 out-of-sample observations, 50 independent horizon blocks, and at
+least 20 positive and 20 negative outcomes. A generic reliability curve or an
+unmatched horizon is not sufficient. This does not authorize changing entry
+thresholds, stop/target policy, or live sizing.
+
 ### Required evaluation
 
 - Spearman rank IC and Newey–West uncertainty by market/setup/horizon.

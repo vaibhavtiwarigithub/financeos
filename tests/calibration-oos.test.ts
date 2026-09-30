@@ -4,7 +4,7 @@
 // (all-one-class) outcomes, non-computable error, or ECE > 0.1 all reject.
 
 import { describe, it, expect } from "vitest";
-import { acceptCalibrationOOS } from "@/lib/validation/calibration";
+import { acceptCalibrationOOS, EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence } from "@/lib/validation/calibration";
 
 // Build n predictions where the realized outcome is drawn deterministically to
 // match the predicted probability (well-calibrated) or to diverge (mis-calibrated).
@@ -64,5 +64,30 @@ describe("acceptCalibrationOOS — fail-closed gate", () => {
   it("treats null/empty input as fail-closed, never accepted-by-default", () => {
     expect(acceptCalibrationOOS(null as any).accepted).toBe(false);
     expect(acceptCalibrationOOS([]).accepted).toBe(false);
+  });
+});
+
+describe("executable outcome gate for Kelly sizing", () => {
+  const valid = {
+    outcome_contract: EXECUTABLE_SIZING_OUTCOME_CONTRACT,
+    horizon_sessions: 10,
+    validation: {
+      accepted: true as const,
+      oos_sample_count: 300,
+      independent_horizon_blocks: 60,
+      positive_outcomes: 120,
+      negative_outcomes: 180,
+    },
+  };
+
+  it("rejects generic benchmark-neutral calibration deciles used by the current artifact", () => {
+    expect(isExecutableSizingEvidence([{ decile: 0, predictedMean: 0.4, realizedWinRate: 0.5, n: 100 }], 10)).toBe(false);
+  });
+
+  it("accepts only explicit executable net-trade outcomes with matching horizon and evidence floors", () => {
+    expect(isExecutableSizingEvidence(valid, 10)).toBe(true);
+    expect(isExecutableSizingEvidence(valid, 5)).toBe(false);
+    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, independent_horizon_blocks: 49 } }, 10)).toBe(false);
+    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, positive_outcomes: 19 } }, 10)).toBe(false);
   });
 });

@@ -1,9 +1,35 @@
 # Scoring Methodology — Implementation Plan
 
 **Created:** 2026-07-10  
-**Status:** Architecture-verification only — NO code changes  
+**Status:** Historical architecture-verification report; not a complete current-state inventory. Follow-up below records the 2026-09-30 sizing-contract audit and mitigation.
 **Reviewer:** Claude Sonnet 4.6  
 **Source docs read:** FEATURE_ARCHITECTURE.md (scoring), CODEX_SCORING_METHODOLOGY_REVIEW_RESULT.md, docs/arch/03-agents.md, docs/arch/08-risk-and-safety.md, lib/scoring/weighted-score.ts, lib/validation/calibration.ts, lib/validation/engine.ts, lib/deepseek-agent.ts, app/api/agents/paper-trade/route.ts, supabase/migrations/ (001–135)
+
+---
+
+## 2026-09-30 follow-up — Kelly outcome-contract mismatch
+
+Production review confirmed a money-path mismatch not covered by the original
+phase table: the `pwin_logistic` artifact predicts
+`benchmark_neutral_return > 0`, while PaperTrader passed that probability to
+Half-Kelly with the ratio of the executable stop and target distances. Those
+are different outcomes. The current artifact was fitted 2026-09-25 on 4,539
+observations; its presence and generic calibration curve do not establish an
+executable trade win probability.
+
+The paper-trade route now accepts a Kelly artifact only when the calibration
+payload explicitly declares `executable_net_trade_pnl_v1`, the same horizon as
+the active mandate, and walk-forward evidence of at least 250 OOS observations,
+50 independent horizon blocks, and 20 outcomes of each class. Existing generic
+calibration arrays fail closed and use the previously approved flat-size
+fallback; this is not a relaxation of entry/risk gates and does not affect live
+trading. A stage event records the fallback reason for candidate-level audit.
+
+**Still not built:** a producer for executable net-trade labels with conservative
+intrabar stop/target ordering, costs, matched horizon, and independent-block
+validation. Until it exists and produces a qualifying artifact, Kelly sizing is
+not evidence-authorized. Do not infer that high composite scores guarantee a
+trade or force a purchase.
 
 ---
 

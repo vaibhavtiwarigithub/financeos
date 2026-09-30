@@ -54,6 +54,48 @@ export interface FitResult {
   oos: OOSAcceptance;
 }
 
+/**
+ * Kelly's p(win) must describe the same executable outcome as its payoff ratio.
+ * The current logistic artifact predicts `benchmark_neutral_return > 0`; that
+ * is useful for research/calibration, but is not the probability that this
+ * paper trade exits profitably under its actual stop, target, costs, and horizon.
+ * Until a producer supplies this explicit contract and evidence, PaperTrader
+ * must retain the approved legacy flat-size behavior.
+ */
+export const EXECUTABLE_SIZING_OUTCOME_CONTRACT = "executable_net_trade_pnl_v1" as const;
+
+export interface ExecutableSizingEvidence {
+  outcome_contract: typeof EXECUTABLE_SIZING_OUTCOME_CONTRACT;
+  horizon_sessions: number;
+  validation: {
+    accepted: true;
+    oos_sample_count: number;
+    independent_horizon_blocks: number;
+    positive_outcomes: number;
+    negative_outcomes: number;
+  };
+}
+
+/**
+ * Architecture gate for applying P(win) to Kelly sizing. The evidence names
+ * and minimums follow scoring-methodology/FEATURE_ARCHITECTURE.md §10: enough
+ * labeled observations, independent horizon blocks, and both outcome classes.
+ * Generic benchmark-neutral calibration deciles intentionally fail this gate.
+ */
+export function isExecutableSizingEvidence(value: unknown, expectedHorizonSessions: number): value is ExecutableSizingEvidence {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const evidence = value as Partial<ExecutableSizingEvidence>;
+  const validation = evidence.validation;
+  return evidence.outcome_contract === EXECUTABLE_SIZING_OUTCOME_CONTRACT
+    && evidence.horizon_sessions === expectedHorizonSessions
+    && !!validation
+    && validation.accepted === true
+    && Number.isFinite(validation.oos_sample_count) && validation.oos_sample_count >= 250
+    && Number.isFinite(validation.independent_horizon_blocks) && validation.independent_horizon_blocks >= 50
+    && Number.isFinite(validation.positive_outcomes) && validation.positive_outcomes >= 20
+    && Number.isFinite(validation.negative_outcomes) && validation.negative_outcomes >= 20;
+}
+
 function sigmoid(z: number): number {
   return 1 / (1 + Math.exp(-z));
 }
