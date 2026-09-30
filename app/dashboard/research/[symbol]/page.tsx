@@ -8,6 +8,7 @@ import {
   ReferenceArea, Scatter, ScatterChart
 } from "recharts";
 import { SCORE_DIMENSIONS, type ScoreDimensionKey, type ScorePoint } from "@/lib/research/score-history";
+import LLMCouncilPanel from "@/components/dashboard/LLMCouncilPanel";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -832,6 +833,7 @@ export default function DeepDivePage() {
           )}
         </div>
       )}
+      {role === "owner" && <LLMCouncilPanel symbol={symbol} market={market} />}
     </div>
   );
 }

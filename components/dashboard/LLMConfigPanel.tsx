@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import ModelFreshnessCard from "@/components/dashboard/ModelFreshnessCard";
+import LLMCouncilPanel from "@/components/dashboard/LLMCouncilPanel";
 
 // Self-contained LLM configuration: per-agent/flow model picker + provider API
 // keys (vault-backed) + freshness check. Rendered in Settings → AI Models (the
@@ -206,6 +207,7 @@ export default function LLMConfigPanel() {
           )}
         </div>
       </div>
+      <LLMCouncilPanel />
     </div>
   );
 }
