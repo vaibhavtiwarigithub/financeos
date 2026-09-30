@@ -208,10 +208,17 @@ export async function prewarmPriceCache(
   symbols: string[],
   supabase: any,
   opts: { market: "us" | "india"; deadlineAt?: number },
-): Promise<{ ok: number; failed: number; skipped: number; alreadyFresh: number }> {
+): Promise<{
+  ok: number;
+  failed: number;
+  skipped: number;
+  alreadyFresh: number;
+  failedSymbols: string[];
+  skippedSymbols: string[];
+}> {
   const normalized = [...new Set(symbols.map((symbol) => symbol.toUpperCase()).filter(Boolean))];
   if (normalized.length === 0) {
-    return { ok: 0, failed: 0, skipped: 0, alreadyFresh: 0 };
+    return { ok: 0, failed: 0, skipped: 0, alreadyFresh: 0, failedSymbols: [], skippedSymbols: [] };
   }
   // FRESHNESS IS A MARKET SESSION, NOT A CALENDAR WINDOW.
   //
@@ -234,6 +241,8 @@ export async function prewarmPriceCache(
   const freshCutoff = expectedNewestSession(opts.market, new Date());
   let pending = normalized;
   let alreadyFresh = 0;
+  const failedSymbols: string[] = [];
+  let skippedSymbols: string[] = [];
   try {
     const { data, error } = await supabase
       .from("price_cache")
@@ -260,7 +269,8 @@ export async function prewarmPriceCache(
   for (let i = 0; i < pending.length; i += 4) {
     if (opts?.deadlineAt != null && Date.now() >= opts.deadlineAt) {
       // Out of budget: count everything not yet attempted and stop cleanly.
-      skipped = pending.length - i;
+      skippedSymbols = pending.slice(i);
+      skipped = skippedSymbols.length;
       break;
     }
     const batch = pending.slice(i, i + 4);
@@ -300,7 +310,11 @@ export async function prewarmPriceCache(
           if (k.startsWith(sym + ":")) memCache.delete(k);
         }
         fetched++;
-      } catch { /* non-critical */ }
+      } catch {
+        // Keep only the symbol identity in the result/health alert. Provider
+        // exceptions can include request details, so never persist raw text.
+        failedSymbols.push(sym);
+      }
     }));
   }
 
@@ -309,6 +323,8 @@ export async function prewarmPriceCache(
     failed: pending.length - fetched - skipped,
     skipped,
     alreadyFresh,
+    failedSymbols: failedSymbols.sort(),
+    skippedSymbols,
   };
 }
 

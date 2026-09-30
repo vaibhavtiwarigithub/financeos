@@ -65,6 +65,24 @@ export async function POST(req: NextRequest) {
       svc.from("decision_observations").select("symbol")
         .eq("market", market).gte("ts", decisionSince).limit(5000),
     ]);
+    if (positionRows.error || decisionRows.error) {
+      const failedSources = [
+        positionRows.error ? "open_positions" : null,
+        decisionRows.error ? "recent_decisions" : null,
+      ].filter(Boolean);
+      await reportIssue({
+        issueKey: `price-prewarm-scope-error:${market}`,
+        severity: "warn",
+        category: "data",
+        title: `Post-close price prewarm could not resolve its ${market.toUpperCase()} scope`,
+        detail: `Scope query failed for ${failedSources.join(" and ")}; the prewarmer refused to treat missing query results as an empty, healthy universe. No symbols were refreshed.`,
+        autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      }, svc);
+      return NextResponse.json(
+        { market, error: "prewarm scope query failed; no symbols were refreshed" },
+        { status: 503 },
+      );
+    }
     openPositions = (positionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
     recentlyScored = (decisionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
   } catch (e: any) {
@@ -82,6 +100,7 @@ export async function POST(req: NextRequest) {
     openPositions,
     recentlyScored,
   });
+  await resolveIssue(`price-prewarm-scope-error:${market}`, svc);
 
   if (symbols.length === 0) {
     return NextResponse.json({ market, symbols: 0, note: "no open positions or recent decisions in scope" });
@@ -104,12 +123,18 @@ export async function POST(req: NextRequest) {
   // bars that drive marks, stops and targets.
   const issueKey = `price-prewarm-incomplete:${market}`;
   if (result.skipped > 0 || result.failed > 0) {
+    const symbolsNeedingRefresh = [
+      ...(result.failedSymbols ?? []).map((symbol) => `failed:${symbol}`),
+      ...(result.skippedSymbols ?? []).map((symbol) => `deferred:${symbol}`),
+    ];
+    const failureSample = symbolsNeedingRefresh.slice(0, 12);
+    const omitted = symbolsNeedingRefresh.length - failureSample.length;
     await reportIssue({
       issueKey,
       severity: "warn",
       category: "data",
       title: `Post-close price prewarm incomplete (${market.toUpperCase()}) — ${result.skipped + result.failed}/${symbols.length} not refreshed`,
-      detail: `${result.ok} fetched, ${result.alreadyFresh} already fresh, ${result.failed} failed, ${result.skipped} skipped for time. Symbols left unrefreshed keep serving the PREVIOUS session's close, which is what position-monitor then marks, stop-checks and target-checks against. Scope is priority-ordered, so open positions were refreshed first.`,
+      detail: `${result.ok} fetched/current, ${result.alreadyFresh} already fresh, ${result.failed} failed, ${result.skipped} skipped for time. Unrefreshed symbols: ${failureSample.join(", ") || "identity unavailable"}${omitted > 0 ? `; ${omitted} more omitted` : ""}. A failed open-position mark can affect monitoring, so position symbols remain first in the bounded scope.`,
       autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
     }, svc).catch(() => {});
   } else {

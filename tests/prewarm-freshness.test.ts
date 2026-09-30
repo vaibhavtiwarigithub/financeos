@@ -103,7 +103,8 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
         chain.select = () => chain;
         chain.in = () => chain;
         chain.gte = (_col: string, value: string) => { capturedGte = value; return chain; };
-        chain.limit = async () => ({ data: [{ symbol: "AAPL", date: "2026-08-28" }], error: null });
+        // A stale AAPL row is excluded by the real `.gte("date", cutoff)` query.
+        chain.limit = async () => ({ data: [], error: null });
         chain.upsert = async () => ({ error: null });
         return chain;
       },
@@ -111,9 +112,10 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     // deadlineAt in the past: the freshness probe still runs, the fetch loop
     // exits immediately, so this isolates the cutoff without hitting providers.
-    await prewarmPriceCache(["AAPL"], supabase, { market: "us", deadlineAt: Date.now() - 1 });
+    const result = await prewarmPriceCache(["AAPL"], supabase, { market: "us", deadlineAt: Date.now() - 1 });
 
     expect(capturedGte).not.toBeNull();
+    expect(result.skippedSymbols).toEqual(["AAPL"]);
     // The cutoff must be a market session, never a rolling 96h calendar date.
     expect(capturedGte).toBe(expectedNewestSession("us", new Date()));
 
@@ -168,7 +170,7 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     const result = await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
 
-    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0 });
+    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0, failedSymbols: ["AAPL"], skippedSymbols: [] });
     expect(h.priceCacheUpsert).toHaveBeenCalledOnce();
   });
 
@@ -191,7 +193,7 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     const result = await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
 
-    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0 });
+    expect(result).toEqual({ ok: 0, failed: 1, skipped: 0, alreadyFresh: 0, failedSymbols: ["AAPL"], skippedSymbols: [] });
     expect(h.priceCacheUpsert).not.toHaveBeenCalled();
   });
 });

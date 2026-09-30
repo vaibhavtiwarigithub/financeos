@@ -124,8 +124,21 @@ export default function SystemHealthCard() {
     try {
       const r = await fetch("/api/agents/health-triage", { method: "POST" });
       const d = await r.json();
-      if (d.ok) setTriage({ content: d.content, model: d.model, open_alerts: d.open_alerts, ts: d.ts });
-    } catch { /* best-effort */ } finally { setRunning(false); }
+      if (!r.ok || !d.ok) throw new Error("health triage failed");
+      setTriage({ content: d.content, model: d.model, open_alerts: d.open_alerts, ts: d.ts });
+
+      // Triage may itself refresh broker-token health and therefore create or
+      // resolve alerts. Refresh the authoritative alert feed after it so the
+      // dashboard never shows the pre-triage list beside a new snapshot.
+      const alertsResponse = await fetch("/api/alerts");
+      if (!alertsResponse.ok) throw new Error("health alert refresh failed");
+      const alertsData = await alertsResponse.json();
+      setAlerts(Array.isArray(alertsData.alerts) ? alertsData.alerts : []);
+      setLoadError(false);
+    } catch {
+      // A failed health refresh must not be presented as current/healthy.
+      setLoadError(true);
+    } finally { setRunning(false); }
   }
 
   async function applyFix(action: string, alert: Alert) {
