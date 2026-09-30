@@ -49,7 +49,7 @@ const call = (market = "us") =>
   POST(new NextRequest(`http://localhost/api/agents/price-prewarm?market=${market}`, { method: "POST" }));
 
 beforeEach(() => {
-  h.prewarm.mockReset().mockResolvedValue({ ok: 3, failed: 0, skipped: 0, alreadyFresh: 5 });
+  h.prewarm.mockReset().mockResolvedValue({ ok: 3, failed: 0, skipped: 0, alreadyFresh: 5, failedSymbols: [], skippedSymbols: [] });
   h.positions.mockReset().mockReturnValue({ data: [{ symbol: "AAPL" }] });
   h.decisions.mockReset().mockReturnValue({ data: [{ symbol: "MSFT" }, { symbol: "AAPL" }] });
   h.report.mockReset().mockResolvedValue(undefined);
@@ -91,9 +91,21 @@ describe("a partial refresh is reported, never hidden", () => {
   });
 
   it("raises a warn when symbols failed", async () => {
-    h.prewarm.mockResolvedValue({ ok: 1, failed: 2, skipped: 0, alreadyFresh: 0 });
+    h.prewarm.mockResolvedValue({ ok: 1, failed: 2, skipped: 0, alreadyFresh: 0, failedSymbols: ["XAR", "SKHY"], skippedSymbols: [] });
     await call();
     expect(h.report).toHaveBeenCalledOnce();
+    expect(h.report.mock.calls[0][0].detail).toContain("failed:XAR, failed:SKHY");
+  });
+
+  it("treats a Supabase scope error as unavailable instead of a clean empty universe", async () => {
+    h.positions.mockReturnValue({ data: null, error: { message: "timeout" } });
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(h.prewarm).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledWith(expect.objectContaining({
+      issueKey: "price-prewarm-scope-error:us",
+      title: expect.stringContaining("could not resolve its US scope"),
+    }), expect.anything());
   });
 
   it("resolves the issue on a clean run", async () => {

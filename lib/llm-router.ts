@@ -2,7 +2,7 @@
 // Langfuse observability: enabled when LANGFUSE_SECRET_KEY + LANGFUSE_PUBLIC_KEY are set in .env.local.
 // No-ops gracefully if keys are absent — zero runtime impact.
 import type Anthropic from "@anthropic-ai/sdk"
-import { reportIssue } from "@/lib/system-health"
+import { reportIssue, resolveIssue } from "@/lib/system-health"
 import { getProviderKey } from "@/lib/llm-keys"
 
 export type LLMTask = "research" | "chat" | "summarize" | "trade" | "evaluate" | "thesis" | "screen" | "optimize"
@@ -275,8 +275,22 @@ function applyDeepSeekPeak(model: string, rate: [number, number]): [number, numb
 // Price a model, falling back to its same-tier sibling's price when a new model
 // has no PRICING entry yet — so cost logging never silently records $0 for a real
 // call. Flags the gap once (dedup'd) so the price gets verified. Never throws.
-function priceFor(model: string): [number, number] {
-  if (PRICING[model]) return applyDeepSeekPeak(model, PRICING[model])
+const pricingWarningsResolved = new Set<string>()
+
+function clearPricingWarning(model: string): void {
+  if (pricingWarningsResolved.has(model)) return
+  pricingWarningsResolved.add(model)
+  resolveIssue(`pricing-unverified:${model}`).catch(() => {
+    // Retry on a later cost calculation if the health write transiently fails.
+    pricingWarningsResolved.delete(model)
+  })
+}
+
+export function priceFor(model: string): [number, number] {
+  if (PRICING[model]) {
+    clearPricingWarning(model)
+    return applyDeepSeekPeak(model, PRICING[model])
+  }
   const sib = SAME_TIER_FALLBACK[model]
   if (sib && PRICING[sib]) {
     reportIssue({

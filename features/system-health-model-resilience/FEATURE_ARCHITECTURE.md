@@ -22,6 +22,13 @@ Implementation allowed: Yes
   claude-fast/claude-smart), `SAME_TIER_FALLBACK` graceful fallback on an
   unavailable model (loud `model-fallback:` alert, never blind-latest), and
   `priceFor` pricing fallback so cost never silently logs $0.
+- 2026-09-30 health repair: `priceFor` resolves a stale
+  `pricing-unverified:<model>` issue once an exact price is present; health
+  triage refreshes the authoritative alert feed after its own checks; the
+  post-close price prewarmer fails closed when either scope query returns a
+  Supabase error and identifies failed/deferred symbols without persisting raw
+  provider exception text. These changes affect only health accuracy and
+  diagnostics, never scoring or trading.
 
 ## Why this feature exists
 
