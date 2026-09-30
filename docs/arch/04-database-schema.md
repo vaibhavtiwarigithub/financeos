@@ -1,5 +1,17 @@
 # Kairos — Database Schema
 
+## Upgrade Path paired-book attribution basis
+
+`upgrade_path_attribution_runs.return_basis` distinguishes `gross_and_net`
+comparisons from `net_only` evidence. For `gross_and_net`, gross portfolio and
+incremental return fields are required and must reconcile; for `net_only`, all
+gross fields must remain NULL while the net incremental return is arithmetically
+verified. This prevents a producer from inferring gross performance by removing
+costs from fills that were already recorded net of modeled execution costs.
+Migration: `20260930193000_attribution_return_basis.sql`. The migration is
+additive; production application must be independently verified before this
+schema status is described as deployed.
+
 ## `chart_pattern_shadow_runs` — prospective technical evidence
 
 This append-only table stores one close-based double-reversal detector attempt per eligible-long entry `decision_observations` row. It includes detection status, optional swing/neckline/confirmation geometry, candle-through date/source, detector version/config, and a foreign key to the decision observation. It contains no forward-return/outcome fields: mature h5/h10/h20 labels are joined later from `observation_labels`. Authenticated users have owner-only read access; service role can read/insert but cannot update, delete, or truncate. Migration: `20260928190000_chart_pattern_shadow_runs.sql`.

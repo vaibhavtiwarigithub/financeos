@@ -1,6 +1,6 @@
 # ATR-scaled exit stop — shadow arm
 
-> Status: **Decision-level shadow implemented; portfolio-level matched P&L producer not implemented.**
+> Status: **Paired-book net attribution producer implemented locally; release and production evidence pending.**
 > The old header saying “no code written” was stale. This remains measure-only; no stop,
 > target, score, sizing, paper/live behavior, or strategy promotion is authorized here.
 >
@@ -171,3 +171,23 @@ Failing any gate leaves the arm in shadow. There is no partial promotion.
 At the current rate of ~26 dates per 6 weeks, that is approximately **2027-Q1**. Stating
 this plainly so the timeline is not a surprise: this is a slow instrument, and building it
 now is worthwhile only because the data accrues whether or not anyone is watching.
+
+## Persisted paired-book attribution producer (2026-09-30; release pending)
+
+The scheduled ATR forward collector now reads its append-only daily paired-book
+snapshots and validates the seed NAV, same-session marks, market calendar,
+complete session sequence, stable policy/cost versions, cumulative matched
+decision population, snapshot hashes, and NAV reconciliation before attribution.
+It writes a net-only attribution row only after two complete non-overlapping
+ten-session return blocks. Before that threshold, Upgrade Path reports the
+exact collecting count; a missing row after the threshold is an invalid producer
+state, not endless collecting.
+
+`return_basis='net_only'` is explicit. The existing execution ledger records
+fills after modeled execution costs, so this producer will not reverse-engineer
+gross returns. Gross return columns are NULL. Its confidence interval and t-stat
+describe non-overlapping paired block deltas; they are descriptive evidence, not
+the separate effective-sample, validation-window, FDR, cost, and owner gates
+needed for promotion. No scoring, stop/target, sizing, trading, or live behavior
+changes. India remains blocked until a valid market-local paired-book source and
+producer exist.

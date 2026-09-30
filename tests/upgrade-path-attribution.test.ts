@@ -3,7 +3,7 @@ import { defaultAttribution, validateAttributionRow, type UpgradePathAttribution
 
 const measured: UpgradePathAttributionRow = {
   program_id: "exit-geometry", market: "us", program_version: "exit-v2", baseline_version: "exit-v1",
-  comparison_type: "matched_replay", state: "measured", as_of_session: "2026-09-18",
+  comparison_type: "matched_replay", state: "measured", return_basis: "gross_and_net", as_of_session: "2026-09-18",
   window_start: "2026-08-01", window_end: "2026-09-17", baseline_portfolio_return_pct: 2,
   variant_portfolio_return_pct: 2.5, baseline_net_portfolio_return_pct: 1.9,
   variant_net_portfolio_return_pct: 2.32, benchmark_return_pct: 1.2, incremental_return_pct: 0.5,
@@ -16,6 +16,19 @@ const measured: UpgradePathAttributionRow = {
 
 describe("upgrade path attribution contract", () => {
   it("accepts a fully matched, net-of-cost result", () => expect(validateAttributionRow(measured)).toEqual({ valid: true, reasons: [] }));
+
+  it("accepts explicitly net-only portfolio attribution without inventing gross returns", () => {
+    const netOnly = {
+      ...measured,
+      return_basis: "net_only" as const,
+      baseline_portfolio_return_pct: null,
+      variant_portfolio_return_pct: null,
+      incremental_return_pct: null,
+      constraints: { ...measured.constraints, return_basis: "net_only" },
+    };
+    expect(validateAttributionRow(netOnly)).toEqual({ valid: true, reasons: [] });
+    expect(validateAttributionRow({ ...netOnly, variant_portfolio_return_pct: netOnly.variant_net_portfolio_return_pct }).valid).toBe(false);
+  });
 
   it("rejects gross or net arithmetic drift", () => {
     const result = validateAttributionRow({ ...measured, incremental_return_pct: 0.7, net_incremental_return_pct: 0.8 });

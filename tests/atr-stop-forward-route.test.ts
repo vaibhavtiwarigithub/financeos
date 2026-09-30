@@ -6,11 +6,13 @@ const h = vi.hoisted(() => ({
   owner: vi.fn(async () => null as unknown),
   run: vi.fn(),
   health: vi.fn(),
+  snapshots: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock("@/lib/auth/cron", () => ({ verifyCronSecret: h.cron }));
 vi.mock("@/lib/auth/require-owner", () => ({ requireOwner: h.owner }));
 vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({}) }));
+vi.mock("@/lib/supabase/paginate", () => ({ fetchAllRows: async () => h.snapshots() }));
 vi.mock("@/lib/shadows/atr-forward-run", () => ({ runAtrForwardCollection: h.run }));
 vi.mock("@/lib/shadows/producer-runs", () => ({
   runWithProducerHealth: async (input: any) => {
@@ -29,6 +31,7 @@ beforeEach(() => {
   h.owner.mockReset().mockResolvedValue(null);
   h.run.mockReset();
   h.health.mockReset();
+  h.snapshots.mockReset().mockResolvedValue([]);
 });
 
 describe("POST /api/agents/atr-stop-forward", () => {
@@ -60,7 +63,7 @@ describe("POST /api/agents/atr-stop-forward", () => {
     const outcome = h.health.mock.calls[0][1];
     expect(outcome).toMatchObject({ status: "blocked", expectedSession: "2026-09-28", observedSession: "2026-09-25" });
     expect(outcome.blockers[0]).toContain("refused");
-    expect(outcome.details.performanceAttribution).toBe("not_produced_by_this_collector");
+    expect(outcome.details.performanceAttribution).toMatchObject({ state: "collecting", independentBlocks: 0 });
   });
 
   it("records a collected run with what it wrote", async () => {
@@ -68,6 +71,7 @@ describe("POST /api/agents/atr-stop-forward", () => {
     const res = await POST(req("us"));
     expect((await res.json()).persisted).toBe(true);
     expect(h.health.mock.calls[0][1]).toMatchObject({ status: "collected", details: { written: ["2026-09-28"], evidenceType: "forward_paired_book_snapshot" } });
+    expect(h.health.mock.calls[0][1].details.performanceAttribution).toMatchObject({ state: "collecting", independentBlocks: 0 });
     expect(h.health.mock.calls[0][0]).toMatchObject({ programId: "exit-stop-shadow", market: "us", triggerSource: "cron_authenticated" });
   });
 });

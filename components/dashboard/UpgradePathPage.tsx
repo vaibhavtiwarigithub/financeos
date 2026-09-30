@@ -253,6 +253,9 @@ function ProgramPanel({ program, mobile, market, collection }: {
             {program.attribution.measurementScope === "synthetic_diagnostic" && <span style={{ color: T.yellow, fontSize: "11px" }}>synthetic diagnostic · not Kairos holdings</span>}
           </div>
           <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>{program.attribution.reason}</div>
+          {program.attribution.returnBasis === "net_only" && <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5, marginTop: "5px" }}>
+            Net-only result: source fills already include execution costs, so gross returns are unavailable and are not inferred.
+          </div>}
           {program.attribution.state === "measured" && <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(3, minmax(0, 1fr))", gap: "8px 14px", marginTop: "10px" }}>
             <TextBlock label="Baseline portfolio · net" text={fmtPct(program.attribution.baselineNetReturnPct)} />
             <TextBlock label="Variant portfolio · net" text={fmtPct(program.attribution.variantNetReturnPct)} />

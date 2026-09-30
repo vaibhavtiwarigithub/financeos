@@ -4,7 +4,7 @@ import type { UpgradePathAttributionRow } from "@/lib/shadows/attribution";
 
 const row: Omit<UpgradePathAttributionRow, "created_at"> = {
   program_id: "international-allocation", market: "us", program_version: "allocation-v1", baseline_version: "voo-v1",
-  comparison_type: "matched_replay", state: "measured", as_of_session: "2026-09-25",
+  comparison_type: "matched_replay", state: "measured", return_basis: "gross_and_net", as_of_session: "2026-09-25",
   window_start: "2022-01-03", window_end: "2026-09-25",
   baseline_portfolio_return_pct: 10, variant_portfolio_return_pct: 12,
   baseline_net_portfolio_return_pct: 10, variant_net_portfolio_return_pct: 11.5,

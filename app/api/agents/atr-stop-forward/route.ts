@@ -6,10 +6,12 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { fetchYahooRawReplaySeries, type YahooRawReplaySeries } from "@/lib/data/yahoo-candles";
 import { readEntryAtr } from "@/lib/learning/atr-exit-evidence";
-import { ATR_FORWARD_PROGRAM_ID } from "@/lib/shadows/atr-forward-collector";
+import { ATR_FORWARD_BLOCK_SESSIONS, ATR_FORWARD_PROGRAM_ID } from "@/lib/shadows/atr-forward-collector";
 import { runAtrForwardCollection, type AtrForwardDeps } from "@/lib/shadows/atr-forward-run";
+import { buildShadowBookAttribution } from "@/lib/shadows/shadow-book-attribution";
 import { ATR_STOP_FORWARD_PROGRAM_VERSION } from "@/lib/shadows/atr-stop-forward-replay";
 import { runWithProducerHealth } from "@/lib/shadows/producer-runs";
+import { writeAttributionRow } from "@/lib/shadows/attribution-writer";
 import { writeShadowBookSnapshot, type ShadowBookSnapshotRow } from "@/lib/shadows/shadow-book-ledger";
 import { expectedLatestSessionDate, expectedMarketSessionsBetween } from "@/lib/trading/market-calendar";
 
@@ -151,8 +153,29 @@ export async function POST(req: NextRequest) {
       codeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
       work: async () => {
         const result = await runAtrForwardCollection(buildDeps(svc, now));
+        const snapshots = await fetchAllRows<ShadowBookSnapshotRow>((from, to) => svc
+          .from("upgrade_path_shadow_book_runs").select("*")
+          .eq("program_id", ATR_FORWARD_PROGRAM_ID).eq("market", "us")
+          .eq("program_version", ATR_STOP_FORWARD_PROGRAM_VERSION)
+          .order("session_date", { ascending: true }).range(from, to), "ATR paired-book attribution source");
+        const attribution = buildShadowBookAttribution(snapshots, ATR_FORWARD_BLOCK_SESSIONS);
+        let attributionWrite: "inserted" | "already_present" | "collecting" = "collecting";
+        if (attribution.state === "measured") {
+          attributionWrite = await writeAttributionRow(svc, attribution.row);
+        }
+        const attributionPersisted = attribution.state === "measured" && attributionWrite === "inserted";
+        const attributionSummary = attribution.state === "measured"
+          ? {
+            state: "measured" as const, returnBasis: "net_only" as const, write: attributionWrite,
+            asOfSession: attribution.row.as_of_session, independentBlocks: attribution.independentBlocks,
+            netDeltaPct: attribution.row.net_incremental_return_pct,
+            intervalPct: [attribution.row.ci_lower_pct, attribution.row.ci_upper_pct],
+            tStatistic: attribution.row.t_statistic,
+            discardedTrailingSessions: attribution.discardedTrailingSessions,
+          }
+          : { state: "collecting" as const, reason: attribution.reason, asOfSession: attribution.asOfSession, independentBlocks: attribution.independentBlocks };
         return {
-          value: NextResponse.json({ ...result, persisted: result.written.length > 0 }, { status: 200 }),
+          value: NextResponse.json({ ...result, persisted: result.written.length > 0 || attributionPersisted, attribution: attributionSummary }, { status: 200 }),
           outcome: {
             status: result.status,
             expectedSession: result.expectedSession,
@@ -162,7 +185,7 @@ export async function POST(req: NextRequest) {
               evidenceType: "forward_paired_book_snapshot",
               written: result.written,
               ...result.details,
-              performanceAttribution: "not_produced_by_this_collector",
+              performanceAttribution: attributionSummary,
             },
           },
         };

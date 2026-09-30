@@ -6,6 +6,7 @@
  */
 export type AttributionClass = "matched_replay" | "paper_cohort" | "operational_only";
 export type AttributionState = "measured" | "collecting" | "producer_missing" | "not_attributable" | "invalid";
+export type AttributionReturnBasis = "gross_and_net" | "net_only";
 
 export interface UpgradePathAttributionRow {
   program_id: string;
@@ -14,6 +15,8 @@ export interface UpgradePathAttributionRow {
   baseline_version: string;
   comparison_type: AttributionClass;
   state: AttributionState;
+  /** Net-only is explicit when source fills already embed execution costs and gross cannot be reconstructed honestly. */
+  return_basis: AttributionReturnBasis;
   as_of_session: string;
   window_start: string | null;
   window_end: string | null;
@@ -78,12 +81,19 @@ export function validateAttributionRow(row: UpgradePathAttributionRow): Attribut
   if (!hasText(row.matched_population_hash) || !hasText(row.input_snapshot_hash)) reasons.push("Matched population and point-in-time input hashes are required.");
   if (!hasText(row.cost_model_version)) reasons.push("A cost-model version is required.");
   if (row.constraints.same_market !== true || row.constraints.same_window !== true || row.constraints.same_population !== true || row.constraints.non_overlapping_sessions !== true || row.constraints.cost_basis !== "net") reasons.push("The row must attest to same-market, same-window, same-population, non-overlapping, net-of-cost comparison constraints.");
-  if (!isFiniteNumber(row.baseline_portfolio_return_pct) || !isFiniteNumber(row.variant_portfolio_return_pct) || !isFiniteNumber(row.incremental_return_pct) || !isFiniteNumber(row.net_incremental_return_pct)) reasons.push("Baseline, variant, gross incremental, and net incremental returns are required.");
+  if (!isFiniteNumber(row.net_incremental_return_pct)) reasons.push("Net incremental portfolio return is required.");
+  if (row.return_basis === "gross_and_net") {
+    if (!isFiniteNumber(row.baseline_portfolio_return_pct) || !isFiniteNumber(row.variant_portfolio_return_pct) || !isFiniteNumber(row.incremental_return_pct)) reasons.push("Gross baseline, variant and incremental returns are required for a gross-and-net row.");
+  } else if (row.return_basis === "net_only") {
+    if (row.baseline_portfolio_return_pct != null || row.variant_portfolio_return_pct != null || row.incremental_return_pct != null) reasons.push("Net-only rows must leave gross return fields NULL rather than relabel net returns as gross.");
+  } else {
+    reasons.push("A supported return basis is required.");
+  }
   if (!isFiniteNumber(row.benchmark_return_pct) || !isFiniteNumber(row.benchmark_relative_incremental_return_pct)) reasons.push("Same-window benchmark comparison is required.");
   if (!isFiniteNumber(row.turnover_pct) || !isFiniteNumber(row.drawdown_delta_pct)) reasons.push("Turnover and drawdown delta are required.");
   if (!Number.isInteger(row.independent_sessions) || (row.independent_sessions ?? 0) < 2) reasons.push("At least two non-overlapping independent return blocks are required.");
   if (!isFiniteNumber(row.ci_lower_pct) || !isFiniteNumber(row.ci_upper_pct) || row.ci_lower_pct! > row.ci_upper_pct!) reasons.push("A valid confidence interval is required.");
-  if (isFiniteNumber(row.baseline_portfolio_return_pct) && isFiniteNumber(row.variant_portfolio_return_pct) && isFiniteNumber(row.incremental_return_pct)
+  if (row.return_basis === "gross_and_net" && isFiniteNumber(row.baseline_portfolio_return_pct) && isFiniteNumber(row.variant_portfolio_return_pct) && isFiniteNumber(row.incremental_return_pct)
     && Math.abs((row.variant_portfolio_return_pct - row.baseline_portfolio_return_pct) - row.incremental_return_pct) > EPSILON) reasons.push("Incremental return must equal variant minus baseline on the common window.");
   if (!isFiniteNumber(row.baseline_net_portfolio_return_pct) || !isFiniteNumber(row.variant_net_portfolio_return_pct)) reasons.push("Both baseline and variant net returns are required to verify net attribution.");
   if (isFiniteNumber(row.baseline_net_portfolio_return_pct) && isFiniteNumber(row.variant_net_portfolio_return_pct) && isFiniteNumber(row.net_incremental_return_pct)

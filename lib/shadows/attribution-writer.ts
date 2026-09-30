@@ -4,7 +4,7 @@ import { validateAttributionRow, type UpgradePathAttributionRow } from "@/lib/sh
 type AttributionInsert = Omit<UpgradePathAttributionRow, "created_at">;
 const KEY_COLUMNS = ["program_id", "market", "program_version", "baseline_version", "as_of_session"] as const;
 const IMMUTABLE_COLUMNS = [
-  "program_id", "market", "program_version", "baseline_version", "comparison_type", "state", "as_of_session",
+  "program_id", "market", "program_version", "baseline_version", "comparison_type", "state", "return_basis", "as_of_session",
   "window_start", "window_end", "baseline_portfolio_return_pct", "variant_portfolio_return_pct",
   "baseline_net_portfolio_return_pct", "variant_net_portfolio_return_pct", "benchmark_return_pct",
   "incremental_return_pct", "net_incremental_return_pct", "benchmark_relative_incremental_return_pct",
