@@ -65,7 +65,10 @@ async function addPointInTimeRelationships(svc: any, row: any, base: Record<stri
     : [];
 
   const [peerBars, peerResearch, earnings] = await Promise.all([
-    peers.length ? svc.from("price_cache").select("symbol,date,open,close").in("symbol", peers).lte("date", date).order("date", { ascending: false }).limit(120) : Promise.resolve({ data: [], error: null }),
+    // price_cache has a date but no intraday availability timestamp. A bar
+    // stamped with the decision date may have been written after this score,
+    // so only completed prior sessions are valid point-in-time peer evidence.
+    peers.length ? svc.from("price_cache").select("symbol,date,open,close").in("symbol", peers).lt("date", date).order("date", { ascending: false }).limit(120) : Promise.resolve({ data: [], error: null }),
     peers.length ? svc.from("decision_observations").select("symbol,ts,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,direction,entry_eligible,decision_context,discovery_source").eq("market", row.market).eq("entry_eligible", true).gte("ts", `${date}T00:00:00.000Z`).lte("ts", asOf).order("ts", { ascending: false }).limit(300) : Promise.resolve({ data: [], error: null }),
     svc.from("earnings_consensus_snapshots").select("symbol,report_date,fiscal_period,consensus_eps,analyst_count,basis,currency,source,available_at,snapshot_at")
       .in("symbol", [row.symbol, ...peers]).eq("market", row.market).lte("available_at", asOf).lte("snapshot_at", asOf)

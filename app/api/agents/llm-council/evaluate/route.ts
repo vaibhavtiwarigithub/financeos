@@ -44,7 +44,10 @@ export async function POST(req: NextRequest) {
         const eligible: Array<{ obs: any; outcome: number }> = [];
         for (const row of rows) {
           const obs = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
-          const outcome = row.benchmark_neutral_return ?? row.fwd_return;
+          // Council IC is explicitly benchmark-neutral. Never silently mix
+          // raw forward returns into that series when the neutral label is
+          // unavailable; such rows are incomplete for this evaluator.
+          const outcome = row.benchmark_neutral_return;
           if (!obs || outcome == null || !Number.isFinite(Number(outcome))) continue;
           if (!isEntryCandidateLong({ entryEligible: obs.entry_eligible, direction: obs.direction, decisionContext: obs.decision_context, discoverySource: obs.discovery_source })) continue;
           eligible.push({ obs, outcome: Number(outcome) });

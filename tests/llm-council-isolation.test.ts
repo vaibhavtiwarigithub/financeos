@@ -24,4 +24,13 @@ describe("LLM council safety boundary", () => {
     expect(collect).toContain("verifyCronSecret");
     expect(evaluate).toContain("verifyCronSecret");
   });
+
+  it("uses only prior-session peer bars and never substitutes raw returns for benchmark-neutral IC", () => {
+    const collect = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    const evaluate = readFileSync("app/api/agents/llm-council/evaluate/route.ts", "utf8");
+    expect(collect).toContain('.lt("date", date)');
+    expect(collect).not.toContain('.lte("date", date)');
+    expect(evaluate).toContain("const outcome = row.benchmark_neutral_return;");
+    expect(evaluate).not.toMatch(/benchmark_neutral_return\s*\?\?\s*fwd_return/);
+  });
 });
