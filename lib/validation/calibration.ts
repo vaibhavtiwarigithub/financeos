@@ -62,11 +62,14 @@ export interface FitResult {
  * Until a producer supplies this explicit contract and evidence, PaperTrader
  * must retain the approved legacy flat-size behavior.
  */
-export const EXECUTABLE_SIZING_OUTCOME_CONTRACT = "executable_net_trade_pnl_v1" as const;
+export const EXECUTABLE_SIZING_OUTCOME_CONTRACT = "executable_paper_trade_pnl_v1" as const;
 
 export interface ExecutableSizingEvidence {
   outcome_contract: typeof EXECUTABLE_SIZING_OUTCOME_CONTRACT;
   horizon_sessions: number;
+  mandate_version: number;
+  /** OOS mean winning P&L divided by absolute OOS mean losing P&L. */
+  payoff_ratio: number;
   validation: {
     accepted: true;
     oos_sample_count: number;
@@ -82,12 +85,15 @@ export interface ExecutableSizingEvidence {
  * labeled observations, independent horizon blocks, and both outcome classes.
  * Generic benchmark-neutral calibration deciles intentionally fail this gate.
  */
-export function isExecutableSizingEvidence(value: unknown, expectedHorizonSessions: number): value is ExecutableSizingEvidence {
+export function isExecutableSizingEvidence(value: unknown, expectedHorizonSessions: number, expectedMandateVersion?: number): value is ExecutableSizingEvidence {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const evidence = value as Partial<ExecutableSizingEvidence>;
   const validation = evidence.validation;
   return evidence.outcome_contract === EXECUTABLE_SIZING_OUTCOME_CONTRACT
     && evidence.horizon_sessions === expectedHorizonSessions
+    && Number.isInteger(evidence.mandate_version)
+    && (expectedMandateVersion == null || evidence.mandate_version === expectedMandateVersion)
+    && typeof evidence.payoff_ratio === "number" && Number.isFinite(evidence.payoff_ratio) && evidence.payoff_ratio > 0
     && !!validation
     && validation.accepted === true
     && Number.isFinite(validation.oos_sample_count) && validation.oos_sample_count >= 250
@@ -138,10 +144,10 @@ function fitLogistic(X: number[][], y: number[], iterations = 500, lr = 0.1): { 
 // Fit standardization + logistic coefficients from ONE row set. Used both for
 // the deployment artifact (all rows) and for each walk-forward fold's train
 // partition (so the OOS calibration curve never sees its own test outcomes).
-function fitCoefficients(rows: LabeledObservation[]): CalibrationCoefficients {
+function fitCoefficients(rows: LabeledObservation[], labels?: number[]): CalibrationCoefficients {
   const { means, stdevs } = standardize(rows);
   const X = rows.map(r => DIMS.map(dim => (((r as any)[dim] ?? 50) - means[dim]) / stdevs[dim]));
-  const y = rows.map(r => ((r.benchmark_neutral_return ?? r.fwd_return ?? 0) > 0 ? 1 : 0));
+  const y = labels ?? rows.map(r => ((r.benchmark_neutral_return ?? r.fwd_return ?? 0) > 0 ? 1 : 0));
   const { intercept, coefs } = fitLogistic(X, y);
   const weights: Record<string, number> = {};
   DIMS.forEach((dim, i) => { weights[dim] = coefs[i]; });

@@ -319,23 +319,44 @@ Only owner promotion changes lifecycle. Learner/LLM may propose a challenger; it
 
 ### Probability used for position sizing
 
-A calibrated probability may feed Kelly sizing only when its binary outcome is the
-same economic event represented by the payoff ratio. The generic label
-`benchmark_neutral_return > 0` answers whether a name beat its benchmark over a
-forward horizon; it does **not** answer whether an order with a particular stop,
-target, costs, and exit policy would have closed profitably. Do not combine that
-probability with a stop/target payoff ratio. Keep such a model available for
-research calibration, but PaperTrader must use the already-approved flat-size
-fallback until an executable-trade-outcome artifact is available.
+A calibrated probability may feed Kelly sizing only when its binary outcome and
+payoff ratio come from the same economic event. The generic label
+`benchmark_neutral_return > 0` asks whether a name beat its benchmark over a
+forward horizon; it does **not** ask whether the completed paper trade made
+money. PaperTrader must not combine that probability with a nominal stop/target
+ratio. It remains research-only.
 
-An executable sizing artifact must identify its outcome-contract version and
-matching horizon, and its walk-forward evidence must use the same deterministic
-entry, stop, target, conservative same-bar ordering, costs, and exit rules as the
-paper execution path. Minimum evidence follows this section's model gate: at
-least 250 out-of-sample observations, 50 independent horizon blocks, and at
-least 20 positive and 20 negative outcomes. A generic reliability curve or an
-unmatched horizon is not sufficient. This does not authorize changing entry
-thresholds, stop/target policy, or live sizing.
+The paper-only producer uses completed `paper_trades` entry lineage. It groups
+partial-exit residual lots by the original `paper_event_id`, refuses ambiguous
+lineage, and emits one observation only after every slice is closed. It excludes
+tainted/excluded rows and requires the same resolved horizon and `mandate_version`
+as the active PaperTrader contract. Only fills tagged at entry with the exact
+`executable_paper_trade_pnl_v1` outcome-contract identifier are eligible; older
+rows are not reinterpreted. Bump that identifier when entry/exit behavior or the
+paper fill-cost model changes. Features are the dimensions frozen on the entry
+fill. The binary outcome is aggregate recorded `realized_pnl > 0`; the
+observed payoff ratio is the OOS mean winning return divided by the absolute OOS
+mean losing return. Thus P(win) and payoff ratio refer to the same completed
+paper-trade ledger outcome, including the modeled entry/exit fill prices used by
+that ledger.
+
+Only the distinct `pwin_executable_paper` artifact can be read by PaperTrader.
+The weekly fit creates it only after a time-ordered walk-forward check with
+training outcomes closed before the test window, at least 250 OOS trade outcomes,
+50 non-overlapping blocks whose labels have all matured before the next block,
+at least 20 wins and 20 losses, and the existing OOS expected-calibration-error
+gate. The artifact must match the active horizon and mandate version and be at
+most 14 days old. A successful refresh that fails a gate replaces any formerly
+qualified artifact with an explicit refusal; a failed data read does not silently
+erase it, and age still bounds its use. Otherwise PaperTrader uses the existing
+configured flat-size fallback. No migration or live-trading change is involved.
+
+Important cost boundary: the paper ledger reflects modeled fills, but it does
+not currently record all exchange fees, taxes, and statutory charges (especially
+for India). Therefore this artifact is evidence about the app's paper P&L
+contract—not a claim of broker-net profitability and never an authorization for
+live sizing. A future live sizing design needs its own complete broker-cost model
+and evidence gate.
 
 ### Required evaluation
 
