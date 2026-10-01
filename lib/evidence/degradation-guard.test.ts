@@ -16,6 +16,7 @@ import {
 } from "@/lib/evidence/degradation-guard";
 import { fieldContract } from "@/lib/evidence/intent-classification";
 import { guardRuntimeFailureResult, observationsFromLegacyMask, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
+import { isEtfSymbol } from "@/lib/asset-classification";
 
 const usable: FieldState = { availability: "available", quality: "fresh", ageSeconds: 3600, contractOk: true };
 const missing: FieldState = { availability: "missing", quality: "unavailable", ageSeconds: null, contractOk: false };
@@ -223,6 +224,22 @@ describe("degradation guard — applicability", () => {
     expect(d.action).toBe("allow");
     const t = d.transitions.find((x) => x.fieldId === "fundamental.reported_core")!;
     expect(t.code).toBe("not_applicable");
+  });
+
+  it("classifies XAR as an ETF so missing issuer fundamentals cannot degrade its evidence", () => {
+    const isEtf = isEtfSymbol("XAR");
+    const legacyObs = observationsFromLegacyMask({
+      isEtf, isAdr: false, isMetal: false,
+      applicable: new Set(["technical", "sentiment", "macro"]),
+      included: { technical: true, sentiment: true, macro: true },
+      renormalized: true,
+      technicalDataPoints: 120,
+    });
+    const d = evaluate(legacyObs, null, { shape: symbolShapeOf({ isEtf, isAdr: false, isMetal: false }) });
+    const t = d.transitions.find((x) => x.fieldId === "fundamental.reported_core")!;
+    expect(d.action).toBe("allow");
+    expect(t.code).toBe("not_applicable");
+    expect(t.blocking).toBe(false);
   });
 
   it("US ADRs have no Form 4 — insider absence is not a degradation", () => {
