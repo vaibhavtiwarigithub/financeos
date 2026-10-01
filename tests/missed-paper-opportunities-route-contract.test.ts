@@ -10,7 +10,8 @@ describe("missed paper-entry evidence contract", () => {
     expect(paperTrade).toContain('args.signal.direction !== "long"');
     expect(paperTrade).toContain("args.signal.session_validated !== true");
     expect(paperTrade).toContain('args.signal.score_source !== "deterministic_v1"');
-    expect(paperTrade).toContain("riskPlan: riskPlanProvenance");
+    expect(paperTrade).toContain("riskPlan: appliedRiskPlanProvenance");
+    expect(paperTrade).toContain('exit_geometry_source: "existing_position"');
     expect(paperTrade).toContain("ignoreDuplicates: true");
     expect(paperTrade).toContain("diagnostic write failures must never block");
   });

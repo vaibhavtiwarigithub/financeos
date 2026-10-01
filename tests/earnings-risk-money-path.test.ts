@@ -9,7 +9,7 @@ describe("earnings-risk P0 money-path wiring", () => {
     expect(annotation).toBeGreaterThan(-1);
     expect(source.indexOf("recordEarningsRiskObservation", annotation)).toBeGreaterThan(annotation);
     expect(source.indexOf("executeCapitalRotationPaper", annotation)).toBeGreaterThan(annotation);
-    expect(source.indexOf('supabase.rpc("execute_paper_fill"', annotation)).toBeGreaterThan(annotation);
+    expect(source.indexOf('supabase.rpc(isTopUp ? "execute_paper_topup" : "execute_paper_fill"', annotation)).toBeGreaterThan(annotation);
   });
 
   it("preserves the legacy live blackout and stores shadow context on proposals", () => {

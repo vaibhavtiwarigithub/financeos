@@ -22,7 +22,8 @@ import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { classifyConstructorSize } from "@/lib/trading/constructor-outcome";
 import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
-import { canOpenPaperName, hasOpenPaperName } from "@/lib/trading/paper-entry-policy";
+import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
+import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
@@ -242,20 +243,26 @@ export async function POST(req: NextRequest) {
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
     // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
-    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, current_price, market, position_role");
+    const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, current_price, market, position_role, stop_loss, price_target");
     const openAlphaNamesByMarket = new Map<string, Set<string>>();
+    const openAlphaPositionsByMarket = new Map<string, Map<string, any>>();
     for (const m of activeMarkets) openAlphaNamesByMarket.set(m, new Set());
+    for (const m of activeMarkets) openAlphaPositionsByMarket.set(m, new Map());
     for (const p of (openPos ?? []) as any[]) {
       if ((p.position_role ?? "alpha") !== "alpha") continue;
       const m = hasMarketCol ? String(p.market ?? "us") : "us";
+      const symbol = String(p.symbol).trim().toUpperCase();
       const names = openAlphaNamesByMarket.get(m) ?? new Set<string>();
-      names.add(String(p.symbol).toUpperCase());
+      names.add(symbol);
       openAlphaNamesByMarket.set(m, names);
+      const positions = openAlphaPositionsByMarket.get(m) ?? new Map<string, any>();
+      positions.set(symbol, p);
+      openAlphaPositionsByMarket.set(m, positions);
     }
 
-    // Held symbols receive fresh research for PositionMonitor, but may not
-    // consume a paper-entry slot. Applying this after the top-N cut starved
-    // new candidates and left deployable cash idle.
+    // New names and held-name add-to-winner candidates are ranked independently:
+    // held research can no longer crowd out new entries, while qualified top-ups
+    // can compete for remaining portfolio capacity.
     if (signals.length > 0) {
       const selected: any[] = [];
       const duplicateIds: string[] = [];
@@ -270,9 +277,10 @@ export async function POST(req: NextRequest) {
           marketRows,
           market as "us" | "india",
           hasMarketCol ? 10 : 5,
-          { excludedSymbols: openAlphaNamesByMarket.get(market) },
+          { heldSymbols: openAlphaNamesByMarket.get(market), topUpLimit: 8 },
         );
         selected.push(...result.selected);
+        selected.push(...result.topUpCandidates);
         duplicateIds.push(...result.duplicateIds);
         duplicateIds.push(...result.excludedIds);
       }
@@ -554,26 +562,10 @@ export async function POST(req: NextRequest) {
       }
 
       const openNames = openAlphaNamesByMarket.get(market) ?? new Set<string>();
-      const marketNameCap = mandateByMarket.get(market)?.max_open_positions ?? 10;
-      // A fresh score can reassess an open holding, but it is not a separately
-      // validated instruction to increase exposure. Every alpha name gets one
-      // entry until a future, approved add-to-winner policy proves otherwise.
-      if (hasOpenPaperName(openNames, signal.symbol)) {
-        const { error: supersedeError } = await supabase.from("agent_signals")
-          .update({ status: "superseded" }).eq("id", signal.id).eq("status", "pending");
-        if (supersedeError) {
-          skipped.push({ symbol: signal.symbol, reason: `open_position_signal_supersession_failed: ${supersedeError.message}` });
-          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "existing_position_gate", outcome: "rejected", reason: "open_alpha_position_exists", detail: { supersession_error: supersedeError.message } });
-          continue;
-        }
-        skipped.push({ symbol: signal.symbol, reason: "open_alpha_position_exists" });
-        await logStage(supabase, {
-          signal_id: signal.id, symbol: signal.symbol, market,
-          stage: "existing_position_gate", outcome: "rejected", reason: "open_alpha_position_exists",
-          detail: { policy: "one_entry_per_open_alpha_name" },
-        });
-        continue;
-      }
+      const marketNameCap = Math.min(8, mandateByMarket.get(market)?.max_open_positions ?? 8);
+      const candidateSymbol = String(signal.symbol).trim().toUpperCase();
+      const existingPosition = openAlphaPositionsByMarket.get(market)?.get(candidateSymbol) ?? null;
+      const isTopUp = Boolean(existingPosition);
       // Capital-rotation reachability: at the name cap the candidate is NOT
       // rejected here. It flows through the remaining gates (sector cap,
       // re-entry cooldown, pricing, sizing) and is evaluated as a rotation
@@ -586,7 +578,7 @@ export async function POST(req: NextRequest) {
       // result. Rotation is slot-for-slot (sell one, buy one), so bypassing the
       // cap here does not grow the book; if no rotation executes the candidate
       // is still skipped below with the same max_open_names reason.
-      const atNameCap = !canOpenPaperName(openNames, signal.symbol, marketNameCap);
+      const atNameCap = !isTopUp && !canOpenPaperName(openNames, signal.symbol, marketNameCap);
       if (atNameCap) {
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "deferred", reason: "max_open_names_rotation_candidate", detail: { current: openNames.size, cap: marketNameCap } });
       }
@@ -601,12 +593,12 @@ export async function POST(req: NextRequest) {
       // Sector cap
       const candSector = await resolveSector(signal.symbol, signal.research_packet_id ?? null);
       const sectorCount = sectorCountByMarket.get(market) ?? {};
-      const atSectorCap = Boolean(candSector && (sectorCount[candSector] ?? 0) >= maxPerSector);
+      const atSectorCap = !isTopUp && Boolean(candSector && (sectorCount[candSector] ?? 0) >= maxPerSector);
       if (atSectorCap) {
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sector_gate", outcome: "deferred", reason: "sector_cap_rotation_candidate", detail: { sector: candSector, max: maxPerSector, current: sectorCount[candSector!] ?? 0 } });
       }
 
-      // Re-entry cooldown: block same-symbol BUY within 3 trading days of a close.
+      // Re-entry cooldown: block same-symbol new BUY within 3 trading days of a close.
       // 5 calendar days covers weekends. SELL/exit signals bypass this check entirely.
       {
         const cooldownCutoff = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
@@ -618,7 +610,7 @@ export async function POST(req: NextRequest) {
           .gte("closed_at", cooldownCutoff);
         if (hasMarketCol) cooldownQ = cooldownQ.eq("market", market);
         const { count: recentClose } = await cooldownQ;
-        if ((recentClose ?? 0) > 0) {
+        if (!isTopUp && (recentClose ?? 0) > 0) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "reentry_cooldown (closed within 3 trading days)" });
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "reentry_gate", outcome: "rejected", reason: "reentry_cooldown", detail: { cooldownCutoff } });
@@ -634,6 +626,50 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const { price, fillPrice, source, retrievedAt, bid, ask, spread } = pf;
+      let topUpActiveStop: number | null = null;
+      let topUpActiveTarget: number | null = null;
+      if (isTopUp) {
+        const weightedCost = Number(existingPosition.avg_cost);
+        const activeStop = Number(existingPosition.stop_loss);
+        const activeTarget = Number(existingPosition.price_target);
+        const geometryAssessment = assessPaperTopUp({ fillPrice, weightedAverageCost: weightedCost, activeStop, activeTarget });
+        if (!geometryAssessment.allowed) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: geometryAssessment.reason });
+          await logStage(supabase, {
+            signal_id: signal.id, symbol: signal.symbol, market,
+            stage: "existing_position_gate", outcome: "rejected", reason: geometryAssessment.reason,
+            detail: { fillPrice, weightedAverageCost: Number.isFinite(weightedCost) ? weightedCost : null },
+          });
+          continue;
+        }
+        const sessionCutoff = cutoffByMarket.get(market);
+        let sameDayTopUpQ = supabase.from("paper_trades").select("id", { count: "exact", head: true })
+          .eq("market", market).eq("symbol", candidateSymbol).eq("order_side", "buy")
+          .eq("partial_exit_lot", false).gte("executed_at", sessionCutoff ?? new Date(0).toISOString());
+        const { count: topUpsToday, error: topUpFrequencyError } = await sameDayTopUpQ;
+        if (topUpFrequencyError) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "top_up_frequency_check_unavailable" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "existing_position_gate", outcome: "unavailable", reason: "top_up_frequency_check_unavailable", detail: { error: topUpFrequencyError.message } });
+          continue;
+        }
+        const frequencyAssessment = assessPaperTopUp({
+          fillPrice,
+          weightedAverageCost: weightedCost,
+          activeStop,
+          activeTarget,
+          fillsThisSession: topUpsToday ?? 0,
+        });
+        if (!frequencyAssessment.allowed) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: frequencyAssessment.reason });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "existing_position_gate", outcome: "deferred", reason: frequencyAssessment.reason });
+          continue;
+        }
+        topUpActiveStop = frequencyAssessment.activeStop;
+        topUpActiveTarget = frequencyAssessment.activeTarget;
+      }
       const tradingMandate = mandateByMarket.get(market) ?? await loadTradingMandate(supabase, market as "us" | "india");
       const resolvedHorizonDays = horizonByMarket.get(market) ?? tradingMandate.target_hold_days;
       const snapshot = {
@@ -688,6 +724,14 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const { priceTarget, stopLoss } = boundPlan;
+      // The existing position owns active exit geometry. Attribute the added
+      // lot to those levels rather than inventing separate protection that the
+      // aggregate position monitor cannot execute.
+      const appliedStopLoss = topUpActiveStop ?? stopLoss;
+      const appliedPriceTarget = topUpActiveTarget ?? priceTarget;
+      const appliedRiskPlanProvenance = isTopUp
+        ? { ...riskPlanProvenance, applied_stop_loss: appliedStopLoss, applied_price_target: appliedPriceTarget, exit_geometry_source: "existing_position" }
+        : riskPlanProvenance;
       await logStage(supabase, {
         signal_id: signal.id, symbol: signal.symbol, market,
         stage: "risk_plan", outcome: "passed",
@@ -925,7 +969,13 @@ export async function POST(req: NextRequest) {
       const perTradeCapPaper = market === "india" ? perTradeCapInrPaper : perTradeCapUsdPaper;
       const intendedSpend = paperIntendedSpend(constructorNavByMarket.get(market), sizedPct, perTradeCapPaper);
       const cashShort = intendedSpend != null && intendedSpend > Number(portfolio.cash_balance);
-      const needsRotation = atNameCap || atSectorCap || noRoom || cashShort;
+      if (isTopUp && noRoom) {
+        await revertClaim(signal.id);
+        skipped.push({ symbol: signal.symbol, reason: "top_up_risk_capacity_exhausted" });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason: "top_up_risk_capacity_exhausted", detail: { adjustments: constructed.orders[0]?.adjustments, book: constructorBookSnapshot } });
+        continue;
+      }
+      const needsRotation = !isTopUp && (atNameCap || atSectorCap || noRoom || cashShort);
       const maxSpend = needsRotation ? intendedSpend : paperAllocationSpend(
         constructorNavByMarket.get(market),
         portfolio.cash_balance,
@@ -935,8 +985,8 @@ export async function POST(req: NextRequest) {
       let qty = paperEntryQuantity(market as "us" | "india", maxSpend, fillPrice);
       if (qty == null) {
         await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
-          referencePrice: price, fillPrice, qty: null, notional: null, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget,
-          horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+          referencePrice: price, fillPrice, qty: null, notional: null, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss: appliedStopLoss, priceTarget: appliedPriceTarget,
+          horizon: resolvedHorizonDays, riskPlan: appliedRiskPlanProvenance,
           reason: market === "us" ? "below_minimum_fractional_order" : "cash_below_one_share",
           detail: { intendedSpend, availableCash: Number(portfolio.cash_balance), proposedSizePct, blockType: "minimum_order_size" } });
         await revertClaim(signal.id);
@@ -1025,13 +1075,13 @@ export async function POST(req: NextRequest) {
         try {
           const rot = await executeCapitalRotationPaper(supabase, {
             runId, rotationsThisRun: rotationsThisRun.get(market) ?? 0,
-            candidate: { ...rotCandidate, qty, fillPrice, priceTarget, stopLoss, sector: candSector },
+            candidate: { ...rotCandidate, qty, fillPrice, priceTarget: appliedPriceTarget, stopLoss: appliedStopLoss, sector: candSector },
             scoreThreshold: tradingMandate.score_threshold, minHoldingDays: tradingMandate.min_hold_days ?? 2,
             p1Readiness: rotationP1Readiness,
             p1EvaluatedAt: rotationP1EvaluatedAt,
             p1Plan: rotationP1Plan,
             entryPolicy: {
-              maxOpenNames: tradingMandate.max_open_positions, maxSectorNames: maxPerSector,
+              maxOpenNames: marketNameCap, maxSectorNames: maxPerSector,
               perTradeCap: perTradeCapPaper,
               dailyNotionalCap: market === "india" ? dailyCapInrPaper : dailyCapUsdPaper,
               dayStart: cutoffByMarket.get(market) ?? null,
@@ -1062,7 +1112,7 @@ export async function POST(req: NextRequest) {
           : paperEntryQuantity(market as "us" | "india", feasibleCounterfactualNotional, fillPrice);
         await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
           referencePrice: price, fillPrice, qty: counterfactualQty, notional: feasibleCounterfactualNotional,
-          source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget, horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+          source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss: appliedStopLoss, priceTarget: appliedPriceTarget, horizon: resolvedHorizonDays, riskPlan: appliedRiskPlanProvenance,
           reason: blockReason, detail: { atNameCap, atSectorCap, noRoom, cashShort, cash: portfolio.cash_balance,
             intendedNotional: intendedSpend, feasibleCounterfactualNotional, replacementSource: feasibleReplacementSource,
             rotationReason: rotReason, rotationReadiness: rotationP1Readiness?.blockers ?? null } });
@@ -1084,8 +1134,8 @@ export async function POST(req: NextRequest) {
         const spentToday = (todayFills ?? []).reduce((s: number, r: any) => s + Number(r.total_value ?? 0), 0);
         if (spentToday + totalCost > Number(dailyCapPaper)) {
           await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
-            referencePrice: price, fillPrice, qty, notional: totalCost, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss, priceTarget,
-            horizon: resolvedHorizonDays, riskPlan: riskPlanProvenance,
+            referencePrice: price, fillPrice, qty, notional: totalCost, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss: appliedStopLoss, priceTarget: appliedPriceTarget,
+            horizon: resolvedHorizonDays, riskPlan: appliedRiskPlanProvenance,
             reason: "daily_paper_notional_cap", detail: { spentToday, dailyCap: Number(dailyCapPaper), proposedNotional: totalCost } });
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "daily_paper_notional_cap" });
@@ -1100,14 +1150,14 @@ export async function POST(req: NextRequest) {
       let orderEventId: any = null;
       let rpcSucceeded = false;
       {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc("execute_paper_fill", {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc(isTopUp ? "execute_paper_topup" : "execute_paper_fill", {
           p_signal_id: signal.id, p_market: market, p_currency: currency, p_symbol: signal.symbol,
           p_qty: qty, p_fill_price: fillPrice, p_total_cost: totalCost, p_price_source: source,
           p_price_retrieved_at: retrievedAt, p_bid: bid, p_ask: ask, p_spread: spread,
           p_analyst_score: signal.analyst_score, p_strategy_id: signal.source ?? "research",
           p_notes: signal.rationale?.slice(0, 500) ?? null,
           p_rationale: `${signal.rationale ?? ""} [source: ${source}, at: ${retrievedAt}]`,
-          p_price_target: priceTarget, p_stop_loss: stopLoss, p_sector: candSector,
+          p_price_target: appliedPriceTarget, p_stop_loss: appliedStopLoss, p_sector: candSector,
           // Build 4a: pre-slippage decision price. fill_price already carries the
           // slipped value; the RPC computes realized_slip_pct = fill/expected - 1.
           p_expected_price: price,
@@ -1115,7 +1165,7 @@ export async function POST(req: NextRequest) {
           p_mandate_version: tradingMandate.version,
           p_mandate_snapshot: snapshot,
           p_resolved_horizon_days: resolvedHorizonDays,
-          p_max_open_names: tradingMandate.max_open_positions,
+          p_max_open_names: marketNameCap,
           p_max_sector_names: maxPerSector,
           p_per_trade_cap: perTradeCapPaper,
           p_daily_notional_cap: dailyCapPaper,
@@ -1161,6 +1211,20 @@ export async function POST(req: NextRequest) {
         skipped.push({ symbol: signal.symbol, reason: "execute_paper_fill_rpc_missing_in_production" });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "execute_paper_fill_rpc_missing_in_production" });
         console.error("[paper-trade] execute_paper_fill RPC missing in production — refusing legacy fallback fill for", signal.symbol);
+        continue;
+      }
+
+      // The local/preview legacy writer performs several independent writes and
+      // cannot safely mint an add-on lot under the anti-pyramid trigger. Never
+      // fall through to it for a top-up: missing RPC support must fail closed,
+      // before creating an event or trade row without the atomic position update.
+      if (!rpcSucceeded && isTopUp) {
+        await revertClaim(signal.id);
+        skipped.push({ symbol: signal.symbol, reason: "execute_paper_topup_rpc_missing" });
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "execution", outcome: "rejected", reason: "execute_paper_topup_rpc_missing",
+        });
         continue;
       }
 
@@ -1231,7 +1295,7 @@ export async function POST(req: NextRequest) {
         } else {
           const newPosRow: Record<string, any> = {
             symbol: signal.symbol, qty, avg_cost: fillPrice, current_price: fillPrice,
-            price_target: priceTarget, stop_loss: stopLoss, highest_price: fillPrice,
+            price_target: appliedPriceTarget, stop_loss: appliedStopLoss, highest_price: fillPrice,
             sector: candSector, market, currency,
             mandate_version: tradingMandate.version,
             mandate_snapshot: snapshot,
@@ -1268,6 +1332,15 @@ export async function POST(req: NextRequest) {
       if (existingBookIdx >= 0) currentBook[existingBookIdx].valuePct += bookEntry.valuePct;
       else currentBook.push(bookEntry);
       bookByMarket.set(market, currentBook);
+      if (isTopUp) {
+        const updatedPosition = {
+          ...existingPosition,
+          qty: Number(existingPosition.qty ?? 0) + qty,
+          avg_cost: ((Number(existingPosition.qty ?? 0) * Number(existingPosition.avg_cost)) + totalCost)
+            / (Number(existingPosition.qty ?? 0) + qty),
+        };
+        openAlphaPositionsByMarket.get(market)?.set(candidateSymbol, updatedPosition);
+      }
       openNames.add(String(signal.symbol).toUpperCase());
       openAlphaNamesByMarket.set(market, openNames);
 
@@ -1277,14 +1350,14 @@ export async function POST(req: NextRequest) {
       const { error: journalErr } = await supabase.from("decision_journal").insert({
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
-        summary: `Paper buy (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, p_win: pWinForSizing, payoff_ratio: payoffRatioForSizing, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
+        summary: `Paper ${isTopUp ? "top-up" : "buy"} (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, entry_kind: isTopUp ? "add_to_winner" : "new_position", prior_weighted_cost: isTopUp ? Number(existingPosition.avg_cost) : null, applied_stop_loss: appliedStopLoss, applied_price_target: appliedPriceTarget, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, p_win: pWinForSizing, payoff_ratio: payoffRatioForSizing, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });
       if (journalErr) console.error("[paper-trade] decision_journal insert failed:", journalErr.message);
 
-      filled.push({ symbol: signal.symbol, market, qty, fillPrice, totalCost, currency, priceSource: source });
+      filled.push({ symbol: signal.symbol, market, qty, fillPrice, totalCost, currency, priceSource: source, entryKind: isTopUp ? "add_to_winner" : "new_position" });
     }
 
     // ── Per-market NAV snapshot ───────────────────────────────────────────────
@@ -1438,6 +1511,21 @@ export async function POST(req: NextRequest) {
     if (runId) {
       const tradedSymbols = filled.map((f: any) => f.symbol);
       const navSummary = Object.entries(navByMarket).map(([m, n]) => `${m}:${m === "india" ? "₹" : "$"}${n.toFixed(2)}`).join(" ");
+      const cashDeployment: Record<string, { cash: number; nav: number; cashPct: number | null; softTargetPct: number; targetMet: boolean | null; openNames: number; maxNames: number }> = {};
+      for (const m of activeMarkets) {
+        const cash = Number(poolByMarket.get(m)?.cash_balance);
+        const nav = Number(navByMarket[m] ?? constructorNavByMarket.get(m) ?? 0);
+        const cashPct = Number.isFinite(cash) && Number.isFinite(nav) && nav > 0 ? (cash / nav) * 100 : null;
+        cashDeployment[m] = {
+          cash: Number.isFinite(cash) ? cash : 0,
+          nav: Number.isFinite(nav) ? nav : 0,
+          cashPct,
+          softTargetPct: 5,
+          targetMet: cashPct == null ? null : cashPct <= 5,
+          openNames: openAlphaNamesByMarket.get(m)?.size ?? 0,
+          maxNames: Math.min(8, mandateByMarket.get(m)?.max_open_positions ?? 8),
+        };
+      }
       const skipReasons = skipped.reduce<Record<string, number>>((counts, item) => {
         const reason = String(item?.reason ?? "unknown");
         counts[reason] = (counts[reason] ?? 0) + 1;
@@ -1449,9 +1537,10 @@ export async function POST(req: NextRequest) {
         .join(", ");
       await supabase.from("agent_runs").update({
         status: "done", symbols: tradedSymbols, signals_written: filled.length,
-        result_summary: `${filled.length} trades filled, ${skipped.length} skipped${skipSummary ? ` (${skipSummary})` : ""}, ${expiredTotal} stale expired. NAV ${navSummary}`,
+        result_summary: `${filled.length} trades filled, ${skipped.length} skipped${skipSummary ? ` (${skipSummary})` : ""}, ${expiredTotal} stale expired. NAV ${navSummary}. Cash: ${Object.entries(cashDeployment).map(([m, d]) => `${m} ${d.cashPct == null ? "unknown" : `${d.cashPct.toFixed(1)}%`} (soft target ≤5%)`).join(", ")}`,
         workload_metrics: {
           skip_reasons: skipReasons,
+          cash_deployment: cashDeployment,
           // W6 taxonomy, corrected 2026-08-18. `quote_stale` was being counted as
           // FAILED, which raised a critical "run state failed" on a run that had
           // behaved exactly as designed: the W1 freshness gate refusing to fill on

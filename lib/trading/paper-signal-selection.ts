@@ -8,11 +8,11 @@ export interface PaperSignalCandidate {
 }
 
 export interface PaperSignalSelectionOptions {
-  /**
-   * Symbols already held as alpha positions in this market. They still receive
-   * fresh research for PositionMonitor, but cannot consume a paper-entry slot.
-   */
+  /** Legacy hard exclusion for callers that intentionally disallow a held symbol. */
   excludedSymbols?: ReadonlySet<string>;
+  /** Held alpha names are ranked separately so qualified top-ups do not crowd out new entries. */
+  heldSymbols?: ReadonlySet<string>;
+  topUpLimit?: number;
 }
 
 function candidateMarket(signal: PaperSignalCandidate): "us" | "india" {
@@ -33,8 +33,9 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
   market: "us" | "india",
   limit: number,
   options: PaperSignalSelectionOptions = {},
-): { selected: T[]; duplicateIds: string[]; excludedIds: string[] } {
+): { selected: T[]; topUpCandidates: T[]; duplicateIds: string[]; excludedIds: string[] } {
   const best = new Map<string, T>();
+  const heldBest = new Map<string, T>();
   const duplicateIds: string[] = [];
   const excludedIds: string[] = [];
 
@@ -46,11 +47,12 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
       excludedIds.push(row.id);
       continue;
     }
-    const incumbent = best.get(symbol);
-    if (!incumbent) best.set(symbol, row);
+    const target = options.heldSymbols?.has(symbol) ? heldBest : best;
+    const incumbent = target.get(symbol);
+    if (!incumbent) target.set(symbol, row);
     else if (isBetter(row, incumbent)) {
       duplicateIds.push(incumbent.id);
-      best.set(symbol, row);
+      target.set(symbol, row);
     } else duplicateIds.push(row.id);
   }
 
@@ -62,5 +64,13 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
       return b.id.localeCompare(a.id);
     })
     .slice(0, Math.max(0, limit));
-  return { selected, duplicateIds, excludedIds };
+  const topUpCandidates = [...heldBest.values()]
+    .sort((a, b) => {
+      const scoreDiff = Number(b.analyst_score) - Number(a.analyst_score);
+      if (scoreDiff !== 0) return scoreDiff;
+      if (a.created_at !== b.created_at) return b.created_at.localeCompare(a.created_at);
+      return b.id.localeCompare(a.id);
+    })
+    .slice(0, Math.max(0, options.topUpLimit ?? Number.MAX_SAFE_INTEGER));
+  return { selected, topUpCandidates, duplicateIds, excludedIds };
 }
