@@ -17,19 +17,26 @@ are different outcomes. The current artifact was fitted 2026-09-25 on 4,539
 observations; its presence and generic calibration curve do not establish an
 executable trade win probability.
 
-The paper-trade route now accepts a Kelly artifact only when the calibration
-payload explicitly declares `executable_net_trade_pnl_v1`, the same horizon as
-the active mandate, and walk-forward evidence of at least 250 OOS observations,
-50 independent horizon blocks, and 20 outcomes of each class. Existing generic
-calibration arrays fail closed and use the previously approved flat-size
-fallback; this is not a relaxation of entry/risk gates and does not affect live
-trading. A stage event records the fallback reason for candidate-level audit.
+The paper-trade route now reads only a separate `pwin_executable_paper` artifact,
+and accepts it only when its versioned outcome contract, active mandate horizon
+and version, freshness, OOS calibration, 250 OOS observations, 50 matured
+non-overlapping blocks, and 20 outcomes of each class all pass. The probability
+and payoff ratio come from the same OOS sample of closed, completed paper-trade
+P&L. Generic benchmark-neutral calibration remains research-only; rejected or
+stale evidence uses the configured flat-size fallback. This does not affect live
+trading or alter entry/risk gates.
 
-**Still not built:** a producer for executable net-trade labels with conservative
-intrabar stop/target ordering, costs, matched horizon, and independent-block
-validation. Until it exists and produces a qualifying artifact, Kelly sizing is
-not evidence-authorized. Do not infer that high composite scores guarantee a
-trade or force a purchase.
+The scheduled producer is now implemented but has **no qualifying evidence
+yet**: it tags new paper entries with `executable_paper_trade_pnl_v1`, groups all
+closed partial-exit slices back to one original `paper_event_id`, excludes open,
+tainted, ambiguous, and legacy untagged outcomes, and fits only if the gates
+pass. Existing historical fills are deliberately not reinterpreted. A failed
+validation refresh writes an explicit refusal so an older accepted artifact
+cannot linger; failed reads leave the prior row untouched, and PaperTrader
+rejects artifacts older than 14 days. Because the paper ledger omits some taxes
+and fees, this is evidence about the app's modeled paper P&L only—not broker-net
+profitability or readiness for live sizing. Do not infer that high composite
+scores guarantee a trade or force a purchase.
 
 ---
 

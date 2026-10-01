@@ -1,0 +1,404 @@
+import crypto from "crypto";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { marketSessionDateAt } from "@/lib/shadows/paper-lot-replay-events";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import {
+  acceptCalibrationOOS,
+  EXECUTABLE_SIZING_OUTCOME_CONTRACT,
+  predictPWin,
+  type CalibrationCoefficients,
+  type CalibrationDecile,
+} from "@/lib/validation/calibration";
+import type { LabeledObservation } from "@/lib/learning/dataset";
+
+const DIMS = ["fundamental_score", "technical_score", "sentiment_score", "macro_score", "insider_score"] as const;
+const MIN_OOS = 250;
+const MIN_INDEPENDENT_BLOCKS = 50;
+const MIN_CLASS = 20;
+const TEST_SESSIONS = 100;
+const FOLDS = 5;
+
+export interface ExecutablePaperTradeSourceRow {
+  id: string;
+  market: string;
+  symbol: string;
+  order_side: string;
+  qty: number | string;
+  fill_price: number | string;
+  signal_id: string | null;
+  paper_event_id: number | string | null;
+  executed_at: string;
+  closed_at: string | null;
+  exit_at?: string | null;
+  exit_price: number | string | null;
+  realized_pnl: number | string | null;
+  analyst_score: number | string | null;
+  resolved_horizon_days: number | string | null;
+  mandate_version: number | string | null;
+  mandate_snapshot?: unknown;
+  position_role?: string | null;
+  partial_exit_lot?: boolean | null;
+  tainted?: boolean | null;
+  excluded_from_learning?: boolean | null;
+}
+
+export interface ExecutablePaperObservation {
+  id: number;
+  ts: string;
+  exitTs: string;
+  entrySession: string;
+  exitSession: string;
+  market: "us" | "india";
+  symbol: string;
+  analyst_score: number;
+  fundamental_score: number | null;
+  technical_score: number | null;
+  sentiment_score: number | null;
+  macro_score: number | null;
+  insider_score: number | null;
+  returnPct: number;
+  won: 0 | 1;
+}
+
+function positiveNumber(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const n = Number(value);
+  return value != null && Number.isFinite(n) ? n : null;
+}
+
+function sameNullableNumber(a: unknown, b: unknown): boolean {
+  const left = finiteNumber(a), right = finiteNumber(b);
+  return left === right;
+}
+
+/**
+ * Collapse the production partial-exit representation back to one original
+ * paper fill. A residual lot is a cloned row with the same paper_event_id; all
+ * slices must be closed before the trade can become a binary training label.
+ */
+export function buildExecutablePaperObservations(
+  rows: ExecutablePaperTradeSourceRow[],
+  market: "us" | "india",
+  horizonSessions: number,
+  mandateVersion: number,
+): ExecutablePaperObservation[] {
+  const groups = new Map<string, ExecutablePaperTradeSourceRow[]>();
+  for (const row of rows) {
+    if (row.market !== market || row.order_side !== "buy" || row.paper_event_id == null || !row.signal_id) continue;
+    const key = String(row.paper_event_id);
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+
+  const out: ExecutablePaperObservation[] = [];
+  for (const group of groups.values()) {
+    const first = group[0];
+    const snapshot = first.mandate_snapshot && typeof first.mandate_snapshot === "object"
+      ? first.mandate_snapshot as Record<string, unknown> : null;
+    if (snapshot?.executable_outcome_contract !== EXECUTABLE_SIZING_OUTCOME_CONTRACT
+      || snapshot.entry_score_source !== "deterministic_v1") continue;
+    const entryDimensions = snapshot.entry_score_dimensions && typeof snapshot.entry_score_dimensions === "object"
+      ? snapshot.entry_score_dimensions as Record<string, unknown> : null;
+    if (!entryDimensions || DIMS.some((dim) => !(dim in entryDimensions)
+      || (entryDimensions[dim] != null && finiteNumber(entryDimensions[dim]) == null))) continue;
+    if (group.some((row) => row.closed_at == null || row.realized_pnl == null || row.exit_price == null
+      || row.tainted === true || row.excluded_from_learning === true
+      || (row.position_role != null && row.position_role !== "alpha")
+      || Number(row.resolved_horizon_days) !== horizonSessions
+      || Number(row.mandate_version) !== mandateVersion
+      || row.signal_id !== first.signal_id
+      || row.symbol.toUpperCase() !== first.symbol.toUpperCase()
+      || row.executed_at !== first.executed_at
+      || !row.mandate_snapshot || typeof row.mandate_snapshot !== "object"
+      || (row.mandate_snapshot as any).executable_outcome_contract !== EXECUTABLE_SIZING_OUTCOME_CONTRACT
+      || (row.mandate_snapshot as any).entry_score_source !== "deterministic_v1"
+      || DIMS.some((dim) => !sameNullableNumber(((row.mandate_snapshot as any).entry_score_dimensions ?? {})[dim], entryDimensions[dim])))) continue;
+
+    // A second row is valid only when it is a residual-lot clone generated by
+    // the partial-exit ledger. Anything else is ambiguous lineage and excluded.
+    if (group.length > 1 && group.slice(1).some((row) => row.partial_exit_lot !== true)) continue;
+
+    const notionals: number[] = [];
+    const pnlValues: number[] = [];
+    for (const row of group) {
+      const qty = positiveNumber(row.qty), fill = positiveNumber(row.fill_price), pnl = finiteNumber(row.realized_pnl);
+      if (qty == null || fill == null || pnl == null) { notionals.length = 0; break; }
+      notionals.push(qty * fill);
+      pnlValues.push(pnl);
+    }
+    const notional = notionals.reduce((sum, value) => sum + value, 0);
+    if (notionals.length !== group.length || notional <= 0) continue;
+    const realizedPnl = pnlValues.reduce((sum, value) => sum + value, 0);
+    const closedAt = group.map((row) => row.exit_at ?? row.closed_at!).sort().at(-1)!;
+    const entryMs = Date.parse(first.executed_at), exitMs = Date.parse(closedAt);
+    if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs) || exitMs <= entryMs) continue;
+
+    const analystScore = finiteNumber(first.analyst_score);
+    if (analystScore == null) continue;
+    out.push({
+      id: out.length + 1,
+      ts: first.executed_at,
+      exitTs: closedAt,
+      entrySession: marketSessionDateAt(first.executed_at, market),
+      exitSession: marketSessionDateAt(closedAt, market),
+      market,
+      symbol: first.symbol.toUpperCase(),
+      analyst_score: analystScore,
+      fundamental_score: finiteNumber(entryDimensions.fundamental_score),
+      technical_score: finiteNumber(entryDimensions.technical_score),
+      sentiment_score: finiteNumber(entryDimensions.sentiment_score),
+      macro_score: finiteNumber(entryDimensions.macro_score),
+      insider_score: finiteNumber(entryDimensions.insider_score),
+      returnPct: realizedPnl / notional,
+      won: realizedPnl > 0 ? 1 : 0,
+    });
+  }
+  return out.sort((a, b) => a.entrySession.localeCompare(b.entrySession) || a.id - b.id);
+}
+
+export function executableTradeWalkForwardFolds<T extends ExecutablePaperObservation>(
+  rows: T[], horizonSessions: number, marketSessions: string[],
+): Array<{ train: T[]; test: T[]; testStartIndex: number; testEndIndex: number }> {
+  const sessions = [...new Set(marketSessions)].sort();
+  const indexBySession = new Map(sessions.map((session, index) => [session, index]));
+  const folds: Array<{ train: T[]; test: T[]; testStartIndex: number; testEndIndex: number }> = [];
+  let start = TEST_SESSIONS;
+  while (folds.length < FOLDS && start + TEST_SESSIONS <= sessions.length) {
+    const testStart = sessions[start];
+    const purgeIndex = Math.max(0, start - horizonSessions);
+    const train = rows.filter((row) => {
+      const index = indexBySession.get(row.entrySession);
+      return index != null && index < purgeIndex && row.exitSession < testStart;
+    });
+    const test = rows.filter((row) => {
+      const index = indexBySession.get(row.entrySession);
+      return index != null && index >= start && index < start + TEST_SESSIONS;
+    });
+    if (train.length >= 60 && test.length > 0) folds.push({ train, test, testStartIndex: start, testEndIndex: start + TEST_SESSIONS });
+    start += TEST_SESSIONS + horizonSessions;
+  }
+  return folds;
+}
+
+function fit(rows: ExecutablePaperObservation[]): CalibrationCoefficients {
+  const means: Record<string, number> = {};
+  const stdevs: Record<string, number> = {};
+  for (const dim of DIMS) {
+    const values = rows.map((row) => row[dim] ?? 50);
+    means[dim] = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - means[dim]) ** 2, 0) / values.length;
+    stdevs[dim] = Math.sqrt(variance) || 1;
+  }
+  const X = rows.map((row) => DIMS.map((dim) => ((row[dim] ?? 50) - means[dim]) / stdevs[dim]));
+  const labels = rows.map((row) => row.won);
+  let intercept = 0;
+  const weights = new Array(DIMS.length).fill(0);
+  const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
+  for (let iteration = 0; iteration < 700; iteration++) {
+    let gradIntercept = 0;
+    const grad = new Array(DIMS.length).fill(0);
+    for (let i = 0; i < X.length; i++) {
+      const error = sigmoid(intercept + X[i].reduce((sum, value, j) => sum + value * weights[j], 0)) - labels[i];
+      gradIntercept += error;
+      for (let j = 0; j < grad.length; j++) grad[j] += error * X[i][j];
+    }
+    intercept -= 0.1 * gradIntercept / X.length;
+    for (let j = 0; j < weights.length; j++) weights[j] -= 0.1 * grad[j] / X.length;
+  }
+  return {
+    intercept,
+    weights: Object.fromEntries(DIMS.map((dim, index) => [dim, weights[index]])),
+    means,
+    stdevs,
+  };
+}
+
+function asLabeled(row: ExecutablePaperObservation): Partial<LabeledObservation> {
+  return {
+    fundamental_score: row.fundamental_score,
+    technical_score: row.technical_score,
+    sentiment_score: row.sentiment_score,
+    macro_score: row.macro_score,
+    insider_score: row.insider_score,
+  };
+}
+
+function reliabilityDeciles(predictions: Array<{ predicted: number; won: 0 | 1 }>): CalibrationDecile[] {
+  const sorted = [...predictions].sort((a, b) => a.predicted - b.predicted);
+  const size = Math.max(1, Math.floor(sorted.length / 10));
+  return Array.from({ length: 10 }, (_, index) => sorted.slice(index * size, index === 9 ? undefined : (index + 1) * size))
+    .filter((slice) => slice.length > 0)
+    .map((slice, index) => ({
+      decile: index,
+      predictedMean: slice.reduce((sum, row) => sum + row.predicted, 0) / slice.length,
+      realizedWinRate: slice.reduce((sum, row) => sum + row.won, 0) / slice.length,
+      n: slice.length,
+    }));
+}
+
+export interface ExecutablePaperFit {
+  coefficients: CalibrationCoefficients;
+  evidence: {
+    outcome_contract: typeof EXECUTABLE_SIZING_OUTCOME_CONTRACT;
+    horizon_sessions: number;
+    mandate_version: number;
+    payoff_ratio: number;
+    validation: {
+      accepted: boolean;
+      reason: string;
+      oos_sample_count: number;
+      independent_horizon_blocks: number;
+      positive_outcomes: number;
+      negative_outcomes: number;
+      breakeven_outcomes: number;
+      calendar_session_count: number;
+      calendar_unmatched_outcomes: number;
+      ece: number | null;
+      oos_mean_win_return: number | null;
+      oos_mean_loss_return: number | null;
+    };
+    calibration: CalibrationDecile[];
+  };
+  nObservations: number;
+  datasetHash: string;
+}
+
+export function fitExecutablePaperCalibration(
+  rows: ExecutablePaperObservation[], horizonSessions: number, mandateVersion: number, marketSessions: string[],
+): ExecutablePaperFit | null {
+  const folds = executableTradeWalkForwardFolds(rows, horizonSessions, marketSessions);
+  const knownSessions = new Set(marketSessions);
+  const calendarUnmatched = rows.filter((row) => !knownSessions.has(row.entrySession) || !knownSessions.has(row.exitSession)).length;
+  const predictions: Array<{ predicted: number; won: 0 | 1; returnPct: number; entrySession: string; exitSession: string }> = [];
+  const foldPredictions: Array<{ testStartIndex: number; testEndIndex: number; rows: typeof predictions }> = [];
+  for (const fold of folds) {
+    const coefficients = fit(fold.train);
+    const thisFold: typeof predictions = [];
+    for (const row of fold.test) {
+      const prediction = {
+        predicted: predictPWin(coefficients, asLabeled(row) as any),
+        won: row.won,
+        returnPct: row.returnPct,
+        entrySession: row.entrySession,
+        exitSession: row.exitSession,
+      };
+      predictions.push(prediction);
+      thisFold.push(prediction);
+    }
+    foldPredictions.push({ testStartIndex: fold.testStartIndex, testEndIndex: fold.testEndIndex, rows: thisFold });
+  }
+  const positives = predictions.filter((row) => row.won === 1);
+  const losses = predictions.filter((row) => row.returnPct < 0);
+  const breakevens = predictions.filter((row) => row.returnPct === 0);
+  const sessionIndex = new Map([...new Set(marketSessions)].sort().map((session, index) => [session, index]));
+  const blocks = foldPredictions.reduce((count, fold) => {
+    for (let start = fold.testStartIndex; start + horizonSessions <= fold.testEndIndex; start += horizonSessions) {
+      const end = start + horizonSessions;
+      const rowsInBlock = fold.rows.filter((row) => {
+        const index = sessionIndex.get(row.entrySession);
+        return index != null && index >= start && index < end;
+      });
+      if (!rowsInBlock.length) continue;
+      const nextBlockStart = [...sessionIndex.entries()].find(([, index]) => index === end)?.[0];
+      // Every test label must mature before the next horizon block starts.
+      if (nextBlockStart && rowsInBlock.some((row) => row.exitSession >= nextBlockStart)) continue;
+      count++;
+    }
+    return count;
+  }, 0);
+  const oosWins = positives.length ? positives.reduce((sum, row) => sum + row.returnPct, 0) / positives.length : null;
+  const oosLosses = losses.length ? losses.reduce((sum, row) => sum + row.returnPct, 0) / losses.length : null;
+  const payoffRatio = oosWins != null && oosLosses != null && oosLosses < 0 ? oosWins / Math.abs(oosLosses) : Number.NaN;
+  const deciles = reliabilityDeciles(predictions);
+  const calibration = acceptCalibrationOOS(predictions.map((row) => ({ predicted: row.predicted, realized: row.won })));
+  const failures: string[] = [];
+  if (calendarUnmatched > 0) failures.push(`benchmark session calendar missing ${calendarUnmatched} of ${rows.length} outcome sessions`);
+  const trainFeatureVariation = folds.some((fold) => DIMS.some((dim) =>
+    new Set(fold.train.map((row) => row[dim]).filter((value): value is number => value != null)).size > 1));
+  if (!trainFeatureVariation) failures.push("entry score dimensions have no cross-sectional variation in training folds");
+  if (predictions.length < MIN_OOS) failures.push(`OOS observations ${predictions.length} < ${MIN_OOS}`);
+  if (blocks < MIN_INDEPENDENT_BLOCKS) failures.push(`independent horizon blocks ${blocks} < ${MIN_INDEPENDENT_BLOCKS}`);
+  if (positives.length < MIN_CLASS) failures.push(`positive outcomes ${positives.length} < ${MIN_CLASS}`);
+  if (losses.length < MIN_CLASS) failures.push(`negative outcomes ${losses.length} < ${MIN_CLASS}`);
+  if (!Number.isFinite(payoffRatio) || payoffRatio <= 0) failures.push("OOS payoff ratio is unavailable or non-positive");
+  if (!calibration.accepted) failures.push(calibration.reason);
+  const evidence = {
+    outcome_contract: EXECUTABLE_SIZING_OUTCOME_CONTRACT,
+    horizon_sessions: horizonSessions,
+    mandate_version: mandateVersion,
+    payoff_ratio: Number.isFinite(payoffRatio) ? payoffRatio : 0,
+    validation: {
+      accepted: failures.length === 0,
+      reason: failures.length ? failures.join("; ") : "executable paper-trade outcome evidence passed",
+      oos_sample_count: predictions.length,
+      independent_horizon_blocks: blocks,
+      positive_outcomes: positives.length,
+      negative_outcomes: losses.length,
+      breakeven_outcomes: breakevens.length,
+      calendar_session_count: knownSessions.size,
+      calendar_unmatched_outcomes: calendarUnmatched,
+      ece: calibration.ece,
+      oos_mean_win_return: oosWins,
+      oos_mean_loss_return: oosLosses,
+    },
+    calibration: deciles,
+  };
+  if (!evidence.validation.accepted) return { coefficients: {} as CalibrationCoefficients, evidence, nObservations: rows.length, datasetHash: "" };
+  const finalCoefficients = fit(rows);
+  const datasetHash = crypto.createHash("sha256").update(JSON.stringify(rows.map((row) => [row.id, row.returnPct, row.entrySession, row.exitSession, row.won]))).digest("hex");
+  return { coefficients: finalCoefficients, evidence, nObservations: rows.length, datasetHash };
+}
+
+export async function fitAndStoreExecutablePaperCalibration(
+  supabase: any,
+  market: "us" | "india",
+  horizonSessions: number,
+  mandateVersion: number,
+): Promise<{ ok: boolean; reason?: string; nObservations?: number; evidence?: ExecutablePaperFit["evidence"] }> {
+  const rows = await fetchAllRows<ExecutablePaperTradeSourceRow>((from, to) => supabase
+    .from("paper_trades")
+    .select("id,market,symbol,order_side,qty,fill_price,signal_id,paper_event_id,executed_at,closed_at,exit_at,exit_price,realized_pnl,analyst_score,resolved_horizon_days,mandate_version,mandate_snapshot,position_role,partial_exit_lot,tainted,excluded_from_learning")
+    .eq("market", market).eq("order_side", "buy").order("id", { ascending: true }).range(from, to), `executable paper trade dataset ${market}`);
+  const observations = buildExecutablePaperObservations(rows, market, horizonSessions, mandateVersion);
+  let marketSessions: string[] = [];
+  if (observations.length) {
+    const sessionRows = await fetchAllRows<{ date: string }>((from, to) => supabase
+      .from("price_cache").select("date").eq("symbol", benchmarkSymbolFor(market, "research"))
+      .gte("date", observations[0].entrySession).order("date", { ascending: true }).range(from, to), `executable sizing session calendar ${market}`);
+    marketSessions = sessionRows.map((row) => String(row.date).slice(0, 10)).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+  }
+  const fitResult = fitExecutablePaperCalibration(observations, horizonSessions, mandateVersion, marketSessions);
+  if (!fitResult) return { ok: false, reason: `no complete closed paper trades for horizon=${horizonSessions}, mandate=${mandateVersion}`, nObservations: observations.length };
+  if (!fitResult.evidence.validation.accepted) {
+    // Invalidate any previously qualified artifact as soon as a successful
+    // refresh proves the current cohort no longer meets its gates. Failed reads
+    // still throw and leave the last artifact untouched; its 14-day money-path
+    // freshness gate bounds that case.
+    const { error } = await supabase.from("model_artifacts").upsert({
+      market, kind: "pwin_executable_paper",
+      coefficients: { intercept: 0, weights: {}, means: {}, stdevs: {} },
+      calibration: fitResult.evidence,
+      n_observations: fitResult.nObservations,
+      fitted_at: new Date().toISOString(),
+      dataset_hash: fitResult.datasetHash || null,
+    }, { onConflict: "market,kind" });
+    if (error) throw new Error(`executable paper calibration refusal upsert failed: ${error.message}`);
+    return { ok: false, reason: fitResult.evidence.validation.reason, nObservations: fitResult.nObservations, evidence: fitResult.evidence };
+  }
+  const { error } = await supabase.from("model_artifacts").upsert({
+    market,
+    kind: "pwin_executable_paper",
+    coefficients: fitResult.coefficients,
+    calibration: fitResult.evidence,
+    n_observations: fitResult.nObservations,
+    fitted_at: new Date().toISOString(),
+    dataset_hash: fitResult.datasetHash,
+  }, { onConflict: "market,kind" });
+  if (error) throw new Error(`executable paper calibration upsert failed: ${error.message}`);
+  return { ok: true, nObservations: fitResult.nObservations, evidence: fitResult.evidence };
+}

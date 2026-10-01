@@ -11,7 +11,7 @@ import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
 import { computeCorrelationShadow, loadShadowReturns } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
-import { isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
+import { EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { computeAllocation } from "@/lib/allocation/allocator";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
@@ -441,11 +441,12 @@ export async function POST(req: NextRequest) {
 
     // Phase 2: dynamic MAE/MFE-percentile risk geometry may use matured labels.
     // Kelly sizing is stricter: an artifact is eligible only when it explicitly
-    // carries executable net-trade outcomes, a matching horizon, and sufficient
+    // carries completed executable paper-trade outcomes, a matching horizon and
+    // mandate version, an OOS payoff ratio from those same outcomes, and sufficient
     // independent OOS evidence. Generic benchmark-neutral P(win) artifacts stay
     // research-only and use the existing flat positionSizePct fallback.
     const pwinModelByMarket = new Map<string, import("@/lib/validation/calibration").CalibrationCoefficients | null>();
-    const pwinArtifactByMarket = new Map<string, { coefficients: import("@/lib/validation/calibration").CalibrationCoefficients | null; calibration: unknown }>();
+    const pwinArtifactByMarket = new Map<string, { coefficients: import("@/lib/validation/calibration").CalibrationCoefficients | null; calibration: unknown; fittedAt: string | null }>();
     const maeMfeByMarket = new Map<string, Awaited<ReturnType<typeof import("@/lib/risk/percentiles").getGlobalMaeMfePercentiles>>>();
     // Build 1 (genome as live control): the promoted champion's genome now
     // governs the exit horizon + MAE/MFE percentiles used to derive dynamic
@@ -457,12 +458,13 @@ export async function POST(req: NextRequest) {
     const horizonByMarket = new Map<string, number>();
     for (const m of activeMarkets) {
       try {
-        const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients,calibration").eq("market", m).eq("kind", "pwin_logistic").maybeSingle();
+        const { data: modelRow } = await supabase.from("model_artifacts").select("coefficients,calibration,fitted_at").eq("market", m).eq("kind", "pwin_executable_paper").maybeSingle();
         pwinArtifactByMarket.set(m, {
           coefficients: (modelRow as any)?.coefficients ?? null,
           calibration: (modelRow as any)?.calibration ?? null,
+          fittedAt: (modelRow as any)?.fitted_at ?? null,
         });
-      } catch { pwinArtifactByMarket.set(m, { coefficients: null, calibration: null }); }
+      } catch { pwinArtifactByMarket.set(m, { coefficients: null, calibration: null, fittedAt: null }); }
       const g = await loadChampionGenome(supabase, m as "us" | "india");
       genomeByMarket.set(m, g);
       const mandate = mandateByMarket.get(m) ?? await loadTradingMandate(supabase, m as "us" | "india");
@@ -471,7 +473,10 @@ export async function POST(req: NextRequest) {
       const pwinArtifact = pwinArtifactByMarket.get(m);
       pwinModelByMarket.set(
         m,
-        pwinArtifact?.coefficients && isExecutableSizingEvidence(pwinArtifact.calibration, resolvedHorizon)
+        pwinArtifact?.coefficients && isExecutableSizingEvidence(pwinArtifact.calibration, resolvedHorizon, mandate.version)
+          && pwinArtifact.fittedAt != null
+          && Date.parse(pwinArtifact.fittedAt) <= Date.now()
+          && Date.now() - Date.parse(pwinArtifact.fittedAt) <= 14 * 24 * 60 * 60 * 1000
           ? pwinArtifact.coefficients
           : null,
       );
@@ -631,7 +636,19 @@ export async function POST(req: NextRequest) {
       const { price, fillPrice, source, retrievedAt, bid, ask, spread } = pf;
       const tradingMandate = mandateByMarket.get(market) ?? await loadTradingMandate(supabase, market as "us" | "india");
       const resolvedHorizonDays = horizonByMarket.get(market) ?? tradingMandate.target_hold_days;
-      const snapshot = mandateSnapshot(tradingMandate, resolvedHorizonDays);
+      const snapshot = {
+        ...mandateSnapshot(tradingMandate, resolvedHorizonDays),
+        executable_outcome_contract: EXECUTABLE_SIZING_OUTCOME_CONTRACT,
+        entry_score_dimensions: {
+          fundamental_score: signal.fundamental_score != null && Number.isFinite(Number(signal.fundamental_score)) ? Number(signal.fundamental_score) : null,
+          technical_score: signal.technical_score != null && Number.isFinite(Number(signal.technical_score)) ? Number(signal.technical_score) : null,
+          sentiment_score: signal.sentiment_score != null && Number.isFinite(Number(signal.sentiment_score)) ? Number(signal.sentiment_score) : null,
+          macro_score: signal.macro_score != null && Number.isFinite(Number(signal.macro_score)) ? Number(signal.macro_score) : null,
+          insider_score: signal.insider_score != null && Number.isFinite(Number(signal.insider_score)) ? Number(signal.insider_score) : null,
+        },
+        entry_score_source: signal.score_source ?? null,
+        entry_scoring_version: signal.scoring_version ?? null,
+      };
 
       // Dynamic R:R (Phase 2): resolve a bounded market-local policy from the
       // eligible-long ledger when valid; otherwise use the current mandate.
@@ -742,46 +759,44 @@ export async function POST(req: NextRequest) {
           fundamental_score: signal.fundamental_score, technical_score: signal.technical_score,
           sentiment_score: signal.sentiment_score, macro_score: signal.macro_score, insider_score: signal.insider_score,
         } as any);
-        // Use the actual fill-bound priceTarget/stopLoss distances, not the raw
-        // learned values, so sizing and the position's persisted exit plan share
-        // one payoff ratio after bounds and fallbacks are applied.
-        const targetPctActual = (priceTarget - fillPrice) / fillPrice;
-        const stopPctActual = (fillPrice - stopLoss) / fillPrice;
-        const payoffRatio = Math.abs(targetPctActual) / Math.max(0.001, Math.abs(stopPctActual));
-        pWinForSizing = pWin;
-        payoffRatioForSizing = payoffRatio;
-        // kellyPositionSizePct works in FRACTIONS (0.10 = 10%) and returns a
-        // fraction; positionSizePct here is a PERCENT (e.g. 10). Convert the
-        // caps to fractions and scale the result back to percent. (Previously
-        // percent-scale caps were passed into the fraction API, so the clamp
-        // floor pinned every position to exactly the floor value regardless of
-        // edge — conviction scaling was silently dead.) A no-edge result is 0,
-        // which the finite/≤0 guard below correctly turns into a skip rather
-        // than opening a floor-sized position.
-        const kellyFrac = kellyPositionSizePct(pWin, payoffRatio, {
-          halfKellyCap: kellyCapPct / 100,
-          floorPct: kellyFloorPct / 100,
-        });
-        proposedSizePct = kellyFrac * 100;
+        // The payoff ratio is the walk-forward OOS mean-win / abs(mean-loss)
+        // from the same closed executable paper-trade cohort as P(win). Do not
+        // mix a net-P&L probability with the nominal stop/target geometry.
+        const evidence = pwinArtifactByMarket.get(market)?.calibration as any;
+        const payoffRatio = Number(evidence?.payoff_ratio);
+        if (!Number.isFinite(payoffRatio) || payoffRatio <= 0) {
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "sizing", outcome: "fallback", reason: "executable_payoff_ratio_unavailable" });
+        } else {
+          pWinForSizing = pWin;
+          payoffRatioForSizing = payoffRatio;
+          // kellyPositionSizePct works in FRACTIONS (0.10 = 10%) and returns a
+          // fraction; positionSizePct here is a PERCENT (e.g. 10). Convert the
+          // caps to fractions and scale the result back to percent. A no-edge
+          // result is 0 and remains a skip rather than a floor-sized fill.
+          const kellyFrac = kellyPositionSizePct(pWin, payoffRatio, {
+            halfKellyCap: kellyCapPct / 100,
+            floorPct: kellyFloorPct / 100,
+          });
+          proposedSizePct = kellyFrac * 100;
+        }
       }
 
-      // A generic calibration curve (the current artifact predicts positive
-      // benchmark-neutral forward return) is not an executable trade-win
-      // probability. Record why we are using the pre-existing flat-size
-      // fallback; do not let that incompatible model silently veto candidates.
+      // Generic benchmark-neutral calibration is research-only, not an
+      // executable paper-P&L probability. Record the safe flat-size fallback.
       const pwinArtifact = pwinArtifactByMarket.get(market);
       if (sizing.mode === "half_kelly" && !pwinModel && pwinArtifact?.coefficients) {
         await logStage(supabase, {
           signal_id: signal.id, symbol: signal.symbol, market,
-          stage: "sizing", outcome: "fallback", reason: "incompatible_probability_outcome_contract",
+          stage: "sizing", outcome: "fallback", reason: "executable_probability_evidence_not_qualified",
           detail: {
             mode: sizing.mode,
             applied: false,
             fallback: "configured_flat_position_size",
             model_present: true,
-            required_outcome_contract: "executable_net_trade_pnl_v1",
+            required_outcome_contract: "executable_paper_trade_pnl_v1",
             required_horizon_sessions: horizonByMarket.get(market) ?? null,
-            note: "benchmark-neutral return calibration is research evidence, not probability of this stop/target trade closing profitably",
+            required_mandate_version: mandateByMarket.get(market)?.version ?? null,
+            note: "only fresh, matching-mandate closed paper P&L evidence can size with Kelly; otherwise configured flat sizing applies",
           },
         });
       }

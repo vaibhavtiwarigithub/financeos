@@ -455,7 +455,7 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     runner: "Supabase pg_cron → Vercel",
     editable: false,
     description:
-      "Learning-core Phase 2 — weekly refit of the calibrated P(win) sizing model per market (dormant until 60+ matured labels exist).",
+      "Weekly market-local calibration refresh. Generic benchmark-neutral calibration remains research-only; executable paper sizing evidence is produced only from fully closed, tagged paper trades and stays unqualified until its strict OOS, independent-block, class-balance, horizon, mandate, and freshness gates pass.",
     handoff: null,
     agentRunsType: null,
   },

@@ -71,6 +71,8 @@ describe("executable outcome gate for Kelly sizing", () => {
   const valid = {
     outcome_contract: EXECUTABLE_SIZING_OUTCOME_CONTRACT,
     horizon_sessions: 10,
+    mandate_version: 3,
+    payoff_ratio: 1.5,
     validation: {
       accepted: true as const,
       oos_sample_count: 300,
@@ -84,10 +86,12 @@ describe("executable outcome gate for Kelly sizing", () => {
     expect(isExecutableSizingEvidence([{ decile: 0, predictedMean: 0.4, realizedWinRate: 0.5, n: 100 }], 10)).toBe(false);
   });
 
-  it("accepts only explicit executable net-trade outcomes with matching horizon and evidence floors", () => {
-    expect(isExecutableSizingEvidence(valid, 10)).toBe(true);
+  it("accepts only executable paper outcomes with matching horizon, mandate, payoff, and evidence floors", () => {
+    expect(isExecutableSizingEvidence(valid, 10, 3)).toBe(true);
     expect(isExecutableSizingEvidence(valid, 5)).toBe(false);
-    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, independent_horizon_blocks: 49 } }, 10)).toBe(false);
-    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, positive_outcomes: 19 } }, 10)).toBe(false);
+    expect(isExecutableSizingEvidence(valid, 10, 2)).toBe(false);
+    expect(isExecutableSizingEvidence({ ...valid, payoff_ratio: 0 }, 10, 3)).toBe(false);
+    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, independent_horizon_blocks: 49 } }, 10, 3)).toBe(false);
+    expect(isExecutableSizingEvidence({ ...valid, validation: { ...valid.validation, positive_outcomes: 19 } }, 10, 3)).toBe(false);
   });
 });
