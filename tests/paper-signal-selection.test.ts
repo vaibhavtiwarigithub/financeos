@@ -56,4 +56,29 @@ describe("paper signal selection", () => {
     expect(result.selected.map(signal => signal.id)).toEqual(["new"]);
     expect(result.excludedIds.sort()).toEqual(["held-new", "held-old"]);
   });
+
+  it("ranks held-name top-ups separately and retains only the best fresh signal per held symbol", () => {
+    const held = new Set(["AAA"]);
+    const rows = [
+      row("held-old", "AAA", 88, "2026-07-22T10:00:00Z"),
+      row("held-best", "aaa", 94, "2026-07-22T11:00:00Z"),
+      row("new-best", "BBB", 91, "2026-07-22T10:00:00Z"),
+      row("new-next", "CCC", 80, "2026-07-22T10:00:00Z"),
+    ];
+
+    const result = selectBestPaperSignals(rows, "us", 1, { heldSymbols: held, topUpLimit: 8 });
+
+    expect(result.selected.map(signal => signal.id)).toEqual(["new-best"]);
+    expect(result.topUpCandidates.map(signal => signal.id)).toEqual(["held-best"]);
+    expect(result.duplicateIds).toContain("held-old");
+  });
+
+  it("does not mix a held symbol's US top-up into the India pipeline", () => {
+    const rows = [
+      row("us", "ABC", 95, "2026-07-22T10:00:00Z", "us"),
+      row("india", "ABC", 90, "2026-07-22T10:00:00Z", "india"),
+    ];
+    expect(selectBestPaperSignals(rows, "india", 10, { heldSymbols: new Set(["ABC"]) }).topUpCandidates.map(x => x.id)).toEqual(["india"]);
+    expect(selectBestPaperSignals(rows, "us", 10, { heldSymbols: new Set(["ABC"]) }).topUpCandidates.map(x => x.id)).toEqual(["us"]);
+  });
 });
