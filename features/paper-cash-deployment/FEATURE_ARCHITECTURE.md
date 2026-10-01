@@ -5,12 +5,16 @@ commit `a9b8c3abae1b4eb1a4edf031ac6d58af7d30d2e7` (Vercel deployment
 `dpl_D3XZ5KminbCmyFTXGxd8XUDXJ4Xh`, READY 2026-09-29). The paper-only cap migration
 `20260929215748` is applied. This does not enable or alter live trading.
 
-Implementation status of the 2026-10-01 owner-approved top-up amendment: code and
-guarded migration are being validated on top of `origin/main`; they are not yet
-deployed. The existing production trigger was confirmed to reject all ordinary
-buy-lot inserts into an open alpha symbol, so the migration adds only an atomic,
-transaction-local bypass within the validated `execute_paper_fill` RPC. Do not
-describe top-ups as active until that migration and the matching route deploy.
+Implementation status of the 2026-10-01 owner-approved top-up amendment: merged
+to `main` as PR #36 (`0f3c51e6`) and deployed READY to production as
+`dpl_HVVTG4HvFM5MwmLcAMwwRQTdUgMx` on 2026-10-01. Guarded migration
+`20261001190231_qualified_paper_topups` is applied and its service-role-only RPC
+grants and once-per-session fill guard were verified in production. The matching
+US/India route is active. No forced fills were run; confirm the first normal
+market-local paper runs report `cash_deployment` and any qualifying top-up fills.
+The production anti-pyramid trigger still rejects ordinary buy-lot inserts into
+an open alpha symbol; only the atomic, transaction-local authorization inside
+the validated `execute_paper_fill` path can permit a qualified add.
 
 ## Why
 
