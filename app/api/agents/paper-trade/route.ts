@@ -27,7 +27,7 @@ import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
-import { paperAllocationSpend, paperIntendedSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
+import { paperAllocationSpend, paperDailyCapQuantity, paperIntendedSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
@@ -1121,26 +1121,47 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Daily paper notional cap (per market): stop once the day's cumulative paper
-      // BUY notional would exceed the cap. BUY only — never blocks a sell/exit.
+      // Daily paper BUY cap: reduce only this already-approved quantity when
+      // possible. The atomic fill RPC rechecks the cap under the market lock.
       const dailyCapPaper = market === "india" ? dailyCapInrPaper : dailyCapUsdPaper;
+      const dailyCapSessionStart = cutoffByMarket.get(market) ?? null;
+      let dailyCapAdjustment: Record<string, number> | null = null;
       if (dailyCapPaper != null) {
-        // Market-local trading-day window (not UTC midnight) — matches the
-        // freshness cutoff so the cap counts the same day's fills.
-        const dayStartIso = cutoffByMarket.get(market) ?? new Date(new Date().setUTCHours(0, 0, 0, 0)).toISOString();
-        const { data: todayFills } = await supabase.from("paper_trades")
-          .select("total_value").eq("market", market).eq("order_side", "buy")
-          .gte("executed_at", dayStartIso);
-        const spentToday = (todayFills ?? []).reduce((s: number, r: any) => s + Number(r.total_value ?? 0), 0);
-        if (spentToday + totalCost > Number(dailyCapPaper)) {
+        if (!dailyCapSessionStart || !Number.isFinite(Number(dailyCapPaper)) || Number(dailyCapPaper) <= 0) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "daily_paper_cap_unavailable" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_cap_unavailable" });
+          continue;
+        }
+        const { data: todayFills, count: todayFillsCount, error: todayFillsError } = await supabase.from("paper_trades")
+          .select("total_value", { count: "exact" }).eq("market", market).eq("order_side", "buy")
+          .gte("executed_at", dailyCapSessionStart);
+        const buyAmounts = (todayFills ?? []).map((r: any) => r.total_value == null ? NaN : Number(r.total_value));
+        if (todayFillsError || !todayFills || todayFillsCount !== todayFills.length
+          || buyAmounts.some((value: number) => !Number.isFinite(value) || value < 0)) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "daily_paper_cap_history_unavailable" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_cap_history_unavailable" });
+          continue;
+        }
+        const spentToday = buyAmounts.reduce((sum: number, value: number) => sum + value, 0);
+        const approvedQty = paperDailyCapQuantity(market as "us" | "india", qty, fillPrice, spentToday, dailyCapPaper);
+        if (approvedQty == null) {
           await recordMissedEntry({ signal, market: market as "us" | "india", currency: currency as "USD" | "INR", runId,
             referencePrice: price, fillPrice, qty, notional: totalCost, source, retrievedAt, decisionAt: riskPlanProvenance.observed_at, stopLoss: appliedStopLoss, priceTarget: appliedPriceTarget,
             horizon: resolvedHorizonDays, riskPlan: appliedRiskPlanProvenance,
-            reason: "daily_paper_notional_cap", detail: { spentToday, dailyCap: Number(dailyCapPaper), proposedNotional: totalCost } });
+            reason: "daily_paper_notional_cap", detail: { spentToday, dailyCap: Number(dailyCapPaper), proposedNotional: totalCost, remainingAllowance: Number(dailyCapPaper) - spentToday } });
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "daily_paper_notional_cap" });
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "rejected", reason: "daily_paper_notional_cap", detail: { spentToday, totalCost, cap: Number(dailyCapPaper) } });
           continue;
+        }
+        if (approvedQty < qty) {
+          dailyCapAdjustment = { proposedQty: qty, proposedNotional: totalCost, approvedQty,
+            approvedNotional: approvedQty * fillPrice, spentToday, dailyCap: Number(dailyCapPaper) };
+          qty = approvedQty;
+          totalCost = qty * fillPrice;
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "shrunk", reason: "daily_paper_notional_cap_resize", detail: dailyCapAdjustment });
         }
       }
 
@@ -1169,7 +1190,7 @@ export async function POST(req: NextRequest) {
           p_max_sector_names: maxPerSector,
           p_per_trade_cap: perTradeCapPaper,
           p_daily_notional_cap: dailyCapPaper,
-          p_day_start: cutoffByMarket.get(market) ?? null,
+          p_day_start: dailyCapSessionStart,
         } as any);
         const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
           /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
@@ -1344,14 +1365,14 @@ export async function POST(req: NextRequest) {
       openNames.add(String(signal.symbol).toUpperCase());
       openAlphaNamesByMarket.set(market, openNames);
 
-      await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `${qty} @ ${fillPrice.toFixed(2)}`, detail: { qty, fillPrice, totalCost, sizedPct } });
+      await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution", outcome: "filled", reason: `${qty} @ ${fillPrice.toFixed(2)}`, detail: { qty, fillPrice, totalCost, sizedPct, dailyCapAdjustment } });
 
       const sym = market === "india" ? "₹" : "$";
       const { error: journalErr } = await supabase.from("decision_journal").insert({
         entry_type: "paper_fill", symbol: signal.symbol, signal_id: signal.id, market,
         paper_event_id: orderEventId,
         summary: `Paper ${isTopUp ? "top-up" : "buy"} (${market.toUpperCase()}): ${qty} × ${signal.symbol} @ ${sym}${fillPrice.toFixed(2)} (score ${signal.analyst_score}, source: ${source})`,
-        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, entry_kind: isTopUp ? "add_to_winner" : "new_position", prior_weighted_cost: isTopUp ? Number(existingPosition.avg_cost) : null, applied_stop_loss: appliedStopLoss, applied_price_target: appliedPriceTarget, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, p_win: pWinForSizing, payoff_ratio: payoffRatioForSizing, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
+        calculations: { market, currency, qty, fill_price: fillPrice, total_cost: totalCost, spread_applied: spread, analyst_score: signal.analyst_score, entry_kind: isTopUp ? "add_to_winner" : "new_position", prior_weighted_cost: isTopUp ? Number(existingPosition.avg_cost) : null, applied_stop_loss: appliedStopLoss, applied_price_target: appliedPriceTarget, daily_cap_adjustment: dailyCapAdjustment, trading_mandate: snapshot, sizing: { flat_pct: positionSizePct, kelly_proposed_pct: proposedSizePct, final_pct: sizedPct, used_calibrated_model: !!pwinModel, p_win: pWinForSizing, payoff_ratio: payoffRatioForSizing, mode: sizing.mode, cap_pct: kellyCapPct, floor_pct: kellyFloorPct, adjustments: constructed.orders[0]?.adjustments ?? [] }, genome: { source: genomeR?.source ?? "default", hash: genomeR?.hash ?? null, horizon_days: genomeR?.genome.horizon_days ?? 10, score_threshold: genomeR?.genome.entry.score_threshold ?? 60 } },
         evidence_refs: [{ table: "agent_signals", id: signal.id, description: "qualifying signal" }],
         has_verified_facts: true, has_calculations: true, resolved: false,
       });
