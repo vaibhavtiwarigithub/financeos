@@ -27,3 +27,15 @@ describe("stale-check market holidays", () => {
     expect(src.indexOf("isExpectedMarketHoliday(job, expectedDayStart)")).toBeLessThan(src.indexOf("const { data: todaysRuns }"));
   });
 });
+
+describe("stale-check also watches the leveraged doors and stalled producers", () => {
+  const src = readFileSync("app/api/alerts/stale-check/route.ts", "utf8");
+  it("expects each door to have a run by 18:00 UTC on trading days", () => {
+    expect(src).toContain('agentType: `${symbol.toLowerCase()}_cron`');
+    expect(src).toContain('label: `Leveraged door ${symbol} (US)`');
+  });
+  it("raises and resolves producer-stalled alerts", () => {
+    expect(src).toContain("detectStalledProducers(");
+    expect(src).toContain("producer-stalled:");
+  });
+});

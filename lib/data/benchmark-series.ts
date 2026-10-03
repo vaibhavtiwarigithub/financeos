@@ -71,15 +71,21 @@ async function loadUsBenchmark(supabase: any): Promise<BenchmarkSeries> {
   // price_cache is filled by the daily kairos-price-cache-fill job. Reading it is a
   // DB read, not a provider call. limit 260 mirrors the pre-existing regime read so
   // regime features stay byte-identical.
+  //
+  // NEWEST 260 bars, returned oldest-first. This read used `ascending: true` + `limit(260)`, which returns the
+  // OLDEST 260 rows. SPY has had >260 rows since early August 2026 (303 on 2026-10-03), so the series froze at
+  // 2026-08-03, assessSeries flagged it stale_series, and beta/RS and the regime features were null for every US
+  // research symbol for two months ("Beta/RS will be null" on every symbol in every run).
   const { data } = await supabase
     .from("price_cache")
     .select("date, close")
     .eq("symbol", BENCHMARK_BY_MARKET.us)
-    .order("date", { ascending: true })
+    .order("date", { ascending: false })
     .limit(260);
   const bars = (data ?? [])
     .map((r: any) => ({ date: String(r.date), close: parseFloat(r.close) }))
-    .filter((b: BenchmarkBar) => Number.isFinite(b.close) && b.close > 0);
+    .filter((b: BenchmarkBar) => Number.isFinite(b.close) && b.close > 0)
+    .sort((a: BenchmarkBar, b: BenchmarkBar) => a.date.localeCompare(b.date));
 
   // Same rule as every other price_cache consumer: the BAR'S market date decides,
   // not when the row was written. Delegated so there is one rule, not four.

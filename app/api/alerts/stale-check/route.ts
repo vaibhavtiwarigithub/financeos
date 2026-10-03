@@ -7,6 +7,7 @@ import { evaluateRunAccounting, parseRunAccounting } from "@/lib/monitoring/run-
 import { checkFreshnessContracts } from "@/lib/monitoring/freshness-contracts";
 import { isTerminalSuccessfulRun, recoveredRunAlert } from "@/lib/monitoring/recovered-run-alerts";
 import { isExpectedMarketHoliday } from "@/lib/monitoring/market-holiday";
+import { detectStalledProducers } from "@/lib/monitoring/producer-stall";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,12 @@ const EXPECTED_JOBS: ExpectedJob[] = [
     recoveryCmd: 'POST /api/agents/learner with {"market":"india"}' },
   { agentType: "edge_scout", label: "EdgeScout (India evidence)", expectedHour: 11, graceHours: 2, requiresIndia: true,
     recoveryCmd: 'POST /api/agents/edge-scout?market=india&maxSymbols=50' },
+  // Leveraged paper doors (SOXL/TQQQ/SQQQ/SOXS). They ran for 11 days without a single agent_runs row (the liveness
+  // write crashed) and nobody was alerted; entry also requires a run <24 h old, so a missing run silently blocks entry.
+  ...(["SOXL", "TQQQ", "SQQQ", "SOXS"] as const).map((symbol) => ({
+    agentType: `${symbol.toLowerCase()}_cron`, label: `Leveraged door ${symbol} (US)`, expectedHour: 16, graceHours: 2,
+    recoveryCmd: `POST /api/agents/${symbol.toLowerCase()}/cron`,
+  })),
 ];
 
 // Convert a UTC Date to ET (America/New_York) wall-clock parts for schedule comparisons.
@@ -299,11 +306,41 @@ async function runCheck() {
   // of the table each job is responsible for actually advance, PER SYMBOL.
   const freshness = await checkFreshnessContracts(svc, { now, includeIndia: indiaEnabled });
 
+  // Upgrade Path producers that keep blocking/erroring are invisible except on the Upgrade Path page.
+  const stalledProducers: string[] = [];
+  try {
+    const { data: producerRuns } = await svc.from("upgrade_path_producer_runs")
+      .select("program_id,market,status,started_at,blockers")
+      .gte("started_at", new Date(now.getTime() - 14 * 86400_000).toISOString())
+      .order("started_at", { ascending: false }).limit(400);
+    const stalled = detectStalledProducers((producerRuns ?? []) as any[]);
+    const stalledKeys = new Set(stalled.map((row) => `producer-stalled:${row.programId}:${row.market}`));
+    for (const row of stalled) {
+      stalledProducers.push(`${row.programId}:${row.market}`);
+      await reportIssue({
+        issueKey: `producer-stalled:${row.programId}:${row.market}`,
+        severity: "warn",
+        category: "cron",
+        title: `Upgrade Path producer stalled: ${row.programId} (${row.market.toUpperCase()})`,
+        detail: [
+          `Its last ${row.runs} runs (${row.firstStartedAt.slice(0, 16)} to ${row.lastStartedAt.slice(0, 16)} UTC) none collected; latest status ${row.lastStatus}.`,
+          row.lastBlocker ? `Latest blocker: ${row.lastBlocker}` : "No blocker text was recorded.",
+          "The evidence this program exists to collect is not accumulating. Check Upgrade Path > this program and the producer-run details.",
+        ].join(" · "),
+        autoExpireAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+      }, svc);
+    }
+    // Resolve a stalled alert once a program's latest run collects again.
+    const programs = new Set<string>((producerRuns ?? []).map((row: any) => `producer-stalled:${row.program_id}:${row.market}`));
+    for (const key of programs) if (!stalledKeys.has(key)) await resolveIssue(key, svc);
+  } catch { /* best-effort: monitoring of monitors must never break the check */ }
+
   return NextResponse.json({
     checked: true,
     hour,
     indiaEnabled,
     results,
+    stalledProducers,
     freshness: freshness.map((f) => ({
       contract: f.contractId, version: f.version, breached: f.breached,
       coverage: Number(f.coverage.toFixed(3)), scopes: f.totalScopes,
