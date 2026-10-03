@@ -58,6 +58,9 @@ row is the only entry candidate.
   leaves the staged row informational only.
 - **CapitalRotation:** latest-score lookup requires session validation, so a
   staged score cannot change weakest-holding selection or a rotation edge.
+- **Fundamentals Research "Why" column:** a staged research score is labeled
+  non-executable with its completed evidence session. It cannot replace the
+  last recorded paper-trader decision or imply the trader skipped a signal.
 
 ## Closed-Day Scheduling
 

@@ -6,7 +6,7 @@ import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { latestExecutionEvent, liveDecisionEvents, paperTradeEvents } from "@/lib/research/trade-timeline";
 import { createServiceClient } from "@/lib/supabase/service";
-import { explainTradeWhy, TRADING_STAGES, type ObservationRow, type StageEventRow } from "@/lib/trading/trade-why";
+import { explainTradeWhy, TRADING_STAGES, type ObservationRow, type ResearchSignalState, type StageEventRow } from "@/lib/trading/trade-why";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +90,21 @@ async function loadWhyInputs(sb: Sb, keys: string[]) {
   }
 
   const observations = new Map<string, ObservationRow>();
+  // A research stage says the score passed, but only the paired signal says
+  // whether it was a closed-day, non-executable catch-up. Read that state by
+  // exact signal ID; never infer tradability from the research timestamp.
+  const researchSignalIds = [...new Set([...events.values()]
+    .flatMap((group) => [...group.values()])
+    .filter((event) => event.stage === "research" && event.signal_id)
+    .map((event) => event.signal_id as string))];
+  const researchStates = new Map<string, ResearchSignalState>();
+  for (const ids of chunks(researchSignalIds, 100)) {
+    const { data, error } = await sb.from("agent_signals")
+      .select("id,status,session_validated,as_of_session")
+      .in("id", ids);
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) researchStates.set(row.id, row as ResearchSignalState);
+  }
   const needObs = keys.filter((k) => !events.has(k)).slice(0, WHY_OBS_KEY_CAP);
   for (const group of chunks(needObs, WHY_OBS_CONCURRENCY)) {
     await Promise.all(group.map(async (k) => {
@@ -108,6 +123,12 @@ async function loadWhyInputs(sb: Sb, keys: string[]) {
   return {
     eventsFor: (k: string) => [...(events.get(k)?.values() ?? [])],
     observationFor: (k: string) => observations.get(k) ?? null,
+    latestResearchStateFor: (k: string) => {
+      const latestResearch = [...(events.get(k)?.values() ?? [])]
+        .filter((event) => event.stage === "research")
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      return latestResearch?.signal_id ? researchStates.get(latestResearch.signal_id) ?? null : null;
+    },
   };
 }
 
@@ -309,6 +330,7 @@ export async function GET(req: NextRequest) {
       market: r.market ?? "us",
       events: why.eventsFor(whyKey(r)),
       observation: why.observationFor(whyKey(r)),
+      latestResearchState: why.latestResearchStateFor(whyKey(r)),
       lastTrade: paperTradeMap.get(whyKey(r)) ?? null,
     }) : null,
     fundamental_breakdown: breakdownWithStatus(r.fundamental_breakdown, "fundamental", r.market ?? "us"),

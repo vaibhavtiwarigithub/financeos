@@ -40,6 +40,27 @@ describe("explainTradeWhy — production reason shapes", () => {
     expect(all).toContain("Re-scored 09-15");
   });
 
+  it("SUNTV closed-day research preserves the last actual paper rejection", () => {
+    const w = explainTradeWhy({ market: "india", now: new Date("2026-10-02T12:00:00Z"), events: [
+      ev("research", "passed", "Eligible: long direction and score 99 >= threshold 60", "2026-09-30T07:00:14Z", null, "sep-signal"),
+      ev("execution", "rejected", "daily_paper_notional_cap", "2026-09-30T07:45:09Z", { cap: 500000, spentToday: 376827.14, totalCost: 126783.36 }, "sep-signal"),
+      ev("research", "passed", "Eligible: long direction and score 91 >= threshold 60", "2026-10-02T05:10:13Z", null, "oct-staged"),
+    ], latestResearchState: { status: "weekend_staged", session_validated: false, as_of_session: "2026-10-01" } });
+    expect(w.outcome).toBe("not_bought");
+    expect(w.headline).toBe("Not bought 09-30: the paper buying limit for that session was reached.");
+    expect(w.bullets.join(" ")).toContain("Research staged 10-02 from the 2026-10-01 completed session");
+    expect([w.headline, ...w.bullets].join(" ")).not.toContain("paper trader has not acted");
+  });
+
+  it("a staged signal without a prior trading decision is not described as ignored", () => {
+    const w = explainTradeWhy({ market: "india", now: new Date("2026-10-02T12:00:00Z"), events: [
+      ev("research", "passed", "Eligible: long direction and score 91 >= threshold 60", "2026-10-02T05:10:13Z", null, "staged"),
+    ], latestResearchState: { status: "weekend_staged", session_validated: false, as_of_session: "2026-10-01" } });
+    expect(w.outcome).toBe("no_trade");
+    expect(w.headline).toContain("Research staged 10-02");
+    expect(w.bullets.join(" ")).toContain("not tradable until a fresh market-session re-score");
+  });
+
   it("multi-clause constructor denial => not bought, binding limit + sector, shadow stages ignored", () => {
     const reason = "portfolio_constructor_denied: name_cap: 20.00% -> 12.00% (existing 0.00%, cap 12%); gross_cap: 12.00% -> 0.00% (book+candidates would be 92.00%, cap 80%); stacked_bet(Energy): 0.00% -> 0.00% (sector already holds 3 positions); denied: scaled size 0.000% below minimum viable 0.5%";
     const w = explainTradeWhy({ market: "us", now, events: [
