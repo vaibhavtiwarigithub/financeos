@@ -6,6 +6,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { evaluateRunAccounting, parseRunAccounting } from "@/lib/monitoring/run-accounting";
 import { checkFreshnessContracts } from "@/lib/monitoring/freshness-contracts";
 import { isTerminalSuccessfulRun, recoveredRunAlert } from "@/lib/monitoring/recovered-run-alerts";
+import { isExpectedMarketHoliday } from "@/lib/monitoring/market-holiday";
 
 export const dynamic = "force-dynamic";
 
@@ -158,6 +159,7 @@ async function runCheck() {
     if (expectedDayOfWeek < 1 || expectedDayOfWeek > 5) continue;
     if (job.fridayOnly && expectedDayOfWeek !== 5) continue;
     if (job.requiresIndia && !indiaEnabled) continue;
+    if (isExpectedMarketHoliday(job, expectedDayStart)) continue;
     const expectedDayEnd = new Date(expectedDayStart.getTime() + 86400_000);
     const dateStr = expectedDayStart.toISOString().slice(0, 10);
 

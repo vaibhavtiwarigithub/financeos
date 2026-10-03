@@ -2063,6 +2063,13 @@
       "nodeId": "SOXLCRON,TQQQCRON,SQQQCRON,SOXSCRON,RESEARCH,PAPER",
       "label": "Leveraged paper doors scheduled + routed from research",
       "reason": "0 agent_runs and 0 leveraged paper trades: schedules were vercel.json only (Hobby) and planners required a bid/ask production never has. Added 12 pg_cron jobs, modeled-spread quote fallback, research gate per door, research always scores the four symbols, PaperTrader logs routed_to_leveraged_door. Generic PaperTrader and rotation still never trade them."
+    },
+    {
+      "date": "2026-10-03",
+      "event": "modify",
+      "nodeId": "EXITSTOP,RESEARCH,WATCHDOG,SOXLCRON,TQQQCRON,SQQQCRON,SOXSCRON",
+      "label": "Review pass: leveraged doors now scored first, ATR forward book unblocked, chart-pattern v2, holiday-aware stale-check, door liveness jobs",
+      "reason": "Leveraged doors never entered (symbols were budget-deferred on weekdays so no session-validated signal); ATR forward book stalled on an inverted cumulative-population check and a pre-open owner sale treated as ambiguous; chart-pattern v1 flagged a standing state, not a breakout; stale-check alerted on an NSE holiday; Monday door entries blocked by the 24 h liveness rule. Fixed with regression tests; 5 pg_cron jobs added."
     }
   ]
 }

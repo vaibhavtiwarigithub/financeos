@@ -1,11 +1,17 @@
 import type { Candle } from "@/lib/data/technicals";
 
-export const CHART_PATTERN_SHADOW_VERSION = "double-reversal.close.v1";
+// v2 (2026-10-03): confirmation is the FIRST close through the neckline after the second swing, and the
+// attempt only counts while that breakout is at most `maxConfirmationAgeBars` sessions old. v1 labelled ANY
+// day with the latest close beyond the neckline as "confirmed" (AMD was re-detected daily, 15% above its
+// neckline), which is a trend/momentum state rather than a breakout event and re-counted one pattern many
+// times. v1 rows are retained, labelled v1, and excluded from v2 verdicts.
+export const CHART_PATTERN_SHADOW_VERSION = "double-reversal.close.v2";
 export const CHART_PATTERN_CONFIG = Object.freeze({
   swingBars: 3,
   extremeTolerancePct: 0.02,
   minimumRetracementPct: 0.03,
   maxCandles: 60,
+  maxConfirmationAgeBars: 2,
 });
 
 export type ChartPatternType = "double_top" | "double_bottom";
@@ -42,10 +48,19 @@ function pivots(closes: number[], kind: "high" | "low", radius: number): Pivot[]
   }
   return result;
 }
+/** Index of the first close in [from, to] strictly beyond `level`, else null. */
+function firstCloseBeyond(closes: number[], from: number, to: number, level: number, side: "above" | "below"): number | null {
+  for (let i = from; i <= to; i++) {
+    if (side === "above" ? closes[i] > level : closes[i] < level) return i;
+  }
+  return null;
+}
+
 /**
  * Causal, close-only double reversal detector. Only completed, ordered bars are
  * used. Close-only geometry avoids mixing adjusted closes with raw OHLC around
- * splits in provider feeds. Confirmation must be the latest bar in the input.
+ * splits in provider feeds. Confirmation is the first close through the neckline after the second swing and
+ * must be at most `maxConfirmationAgeBars` sessions before the latest bar.
  */
 export function detectConfirmedDoubleReversal(input: Candle[]): ChartPatternAttempt {
   const candles = input
@@ -75,14 +90,15 @@ export function detectConfirmedDoubleReversal(input: Candle[]): ChartPatternAtte
       const meanTop = (first.price + second.price) / 2;
       if (Math.abs(first.price - second.price) / meanTop > CHART_PATTERN_CONFIG.extremeTolerancePct) continue;
       if ((meanTop - trough.price) / meanTop < CHART_PATTERN_CONFIG.minimumRetracementPct) continue;
-      if (closes[latest] >= trough.price) continue;
+      const breakIndex = firstCloseBeyond(closes, second.index + 1, latest, trough.price, "below");
+      if (breakIndex == null || latest - breakIndex > CHART_PATTERN_CONFIG.maxConfirmationAgeBars) continue;
       candidates.push({
-        confirmationIndex: latest,
+        confirmationIndex: breakIndex,
         pattern: {
           patternType: "double_top", swing1Date: candles[first.index].date, swing1Price: first.price,
           swing2Date: candles[second.index].date, swing2Price: second.price,
           necklineDate: candles[trough.index].date, necklinePrice: trough.price,
-          confirmationDate: candles[latest].date, confirmationPrice: closes[latest],
+          confirmationDate: candles[breakIndex].date, confirmationPrice: closes[breakIndex],
         },
       });
     }
@@ -97,14 +113,15 @@ export function detectConfirmedDoubleReversal(input: Candle[]): ChartPatternAtte
       const meanBottom = (first.price + second.price) / 2;
       if (Math.abs(first.price - second.price) / meanBottom > CHART_PATTERN_CONFIG.extremeTolerancePct) continue;
       if ((peak.price - meanBottom) / meanBottom < CHART_PATTERN_CONFIG.minimumRetracementPct) continue;
-      if (closes[latest] <= peak.price) continue;
+      const breakIndex = firstCloseBeyond(closes, second.index + 1, latest, peak.price, "above");
+      if (breakIndex == null || latest - breakIndex > CHART_PATTERN_CONFIG.maxConfirmationAgeBars) continue;
       candidates.push({
-        confirmationIndex: latest,
+        confirmationIndex: breakIndex,
         pattern: {
           patternType: "double_bottom", swing1Date: candles[first.index].date, swing1Price: first.price,
           swing2Date: candles[second.index].date, swing2Price: second.price,
           necklineDate: candles[peak.index].date, necklinePrice: peak.price,
-          confirmationDate: candles[latest].date, confirmationPrice: closes[latest],
+          confirmationDate: candles[breakIndex].date, confirmationPrice: closes[breakIndex],
         },
       });
     }

@@ -158,7 +158,16 @@ export async function POST(req: NextRequest) {
           .eq("program_id", ATR_FORWARD_PROGRAM_ID).eq("market", "us")
           .eq("program_version", ATR_STOP_FORWARD_PROGRAM_VERSION)
           .order("session_date", { ascending: true }).range(from, to), "ATR paired-book attribution source");
-        const attribution = buildShadowBookAttribution(snapshots, ATR_FORWARD_BLOCK_SESSIONS);
+        // Derived attribution must never mask the collection that already succeeded: a refusal here (for example a
+        // corrupted history) used to throw, turning a written snapshot into a failed producer run with no detail.
+        let attribution: ReturnType<typeof buildShadowBookAttribution>;
+        let attributionRefusal: string | null = null;
+        try {
+          attribution = buildShadowBookAttribution(snapshots, ATR_FORWARD_BLOCK_SESSIONS);
+        } catch (error) {
+          attributionRefusal = error instanceof Error ? error.message : String(error);
+          attribution = { state: "collecting", reason: `Attribution refused: ${attributionRefusal}`, asOfSession: result.observedSession, independentBlocks: 0 };
+        }
         let attributionWrite: "inserted" | "already_present" | "collecting" = "collecting";
         if (attribution.state === "measured") {
           attributionWrite = await writeAttributionRow(svc, attribution.row);
@@ -180,7 +189,7 @@ export async function POST(req: NextRequest) {
             status: result.status,
             expectedSession: result.expectedSession,
             observedSession: result.observedSession,
-            blockers: result.blockers,
+            blockers: attributionRefusal ? [...result.blockers, `Attribution refused: ${attributionRefusal}`] : result.blockers,
             details: {
               evidenceType: "forward_paired_book_snapshot",
               written: result.written,

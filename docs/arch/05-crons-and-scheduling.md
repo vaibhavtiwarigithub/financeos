@@ -1,4 +1,6 @@
 # Kairos — Crons & Scheduling
+> 2026-10-03: **5 pg_cron jobs added** (migration `20261003143635`): `kairos-{soxl,tqqq,sqqq,soxs}-open` at `35-38 14 * * 1-5` (in-session liveness before each entry window; each door's planner needs a successful run <24 h old, and Monday's entry had only Friday's close run ~67 h earlier, so Monday/post-holiday entries were structurally blocked in EDT months) and `kairos-corporate-action-coverage-us-evening` at `35,41,47,53 21 * * 1-5` (symbols bought that afternoon had no Massive coverage at the 22:15 UTC ATR collector step, blocking the whole session, e.g. MU 2026-09-28).
+>
 > 2026-09-28: **12 pg_cron jobs added for the leveraged paper doors** (`kairos-{soxl,tqqq,sqqq,soxs}-entry` `M 15,16 * * 1-5` [M=5/25/40/0]; `-close-edt` `M 20 * 3-10 1-5`; `-close-est` `M 21 * 11,12,1,2 1-5` [M=15/20/25/30]), `GET`, 58 s timeout. The matching `vercel.json` entries never fired (Vercel Hobby) and are superseded; pg_cron is the executor. See docs/arch/03-agents.md.
 >
 > 2026-09-28: `kairos-scan-india-refresh` (10:45 UTC weekdays) now orders its 600-name slice with a per-day rotating tie-break instead of NSE list order (see `docs/arch/03-agents.md`); no schedule change. Note the cron's `succeeded` status only means the request was dispatched.

@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Candle } from "@/lib/data/technicals";
 import {
+  CHART_PATTERN_SHADOW_VERSION,
   detectConfirmedDoubleReversal,
   summarizeChartPatternEvidence,
   summarizeIndependentPatternBlocks,
@@ -36,6 +38,31 @@ describe("chart pattern shadow", () => {
     expect(detectConfirmedDoubleReversal(bars({ 8: 100, 14: 94, 21: 100, 31: 95 })).status).toBe("no_pattern");
     expect(detectConfirmedDoubleReversal(bars({ 8: 100, 9: 100, 14: 94, 21: 100, 31: 93 })).status).toBe("no_pattern");
     expect(detectConfirmedDoubleReversal(bars({ 8: 100, 14: 94, 21: 100 }).slice(0, 20)).status).toBe("insufficient_candles");
+  });
+
+  it("v2: a breakout older than the confirmation window is NOT a detection (v1 re-detected AMD daily, 15% above its neckline)", () => {
+    // double bottom 8/21, neckline 14 = 96, first close through the neckline at bar 24 (97), still above at 31.
+    const old = detectConfirmedDoubleReversal(bars({ 8: 90, 14: 96, 21: 90.5, 24: 97, 25: 98, 26: 99, 27: 100, 28: 101, 29: 102, 30: 103, 31: 104 }));
+    expect(old.status).toBe("no_pattern");
+  });
+
+  it("v2: confirmation is the FIRST close through the neckline, within 2 sessions of the latest bar", () => {
+    // first break at bar 30 (97); bar 31 still above. Latest is 1 bar after the break.
+    const fresh = detectConfirmedDoubleReversal(bars({ 8: 90, 14: 96, 21: 90.5, 30: 97, 31: 98 }));
+    expect(fresh.status).toBe("detected");
+    if (fresh.status === "detected") {
+      expect(fresh.pattern.confirmationDate).toBe("2026-01-31"); // bar 30 = Jan 31, not the latest bar (Feb 1)
+      expect(fresh.pattern.confirmationPrice).toBe(97);
+    }
+    // same for a double top: first close below the trough at bar 29 is 3 bars before the latest bar (31) -> too old
+    expect(detectConfirmedDoubleReversal(bars({ 8: 100, 14: 94, 21: 100, 28: 93, 29: 92, 30: 91, 31: 90 })).status).toBe("no_pattern");
+    expect(detectConfirmedDoubleReversal(bars({ 8: 100, 14: 94, 21: 100, 29: 93, 30: 92, 31: 91 })).status).toBe("detected");
+  });
+
+  it("v2: the detector version is bumped so v1 rows can never be pooled with v2 evidence", () => {
+    expect(CHART_PATTERN_SHADOW_VERSION).toBe("double-reversal.close.v2");
+    const route = readFileSync("app/api/agents/chart-pattern-shadow/route.ts", "utf8");
+    expect(route.match(/eq\("detector_version", CHART_PATTERN_SHADOW_VERSION\)/g)?.length).toBe(2);
   });
 
   it("deduplicates dates and ignores invalid prices before detection", () => {

@@ -110,6 +110,20 @@ export interface AtrStopReplayStepResult {
 
 const positive = (value: number) => Number.isFinite(value) && value > 0;
 
+/** UTC instant of the regular-session open (US 09:30 ET, India 09:15 IST) on a market-local session date. */
+export function regularSessionOpenMs(market: PaperQuantityMarket, session: string): number {
+  const [y, m, d] = session.split("-").map(Number);
+  const zone = market === "us" ? "America/New_York" : "Asia/Kolkata";
+  const [hour, minute] = market === "us" ? [9, 30] : [9, 15];
+  const guess = Date.UTC(y, m - 1, d, hour, minute);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(guess));
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const localAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
+  return guess - (localAsUtc - guess);
+}
+
 function exchangeSessionDateAt(timestamp: string, market: PaperQuantityMarket): string {
   const date = new Date(timestamp);
   if (!timestamp || !Number.isFinite(date.getTime())) throw new Error("Replay event requires a valid exact fill timestamp.");
@@ -291,6 +305,17 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
     rows.push(entry);
     entriesBySymbol.set(symbol, rows);
   }
+  // A recorded full sale that happened BEFORE the regular session opened (e.g. the owner's 12:14 UTC pre-market
+  // consolidation closes) precedes every bar touch that session: the position was already gone at the open, so
+  // the daily bar's stop/target cannot apply and there is no ordering ambiguity. Only such sales are resolved;
+  // an intraday or after-close sale next to a barrier touch is still refused below.
+  const sessionOpenMs = regularSessionOpenMs(input.market, input.session);
+  const soldBeforeOpen = (symbol: string, quantityAtOpen: number): boolean => {
+    const sells = externalExits.get(symbol);
+    if (!sells?.length) return false;
+    if (!sells.every((sell) => Date.parse(sell.filledAt) < sessionOpenMs)) return false;
+    return sells.reduce((sum, sell) => sum + sell.quantity, 0) + 1e-9 >= quantityAtOpen;
+  };
   for (const [symbol, sells] of externalExits) {
     const entries = entriesBySymbol.get(symbol) ?? [];
     if (entries.length) {
@@ -310,6 +335,10 @@ export function advanceAtrStopReplaySession(input: AtrStopReplayStepInput): AtrS
     const bar = bars.get(position.symbol.toUpperCase());
     if (!bar) throw new Error(`Held symbol ${position.symbol} lacks an OHLC bar for ${input.session}.`);
     const isUs = input.market === "us";
+    if (soldBeforeOpen(position.symbol.toUpperCase(), position.quantity)) {
+      positions.push({ ...position }); // removed by the recorded pre-open sale applied below
+      continue;
+    }
     const decision = decideExitLadder({
       market: input.market,
       qty: position.quantity,

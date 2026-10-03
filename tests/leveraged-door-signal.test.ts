@@ -55,7 +55,12 @@ describe("routed design wiring (contract)", () => {
   it("generic paths still block the sleeve and research still scores it", () => {
     const policy = readFileSync("lib/trading/symbol-policy.ts", "utf8");
     expect(policy).toContain('isLeveragedInverseEtf(sym) && !leveragedSleeveExempt');
-    expect(readFileSync("lib/research-agent.ts", "utf8")).toContain("for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate");
+    const research = readFileSync("lib/research-agent.ts", "utf8");
+    expect(research).toContain("for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate");
+    // Must be admitted BEFORE the 186-name watchlist: the wall-clock budget cuts the tail, and the four doors
+    // need a same-weekday session-validated signal (weekend-staged signals are never validated).
+    expect(research.indexOf("for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate"))
+      .toBeLessThan(research.indexOf("for (const sym of watchlist.usManual) addCandidate"));
     expect(readFileSync("app/api/agents/paper-trade/route.ts", "utf8")).toContain("routed_to_leveraged_door");
   });
 });

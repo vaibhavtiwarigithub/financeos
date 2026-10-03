@@ -4,6 +4,7 @@ import {
   atrReplayBookFromShadowState,
   atrReplayBookToShadowState,
   atrStopForEntry,
+  regularSessionOpenMs,
   type AtrStopReplayBook,
   type AtrStopReplayEntry,
   type AtrStopReplayStepInput,
@@ -269,5 +270,39 @@ describe("forward ATR-stop portfolio replay", () => {
   it("refuses the current mixed adjusted-close/raw-range price-cache contract", () => {
     expect(() => advanceAtrStopReplaySession(step({ priceBasis: "mixed_adjusted_close_raw_ohlc" })))
       .toThrow("requires one verified raw-OHLC price basis");
+  });
+});
+
+describe("pre-open external sales (2026-09-29 TSLA owner close at 12:14 UTC blocked the ATR book for four sessions)", () => {
+  const heldAbc = () => ({
+    ...seed(),
+    positions: [{ symbol: "ABC", quantity: 2, costBasis: 100, initialStopLoss: 95, currentStop: 95,
+      priceTarget: 110, highestPrice: 100, applyAtrStop: false, partialTaken: false }],
+  });
+  const stopHitBar = [{ symbol: "ABC", open: 100, high: 101, low: 94, close: 94.5 }];
+
+  it("a FULL recorded sale before the 09:30 ET open resolves: the barrier cannot apply to a position already gone", () => {
+    const result = advanceAtrStopReplaySession(step({
+      book: heldAbc(), entries: [], bars: stopHitBar,
+      externalExits: [{ symbol: "ABC", quantity: 2, fillPrice: 99, filledAt: "2026-09-28T12:14:00.000Z", reason: "manual" }],
+    }));
+    expect(result.exits).toEqual([{ symbol: "ABC", reason: "manual", quantity: 2, fillPrice: 99, executionSource: "recorded_fill", filledAt: "2026-09-28T12:14:00.000Z" }]);
+    expect(result.book.positions).toEqual([]);
+    expect(result.book.cash).toBeCloseTo(1_000 + 2 * 99);
+  });
+
+  it("still refuses an intraday sale, an after-close sale, or a PARTIAL pre-open sale next to a barrier touch", () => {
+    const base = { book: heldAbc(), entries: [], bars: stopHitBar };
+    const sell = (quantity: number, filledAt: string) => [{ symbol: "ABC", quantity, fillPrice: 99, filledAt, reason: "manual" as const }];
+    // 09:30 ET = 13:30 UTC in September (EDT)
+    expect(() => advanceAtrStopReplaySession(step({ ...base, externalExits: sell(2, "2026-09-28T15:00:00.000Z") }))).toThrow("order-ambiguous");
+    expect(() => advanceAtrStopReplaySession(step({ ...base, externalExits: sell(2, "2026-09-28T23:30:00.000Z") }))).toThrow("order-ambiguous");
+    expect(() => advanceAtrStopReplaySession(step({ ...base, externalExits: sell(1, "2026-09-28T12:14:00.000Z") }))).toThrow("order-ambiguous");
+  });
+
+  it("regularSessionOpenMs is DST-aware", () => {
+    expect(new Date(regularSessionOpenMs("us", "2026-09-28")).toISOString()).toBe("2026-09-28T13:30:00.000Z"); // EDT
+    expect(new Date(regularSessionOpenMs("us", "2026-12-01")).toISOString()).toBe("2026-12-01T14:30:00.000Z"); // EST
+    expect(new Date(regularSessionOpenMs("india", "2026-09-28")).toISOString()).toBe("2026-09-28T03:45:00.000Z");
   });
 });

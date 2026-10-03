@@ -770,6 +770,16 @@ export async function gatherSymbols(
     candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: classifyResearchAssetClass(sym), discovery_source: source });
   };
 
+  // PRIORITY 0 — leveraged sleeve (SOXL/TQQQ/SQQQ/SOXS). The dedicated paper doors fire at 11:00-12:00 ET
+  // and need a SESSION-VALIDATED research signal from the same weekday, so these four must be scored in the
+  // first main run (13:00 UTC), before the doors. They previously sat behind the 186-name watchlist: every
+  // main run deferred 33-51 names on the wall-clock budget, the four sat in that tail, and only the Saturday
+  // queue catch-up (weekend_staged, never session-validated) ever scored them, so no door could enter.
+  // Four symbols are negligible budget. Scoring grants no trading authority: PaperTrader still refuses these
+  // symbols (symbol-policy) and rotation only sources alpha positions; only the sleeve's own door can trade
+  // them, re-checking this signal, its own trend/liquidity/stop geometry and the 5% combined sleeve cap.
+  if (includeUs) for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate(sym, "watchlist");
+
   // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
   // beats everything except holdings, so a hand-picked ticker (e.g. SK Hynix)
   // never starves behind the screener carry-forward backlog.
@@ -788,14 +798,6 @@ export async function gatherSymbols(
 
   // PRIORITY 3 — the rest of the watchlist (Theme Scout / non-manual).
   for (const sym of watchlist.usOther) addCandidate(sym, "watchlist");
-
-  // Leveraged sleeve (SOXL/TQQQ/SQQQ/SOXS): always scored so the dedicated paper doors
-  // have a fresh research verdict to gate on. Scoring grants no trading authority here:
-  // PaperTrader still refuses these symbols (symbol-policy) and capital rotation only
-  // acts on alpha positions, so the only path to a fill is the sleeve's own door,
-  // which re-checks this signal, its own trend/liquidity/stop geometry and the 5%
-  // combined sleeve cap.
-  if (includeUs) for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate(sym, "watchlist");
 
   const screenerMax = parseInt(process.env.RESEARCH_SCREENER_MAX ?? "6");
   let screenerAdded = 0;

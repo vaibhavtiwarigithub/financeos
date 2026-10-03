@@ -11,11 +11,11 @@ function state(session: string, qty: number): ShadowBookState {
   return { market: "us", session, cash: 0, positions: [{ symbol: "AAA", quantity: qty, costBasis: 100 }] };
 }
 
-function rowsFor(count: number): ShadowBookSnapshotRow[] {
+function rowsFor(count: number, idsAt: (index: number) => string[] = () => ["seed-position:AAA"]): ShadowBookSnapshotRow[] {
   const sessions = [START, ...expectedMarketSessionsBetween("us", START, "2026-03-02")].slice(0, count);
   const initial = state(START, 1);
-  const decisionIds = ["seed-position:AAA"];
   return sessions.map((session, index) => {
+    const decisionIds = idsAt(index);
     const history = sessions.slice(0, index + 1).map((date, offset) => {
       const price = 100 + offset * 0.2;
       return {
@@ -70,5 +70,16 @@ describe("paired shadow-book attribution", () => {
     const rows = rowsFor(21);
     rows[10] = { ...rows[10], matched_population_hash: "wrong" };
     expect(() => buildShadowBookAttribution(rows, BLOCK)).toThrow("decision-population hash does not verify");
+  });
+
+  it("accepts a cumulative population that GROWS with new paper entries (the seed->MU step that broke the ATR collector since 2026-09-30)", () => {
+    const rows = rowsFor(21, (index) => index < 3 ? ["seed-position:AAA"] : ["seed-position:AAA", "paper-entry:us|MU|alpha|2026-09-28"]);
+    expect(() => buildShadowBookAttribution(rows, BLOCK)).not.toThrow();
+    expect(buildShadowBookAttribution(rows, BLOCK).state).toBe("measured");
+  });
+
+  it("still refuses a population that REMOVES a previously matched decision", () => {
+    const rows = rowsFor(21, (index) => index < 3 ? ["seed-position:AAA", "paper-entry:us|MU|alpha|x"] : ["seed-position:AAA"]);
+    expect(() => buildShadowBookAttribution(rows, BLOCK)).toThrow("removed decisions from the cumulative matched population");
   });
 });

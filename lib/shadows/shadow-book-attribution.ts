@@ -118,8 +118,14 @@ export function buildShadowBookAttribution(rowsInput: ShadowBookSnapshotRow[], b
     }
     const sortedIds = [...decisions].sort();
     if (row.matched_population_hash !== digest(sortedIds)) throw new Error(`Snapshot ${row.session_date} decision-population hash does not verify.`);
-    if (previousPopulation && sortedIds.some((id) => !previousPopulation!.includes(id))) {
-      throw new Error(`Snapshot ${row.session_date} removed decisions from the cumulative matched population.`);
+    // The matched population is cumulative: new entries are ADDED each session. The earlier check had this
+    // inverted (it threw when the current snapshot contained an id the previous one lacked), so the first new
+    // entry after the seed (MU, 2026-09-28) failed every later ATR collector run. Only a REMOVED id is an error.
+    if (previousPopulation) {
+      const current = new Set(sortedIds);
+      if (previousPopulation.some((id) => !current.has(id))) {
+        throw new Error(`Snapshot ${row.session_date} removed decisions from the cumulative matched population.`);
+      }
     }
     previousPopulation = sortedIds;
 
