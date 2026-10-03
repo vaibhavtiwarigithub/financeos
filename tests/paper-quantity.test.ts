@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paperEntryQuantity, paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
+import { paperDailyCapQuantity, paperEntryQuantity, paperPartialTargetQuantity, paperRunnerStopPrice } from "@/lib/trading/paper-quantity";
 
 describe("paperEntryQuantity", () => {
   it("uses six-decimal US fractions without exceeding the allocation", () => {
@@ -16,6 +16,28 @@ describe("paperEntryQuantity", () => {
   it("rejects non-finite or non-positive inputs", () => {
     expect(paperEntryQuantity("us", NaN, 10)).toBeNull();
     expect(paperEntryQuantity("us", 10, 0)).toBeNull();
+  });
+});
+
+describe("paperDailyCapQuantity", () => {
+  it("reduces the SUNTV.NS buy to 192 whole shares under the India daily cap", () => {
+    const qty = paperDailyCapQuantity("india", 198, 640.32, 376_827.14, 500_000);
+    expect(qty).toBe(192);
+    expect(376_827.14 + (qty ?? 0) * 640.32).toBeLessThanOrEqual(500_000);
+  });
+
+  it("uses six-decimal US paper shares and never increases an approved quantity", () => {
+    const qty = paperDailyCapQuantity("us", 2, 326.0529, 900, 1_000);
+    expect(qty).toBe(0.306698);
+    expect(900 + (qty ?? 0) * 326.0529).toBeLessThanOrEqual(1_000);
+    expect(paperDailyCapQuantity("us", 0.25, 326.0529, 900, 1_000)).toBe(0.25);
+  });
+
+  it("refuses zero room, an unbuyable India remainder, or malformed cap evidence", () => {
+    expect(paperDailyCapQuantity("india", 198, 640.32, 499_500, 500_000)).toBeNull();
+    expect(paperDailyCapQuantity("us", 1, 100, 500_000, 500_000)).toBeNull();
+    expect(paperDailyCapQuantity("us", 1, 100, NaN, 500_000)).toBeNull();
+    expect(paperDailyCapQuantity("us", 1, 100, -1, 500_000)).toBeNull();
   });
 });
 

@@ -56,6 +56,33 @@ export function paperEntryQuantity(
   return Number.isFinite(qty) && qty > 0 ? qty : null;
 }
 
+/** Downsize an approved paper BUY to the remaining daily allowance, never upsize it. */
+export function paperDailyCapQuantity(
+  market: PaperQuantityMarket,
+  proposedQty: unknown,
+  fillPrice: unknown,
+  spentToday: unknown,
+  dailyCap: unknown,
+): number | null {
+  const proposed = finitePositive(proposedQty);
+  const price = finitePositive(fillPrice);
+  const spent = Number(spentToday);
+  const cap = finitePositive(dailyCap);
+  if (proposed == null || price == null || cap == null || !Number.isFinite(spent) || spent < 0) return null;
+
+  const remaining = cap - spent;
+  if (!Number.isFinite(remaining) || remaining <= 0) return null;
+  const affordable = paperEntryQuantity(market, remaining, price);
+  if (affordable == null) return null;
+
+  const scale = market === "us" ? US_FRACTIONAL_SCALE : 1;
+  let units = Math.floor(Math.min(proposed, affordable) * scale);
+  // Floating-point multiplication may straddle a decimal cap boundary. Err
+  // below the cap; the locked database RPC is still the final authority.
+  while (units > 0 && units / scale * price > remaining) units -= 1;
+  return units > 0 ? units / scale : null;
+}
+
 /** Returns a partial-target sell quantity or null when the position must close whole. */
 export function paperPartialTargetQuantity(market: PaperQuantityMarket, heldQty: unknown): number | null {
   const qty = finitePositive(heldQty);

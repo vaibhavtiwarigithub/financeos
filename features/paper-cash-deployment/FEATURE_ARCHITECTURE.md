@@ -68,6 +68,22 @@ session limit under the market-pool lock, including concurrent calls.
 The same code path and rules apply to US and India, with market-local currency,
 quotes, cash, daily caps, and whole-share/fractional quantity rules preserved.
 
+### Daily-cap downsize (owner-approved 2026-10-03)
+
+An otherwise eligible ordinary paper buy or qualified top-up whose proposed
+notional exceeds the *remaining* market-local daily buy allowance may be reduced
+to the largest executable quantity at its already validated fill price. This
+only reduces the constructor-approved order; it cannot increase the order,
+change its symbol or stop/target, trigger rotation, waive a risk gate, or force
+deployment toward the soft cash objective. India rounds down to whole shares;
+US paper rounds down to six-decimal shares. Zero/invalid allowance, unavailable
+market-local session, unreadable buy history, or a remainder below one valid
+quantity fails closed. The existing atomic fill RPC independently rechecks the
+same daily cap under its market-pool lock, so a concurrent buy can still deny
+the resized proposal without creating a partial fill. Log proposed and executed
+quantities/notionals and cap context; do not classify a reduced successful fill
+as a wholly missed entry. Live and broker execution are out of scope.
+
 The soft 5% cash objective is measured and surfaced in the paper-run summary,
 but is not an order instruction. Cash can remain above target because risk room,
 sector/name caps, available qualifying signals, fresh quotes, daily limits, or
