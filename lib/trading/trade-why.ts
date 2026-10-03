@@ -29,6 +29,12 @@ export interface ObservationRow {
   score_threshold: number | string | null;
 }
 
+export interface ResearchSignalState {
+  status: string | null;
+  session_validated: boolean | null;
+  as_of_session: string | null;
+}
+
 export interface TradeRowLite {
   side: "buy" | "sell";
   date: string;
@@ -168,8 +174,8 @@ function rejectionSentence(ev: StageEventRow, chain: StageEventRow[]): { text: s
     return { text: "a paper position is already open (one entry per stock).", bullets };
   if (reason === "pyramid_gate") return { text: "the existing position is at a loss, and the app never averages down.", bullets };
   if (reason === "daily_paper_notional_cap") {
-    if (d.cap != null) bullets.unshift(`Already bought ${Math.round(Number(d.spentToday ?? 0))} today; this order ${Math.round(Number(d.totalCost ?? 0))}; daily limit ${Math.round(Number(d.cap))}.`);
-    return { text: "today's paper buying limit was reached.", bullets };
+    if (d.cap != null) bullets.unshift(`That session had already bought ${Math.round(Number(d.spentToday ?? 0))}; proposed order ${Math.round(Number(d.totalCost ?? 0))}; daily limit ${Math.round(Number(d.cap))}.`);
+    return { text: "the paper buying limit for that session was reached.", bullets };
   }
   if (/^insufficient_cash/.test(reason)) return { text: "there was not enough paper cash for this order.", bullets };
   if (reason === "sector_cap") {
@@ -214,6 +220,7 @@ export function explainTradeWhy(input: {
   market: string;
   events: StageEventRow[];
   observation?: ObservationRow | null;
+  latestResearchState?: ResearchSignalState | null;
   lastTrade?: TradeRowLite | null;
   now?: Date;
 }): TradeWhy {
@@ -277,30 +284,43 @@ export function explainTradeWhy(input: {
   const r = research[0];
   if (r && (!top || (r.signal_id !== top.signal_id && r.created_at > top.created_at))) {
     const rs = normaliseResearchReason(r);
-    // A later research row is a RE-SCORE, not a decision, so it must not erase a
-    // trading-stage verdict already recorded for this symbol. It was doing exactly
-    // that: 9,619 real rejections across 113 symbols in 30 days (prod, 2026-09-15)
-    // displayed as "the paper trader has not acted on this signal" because a newer
-    // re-score outranked them. CORDSCABLE.NS was deferred at the name cap (15 of
-    // 15) at 07:45 and re-scored at 15:08, and only the re-score was shown.
-    //
-    // A re-score that FAILS still supersedes: eligibility genuinely changed, and
-    // "score is now below threshold" is the true current reason. The annotation
-    // is bounded to the SAME day: a month-old rejection must not headline a fresh
-    // re-score, which is the existing stale-chain contract.
-    if (decision?.at && rs.passed && r.created_at.slice(0, 10) === decision.at.slice(0, 10)) {
-      decision = {
-        ...decision,
-        bullets: [
-          ...decision.bullets,
-          `Re-scored ${mmdd(r.created_at)}: ${rs.text}. The verdict above is from the paper-trader run that actually looked at it.`,
-        ],
-      };
+    // Closed-day research is information, never an executable paper decision.
+    // Its fresh timestamp must not erase an older, real PaperTrader rejection
+    // (SUNTV.NS on 2026-10-02 after the 2026-09-30 daily-buy-cap rejection).
+    const staged = input.latestResearchState?.status === "weekend_staged"
+      || input.latestResearchState?.session_validated === false;
+    if (staged) {
+      const session = input.latestResearchState?.as_of_session;
+      const note = `Research staged ${mmdd(r.created_at)}${session ? ` from the ${session} completed session` : ""}; it is not tradable until a fresh market-session re-score.`;
+      decision = decision
+        ? { ...decision, bullets: [...decision.bullets, note] }
+        : finish("no_trade", "Research staged", "this closed-day score is not yet eligible for paper trading.", r.created_at, [note], now);
     } else {
-      decision = rs.passed
-        ? finish("no_trade", "Eligible", `${rs.text}, but the paper trader has not acted on this signal.`, r.created_at,
-            ["A signal that is not traded on its market day expires.", "Other gates (open positions, sector, cash) run only when the paper trader picks it up."], now)
-        : finish("no_trade", "No trade", rs.text, r.created_at, [], now);
+      // A later research row is a RE-SCORE, not a decision, so it must not erase a
+      // trading-stage verdict already recorded for this symbol. It was doing exactly
+      // that: 9,619 real rejections across 113 symbols in 30 days (prod, 2026-09-15)
+      // displayed as "the paper trader has not acted on this signal" because a newer
+      // re-score outranked them. CORDSCABLE.NS was deferred at the name cap (15 of
+      // 15) at 07:45 and re-scored at 15:08, and only the re-score was shown.
+      //
+      // A re-score that FAILS still supersedes: eligibility genuinely changed, and
+      // "score is now below threshold" is the true current reason. The annotation
+      // is bounded to the SAME day: a month-old rejection must not headline a fresh
+      // re-score, which is the existing stale-chain contract.
+      if (decision?.at && rs.passed && r.created_at.slice(0, 10) === decision.at.slice(0, 10)) {
+        decision = {
+          ...decision,
+          bullets: [
+            ...decision.bullets,
+            `Re-scored ${mmdd(r.created_at)}: ${rs.text}. The verdict above is from the paper-trader run that actually looked at it.`,
+          ],
+        };
+      } else {
+        decision = rs.passed
+          ? finish("no_trade", "Eligible", `${rs.text}, but the paper trader has not acted on this signal.`, r.created_at,
+              ["A signal that is not traded on its market day expires.", "Other gates (open positions, sector, cash) run only when the paper trader picks it up."], now)
+          : finish("no_trade", "No trade", rs.text, r.created_at, [], now);
+      }
     }
   }
 
