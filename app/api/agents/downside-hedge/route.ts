@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -166,9 +167,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, observation_date: observationDate, decision, execution });
   } catch (error: any) {
-    await svc.from("downside_hedge_events").insert({
+    await bestEffort(svc.from("downside_hedge_events").insert({
       market: "us", event_type: "error", decision: "none", reason: String(error?.message ?? error).slice(0, 500),
-    }).catch(() => {});
+    }), "downside_hedge_events error row");
     return NextResponse.json({ ok: false, error: error?.message ?? "downside_hedge_failed" }, { status: 500 });
   }
 }

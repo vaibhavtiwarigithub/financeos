@@ -1,4 +1,6 @@
 # Kairos — Risk & Safety
+> 2026-10-03: **Latent live-path crash removed: `.catch()` on supabase query builders.** supabase-js builders are thenables without `.catch`, so `svc.from(x).insert(y).catch(() => {})` throws a TypeError when run. It was in the leveraged-live and crypto-live crons (the `broker_orders` ledger write that runs AFTER a real fill, so the throw would have aborted the route after the order and before follow-up protection), the Kite order route (after a confirmed BUY and GTT), downside-hedge, edge-readiness and benchmark-scorecard error paths, and it crashed all four leveraged paper doors on every run. Replaced with `bestEffort()` (`lib/supabase/best-effort.ts`: awaits, logs, never throws); `tests/no-supabase-builder-catch.test.ts` fails the build if the pattern returns anywhere under `app/` or `lib/`. Live flags are unchanged (all still off); this removes a failure mode that would only have appeared on the first real live fill.
+>
 
 ## Paper cash deployment ceiling (approved, no leverage)
 

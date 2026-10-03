@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { createServiceClient } from "@/lib/supabase/service";
 import { placeEquityOrder, getKiteHoldings, placeKiteGtt, cancelKiteGtt, verifyKiteTradingIdentity } from "@/lib/kite";
 import { requireOwner } from "@/lib/auth/require-owner";
@@ -414,14 +415,14 @@ export async function POST(req: NextRequest) {
           detail: `The BUY was already confirmed, but its stop/target GTT failed: ${gttResult.error ?? "unknown"}. The position is unprotected at Kite until the GTT is placed and reconciled.`,
         }, svc);
       }
-      await svc.from("decision_journal").insert({
+      await bestEffort(svc.from("decision_journal").insert({
         entry_type: "kite_gtt", symbol, market: "india",
         summary: gttResult.ok
           ? `GTT placed (trigger ${gttResult.triggerId}): stop ₹${stopPrice.toFixed(2)}, target ₹${targetPrice.toFixed(2)}`
           : `GTT placement failed (BUY already confirmed; critical protection gap): ${gttResult.error}`,
         calculations: { stop_pct: stopPct, target_pct: targetPct, ref_price: refPrice, broker_order_ledger_id: ledgerId },
         has_verified_facts: true, resolved: gttResult.ok,
-      }).catch(() => {});
+      }), "kite_gtt decision_journal");
     }
   }
 

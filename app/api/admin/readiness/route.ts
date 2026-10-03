@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/paginate";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -49,14 +48,12 @@ async function runReadiness() {
     checks.push({ key: `${market}_confidence_coverage`, pass: confidenceCoverage >= 0.8, requiredFor: "engineering",
       detail: `${Math.round(confidenceCoverage * 100)}% of latest ${observations?.length ?? 0}` });
 
-    // Paginated: this understated the label count by reading 1,000 of 5,223 US
-    // observations, and it gates the `autonomous` readiness tier.
-    const allObservationIds = await fetchAllRows((from, to) => svc.from("decision_observations")
-      .select("id").eq("market", market).order("id", { ascending: true }).range(from, to), "observation ids");
-    const ids = allObservationIds.map((o: any) => o.id);
-    const { count: labelCount } = ids.length
-      ? await svc.from("observation_labels").select("id", { count: "exact", head: true }).in("observation_id", ids)
-      : { count: 0 };
+    // One server-side join count. The previous version paged EVERY observation id (9,194 US rows = 10+ sequential
+    // queries) and then sent every id in a single `.in()` filter URL; as the ledger grew that exceeded the
+    // 60 s function limit, so `readiness_runs` stopped being written after 2026-09-25 (daily Vercel timeout).
+    const { count: labelCount } = await svc.from("observation_labels")
+      .select("id, decision_observations!inner(market)", { count: "exact", head: true })
+      .eq("decision_observations.market", market);
     checks.push({ key: `${market}_forward_labels`, pass: (labelCount ?? 0) >= 60, requiredFor: "autonomous",
       detail: `${labelCount ?? 0} labels on latest observation cohort; need >=60` });
 

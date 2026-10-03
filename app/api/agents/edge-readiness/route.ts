@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -268,11 +269,11 @@ export async function POST(req: NextRequest) {
       detail: `${message.slice(0, 500)} Scoring and trading remain unchanged.`,
     }, svc);
     if (runId) {
-      await svc.from("agent_runs").update({
+      await bestEffort(svc.from("agent_runs").update({
         status: "error",
         completed_at: new Date().toISOString(),
         result_summary: message.slice(0, 500),
-      }).eq("id", runId).catch(() => {});
+      }).eq("id", runId), "agent_runs error update");
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }

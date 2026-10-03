@@ -22,6 +22,7 @@
 // than leaving it naked — see features/leveraged-etf-and-intraday-execution/
 // FEATURE_ARCHITECTURE.md's L4 section, part 3.
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { LEVERAGED_LIVE_ENABLED } from "@/lib/autonomy";
@@ -93,13 +94,14 @@ async function recordBrokerOrder(
   supabase: ReturnType<typeof createServiceClient>,
   input: { symbol: string; side: "buy" | "sell"; brokerAccountId: string; brokerOrderId: string; qty: number; avgFillPrice: number | null },
 ) {
-  await supabase.from("broker_orders").insert({
+  // best-effort: a logging failure must not undo a real fill (and `.catch` on a supabase builder would throw AFTER the fill)
+  await bestEffort(supabase.from("broker_orders").insert({
     market: "us", broker: "robinhood", broker_env: "live", broker_account_id: input.brokerAccountId,
     symbol: input.symbol, side: input.side, qty: input.qty, order_type: "market",
     status: "filled", broker_order_id: input.brokerOrderId, submitted_at: new Date().toISOString(),
     filled_qty: input.qty, avg_fill_price: input.avgFillPrice, approved_by_user: false,
     learning_scope: "risk_policy_only",
-  } as any).catch(() => undefined); // best-effort: a logging failure must not undo a real fill
+  } as any), "leveraged-live broker_orders ledger");
 }
 
 async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceClient>, now: number): Promise<number | null> {
@@ -113,11 +115,11 @@ async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceCl
 
 async function recordRun(supabase: ReturnType<typeof createServiceClient>, status: "done" | "error", summary: string): Promise<void> {
   const nowIso = new Date().toISOString();
-  await supabase.from("agent_runs").insert({
+  await bestEffort(supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "us", status, symbols: SYMBOLS.map(s => s.symbol),
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
     result_summary: summary.slice(0, 500),
-  } as any).catch(() => undefined);
+  } as any), "leveraged-live agent_runs");
 }
 
 /** Flatten a just-opened position when the protective stop could not be

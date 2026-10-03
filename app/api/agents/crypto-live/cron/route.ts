@@ -18,6 +18,7 @@
 // stop placement always flattens the just-opened position rather than
 // leaving it naked — same non-negotiable as the leveraged sleeve.
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { CRYPTO_LIVE_ENABLED } from "@/lib/autonomy";
@@ -54,11 +55,11 @@ function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, m
 
 async function recordRun(supabase: ReturnType<typeof createServiceClient>, status: "done" | "error", summary: string): Promise<void> {
   const nowIso = new Date().toISOString();
-  await supabase.from("agent_runs").insert({
+  await bestEffort(supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "crypto", status, symbols: [...CRYPTO_SYMBOLS],
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
     result_summary: summary.slice(0, 500),
-  } as any).catch(() => undefined);
+  } as any), "crypto-live agent_runs");
 }
 
 /** Same broker_orders logging requirement as the leveraged sleeve (see
@@ -70,13 +71,13 @@ async function recordBrokerOrder(
   supabase: ReturnType<typeof createServiceClient>,
   input: { symbol: string; side: "buy" | "sell"; brokerAccountId: string; brokerOrderId: string; qty: number; avgFillPrice: number | null },
 ) {
-  await supabase.from("broker_orders").insert({
+  await bestEffort(supabase.from("broker_orders").insert({
     market: "crypto", broker: "robinhood", broker_env: "live", broker_account_id: input.brokerAccountId,
     symbol: input.symbol, side: input.side, qty: input.qty, order_type: "market",
     status: "filled", broker_order_id: input.brokerOrderId, submitted_at: new Date().toISOString(),
     filled_qty: input.qty, avg_fill_price: input.avgFillPrice, approved_by_user: false,
     learning_scope: "risk_policy_only",
-  } as any).catch(() => undefined);
+  } as any), "crypto-live broker_orders ledger");
 }
 
 async function flattenAndAlert(symbol: string, qty: number, reason: string, brokerAccountId: string, supabase: ReturnType<typeof createServiceClient>) {

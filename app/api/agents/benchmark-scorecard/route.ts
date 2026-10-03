@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bestEffort } from "@/lib/supabase/best-effort";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { fetchMassiveCandles } from "@/lib/data/candles";
@@ -494,7 +495,7 @@ export async function POST(req: NextRequest) {
   };
   if (!expected.date || !expected.calendarSupported) {
     const error = `expected completed ${marketScope} session is unknown; calendar support is required before benchmark freshness can be claimed`;
-    await svc.from("agent_runs").insert({ ...runBase, status: "error", result_summary: error } as any).catch(() => undefined);
+    await bestEffort(svc.from("agent_runs").insert({ ...runBase, status: "error", result_summary: error } as any), "agent_runs error row");
     await reportIssue({ issueKey: `benchmark-collector-freshness:${marketScope}`, severity: "critical", category: "data", title: `${marketScope.toUpperCase()} benchmark collector cannot determine the expected session`, detail: error }, svc);
     return NextResponse.json({ ok: false, market: marketScope, attempt, error }, { status: 500 });
   }
