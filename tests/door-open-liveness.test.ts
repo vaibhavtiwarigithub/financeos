@@ -16,3 +16,12 @@ describe("leveraged door open-liveness + evening coverage schedule", () => {
     expect(sql).toContain("'kairos-corporate-action-coverage-us-evening', '35,41,47,53 21 * * 1-5'");
   });
 });
+
+describe("L1 leveraged-ETF shadow collector scheduling (0 observations ever: hour-precision Vercel cron missed its 11:00-11:14 ET window)", () => {
+  it("answers POST (kairos_call_agent always POSTs) and is scheduled minute-precisely through pg_cron", () => {
+    expect(readFileSync("app/api/agents/leveraged-etf-shadow/collect/route.ts", "utf8")).toContain("export const POST = GET;");
+    const migration = readFileSync("supabase/migrations/20261003150000_schedule_leveraged_etf_shadow_collector.sql", "utf8");
+    expect(migration).toContain("'kairos-leveraged-etf-shadow', '3 15,16 * * 1-5'");
+    expect(migration).toContain("'/api/agents/leveraged-etf-shadow/collect'");
+  });
+});

@@ -2062,7 +2062,7 @@
       "event": "modify",
       "nodeId": "SOXLCRON,TQQQCRON,SQQQCRON,SOXSCRON,RESEARCH,PAPER",
       "label": "Leveraged paper doors scheduled + routed from research",
-      "reason": "0 agent_runs and 0 leveraged paper trades: schedules were vercel.json only (Hobby) and planners required a bid/ask production never has. Added 12 pg_cron jobs, modeled-spread quote fallback, research gate per door, research always scores the four symbols, PaperTrader logs routed_to_leveraged_door. Generic PaperTrader and rotation still never trade them."
+      "reason": "0 agent_runs and 0 leveraged paper trades: schedules were vercel.json only, which fires at hour precision on Hobby so the 11:00-12:14 ET windows were missed and every run crashed in recordRun before its liveness write and planners required a bid/ask production never has. Added 12 pg_cron jobs, modeled-spread quote fallback, research gate per door, research always scores the four symbols, PaperTrader logs routed_to_leveraged_door. Generic PaperTrader and rotation still never trade them."
     },
     {
       "date": "2026-10-03",

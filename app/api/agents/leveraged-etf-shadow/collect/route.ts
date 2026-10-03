@@ -126,3 +126,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ status: "ran", now, results });
 }
+
+// pg_cron (kairos_call_agent) always POSTs. Vercel Hobby cron fires at an unspecified minute inside the hour, so the
+// 11:00-11:14 ET window was never hit and leveraged_etf_shadow_observations stayed empty; the minute-precise pg_cron
+// job `kairos-leveraged-etf-shadow` (15,16 UTC at :03) now drives it.
+export const POST = GET;
