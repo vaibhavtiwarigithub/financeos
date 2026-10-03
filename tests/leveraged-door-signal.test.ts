@@ -78,3 +78,20 @@ describe("pg_cron schedule migration", () => {
     expect(sql).toMatch(/close-est', '\d+ 21 \* 11,12,1,2 1-5'/);
   });
 });
+
+describe("leveraged symbols stay out of the equity chart-pattern evidence", () => {
+  it("research skips the pattern shadow write for the four sleeve symbols", () => {
+    const research = readFileSync("lib/research-agent.ts", "utf8");
+    const guard = research.indexOf("!LEVERAGED_SLEEVE_SYMBOLS.has(symbol.toUpperCase()) && isEntryCandidateLong");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(research.indexOf("detectConfirmedDoubleReversal(candles)"));
+  });
+});
+
+describe("leveraged symbols stay out of the rotation edge evidence", () => {
+  it("loadRotationScoreEdgeEvidence skips the four sleeve symbols", () => {
+    const src = readFileSync("lib/trading/capital-rotation.ts", "utf8");
+    expect(src).toContain('LEVERAGED_SLEEVE_SYMBOLS.has(String(row.symbol ?? "").toUpperCase())');
+    expect(src).toContain('from "./leveraged-sleeve-risk"');
+  });
+});

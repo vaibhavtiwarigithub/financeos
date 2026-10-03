@@ -2528,7 +2528,9 @@ export async function processSymbol(
 
     // Measure-only pattern evidence reuses the completed candles already fetched
     // for technical research. No future label is written back to this decision.
-    if (insertedObsId && !isCrypto && isEntryCandidateLong({
+    // The leveraged sleeve (3x/inverse ETFs, scored only to feed its own doors) is a different instrument family; its
+    // pattern outcomes must not be pooled into the equity double-reversal evidence.
+    if (insertedObsId && !isCrypto && !LEVERAGED_SLEEVE_SYMBOLS.has(symbol.toUpperCase()) && isEntryCandidateLong({
       entryEligible,
       direction: signalDirection,
       decisionContext: isHeld ? "holding_review" : "entry_candidate",

@@ -11,6 +11,7 @@ import {
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { replacementCapacity } from "./rotation-capacity";
+import { LEVERAGED_SLEEVE_SYMBOLS } from "./leveraged-sleeve-risk";
 import { isEntryCandidateLong, isHoldingReview } from "@/lib/learning/entry-cohort";
 import {
   hasExactPaperTaxLot,
@@ -247,6 +248,9 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
     const labels = Array.isArray(row.observation_labels) ? row.observation_labels : [row.observation_labels];
     const label = labels.find((item: any) => Number(item?.horizon_days) === args.horizonDays);
     if (label?.fwd_return == null || row.analyst_score == null || !row.ts) continue;
+    // 3x/inverse sleeve ETFs are scored only to feed their own doors and trade nowhere else; their returns are on a
+    // different scale and must not enter the equity candidate-vs-holding edge that gates rotation.
+    if (LEVERAGED_SLEEVE_SYMBOLS.has(String(row.symbol ?? "").toUpperCase())) continue;
     const candidate = isEntryCandidateLong({
       entryEligible: row.entry_eligible,
       direction: row.direction,
