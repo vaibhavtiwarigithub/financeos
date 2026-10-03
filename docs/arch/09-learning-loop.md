@@ -1,4 +1,6 @@
 # Kairos — Learning Loop
+> 2026-10-03: **US regime features are null on 5,721 observations (2026-08-17 .. 2026-10-03).** `features.regime.{trend, volTercile, realizedVol}` come from the US benchmark series, which was frozen at 2026-08-03 by an ascending+limit(260) read of `price_cache` (fixed 2026-10-03). `decision_observations` is immutable, so those rows stay null: any regime-conditioned analysis, archetype grading or calibration must exclude US rows from 2026-08-17 to the fix date (rows from the first post-fix research run onward are populated). No other feature group dropped >=30 points of coverage between July and the last week (checked across technical/fundamental/sentiment/macro/quality keys).
+>
 
 ## Shadow decision price provenance
 
