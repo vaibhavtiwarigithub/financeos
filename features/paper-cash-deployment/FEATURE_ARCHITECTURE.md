@@ -16,6 +16,12 @@ The production anti-pyramid trigger still rejects ordinary buy-lot inserts into
 an open alpha symbol; only the atomic, transaction-local authorization inside
 the validated `execute_paper_fill` path can permit a qualified add.
 
+Implementation status of the 2026-10-03 daily-cap downsize amendment: PRs #40
+(`789f79ea`) and #41 (`7455793f`) are merged. Final production deployment
+`dpl_7ohWV3UNECfianD6yLYCHo75gViL` is READY on the production aliases.
+Pure quantity and route-contract tests pass; a real downsized fill remains
+unobserved until an ordinary eligible market run. No schema or live change.
+
 ## Why
 
 The owner wants each market-local paper portfolio to keep cash near or below 5%
