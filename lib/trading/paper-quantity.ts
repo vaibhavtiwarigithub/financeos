@@ -66,7 +66,7 @@ export function paperDailyCapQuantity(
 ): number | null {
   const proposed = finitePositive(proposedQty);
   const price = finitePositive(fillPrice);
-  const spent = Number(spentToday);
+  const spent = typeof spentToday === "number" ? spentToday : NaN;
   const cap = finitePositive(dailyCap);
   if (proposed == null || price == null || cap == null || !Number.isFinite(spent) || spent < 0) return null;
 

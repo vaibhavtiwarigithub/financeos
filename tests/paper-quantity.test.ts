@@ -37,6 +37,7 @@ describe("paperDailyCapQuantity", () => {
     expect(paperDailyCapQuantity("india", 198, 640.32, 499_500, 500_000)).toBeNull();
     expect(paperDailyCapQuantity("us", 1, 100, 500_000, 500_000)).toBeNull();
     expect(paperDailyCapQuantity("us", 1, 100, NaN, 500_000)).toBeNull();
+    expect(paperDailyCapQuantity("us", 1, 100, null, 500_000)).toBeNull();
     expect(paperDailyCapQuantity("us", 1, 100, -1, 500_000)).toBeNull();
   });
 });
