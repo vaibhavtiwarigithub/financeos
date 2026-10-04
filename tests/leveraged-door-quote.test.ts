@@ -29,7 +29,7 @@ describe("planner accepts the modeled quote (regression: every door failed inval
   const now = Date.UTC(2026, 8, 29, 15, 5);
   const base = (quote: any) => planSoxlEntry({ policy, now, quote, signalAt: now - 3600_000, lastExitAt: null,
     signalSession: "2026-09-28", expectedSignalSession: "2026-09-28", entryWindowOpen: true, monitorVerifiedAt: now - 3600_000,
-    trendQualified: true, atr: 2, structuralStop: 90, nav: 10000, cash: 5000, holdings: [] });
+    trendQualified: true, atr: 2, structuralStop: 90, nav: 10000, cash: 5000, holdings: [], leveragedSleevePositions: [] });
   it("old wiring (NaN bid/ask) is refused; modeled quote is planned", () => {
     expect(base({ bid: NaN, ask: NaN, observedAt: now })).toEqual({ ok: false, reason: "invalid_quote" });
     const plan = base(doorQuoteForPlan({ bid: null, ask: null, price: 100 }, now));

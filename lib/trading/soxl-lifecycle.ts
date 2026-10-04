@@ -1,5 +1,6 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
 import { semiconductorCapacity, type SemiconductorHolding } from "./semiconductor-risk";
+import { leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Explicit paper experiment contract; thresholds are policy, not learned alpha.
  * A caller must persist the plan atomically with the fill and use the same
@@ -50,6 +51,8 @@ export function planSoxlEntry(input: {
   nav: number;
   cash: number;
   holdings: SemiconductorHolding[];
+  /** Open SOXL/TQQQ/SQQQ/SOXS positions: the 5%-of-NAV cap is COMBINED across the four (owner rule 2026-09-23). */
+  leveragedSleevePositions: LeveragedSleevePosition[];
 }): { ok: false; reason: string } | { ok: true; version: string; entry: number; stop: number; target: number; maxNotional: number; signalAt: number } {
   const p = input.policy;
   if (!p.version || ![p.maxQuoteAgeMs, p.maxSpreadBps, p.maxMonitorAgeMs, p.atrStopMultiple,
@@ -80,7 +83,13 @@ export function planSoxlEntry(input: {
     stopDistancePct: stopPct, riskBudgetPct: p.riskBudgetPct, exposureCapPct: p.semiconductorCapPct, holdings: input.holdings });
   if (!capacity.ok) return capacity;
   if (capacity.maxNotional <= 0) return { ok: false, reason: "no_capacity" };
-  return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional: capacity.maxNotional, signalAt: input.signalAt };
+  // SOXL only ever applied its OWN 5% ceiling, so a held TQQQ/SQQQ/SOXS position let it add another full 5% and the
+  // sleeve could reach 10% of NAV. TQQQ/SQQQ/SOXS already used the shared headroom; SOXL now does too.
+  const headroom = leveragedSleeveHeadroom({ nav: input.nav, positions: input.leveragedSleevePositions });
+  if (!headroom.ok) return headroom;
+  if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };
+  const maxNotional = Math.min(capacity.maxNotional, headroom.headroom);
+  return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };
 }
 
 export function monitorSoxl(input: {

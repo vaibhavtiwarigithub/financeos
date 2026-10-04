@@ -7,13 +7,22 @@ const entry = {
   now: 100000, quote: { bid: 99.9, ask: 100, observedAt: 99000 }, signalAt: 80000,
   lastExitAt: null, signalSession: "2026-09-21", expectedSignalSession: "2026-09-21",
   entryWindowOpen: true, monitorVerifiedAt: 99000, trendQualified: true,
-  atr: 3, structuralStop: 95, nav: 10000, cash: 1000, holdings: [],
+  atr: 3, structuralStop: 95, nav: 10000, cash: 1000, holdings: [], leveragedSleevePositions: [],
 };
 const held = { market: "us" as const, qty: 10, avgEntry: 100, initialStopLoss: 94,
   currentStop: 94, highestPrice: 100, priceTarget: 109, partialTaken: false };
 describe("SOXL lifecycle contract", () => {
   it("binds volatility geometry to ask without inventing a reward floor", () => {
     expect(planSoxlEntry(entry)).toMatchObject({ ok: true, entry: 100, stop: 94, target: 109, maxNotional: 250 });
+  });
+  it("applies the COMBINED 5% leveraged-sleeve cap: a held TQQQ/SQQQ/SOXS reduces SOXL capacity (SOXL used to add a full 5% on top)", () => {
+    // NAV 10,000 -> sleeve cap 500. $400 already in TQQQ leaves $100 for SOXL (its own ceiling alone would be 250).
+    expect(planSoxlEntry({ ...entry, leveragedSleevePositions: [{ symbol: "TQQQ", marketValue: 400 }] }))
+      .toMatchObject({ ok: true, maxNotional: 100 });
+    expect(planSoxlEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SQQQ", marketValue: 500 }] }))
+      .toEqual({ ok: false, reason: "no_sleeve_capacity" });
+    expect(planSoxlEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXS", marketValue: Number.NaN }] }))
+      .toMatchObject({ ok: false });
   });
   it("requires working monitoring and fresh quotes before entry", () => {
     expect(planSoxlEntry({ ...entry, monitorVerifiedAt: 0 })).toMatchObject({ ok: false, reason: "monitor_unhealthy" });

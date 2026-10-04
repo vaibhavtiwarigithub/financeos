@@ -52,6 +52,7 @@ import { getQuote } from "@/lib/data/quotes";
 import { computeTechnicals, detectBreakdownVeto } from "@/lib/data/technicals";
 import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
 import { planSoxlEntry, monitorSoxl, type SoxlPolicy } from "@/lib/trading/soxl-lifecycle";
+import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import type { SemiconductorHolding } from "@/lib/trading/semiconductor-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -333,6 +334,9 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     nav: Number(portfolio.nav ?? 0),
     cash: Number(portfolio.cash_balance ?? 0),
     holdings,
+    leveragedSleevePositions: (positions ?? [])
+      .filter((p: any) => LEVERAGED_SLEEVE_SYMBOLS.has(String(p.symbol).toUpperCase()))
+      .map((p: any) => ({ symbol: String(p.symbol), marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? 0) })),
   });
 
   if (!plan.ok) {
