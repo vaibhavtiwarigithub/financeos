@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   if (role !== "owner") {
     const cutoff = new Date(Date.now() - validDays * 86_400_000).toISOString().slice(0, 10);
-    // Paginated: PostgREST caps one response at 1,000 rows, so `.limit(2500)` silently returned the OLDEST 1,000 bars
+    // Paginated: PostgREST caps one response at 1,000 rows, so a single large limit silently returned the OLDEST 1,000 bars
     // for long windows (VOO has 1,304) and the chart ended years ago.
     const svc = createServiceClient();
     let data: any[];

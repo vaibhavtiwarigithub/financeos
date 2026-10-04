@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   prewarm: vi.fn(),
   positions: vi.fn(),
   decisions: vi.fn(),
+  disabled: vi.fn(),
   report: vi.fn(),
   resolve: vi.fn(),
 }));
@@ -37,6 +38,7 @@ vi.mock("@/lib/supabase/service", () => ({
         eq: () => ({
           is: () => ({ gt: () => ({ limit: async () => h.positions() }) }),
           gte: () => ({ limit: async () => h.decisions() }),
+          eq: () => ({ limit: async () => h.disabled() }), // research-disabled watchlist names
         }),
       }),
     }),
@@ -52,6 +54,7 @@ beforeEach(() => {
   h.prewarm.mockReset().mockResolvedValue({ ok: 3, failed: 0, skipped: 0, alreadyFresh: 5, failedSymbols: [], skippedSymbols: [] });
   h.positions.mockReset().mockReturnValue({ data: [{ symbol: "AAPL" }] });
   h.decisions.mockReset().mockReturnValue({ data: [{ symbol: "MSFT" }, { symbol: "AAPL" }] });
+  h.disabled.mockReset().mockReturnValue({ data: [] });
   h.report.mockReset().mockResolvedValue(undefined);
   h.resolve.mockReset().mockResolvedValue(undefined);
 });
@@ -134,5 +137,24 @@ describe("it refreshes PRICE BARS, not evidence", () => {
     for (const forbidden of ["agent_signals", "trade_proposals", "broker_orders", "paper_trades", "strategy_config"]) {
       expect(src, `price-prewarm must not touch ${forbidden}`).not.toContain(forbidden);
     }
+  });
+});
+
+describe("research-disabled names", () => {
+  it("are dropped from the scope unless held (delisted ABB/IRBT/TMHC failed every run for weeks)", async () => {
+    h.positions.mockReturnValue({ data: [{ symbol: "AAPL" }, { symbol: "IRBT" }] });
+    h.decisions.mockReturnValue({ data: [{ symbol: "MSFT" }, { symbol: "ABB" }, { symbol: "IRBT" }] });
+    h.disabled.mockReturnValue({ data: [{ symbol: "ABB" }, { symbol: "IRBT" }] });
+    const res = await call("us");
+    expect(res.status).toBe(200);
+    const scope: string[] = h.prewarm.mock.calls[0][0];
+    expect(scope).toContain("MSFT");
+    expect(scope).toContain("IRBT"); // held, so it stays
+    expect(scope).not.toContain("ABB");
+  });
+  it("a failed disabled-watchlist read is reported as an unavailable scope, not an empty one", async () => {
+    h.disabled.mockReturnValue({ data: null, error: { message: "boom" } });
+    const res = await call("us");
+    expect(res.status).toBe(503);
   });
 });
