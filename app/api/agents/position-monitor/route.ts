@@ -701,7 +701,12 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
     // A stop hit mid-session is real even when price recovered by close.
     // Fill price is trailingStop (stop order assumed placed at that level),
     // not the session low — filling at the gap extreme is too pessimistic.
-    const sessionLow = market === "us" ? (dayLowMap[pos.symbol] ?? currentPrice) : currentPrice;
+    // The session range includes trading BEFORE a same-session fill, so a position opened today
+    // must not be stopped/targeted by a low or high it never experienced.
+    const openedThisSession = openedAt != null
+      && exchangeSessionDate(new Date(openedAt).toISOString(), market) === exchangeSessionDate(new Date().toISOString(), market);
+    const useSessionRange = market === "us" && !openedThisSession;
+    const sessionLow = useSessionRange ? (dayLowMap[pos.symbol] ?? currentPrice) : currentPrice;
     const priceForStopCheck = Math.min(currentPrice, sessionLow);
     const ladderDecision = decideExitLadder({
       market,
@@ -712,7 +717,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
       // Use its high for target detection, while retaining the close as the
       // conservative mark/fill input. The shared ladder still gives a stop
       // precedence when both barriers were touched.
-      targetCheckPrice: market === "us" ? dayHighMap[pos.symbol] : undefined,
+      targetCheckPrice: useSessionRange ? dayHighMap[pos.symbol] : undefined,
       stopCheckPrice: priceForStopCheck,
       priceTarget: pos.price_target == null ? null : Number(pos.price_target),
       initialStopLoss: pos.initial_stop_loss == null ? null : Number(pos.initial_stop_loss),

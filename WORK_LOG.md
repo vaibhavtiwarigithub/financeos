@@ -1,5 +1,7 @@
 # Work Log
 
+**Review pass, entry-day range guard (Claude, 2026-10-03):** PositionMonitor applied the full-session day low/high to positions opened the same session, so a pre-fill low/high could stop out or target a position that never saw it (more reachable now that Yahoo supplies the range). Range is now ignored when `opened_at` is in the current exchange session. Week 9/17-9/26 review otherwise: crypto paper/shadows, exogenous collectors, missed-entry ledger, rotation events all producing; exit-geometry revert (45ff10d7) sound; rotation capacity logic reviewed, no defects (rotation still inert).
+
 **Review pass, US intraday range (Claude, 2026-10-03):** Massive snapshot/grouped-daily are 403 in production, so the US PositionMonitor's Yahoo fallback supplied no `dayLow`/`dayHigh`: intraday stop/target-touch checks silently degraded to close-only. `fetchYahooQuote` now returns Yahoo's `regularMarketDayLow/High` and `getSettledDailyQuotes` passes them through. Confirm after next 20:15 UTC monitor run that US marks carry a range.
 
 **Review pass, SOXL sleeve cap (Claude, 2026-10-03):** SOXL door honored only its own `SOXL_MAX_NAV_FRACTION`, not the owner's combined <=5%-of-NAV leveraged sleeve that TQQQ/SQQQ/SOXS use; SOXL could stack on top of other sleeve holdings. Now `soxl-lifecycle` takes `leveragedSleevePositions` and caps by `leveragedSleeveHeadroom` (fail-closed on bad marks, `no_sleeve_capacity` at zero). Tests added.
