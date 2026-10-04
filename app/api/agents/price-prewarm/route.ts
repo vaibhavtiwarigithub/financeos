@@ -1,3 +1,4 @@
+import { requiredPriceScope } from "@/lib/monitoring/freshness-contracts";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -59,16 +60,18 @@ export async function POST(req: NextRequest) {
   let recentlyScored: string[] = [];
   try {
     const decisionSince = new Date(Date.now() - PREWARM_RECENT_DECISION_DAYS * 86400_000).toISOString();
-    const [positionRows, decisionRows] = await Promise.all([
+    const [positionRows, decisionRows, disabledRows] = await Promise.all([
       svc.from("paper_positions").select("symbol")
         .eq("market", market).is("exit_reason", null).gt("qty", 0).limit(500),
       svc.from("decision_observations").select("symbol")
         .eq("market", market).gte("ts", decisionSince).limit(5000),
+      svc.from("watchlist").select("symbol").eq("market", market).eq("research_enabled", false).limit(500),
     ]);
-    if (positionRows.error || decisionRows.error) {
+    if (positionRows.error || decisionRows.error || disabledRows.error) {
       const failedSources = [
         positionRows.error ? "open_positions" : null,
         decisionRows.error ? "recent_decisions" : null,
+        disabledRows.error ? "research_disabled_watchlist" : null,
       ].filter(Boolean);
       await reportIssue({
         issueKey: `price-prewarm-scope-error:${market}`,
@@ -84,7 +87,13 @@ export async function POST(req: NextRequest) {
       );
     }
     openPositions = (positionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
-    recentlyScored = (decisionRows.data ?? []).map((r: any) => String(r.symbol ?? ""));
+    // Same scope rule as the freshness monitor: a research-disabled (e.g. delisted ABB/IRBT/TMHC) name that is not held
+    // is not refreshed, so it can neither fail the run nor raise a standing "prewarm incomplete" alert for 7 days.
+    recentlyScored = [...requiredPriceScope(
+      (decisionRows.data ?? []).map((r: any) => String(r.symbol ?? "")),
+      openPositions,
+      (disabledRows.data ?? []).map((r: any) => String(r.symbol ?? "")),
+    )];
   } catch (e: any) {
     // Unlike the research cron, this route has nothing else to fall back to: an
     // empty scope would report a clean run having refreshed nothing.

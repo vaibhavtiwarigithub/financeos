@@ -15,6 +15,36 @@ CIK|Company Name|Form Type|Date Filed|File Name
 0002000003|Foreign Issuer|F-1/A|2026-09-08|edgar/data/2000003/0002000003-26-000003.txt
 `;
 
+// REAL format (live SEC fetch of master.20260930.idx, 2026-10-03): dates are YYYYMMDD, not ISO. The parser rejected
+// every such row, so listing discovery reported "available, 0 filings" daily and created no candidate (that index had
+// 12 S-1/F-1/424B4 filings). The ISO-date fixture above hid it.
+const REAL_INDEX = `Description:           Daily Index of EDGAR Dissemination Feed
+Last Data Received:    Sep 30, 2026
+Comments:              webmaster@sec.gov
+Anonymous FTP:         ftp://ftp.sec.gov/edgar/
+
+CIK|Company Name|Form Type|Date Filed|File Name
+--------------------------------------------------------------------------------
+1000275|ROYAL BANK OF CANADA|424B2|20260930|edgar/data/1000275/0000950103-26-014800.txt
+2012345|NEW LISTING HOLDINGS INC|S-1|20260930|edgar/data/2012345/0001193125-26-400001.txt
+2012346|FOREIGN NEWCO LTD|F-1/A|20260930|edgar/data/2012346/0001193125-26-400002.txt
+2012347|PRICED IPO CORP|424B4|20260930|edgar/data/2012347/0001193125-26-400003.txt
+`;
+
+describe("SEC daily index real date format", () => {
+  it("parses YYYYMMDD dates, keeps only IPO forms and normalizes filedAt to ISO", () => {
+    const rows = parseEdgarMasterIndex(REAL_INDEX);
+    expect(rows.map((row) => row.form)).toEqual(["S-1", "F-1/A", "424B4"]);
+    expect(rows.every((row) => row.filedAt === "2026-09-30")).toBe(true);
+    expect(rows[0]).toMatchObject({ cik: "0002012345", accessionNumber: "0001193125-26-400001" });
+  });
+  it("still accepts ISO dates and rejects a malformed date", () => {
+    expect(parseEdgarMasterIndex(INDEX)).toHaveLength(2);
+    const bad = REAL_INDEX.replace("20260930|edgar/data/2012345", "2026-9-30|edgar/data/2012345");
+    expect(parseEdgarMasterIndex(bad).map((row) => row.form)).toEqual(["F-1/A", "424B4"]);
+  });
+});
+
 describe("new-listing evidence discovery", () => {
   it("never requests tonight's not-yet-published index", () => {
     expect(publishedEdgarIndexDates(new Date("2026-09-25T23:35:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-24");

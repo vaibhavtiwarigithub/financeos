@@ -30,13 +30,19 @@ export function parseEdgarMasterIndex(body: string): EdgarListingFiling[] {
     const [rawCik, rawName, rawForm, rawDate, filename] = line.trim().split("|");
     const form = String(rawForm ?? "").toUpperCase();
     if (!rawCik || !rawName || !rawDate || !filename || !IPO_FORMS.has(form)) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) continue;
+    // The real SEC daily index writes dates as YYYYMMDD ("20260930"). The parser only accepted ISO dates, so it
+    // dropped EVERY row (a real 2026-09-30 index holds 12 S-1/F-1/424B4 filings; the run reported filing_count 0
+    // with status "available" for every day since the header fix, and listing_candidates never got a row). The test
+    // fixture used ISO dates, which is why tests never caught it. Normalize to ISO.
+    const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(rawDate.trim());
+    const filedAt = compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : /^\d{4}-\d{2}-\d{2}$/.test(rawDate.trim()) ? rawDate.trim() : null;
+    if (!filedAt) continue;
     const cik = rawCik.padStart(10, "0");
     const accessionNumber = filename.match(/(\d{10}-\d{2}-\d{6})\.txt$/)?.[1];
     if (!accessionNumber) continue;
     const sourceUrl = `https://www.sec.gov/Archives/${filename}`;
     const canonical = [cik, rawName.trim(), form, rawDate, filename].join("|");
-    rows.push({ cik, companyName: rawName.trim(), form, filedAt: rawDate, accessionNumber, sourceUrl,
+    rows.push({ cik, companyName: rawName.trim(), form, filedAt, accessionNumber, sourceUrl,
       payloadHash: createHash("sha256").update(canonical).digest("hex") });
   }
   return rows;

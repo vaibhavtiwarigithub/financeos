@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchPriceHistory } from "@/lib/chart-data";
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 
 export async function GET(req: NextRequest) {
@@ -21,15 +22,22 @@ export async function GET(req: NextRequest) {
 
   if (role !== "owner") {
     const cutoff = new Date(Date.now() - validDays * 86_400_000).toISOString().slice(0, 10);
-    const { data, error } = await createServiceClient()
-      .from("price_cache")
-      .select("date, open, high, low, close, volume")
-      .eq("symbol", symbol)
-      .gte("date", cutoff)
-      .order("date", { ascending: true })
-      .limit(2500);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    const candles: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }> = (data ?? [])
+    // Paginated: PostgREST caps one response at 1,000 rows, so `.limit(2500)` silently returned the OLDEST 1,000 bars
+    // for long windows (VOO has 1,304) and the chart ended years ago.
+    const svc = createServiceClient();
+    let data: any[];
+    try {
+      data = await fetchAllRows((from, to) => svc
+        .from("price_cache")
+        .select("date, open, high, low, close, volume")
+        .eq("symbol", symbol)
+        .gte("date", cutoff)
+        .order("date", { ascending: true })
+        .range(from, to), "stored price history");
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    }
+    const candles: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }> = data
       .map((r: any) => ({
         date: String(r.date), open: Number(r.open), high: Number(r.high),
         low: Number(r.low), close: Number(r.close), volume: Number(r.volume ?? 0),
