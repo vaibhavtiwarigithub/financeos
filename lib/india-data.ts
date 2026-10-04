@@ -22,6 +22,9 @@ export interface IndiaQuote {
   changePct: number;
   retrievedAt: string;
   stale: boolean;
+  /** Latest session range from Yahoo chart meta; feeds the US intraday stop/target-touch check when Massive is unavailable. */
+  dayLow?: number | null;
+  dayHigh?: number | null;
 }
 
 function isMarketHours(market: "us" | "india"): boolean {
@@ -66,6 +69,8 @@ export async function fetchYahooQuote(
       changePct: prev ? ((m.regularMarketPrice - prev) / prev) * 100 : 0,
       retrievedAt,
       stale: isYahooQuoteStale(retrievedAt, market),
+      dayLow: Number.isFinite(m.regularMarketDayLow) && m.regularMarketDayLow > 0 ? m.regularMarketDayLow : null,
+      dayHigh: Number.isFinite(m.regularMarketDayHigh) && m.regularMarketDayHigh > 0 ? m.regularMarketDayHigh : null,
     };
   } catch {
     return null;

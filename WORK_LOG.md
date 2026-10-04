@@ -1,5 +1,7 @@
 # Work Log
 
+**Review pass, US intraday range (Claude, 2026-10-03):** Massive snapshot/grouped-daily are 403 in production, so the US PositionMonitor's Yahoo fallback supplied no `dayLow`/`dayHigh`: intraday stop/target-touch checks silently degraded to close-only. `fetchYahooQuote` now returns Yahoo's `regularMarketDayLow/High` and `getSettledDailyQuotes` passes them through. Confirm after next 20:15 UTC monitor run that US marks carry a range.
+
 **Review pass, SOXL sleeve cap (Claude, 2026-10-03):** SOXL door honored only its own `SOXL_MAX_NAV_FRACTION`, not the owner's combined <=5%-of-NAV leveraged sleeve that TQQQ/SQQQ/SOXS use; SOXL could stack on top of other sleeve holdings. Now `soxl-lifecycle` takes `leveragedSleevePositions` and caps by `leveragedSleeveHeadroom` (fail-closed on bad marks, `no_sleeve_capacity` at zero). Tests added.
 
 **Review pass, second sweep (Claude, 2026-10-03):** SEC listing-discovery parser dropped every row (real index dates are YYYYMMDD, fixture was ISO): `listing_candidates` has 0 rows ever; fixed with a real-format test. Prewarm scope excludes research-disabled unheld names; viewer price route paginated. Retracted from my earlier "not fixed" list: `sector-regime-shadow` is an on-demand read-only diagnostic and `evaluation/p1-gate` runs weekly from vercel.json (hour precision is fine); neither needs pg_cron. Delisted ABB/IRBT/TMHC still appear in the research prewarm because they are in the live-account holdings snapshot (broker data, not code).

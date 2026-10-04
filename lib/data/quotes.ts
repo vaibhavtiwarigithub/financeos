@@ -306,6 +306,8 @@ export async function getSettledDailyQuotes(
           source: "yahoo",
           retrievedAt: q.retrievedAt ?? new Date().toISOString(),
           stale: false,
+          dayLow: q.dayLow ?? null,
+          dayHigh: q.dayHigh ?? null,
         };
       }
     }
