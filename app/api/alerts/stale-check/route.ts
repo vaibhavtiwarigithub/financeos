@@ -8,6 +8,7 @@ import { checkFreshnessContracts } from "@/lib/monitoring/freshness-contracts";
 import { isTerminalSuccessfulRun, recoveredRunAlert } from "@/lib/monitoring/recovered-run-alerts";
 import { isExpectedMarketHoliday } from "@/lib/monitoring/market-holiday";
 import { detectStalledProducers } from "@/lib/monitoring/producer-stall";
+import { checkPaperEodHealth } from "@/lib/monitoring/paper-eod-health";
 
 export const dynamic = "force-dynamic";
 
@@ -305,6 +306,12 @@ async function runCheck() {
   // The freshness registry asks the complementary question: did the watermark
   // of the table each job is responsible for actually advance, PER SYMBOL.
   const freshness = await checkFreshnessContracts(svc, { now, includeIndia: indiaEnabled });
+  // Run liveness is insufficient: a completed monitor can leave no canonical
+  // EOD NAV or position marks. Check the persisted evidence independently.
+  const paperEodHealth = {
+    us: await checkPaperEodHealth(svc, "us", now),
+    ...(indiaEnabled ? { india: await checkPaperEodHealth(svc, "india", now) } : {}),
+  };
 
   // Upgrade Path producers that keep blocking/erroring are invisible except on the Upgrade Path page.
   const stalledProducers: string[] = [];
@@ -337,6 +344,7 @@ async function runCheck() {
 
   return NextResponse.json({
     checked: true,
+    paperEodHealth,
     hour,
     indiaEnabled,
     results,
