@@ -39,6 +39,8 @@ function rowsFor(perDateOutcomes: Array<{ date: string; scores: number[]; outcom
         direction: "long",
         action: "scored",
         agentLabel: "research",
+        sessionValidated: true,
+        asOfSession: entry.date,
       });
     }
   }

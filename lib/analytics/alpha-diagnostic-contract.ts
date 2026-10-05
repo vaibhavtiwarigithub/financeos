@@ -9,7 +9,7 @@
 import { MIN_EFFECTIVE_OBSERVATIONS, effectiveObservations } from "@/lib/learning/dimension-diagnostics";
 
 export type DiagnosticMarket = "us" | "india";
-export const ALPHA_DIAGNOSTIC_METRIC_VERSION = "alpha_diagnostics_v2_2";
+export const ALPHA_DIAGNOSTIC_METRIC_VERSION = "alpha_diagnostics_v2_3_entry_funnel";
 
 /**
  * `descriptive_only` is NOT a weak pass. It means the number is reportable but

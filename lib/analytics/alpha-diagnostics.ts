@@ -186,6 +186,7 @@ export function runA1Funnel(
   rows: FunnelRow[],
   horizonDays: number,
   minDates: number,
+  allScoredRows?: FunnelRow[],
 ): DiagnosticFinding {
   const stageIndex = new Map(FUNNEL_STAGES.map((s, i) => [s, i]));
   const byStage = new Map<FunnelStage, FunnelRow[]>();
@@ -197,6 +198,10 @@ export function runA1Funnel(
     if (reached == null) continue;
     for (let i = 0; i <= reached; i++) byStage.get(FUNNEL_STAGES[i])!.push(r);
   }
+  // The first scored decision and the first eligible decision can differ on
+  // the same symbol/session. A1 must use the actual all-scored baseline rather
+  // than letting the later eligible score rewrite the discovery comparison.
+  if (allScoredRows) byStage.set("scored", allScoredRows);
 
   const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
   const stages = FUNNEL_STAGES.map(stage => {
@@ -216,12 +221,14 @@ export function runA1Funnel(
     if (!r.attritionReason) continue;
     attrition[r.attritionReason] = (attrition[r.attritionReason] ?? 0) + 1;
   }
+  if (allScoredRows) attrition.not_eligible_long = Math.max(0, allScoredRows.length - rows.length);
 
-  const dates = new Set(rows.map(r => r.date));
+  const sampleRows = allScoredRows ?? rows;
+  const dates = new Set(sampleRows.map(r => r.date));
   const sample: DiagnosticSample = {
-    nRows: rows.length,
+    nRows: sampleRows.length,
     nDates: dates.size,
-    nSymbols: new Set(rows.map(r => r.symbol)).size,
+    nSymbols: new Set(sampleRows.map(r => r.symbol)).size,
     horizonDays,
   };
   const gate = sampleStatus(sample, minDates);
@@ -229,15 +236,26 @@ export function runA1Funnel(
 
   return {
     market, testId: "A1", cohort: "learning",
-    window: { from: minOf(rows.map(r => r.date)), to: maxOf(rows.map(r => r.date)) },
+    window: { from: minOf(sampleRows.map(r => r.date)), to: maxOf(sampleRows.map(r => r.date)) },
     sample,
     coverage: scored.coverage,
     metricVersion: ALPHA_DIAGNOSTIC_METRIC_VERSION,
-    status: gate.status,
-    reason: gate.ok
+    // The funnel is an attribution view, not a strategy promotion test. Even
+    // with enough sessions, a descriptive difference is never a "pass".
+    status: scored.labelled === 0 ? "insufficient_evidence" : gate.ok ? "descriptive_only" : gate.status,
+    reason: scored.labelled === 0
+      ? `No matured benchmark-neutral h${horizonDays} labels in the scored entry-candidate cohort.`
+      : gate.ok
       ? "Stage-by-stage benchmark-neutral return. Descriptive: it locates attrition, it does not license a policy change."
       : gate.reason,
-    metrics: { horizonDays, stages, attrition },
+    metrics: {
+      horizonDays, stages, attrition,
+      stageDefinitions: {
+        selected: "Reached the PaperTrader decision loop; this includes deferred and rejected candidates, not only approved orders.",
+        filled: "A non-tainted signal-linked paper lot was recorded.",
+        closed: "Every signal-linked lot in the cohort has a close timestamp.",
+      },
+    },
   };
 }
 

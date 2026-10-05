@@ -262,11 +262,13 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
     evidence.peg_ratio_scoring_status = "measure_only";
   }
 
-  // 52-week high proximity — momentum quality signal (IBD-style)
+  // 52-week-high proximity is measured only against an actual current price.
+  // A 200-day moving average is not a tradable price and can falsely make a
+  // stock appear close to (or far from) its high when the quote is missing.
   const high52w = parseFloat(overview["52WeekHigh"] ?? "");
-  const refP = currentPrice ?? parseFloat(overview["200DayMovingAverage"] ?? "");
-  if (!isNaN(high52w) && high52w > 0 && !isNaN(refP) && refP > 0) {
-    const pctFrom52wHigh = (high52w - refP) / high52w; // 0 = AT high, 1 = 100% below
+  if (!isNaN(high52w) && high52w > 0 && currentPrice != null
+      && Number.isFinite(currentPrice) && currentPrice > 0) {
+    const pctFrom52wHigh = (high52w - currentPrice) / high52w; // 0 = AT high
     evidence.pct_from_52w_high = parseFloat((pctFrom52wHigh * 100).toFixed(1));
     evidence.pct_from_52w_high_scoring_status = "measure_only";
   }

@@ -30,6 +30,20 @@ describe("score input governance", () => {
       analyst_target_mode: "observational_only",
     });
   });
+
+  it("does not invent 52-week-high distance from a moving average when the quote is absent", () => {
+    const base = {
+      Symbol: "TEST", Sector: "Technology", PERatio: "20", ProfitMargin: "0.15",
+      ReturnOnEquityTTM: "0.15", EPS: "3", QuarterlyRevenueGrowthYOY: "0.12",
+      "52WeekHigh": "120", "200DayMovingAverage": "100",
+    };
+    const noQuote = scoreFundamentals(base, false);
+    const priced = scoreFundamentals(base, false, 90);
+    expect(noQuote.evidence).not.toHaveProperty("pct_from_52w_high");
+    expect(priced.evidence.pct_from_52w_high).toBe(25);
+    expect(priced.evidence.pct_from_52w_high_scoring_status).toBe("measure_only");
+    expect(priced.score).toBe(noQuote.score);
+  });
 });
 
 describe("unvalidated broker financial trends", () => {

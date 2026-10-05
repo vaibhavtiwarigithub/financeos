@@ -21,12 +21,20 @@ function marketFrom(request: NextRequest): Market | null {
   return value === "us" || value === "india" ? value : null;
 }
 
-async function agentLabels(svc: any, ids: string[]): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+type SignalProvenance = { label: string; market: Market; sessionValidated: boolean; asOfSession: string | null };
+
+async function signalProvenance(svc: any, ids: string[]): Promise<Map<string, SignalProvenance>> {
+  const result = new Map<string, SignalProvenance>();
   for (let index = 0; index < ids.length; index += 500) {
-    const { data, error } = await svc.from("agent_signals").select("id,agent_label").in("id", ids.slice(index, index + 500));
-    if (error) throw new Error(`agent label query failed: ${error.message}`);
-    for (const row of data ?? []) result.set(String((row as any).id), String((row as any).agent_label ?? "research"));
+    const { data, error } = await svc.from("agent_signals")
+      .select("id,agent_label,market,session_validated,as_of_session").in("id", ids.slice(index, index + 500));
+    if (error) throw new Error(`signal provenance query failed: ${error.message}`);
+    for (const row of data ?? []) result.set(String((row as any).id), {
+      label: String((row as any).agent_label ?? "research"),
+      market: (row as any).market,
+      sessionValidated: (row as any).session_validated === true,
+      asOfSession: (row as any).as_of_session ?? null,
+    });
   }
   return result;
 }
@@ -64,10 +72,11 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     return decision?.signal_id;
   }).filter((id: unknown): id is string => typeof id === "string");
-  const labels = await agentLabels(svc, [...new Set(signalIds)]);
+  const sources = await signalProvenance(svc, [...new Set(signalIds)]);
   return sourceRows.flatMap((row) => {
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     if (!decision?.id || !decision.ts) return [];
+    const source = decision.signal_id ? sources.get(String(decision.signal_id)) : null;
     return [{
       id: Number(decision.id), ts: String(decision.ts), symbol: String(decision.symbol), codeVersion: decision.code_version == null ? null : String(decision.code_version), analystScore: decision.analyst_score == null ? null : Number(decision.analyst_score),
       scores: {
@@ -82,7 +91,9 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
       decisionContext: decision.decision_context ?? null,
       discoverySource: decision.discovery_source ?? null,
       direction: decision.direction == null ? null : String(decision.direction),
-      action: String(decision.action ?? "scored"), agentLabel: decision.signal_id ? labels.get(String(decision.signal_id)) ?? "research" : "research",
+      action: String(decision.action ?? "scored"), agentLabel: source?.label ?? "research",
+      sessionValidated: source?.market === market && source.sessionValidated === true,
+      asOfSession: source?.market === market ? source.asOfSession : null,
     }];
   });
 }
@@ -103,7 +114,9 @@ async function runMarket(svc: any, market: Market) {
       continue;
     }
     const findings = [...buildDimensionFindings(observations, horizonDays), ...buildAgentFindings(observations, horizonDays)];
-    const distinctSessions = new Set(observations.map((row) => row.ts.slice(0, 10))).size;
+    const distinctSessions = new Set(observations
+      .filter(row => row.sessionValidated === true && row.asOfSession != null)
+      .map(row => row.asOfSession)).size;
     const status = findings.some((finding) => finding.classification === "insufficient_evidence") ? "insufficient_evidence" : "measured";
     const { data: run, error: runError } = await svc.from("dimension_diagnostic_runs").insert({
       market, analysis_plan_version: DIMENSION_DIAGNOSTIC_PLAN_VERSION, as_of_date: asOfDate, horizon_days: horizonDays,

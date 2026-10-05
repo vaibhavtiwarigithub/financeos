@@ -33,6 +33,8 @@ function observations(dates: number, perDate = 6): DiagnosticObservation[] {
         direction: "long",
         action: "scored",
         agentLabel: "research",
+        sessionValidated: true,
+        asOfSession: ts.slice(0, 10),
       });
     }
   }
