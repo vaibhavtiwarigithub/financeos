@@ -141,6 +141,28 @@ benchmark matching, and overlap-aware independent-session evidence.
 > **Still unverified:** the per-dimension figures that motivated the archetype instrument (`us fundamental +0.076 t=2.40`, `india technical +0.173 t=2.51`) are all-scored and have NOT been re-derived. The header comment in `lib/learning/archetype-ic.ts` now says so. `lib/edges/*` also computes IC and was not audited here.
 >
 > 2026-08-28: **Alpha Diagnostic Lab P0 shipped** (`features/alpha-diagnostic-lab/`). Read-only funnel diagnosis per market, weekly. A0 data truth gates everything; the strongest verdict is `owner_review` and no money path reads it. Full record incl. the seven defects found by running it: `features/alpha-diagnostic-lab/IMPLEMENTATION_RESULT.md`.
+
+The A1 funnel uses persisted entry-candidate decisions, market/session-matched
+PaperTrader stage events and signal-linked lots. It preserves the first scored
+and first eligible decision separately for each symbol/session, then reports
+the scored, eligible-long, selected, filled and fully closed stages with labelled
+benchmark-neutral returns at 5, 10 and 20 sessions. Holding re-scores are not
+entry candidates; missing labels remain missing. Its output is descriptive
+only and is suppressed from interpretation whenever A0 cannot verify the
+underlying completed-session NAV and benchmark record. The mark and lot ledgers
+are paginated so their growing history cannot silently truncate A6 replay.
+
+Dimension IC separates evidence availability from predictive evidence. Only
+decisions whose source signal validates the market session and supplies its
+as-of session enter predictive cross-sections; weekend/catch-up research stays
+visible in data-quality counts but is not treated as a tradable independent
+session. Missing scores or forward returns are unavailable, never numeric zero.
+The corrected diagnostic uses a new plan version; earlier IC histories retain
+their original meaning and must not be compared as if their cohorts matched.
+The code-version IC ledger uses that same source-session evidence. Its
+benchmark-relative label does not fall back to raw stock return when the
+benchmark is missing; such rows remain unlabelled. Its per-cell count exposes
+how many rows lack valid session provenance rather than silently grading them.
 >
 > First production run, both markets `A0 pass`, verdict `collect_more` (nothing clears the 60-date review floor):
 >

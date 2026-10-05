@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCodeVersionIcLedger, applyMultipleComparisonsControl, UNKNOWN_CODE_VERSION } from "./code-version-ic";
+import { buildCodeVersionIcLedger, applyMultipleComparisonsControl, loadCodeVersionObservations, UNKNOWN_CODE_VERSION } from "./code-version-ic";
 import { detectRegressions } from "./ic-regression-alert";
 import type { DiagnosticObservation } from "./dimension-diagnostics";
 
@@ -29,6 +29,7 @@ function observations(dates: number, codeVersion: string, opts: { invert?: boole
         availabilityMask: { fundamental: true },
         benchmarkNeutralReturn: outcome,
         entryEligible: true, decisionContext: "entry_candidate", direction: "long", action: "scored", agentLabel: "",
+        sessionValidated: true, asOfSession: ts.slice(0, 10),
       });
     }
   }
@@ -36,6 +37,13 @@ function observations(dates: number, codeVersion: string, opts: { invert?: boole
 }
 
 describe("buildCodeVersionIcLedger", () => {
+  it("excludes invalid source sessions and reports the provenance loss", () => {
+    const rows = observations(30, "v1");
+    rows[0] = { ...rows[0], sessionValidated: false };
+    const cell = buildCodeVersionIcLedger("us", 2, rows).find((c) => c.dimension === "fundamental");
+    expect(cell?.sessionProvenanceExcluded).toBe(1);
+    expect(cell?.n).toBe(179);
+  });
   it("groups by code_version and reuses buildDimensionFindings' overlap-corrected classification", () => {
     // 20 dates clears MIN_PREDICTIVE_DATES; at horizonDays=10 nEff=2.0, below
     // MIN_EFFECTIVE_OBSERVATIONS(12) -> insufficient_evidence is EXPECTED here.
@@ -72,6 +80,20 @@ describe("buildCodeVersionIcLedger", () => {
     expect(fundamental!.classification).toBe("insufficient_evidence");
     expect(fundamental!.ci95).toBeNull();
     expect(fundamental!.pValue).toBeNull();
+  });
+});
+
+describe("loadCodeVersionObservations", () => {
+  it("keeps raw-return-only labels unlabelled and requires matching source-session proof", async () => {
+    const decision = { id: 3, ts: "2026-08-08T13:00:00Z", symbol: "TEST", market: "us", signal_id: "sig-1", code_version: "v1", analyst_score: 70, fundamental_score: 80, technical_score: 65, sentiment_score: null, macro_score: null, insider_score: null, availability_mask: {}, entry_eligible: true, direction: "long", action: "scored", decision_context: "entry_candidate", discovery_source: "watchlist" };
+    const svc = { from: (table: string) => table === "observation_labels"
+      ? { select: () => ({ eq: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: [{ id: 1, observation_id: 3, horizon_days: 10, benchmark_neutral_return: null, fwd_return: 0.25, decision_observations: decision }], error: null }) }) }) }) }) }
+      : { select: () => ({ in: async () => ({ data: [{ id: "sig-1", market: "us", session_validated: false, as_of_session: "2026-08-07" }], error: null }) }) } };
+    const loaded = await loadCodeVersionObservations(svc, "us", 10);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].benchmarkNeutralReturn).toBeNull();
+    expect(loaded[0].sessionValidated).toBe(false);
+    expect(loaded[0].asOfSession).toBe("2026-08-07");
   });
 });
 

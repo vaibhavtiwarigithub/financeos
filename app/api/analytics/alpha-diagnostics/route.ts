@@ -17,8 +17,9 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import {
   runA0DataTruth, runA1Funnel, runA3Payoff,
-  type NavRow, type FunnelRow, type ClosedLot,
+  type NavRow, type ClosedLot,
 } from "@/lib/analytics/alpha-diagnostics";
+import { projectAllScoredEntryRows, projectEntryFunnel, type FunnelEvent, type FunnelSignal } from "@/lib/analytics/alpha-diagnostics-funnel";
 import {
   runA4ExitPaths, runA5Sizing, runA7CostStress,
   type ExitPathLot, type SizedLot,
@@ -33,13 +34,13 @@ import {
   ALPHA_DIAGNOSTIC_METRIC_VERSION, fingerprint, fingerprintDataset, resolveVerdict, MIN_REVIEW_DATES,
   type DiagnosticFinding, type DiagnosticMarket,
 } from "@/lib/analytics/alpha-diagnostic-contract";
-import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { isEntryCandidateLong, resolveDecisionContext } from "@/lib/learning/entry-cohort";
 import { expectedMarketSessionsBetween, getMarketDayStatus } from "@/lib/trading/market-calendar";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const PLAN_VERSION = "alpha_diagnostic_lab_v2_measurement_integrity";
+const PLAN_VERSION = "alpha_diagnostic_lab_v3_entry_funnel_and_full_marks";
 const HISTORY_LIMIT = 20;
 const PAGE_SIZE = 1000;
 
@@ -203,20 +204,22 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Load persisted ledgers only. No provider call anywhere below. ────────
-    const [perfRes, tradesRes, observationRows, marksRes, posRes] = await Promise.all([
-      svc.from("paper_performance")
-        .select("date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, snapshot_type, tainted")
-        .eq("market", market).order("date", { ascending: true }),
+    const [perfRows, allLotRows, observationRows, marksRes, posRes] = await Promise.all([
+      loadAllRows<any>((from, to) => svc.from("paper_performance")
+        .select("id, date, nav, cash_balance, positions_value, bench_nav, bench_session_date, bench_source, snapshot_type, tainted")
+        .eq("market", market).order("date", { ascending: true })
+        .order("id", { ascending: true }).range(from, to)),
       // ALL lots, not just closed. The closed-lot cohorts are derived below;
       // A6 additionally needs OPEN lots, because a calendar replay treats an
       // open position as an entry with no exit yet.
-      svc.from("paper_trades")
-        .select("symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, executed_at, exit_price, stop_loss, take_profit, tainted, excluded_from_learning, closed_at")
-        .eq("market", market).not("fill_price", "is", null),
+      loadAllRows<any>((from, to) => svc.from("paper_trades")
+        .select("id, signal_id, symbol, market, realized_pnl, pnl_pct, exit_reason, fill_price, qty, executed_at, exit_price, stop_loss, take_profit, tainted, excluded_from_learning, closed_at")
+        .eq("market", market).not("fill_price", "is", null)
+        .order("id", { ascending: true }).range(from, to)),
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       loadAllRows<any>((from, to) => svc.from("decision_observations")
-        .select("id, signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
+        .select("id, signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
         .not("analyst_score", "is", null)
         .order("ts", { ascending: true })
@@ -227,25 +230,19 @@ export async function POST(req: NextRequest) {
       // prices from a provider series. It only begins 2026-08-17 (when the W4
       // ledger was created), which bounds the A6 window -- reported honestly in
       // its date count rather than backfilled from a different source.
-      // Bounded read, kept explicit: 106-121 rows per market today. The mark
-      // ledger grows one row per open position per session, so it will cross
-      // PostgREST's 1,000-row cap; A6 already reports its own session count, and
-      // a truncated ledger would silently shorten the replay window instead.
-      svc.from("paper_position_marks")
-        .select("session_date, symbol, qty, mark_price")
-        .eq("market", market).order("session_date", { ascending: true }).range(0, 999),
+      // The mark ledger grows each session; a one-page read silently truncates
+      // the A6 replay. Read all pages in stable date/symbol order.
+      loadAllRows<any>((from, to) => svc.from("paper_position_marks")
+        .select("id, session_date, symbol, qty, mark_price")
+        .eq("market", market).order("session_date", { ascending: true })
+        .order("symbol", { ascending: true }).order("id", { ascending: true }).range(from, to)),
       // A9 inputs: geometry currently carried by open positions.
       svc.from("paper_positions")
         .select("symbol, opened_at, avg_cost, initial_stop_loss, stop_loss, price_target")
         .eq("market", market),
     ]);
-    if (perfRes.error) throw new Error(`paper_performance read failed: ${perfRes.error.message}`);
-    if (tradesRes.error) throw new Error(`paper_trades read failed: ${tradesRes.error.message}`);
-    if (marksRes.error) throw new Error(`paper_position_marks read failed: ${marksRes.error.message}`);
     if (posRes.error) throw new Error(`paper_positions read failed: ${posRes.error.message}`);
 
-    const perfRows = (perfRes.data ?? []) as any[];
-    const allLotRows = (tradesRes.data ?? []) as any[];
     const executableSignalVersions = await loadExecutableSignalVersions(
       svc,
       observationRows.map((row: any) => row.signal_id),
@@ -258,7 +255,7 @@ export async function POST(req: NextRequest) {
       row.score_source === "deterministic_v1"
       && typeof row.scoring_version === "string"
       && row.scoring_version.length > 0
-      && executableSignalVersions.get(String(row.signal_id)) === row.scoring_version,
+      && executableSignalVersions.get(String(row.signal_id))?.version === row.scoring_version,
     );
     // Closed-lot cohorts. A3/A4/A5/A7 are all realized-outcome metrics and must
     // not see an open position, whose P&L has not happened yet.
@@ -294,6 +291,7 @@ export async function POST(req: NextRequest) {
     const learningLots = learningLotPairs.map(({ lot }) => lot);
 
     const findings: DiagnosticFinding[] = [];
+    let funnelEvents: FunnelEvent[] = [];
 
     // A0 FIRST and unconditionally. Everything after it is uninterpretable if
     // data truth failed.
@@ -301,9 +299,24 @@ export async function POST(req: NextRequest) {
     findings.push(a0.finding);
 
     if (a0.finding.status === "pass") {
-      // A1 needs a funnel projection that P0 does not yet persist; emit an
-      // explicit insufficient-evidence finding rather than a fabricated funnel.
-      findings.push(runA1Funnel(market, [] as FunnelRow[], 10, MIN_REVIEW_DATES));
+      // Join immutable entry decisions to the paper-trader stage ledger and
+      // actual lots by signal_id. Holding reviews are never buy candidates.
+      funnelEvents = await loadFunnelEvents(svc, selectionObservationRows
+        .filter((r: any) => resolveDecisionContext(r.decision_context, r.discovery_source) === "entry_candidate")
+        .map((r: any) => r.signal_id), market);
+      const horizons = [5, 10, 20] as const;
+      const funnelByHorizon = horizons.map(horizon => runA1Funnel(market,
+        projectEntryFunnel(selectionObservationRows, executableSignalVersions, funnelEvents, allLotRows, horizon),
+        horizon, MIN_REVIEW_DATES,
+        projectAllScoredEntryRows(selectionObservationRows, executableSignalVersions, horizon)));
+      const a1 = funnelByHorizon[1];
+      a1.metrics = { ...a1.metrics,
+        horizonFindings: Object.fromEntries(funnelByHorizon.map(f => [String(f.sample.horizonDays), {
+          sample: f.sample, coverage: f.coverage, status: f.status, metrics: f.metrics,
+        }])),
+        stageEvidence: "exact_signal_id_market_session; one earliest entry decision per symbol/session; missing labels remain null",
+      };
+      findings.push(a1);
 
       // A2 at h10 -- the horizon the mandate actually holds to (target_hold_days
       // = 10). Grading a 10-day policy on 2-day moves measures noise; grading it
@@ -330,7 +343,7 @@ export async function POST(req: NextRequest) {
       findings.push(runA7CostStress(market, learningLots));
 
       // -- A6: paired calendar replay with finite capital --------------------
-      const markRows = (marksRes.data ?? []) as any[];
+      const markRows = marksRes as any[];
       const bySession = new Map<string, Record<string, number>>();
       for (const mk of markRows) {
         const px = num(mk.mark_price);
@@ -474,7 +487,9 @@ export async function POST(req: NextRequest) {
       performance: perfRows,
       trades: allLotRows,
       observations: observationRows.map(normalizeObservationForFingerprint),
-      marks: (marksRes.data ?? []) as any[],
+      executableSignals: [...executableSignalVersions.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      marks: marksRes,
+      funnelEvents,
       positions: (posRes.data ?? []) as any[],
     });
     const verdict = resolveVerdict(findings);
@@ -488,7 +503,7 @@ export async function POST(req: NextRequest) {
       coverage: {
         navRows: navRows.length,
         taintedNavRowsExcludedFromA0: taintedNavRows,
-        markRows: (marksRes.data ?? []).length,
+        markRows: marksRes.length,
         lotRows: allLotRows.length,
         openLots: allLotRows.length - tradeRows.length,
         selectionObservationRows: observationRows.length,
@@ -594,12 +609,12 @@ function pctFromFill(level: unknown, fill: unknown, direction: "target" | "stop"
  * therefore prove its source was a current-session, deterministic equity signal
  * instead of treating every historical score as an executable opportunity.
  */
-async function loadExecutableSignalVersions(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<Map<string, string>> {
+async function loadExecutableSignalVersions(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<Map<string, FunnelSignal>> {
   const ids = [...new Set(signalIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
-  const executable = new Map<string, string>();
+  const executable = new Map<string, FunnelSignal>();
   for (let start = 0; start < ids.length; start += 200) {
     const { data, error } = await svc.from("agent_signals")
-      .select("id,market,asset_class,score_source,scoring_version,session_validated")
+      .select("id,market,asset_class,score_source,scoring_version,session_validated,as_of_session")
       .in("id", ids.slice(start, start + 200));
     if (error) throw new Error(`selection signal provenance read failed: ${error.message}`);
     for (const signal of data ?? []) {
@@ -610,10 +625,26 @@ async function loadExecutableSignalVersions(svc: any, signalIds: unknown[], mark
         && typeof (signal as any).scoring_version === "string"
         && (signal as any).scoring_version.length > 0
         && (signal as any).session_validated === true
-      ) executable.set(String((signal as any).id), String((signal as any).scoring_version));
+      ) executable.set(String((signal as any).id), {
+        version: String((signal as any).scoring_version),
+        session: typeof (signal as any).as_of_session === "string" ? (signal as any).as_of_session : null,
+      });
     }
   }
   return executable;
+}
+
+async function loadFunnelEvents(svc: any, signalIds: unknown[], market: DiagnosticMarket): Promise<FunnelEvent[]> {
+  const ids = [...new Set(signalIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+  const events: FunnelEvent[] = [];
+  for (let start = 0; start < ids.length; start += 200) {
+    const batch = ids.slice(start, start + 200);
+    events.push(...await loadAllRows<FunnelEvent>((from, to) => svc.from("pipeline_stage_events")
+      .select("signal_id,stage,outcome,reason,created_at")
+      .eq("market", market).in("signal_id", batch)
+      .order("id", { ascending: true }).range(from, to)));
+  }
+  return events;
 }
 
 function toExitPathLot(r: any, l: ClosedLot): ExitPathLot {

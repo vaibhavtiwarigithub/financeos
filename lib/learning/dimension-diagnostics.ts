@@ -16,7 +16,10 @@ import { quantileDiagnostics, type FactorRow } from "./factor-quantiles";
 // half the dates. That is a different dataset, not a refinement of the same one,
 // so v4 rows are kept as recorded and superseded rather than deleted or rerun in
 // place. India was under the cap and its v4 numbers are unaffected.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v6";
+// v7 excludes source signals that were not validated for their market session
+// from predictive IC. v6 incorrectly counted weekend research as independent
+// tradable sessions; its rows are frozen, not rewritten.
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v7_session_provenance";
 // 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
 // sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
 // the short labels structurally cannot answer, because a 20-day label can never
@@ -81,9 +84,13 @@ export type DiagnosticObservation = {
   direction: string | null;
   action: string;
   agentLabel: string;
+  /** Exact signal provenance. Missing is not a validated trade session. */
+  sessionValidated?: boolean | null;
+  asOfSession?: string | null;
 };
 
 function finite(value: unknown): number | null {
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -124,6 +131,12 @@ export function tStatistic(meanIc: number | null, sd: number | null, nEffective:
 
 function dateOf(ts: string): string {
   return ts.slice(0, 10);
+}
+
+function hasExecutableSession(row: DiagnosticObservation): boolean {
+  return row.sessionValidated === true
+    && typeof row.asOfSession === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(row.asOfSession);
 }
 
 function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: string }>, horizonDays: number) {
@@ -205,6 +218,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         unavailable: unavailable.length,
         unknown,
         availability_rate: observations.length ? available.length / observations.length : null,
+        invalid_or_unknown_session_provenance: observations.filter(row => !hasExecutableSession(row)).length,
       },
       reason: available.length === 0
         ? `No labeled observations declared ${dimension} available. This is a data-quality finding, not a scoring recommendation.`
@@ -218,19 +232,21 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
     const toRows = (source: DiagnosticObservation[]): FactorRow[] => source.flatMap((row) => {
       const value = finite(row.scores[dimension]);
       const outcome = finite(row.benchmarkNeutralReturn);
-      return value == null || outcome == null ? [] : [{ symbol: row.symbol, value, outcome, ts: row.ts }];
+      return value == null || outcome == null || !hasExecutableSession(row)
+        ? [] : [{ symbol: row.symbol, value, outcome, ts: row.asOfSession! }];
     });
     // HEADLINE = the cohort that can actually be entered. The all-scored number
     // ranks names the system would never buy, which is how a +0.105 "edge" was
     // published and retracted; it survives only as labelled context.
-    const eligible = available.filter((row) => isEntryCandidateLong({
+    const eligible = available.filter((row) => hasExecutableSession(row) && isEntryCandidateLong({
       entryEligible: row.entryEligible,
       direction: row.direction,
       decisionContext: row.decisionContext,
       discoverySource: row.discoverySource,
     }));
     const predictive = predictiveMetrics(toRows(eligible), horizonDays);
-    const context = predictiveMetrics(toRows(available), horizonDays);
+    const validAvailable = available.filter(hasExecutableSession);
+    const context = predictiveMetrics(toRows(validAvailable), horizonDays);
     findings.push({
       subjectType: "dimension",
       subjectKey: dimension,
@@ -259,7 +275,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         [`${ALL_SCORED_COHORT_KEY}_context`]: {
           cohort: ALL_SCORED_COHORT_KEY,
           ...context.metrics,
-          quantile_diagnostics: quantileDiagnostics(toRows(available), {
+          quantile_diagnostics: quantileDiagnostics(toRows(validAvailable), {
             nEffective: context.metrics.effective_observations,
           }),
           interpretation: "Context only. Includes observations that were never entry eligible and could not have been bought; never cite this as the score's predictive power.",
@@ -285,16 +301,17 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
     const toRows = (source: DiagnosticObservation[]) => source.flatMap((row) => {
       const score = finite(row.analystScore);
       const outcome = finite(row.benchmarkNeutralReturn);
-      return score == null || outcome == null ? [] : [{ value: score, outcome, ts: row.ts }];
+      return score == null || outcome == null || !hasExecutableSession(row)
+        ? [] : [{ value: score, outcome, ts: row.asOfSession! }];
     });
-    const eligibleRows = rows.filter((row) => isEntryCandidateLong({
+    const eligibleRows = rows.filter((row) => hasExecutableSession(row) && isEntryCandidateLong({
       entryEligible: row.entryEligible,
       direction: row.direction,
       decisionContext: row.decisionContext,
       discoverySource: row.discoverySource,
     }));
     const predictive = predictiveMetrics(toRows(eligibleRows), horizonDays);
-    const context = predictiveMetrics(toRows(rows), horizonDays);
+    const context = predictiveMetrics(toRows(rows.filter(hasExecutableSession)), horizonDays);
     const eligibleReturns = eligibleRows.flatMap((row) => finite(row.benchmarkNeutralReturn) != null
       ? [finite(row.benchmarkNeutralReturn)!] : []);
     const availabilityValues = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => row.availabilityMask?.[dimension] === true ? 1 : 0));
@@ -317,6 +334,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
           interpretation: "Context only. Includes observations that were never entry eligible and could not have been bought.",
         },
         observations: rows.length,
+        invalid_or_unknown_session_provenance: rows.filter(row => !hasExecutableSession(row)).length,
         eligible_observations: eligibleRows.length,
         code_versioned_observations: versionedObservations,
         code_version_coverage: rows.length ? versionedObservations / rows.length : null,
@@ -346,7 +364,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
 
 export function diagnosticFingerprint(market: string, horizonDays: number, observations: DiagnosticObservation[]): string {
   const material = observations
-    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${isEntryCandidateLong({ entryEligible: row.entryEligible, direction: row.direction, decisionContext: row.decisionContext, discoverySource: row.discoverySource }) ? 1 : 0}`)
+    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${row.sessionValidated === true ? 1 : 0}:${row.asOfSession ?? "unknown"}:${isEntryCandidateLong({ entryEligible: row.entryEligible, direction: row.direction, decisionContext: row.decisionContext, discoverySource: row.discoverySource }) ? 1 : 0}`)
     .sort()
     .join("|");
   return crypto.createHash("sha256").update(`${DIMENSION_DIAGNOSTIC_PLAN_VERSION}|${market}|${horizonDays}|${material}`).digest("hex");

@@ -12,6 +12,7 @@ import {
   applyMultipleComparisonsControl,
   buildCodeVersionIcLedger,
   loadCodeVersionObservations,
+  CODE_VERSION_IC_METHOD_VERSION,
   type CodeVersionCell,
   type Market,
 } from "@/lib/learning/code-version-ic";
@@ -57,6 +58,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       market,
       horizons,
+      methodVersion: CODE_VERSION_IC_METHOD_VERSION,
       cells,
       regressions,
       influence: "None. Detection only — flags that a dimension's IC changed AFTER a code_version shipped, never that the version caused it. No score, weight, eligibility, sizing, or broker path reads this.",
@@ -82,7 +84,7 @@ export async function POST(request: NextRequest) {
     const svc = createServiceClient();
     const cells = await buildLedger(svc, market, DIAGNOSTIC_HORIZONS);
     const regressions = await reconcileRegressionAlerts(market, cells, svc);
-    return NextResponse.json({ ok: true, market, cellCount: cells.length, regressions, influence: "None" });
+    return NextResponse.json({ ok: true, market, methodVersion: CODE_VERSION_IC_METHOD_VERSION, cellCount: cells.length, regressions, influence: "None" });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "ledger reconcile failed" }, { status: 500 });
   }

@@ -9,7 +9,7 @@ function cells(): CodeVersionCell[] {
     market: "us", horizonDays: 10, dimension: "fundamental", codeVersion: `v${i}`,
     firstSeen: `2026-0${i + 1}-01`, lastSeen: `2026-0${i + 1}-28`, n: 100,
     qualifyingSessions: 30, meanIc: ic, sd: 0.1, tStat: 1, ci95: null, pValue: null,
-    effectiveObservations: 30, classification: "measured_descriptive", reason: "fixture",
+    effectiveObservations: 30, classification: "measured_descriptive", sessionProvenanceExcluded: 0, reason: "fixture",
   }));
 }
 beforeEach(() => vi.clearAllMocks());

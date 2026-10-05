@@ -13,7 +13,7 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
   it("queries entry eligibility, excursions, initial stops, and persisted mark quantity", () => {
     expect(route).toContain("signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source");
     expect(route).toContain("max_adverse_excursion, max_favorable_excursion");
-    expect(route).toContain('.select("session_date, symbol, qty, mark_price")');
+    expect(route).toContain('.select("id, session_date, symbol, qty, mark_price")');
     expect(route).toContain("initial_stop_loss, stop_loss, price_target");
     expect(route).toContain("stop_loss, take_profit, tainted");
   });
@@ -40,8 +40,22 @@ describe("Alpha Diagnostic Lab route integrity contract", () => {
     expect(route).toContain("session_validated === true");
     expect(route).toContain('score_source === "deterministic_v1"');
     expect(route).toContain('asset_class !== "crypto"');
-    expect(route).toContain("executableSignalVersions.get(String(row.signal_id)) === row.scoring_version");
+    expect(route).toContain("executableSignalVersions.get(String(row.signal_id))?.version === row.scoring_version");
     expect(route).toContain("selectionProvenanceCoveragePct");
+  });
+
+  it("projects A1 from immutable per-signal stages and fills, never an empty placeholder", () => {
+    expect(route).toContain("projectEntryFunnel(selectionObservationRows, executableSignalVersions, funnelEvents, allLotRows, horizon)");
+    expect(route).toContain('loadFunnelEvents(svc, selectionObservationRows');
+    expect(route).toContain('resolveDecisionContext(r.decision_context, r.discovery_source) === "entry_candidate"');
+    expect(route).toContain('horizons = [5, 10, 20]');
+    expect(route).not.toContain("[] as FunnelRow[]");
+  });
+
+  it("paginates the growing mark ledger rather than clipping A6 at 1,000 rows", () => {
+    expect(route).toContain('loadAllRows<any>((from, to) => svc.from("paper_position_marks")');
+    expect(route).toContain('.order("symbol", { ascending: true }).order("id", { ascending: true }).range(from, to)');
+    expect(route).not.toContain('.range(0, 999)');
   });
 
   it("starts A6 only from a canonical mark with an untainted performance row", () => {

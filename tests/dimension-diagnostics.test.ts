@@ -16,6 +16,7 @@ function observation(id: number, date: string, available = true): DiagnosticObse
     decisionContext: id % 2 === 0 ? "entry_candidate" : "holding_review",
     direction: id % 2 === 0 ? "long" : "neutral",
     action: id % 2 === 0 ? "signal_written" : "scored", agentLabel: "research",
+    sessionValidated: true, asOfSession: date,
   };
 }
 
@@ -45,6 +46,34 @@ describe("dimension diagnostics P0", () => {
     expect(diagnosticFingerprint("us", 5, rows)).toBe(diagnosticFingerprint("us", 5, [...rows]));
   });
 
+  it("keeps invalid weekend research visible for data quality but out of predictive IC", () => {
+    const valid = Array.from({ length: 6 }, (_, i) => observation(i * 2 + 2, "2026-08-07"));
+    const weekend = Array.from({ length: 6 }, (_, i) => ({
+      ...observation(i * 2 + 102, "2026-08-08"),
+      sessionValidated: false, asOfSession: "2026-08-07",
+    }));
+    const rows = [...valid, ...weekend];
+    const findings = buildDimensionFindings(rows, 2);
+    const availability = findings.find(f => f.subjectKey === "technical" && f.findingType === "availability")!;
+    const predictive = findings.find(f => f.subjectKey === "technical" && f.findingType === "predictive")!;
+    expect(availability.metrics.invalid_or_unknown_session_provenance).toBe(6);
+    expect(predictive.metrics.distinct_sessions).toBe(1);
+    expect((predictive.metrics.session_ic_series as any[]).every(point => point.date !== "2026-08-08")).toBe(true);
+    expect(diagnosticFingerprint("us", 2, rows)).not.toBe(diagnosticFingerprint("us", 2,
+      rows.map(row => ({ ...row, sessionValidated: true }))));
+  });
+
+  it("does not turn missing factor scores or forward outcomes into zero-return evidence", () => {
+    const rows = [
+      { ...observation(2, "2026-08-07"), scores: { ...observation(2, "2026-08-07").scores, fundamental: null } },
+      { ...observation(4, "2026-08-07"), benchmarkNeutralReturn: null },
+    ];
+    const predictive = buildDimensionFindings(rows, 2)
+      .find(f => f.subjectKey === "fundamental" && f.findingType === "predictive")!;
+    expect(predictive.metrics.labeled_observations).toBe(0);
+    expect(predictive.classification).toBe("insufficient_evidence");
+  });
+
   // THE REGRESSION THIS FILE EXISTS FOR (2026-08-28).
   //
   // The eligible-long rows rank PERFECTLY BACKWARDS and the ineligible rows rank
@@ -63,7 +92,7 @@ describe("dimension diagnostics P0", () => {
         scores: { fundamental: 50 + i, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
         benchmarkNeutralReturn: -i, entryEligible: true, direction: "long", decisionContext: "entry_candidate",
-        action: "signal_written", agentLabel: "research",
+        action: "signal_written", agentLabel: "research", sessionValidated: true, asOfSession: date,
       });
       // 5 ineligible names: higher score -> better return, and a wider spread,
       // so the pooled all-scored IC is strongly positive.
@@ -73,7 +102,7 @@ describe("dimension diagnostics P0", () => {
         scores: { fundamental: 70 + i, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
         benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral", decisionContext: "holding_review",
-        action: "scored", agentLabel: "research",
+        action: "scored", agentLabel: "research", sessionValidated: true, asOfSession: date,
       });
     }
 
@@ -97,7 +126,7 @@ describe("dimension diagnostics P0", () => {
         scores: { fundamental: 50, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
         benchmarkNeutralReturn: -i, entryEligible: true, direction: "long", decisionContext: "entry_candidate",
-        action: "signal_written", agentLabel: "research",
+        action: "signal_written", agentLabel: "research", sessionValidated: true, asOfSession: date,
       });
       for (let i = 0; i < 5; i++) rows.push({
         id: d * 100 + 50 + i, ts: `${date}T13:00:00.000Z`, symbol: `N${i}`, codeVersion: "test-code",
@@ -105,7 +134,7 @@ describe("dimension diagnostics P0", () => {
         scores: { fundamental: 50, technical: 50, sentiment: 50, macro: 50, insider: 50 },
         availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
         benchmarkNeutralReturn: 10 + i, entryEligible: false, direction: "neutral", decisionContext: "holding_review",
-        action: "scored", agentLabel: "research",
+        action: "scored", agentLabel: "research", sessionValidated: true, asOfSession: date,
       });
     }
     const finding = buildAgentFindings(rows, 2).find((f) => f.subjectType === "agent");
@@ -125,7 +154,7 @@ describe("dimension diagnostics P0", () => {
       scores: { fundamental: 50 + i, technical: 50, sentiment: 50, macro: 50, insider: 50 },
       availabilityMask: { fundamental: true, technical: true, sentiment: true, macro: true, insider: true },
       benchmarkNeutralReturn: i, entryEligible: true, direction: "short",
-      action: "scored", agentLabel: "research",
+      action: "scored", agentLabel: "research", sessionValidated: true, asOfSession: "2026-08-01",
     });
     const finding = buildDimensionFindings(rows, 2)
       .find((f) => f.subjectKey === "fundamental" && f.findingType === "predictive");

@@ -113,6 +113,28 @@ describe("A1 funnel", () => {
   it("refuses interpretation below the date floor", () => {
     expect(runA1Funnel("us", rows(3), 10, 20).status).toBe("insufficient_evidence");
   });
+
+  it("uses the first all-scored baseline without double-counting a later eligible decision", () => {
+    const eligible: FunnelRow[] = [{ date: "2026-10-02", symbol: "ARM", stage: "selected",
+      benchmarkNeutralReturn: -0.2, attritionReason: "max_open_names" }];
+    const allScored: FunnelRow[] = [{ date: "2026-10-02", symbol: "ARM", stage: "scored",
+      benchmarkNeutralReturn: 0.12, attritionReason: null }];
+    const f = runA1Funnel("us", eligible, 10, 1, allScored);
+    const stages = f.metrics.stages as any[];
+    expect(stages.find(s => s.stage === "scored")).toMatchObject({ count: 1, meanBenchmarkNeutralReturn: 0.12 });
+    expect(stages.find(s => s.stage === "entry_eligible")).toMatchObject({ count: 1, meanBenchmarkNeutralReturn: -0.2 });
+  });
+
+  it("never calls a descriptive funnel a pass and refuses an unlabelled horizon", () => {
+    const mature = Array.from({ length: 60 }, (_, i) => ({
+      date: new Date(Date.UTC(2026, 5, i + 1)).toISOString().slice(0, 10),
+      symbol: "AAA", stage: "scored" as const, benchmarkNeutralReturn: 0.01,
+      attritionReason: null,
+    }));
+    expect(runA1Funnel("us", mature, 5, 1).status).toBe("descriptive_only");
+    const unlabelled = mature.map(row => ({ ...row, benchmarkNeutralReturn: null }));
+    expect(runA1Funnel("us", unlabelled, 20, 1).status).toBe("insufficient_evidence");
+  });
 });
 
 describe("sampleStatus overlap correction", () => {

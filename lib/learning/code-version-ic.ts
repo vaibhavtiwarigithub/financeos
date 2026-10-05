@@ -31,6 +31,7 @@ export type Market = "us" | "india";
  * named version — they could span several real deploys, so grouping them under
  * one version key would manufacture a false "boundary". */
 export const UNKNOWN_CODE_VERSION = "unknown";
+export const CODE_VERSION_IC_METHOD_VERSION = "v2_validated_session_benchmark_neutral";
 
 export type CodeVersionCell = {
   market: Market;
@@ -50,6 +51,8 @@ export type CodeVersionCell = {
   pValue: number | null;
   effectiveObservations: number;
   classification: "insufficient_evidence" | "measured_descriptive";
+  /** Decisions without a validated market-local source session cannot rank. */
+  sessionProvenanceExcluded: number;
   reason: string;
   /** Set by applyMultipleComparisonsControl. Undefined until that pass runs. */
   bhSignificant?: boolean;
@@ -64,14 +67,13 @@ const PAGE = 1000;
  * silently caps unpaginated reads at 1,000 rows — see that file's header
  * comment and docs/arch/09-learning-loop.md 2026-08-28 entry). Duplicated
  * rather than imported because that loader is a route-local, unexported
- * function and also joins agent_signals for a label this ledger never uses —
- * skipping that join here is a real cost saving, not laziness that loses
- * correctness.
+ * function. This ledger now loads the minimal source-signal session proof:
+ * omitting it once let weekend catch-up research enter code-version IC and
+ * could manufacture or clear regression alerts on a non-tradable cohort.
  *
- * `benchmark_neutral_return` falls back to `fwd_return` per-row: production
- * has real fwd_return-only rows (e.g. US h10 11 rows, India h5 64, h10 53, h20
- * 91 — measured 2026-09-08), and dropping them would understate n for exactly
- * the small-sample cells this feature exists to police.
+ * A missing benchmark-neutral label stays missing. Raw forward return is not
+ * interchangeable with benchmark-relative performance and must not inflate an
+ * IC cell merely to make its sample larger.
  */
 export async function loadCodeVersionObservations(
   svc: any,
@@ -83,7 +85,7 @@ export async function loadCodeVersionObservations(
     const { data, error } = await svc
       .from("observation_labels")
       .select(
-        "id,observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,decision_context,discovery_source)",
+        "id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,signal_id,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,decision_context,discovery_source)",
       )
       .eq("horizon_days", horizonDays)
       .eq("decision_observations.market", market)
@@ -94,11 +96,25 @@ export async function loadCodeVersionObservations(
     rows.push(...page);
     if (page.length < PAGE) break;
   }
+  const ids = [...new Set(rows.flatMap((row) => {
+    const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
+    return typeof decision?.signal_id === "string" ? [decision.signal_id] : [];
+  }))];
+  const sessions = new Map<string, { market: Market; validated: boolean; date: string | null }>();
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const { data, error } = await svc.from("agent_signals")
+      .select("id,market,session_validated,as_of_session").in("id", ids.slice(offset, offset + 500));
+    if (error) throw new Error(`code-version IC signal provenance query failed: ${error.message}`);
+    for (const signal of data ?? []) sessions.set(String(signal.id), {
+      market: signal.market, validated: signal.session_validated === true,
+      date: signal.as_of_session ?? null,
+    });
+  }
   return rows.flatMap((row) => {
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     if (!decision?.id || !decision.ts) return [];
-    const returnValue = row.benchmark_neutral_return ?? row.fwd_return;
-    if (returnValue == null) return [];
+    const returnValue = row.benchmark_neutral_return;
+    const source = typeof decision.signal_id === "string" ? sessions.get(decision.signal_id) : null;
     return [{
       id: Number(decision.id),
       ts: String(decision.ts),
@@ -113,17 +129,16 @@ export async function loadCodeVersionObservations(
         insider: decision.insider_score == null ? null : Number(decision.insider_score),
       },
       availabilityMask: decision.availability_mask ?? null,
-      benchmarkNeutralReturn: Number(returnValue),
+      benchmarkNeutralReturn: returnValue == null ? null : Number(returnValue),
       entryEligible: decision.entry_eligible === true,
       decisionContext: decision.decision_context ?? null,
       discoverySource: decision.discovery_source ?? null,
       direction: decision.direction == null ? null : String(decision.direction),
       action: String(decision.action ?? "scored"),
-      // Unused by buildDimensionFindings' dimension path (agentLabel only
-      // feeds buildAgentFindings, which this ledger never calls); stubbed to
-      // satisfy the shared DiagnosticObservation type without the extra
-      // agent_signals join loadObservations pays for.
+      // Agent identity is not used by this dimension-only ledger.
       agentLabel: "",
+      sessionValidated: source?.market === market && source.validated === true,
+      asOfSession: source?.market === market ? source.date : null,
     } satisfies DiagnosticObservation];
   });
 }
@@ -190,6 +205,7 @@ export function buildCodeVersionIcLedger(
         pValue: measured ? pValueFromT(tStat) : null,
         effectiveObservations: nEffective,
         classification,
+        sessionProvenanceExcluded: rows.filter((row) => row.sessionValidated !== true || !row.asOfSession).length,
         reason: finding.reason,
       });
     }

@@ -78,7 +78,15 @@ Two live-flow failures were found and repaired before completion:
 
 ## Deliberate refusals / remaining evidence gaps
 
-- A1 remains insufficient because the full funnel projection is not persisted.
+- Historical note: at this implementation snapshot, A1 remained insufficient.
+  The 2026-10-04 diagnostic repair now projects A1 from immutable
+  `decision_observations`, `pipeline_stage_events`, and signal-linked
+  `paper_trades` at h5/h10/h20, choosing the first entry-candidate decision
+  per symbol/market session before reading the subsequent outcome. Holding
+  reviews, unverified signal provenance, shadow-only events, and missing
+  labels cannot inflate selection or fills. This is descriptive attribution,
+  not a policy pass. A0 still blocks interpretation when a real completed EOD
+  session is absent; missing historical snapshots are not synthesized.
 - A4 refuses barrier ordering when both stop and target were touched and refuses
   classification when MFE/MAE are unavailable.
 - A2/A8 refuse a verdict below the overlap-adjusted date floor.

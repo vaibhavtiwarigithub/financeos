@@ -23,6 +23,13 @@
 
 ## Hard boundaries verified in implementation
 
+The v7 measurement-integrity repair (2026-10-05) excludes unvalidated
+weekend/catch-up source signals from predictive IC and uses the signal's
+market-local `as_of_session` as the cross-section date. Such observations
+remain in availability/data-quality counts. Missing factor scores and forward
+returns are not converted to zero. Earlier plan-version rows remain immutable
+and are not directly comparable with v7.
+
 - Reads only `decision_observations`, `observation_labels`, and signal labels.
 - Does not import ResearchAgent scoring, PaperTrader, PositionMonitor, strategy
   mutation, proposal, broker, or provider modules.
