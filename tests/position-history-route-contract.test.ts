@@ -17,10 +17,13 @@ describe("position history endpoint contract", () => {
 
   it("requires market scope and verifies open positions before reading marks", () => {
     expect(source).toContain('.eq("market", market)');
-    expect(source).toContain('.select("id, symbol, opened_at")');
+    expect(source).toContain('.select("id, symbol, qty, opened_at, position_role")');
     expect(source).not.toContain("created_at");
     expect(source.indexOf('from("paper_positions")')).toBeLessThan(source.indexOf('from("paper_position_marks")'));
     expect(source).toContain('.in("position_id", verifiedIds)');
+    expect(source).toContain('from("paper_trades")');
+    expect(source).toContain("buildPositionActivitySeries");
+    expect(source).toContain("activityTruncated");
   });
 
   it("bounds the batch and paginates to avoid silently returning only the first DB page", () => {

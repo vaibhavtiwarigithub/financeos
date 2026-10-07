@@ -1,12 +1,12 @@
 # Open Position History Chart — Feature Architecture
 
-**Status:** Merged to `main` in PR #46 and deployed to production on 2026-10-07. Vercel production build completed READY, including TypeScript validation and all static-page generation. The isolated local build stalled under host memory pressure; the deployment build verified the complete app. Read-only UI; no migration or trading-policy change.
+**Status:** Initial read-only price-history chart merged to `main` in PR #46 and deployed on 2026-10-07. Execution-ladder extension is being implemented in the current Codex change; it is not production-ready until merged and deployed. No schema or trading-policy change.
 **Owner:** Vaibhav
 **Why:** Make each held paper position's path since entry visible beside its current P&L, while preserving the distinction between share-price movement and portfolio cash-flow effects.
 
 ## Decision
 
-Render a compact, market-local sparkline inside each open paper-position card. Use the append-only `paper_position_marks` ledger, keyed by the current position ID, as the historical mark source. The plotted value is percentage price movement from the first valid mark at/after entry—not historical position value or realized P&L.
+Render a compact, market-local view inside each open paper-position card. The daily price sparkline uses the append-only `paper_position_marks` ledger, keyed by current position ID. A second activity chart reconstructs the share-count step line from immutable paper lot rows (`paper_trades`) within the current position epoch, and shows fills/sales, fill prices, and traded notionals. Neither view is a historical P&L or net return attribution chart.
 
 The UI batches all currently held position IDs in one read request and loads lazily after the position list is visible. It displays the latest mark date and a clear no-data/stale state. No chart may trigger provider fetches, write marks, mutate a position, or place an order.
 
@@ -15,6 +15,7 @@ The UI batches all currently held position IDs in one read request and loads laz
 - `paper_position_marks` records market, position ID, symbol, quantity, mark, source, observed time, provenance, stale status, and session date in an append-only ledger.
 - Daily close marks are suitable for a compact path view but do not provide an intraday execution path.
 - Quantity can change after add-on buys or partial exits. Therefore a position-value line can jump for reasons unrelated to price, and a P&L line requires correctly reconstructed cash flows and cost basis. This first version does not claim either.
+- `paper_order_events` does not contain an exact `position_id` link in the current schema. The activity view therefore uses `paper_positions.opened_at`, market, symbol and position role to delimit the current epoch, then groups residual partial-exit lots by their immutable event/signal lineage. It refuses the chart if the epoch is missing, a residual lacks lineage, an exit lacks exact quantity/price/reason, event history is truncated, or reconstructed shares do not equal current open quantity. It does not use same-symbol history from before this position epoch.
 - The existing general research chart endpoint is not reused: it does not establish exact current-position lineage, and its price-cache query is not market-scoped in this revision.
 
 ## Data contract
@@ -40,6 +41,14 @@ Response:
     truncated?: boolean;
     status: "ready" | "insufficient_history" | "unavailable";
   }>;
+  activity: Record<string, {
+    events: Array<{
+      at: string; side: "buy" | "sell"; quantity: number; fillPrice: number;
+      notional: number; quantityAfter: number; reason: string | null;
+    }>;
+    status: "ready" | "unavailable" | "reconciliation_mismatch";
+    reconstructedQty: number | null;
+  }>;
 }
 ```
 
@@ -47,12 +56,13 @@ The endpoint authenticates viewer/owner, caps requests to eight IDs, loads the c
 
 ## UI
 
-- Place the sparkline within `PositionCard`, beneath the bought/opened date and quote row.
+- Place the two compact charts within `PositionCard`, beneath the bought/opened date and quote row.
 - X axis: market session date, implicit through ordered daily points.
 - Y axis: percent change from the first valid mark; include a zero baseline and signed latest percentage.
 - Tooltip: session date, mark price, percentage move, and mark provenance/freshness.
 - Stale/carry-forward observations are visibly muted; missing sessions remain gaps (never interpolated as fresh quotes).
 - Values are raw recorded marks; corporate-action/split normalization is not claimed by this chart version.
+- Activity view X axis is event time; Y axis is shares held after each fill/exit. Green markers mean buy/add, red markers mean sold quantity. Tooltips show exact fill price and executed notional. The step line is quantity—not dollar market value—because marking it as position value without a matching historical price at every event would confound trading activity with market moves. The separate price path gives daily market movement.
 - Preserve existing current P&L, value, exit-plan, and manual-close displays unchanged.
 - Honor mobile card width and provide an accessible text summary.
 
@@ -74,8 +84,8 @@ The broad-market sequence is therefore:
 ## Files
 
 - Add `app/api/portfolio/position-history/route.ts` (owner/viewer-gated read-only endpoint).
-- Add `components/dashboard/PositionHistorySparkline.tsx` (read-only visualization).
-- Update `components/dashboard/PortfolioPage.tsx` (batch request and per-position rendering).
+- Add `components/dashboard/PositionHistorySparkline.tsx` and `components/dashboard/PositionActivityChart.tsx` (read-only visualizations).
+- Update `lib/portfolio/position-history.ts` (deterministic, fail-closed activity reconstruction) and `components/dashboard/PortfolioPage.tsx` (batch request and per-position rendering).
 - Add route/component tests under `tests/`.
 - Update `docs/arch/10-current-system-reference.md` with the chart contract and limitation.
 - No files in the scorer, candidate universe, constructor, or trading policy are changed by this slice.
@@ -88,3 +98,4 @@ The broad-market sequence is therefore:
 4. Percentage values are deterministic and use the first valid mark; no mark is fabricated or interpolated.
 5. Existing position P&L and exit plan remain unchanged.
 6. No database migration, provider call, portfolio policy change, order, or paper/live flag change.
+7. Activity chart either reconciles event-derived ending shares exactly to the open position or visibly refuses; split residuals are not counted as new buys.
