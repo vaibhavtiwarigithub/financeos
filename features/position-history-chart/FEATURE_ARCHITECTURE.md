@@ -1,6 +1,6 @@
 # Open Position History Chart — Feature Architecture
 
-**Status:** Implemented on an isolated branch; focused tests and TypeScript pass. Full local production build remains unverified: the custom webpack build is resource-heavy on this host, and no build ID/routes manifest was produced. Next's isolated webpack worker and memory optimizations are enabled; remote preview verification is pending. Read-only UI; no migration or trading-policy change.
+**Status:** Merged to `main` in PR #46 and deployed to production on 2026-10-07. Vercel production build completed READY, including TypeScript validation and all static-page generation. The isolated local build stalled under host memory pressure; the deployment build verified the complete app. Read-only UI; no migration or trading-policy change.
 **Owner:** Vaibhav
 **Why:** Make each held paper position's path since entry visible beside its current P&L, while preserving the distinction between share-price movement and portfolio cash-flow effects.
 

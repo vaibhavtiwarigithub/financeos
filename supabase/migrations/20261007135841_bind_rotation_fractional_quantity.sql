@@ -1,5 +1,5 @@
 -- Bind atomic paper-rotation execution to the exact constructor-sized quantity.
--- Apply only after the matching PaperTrader caller is deployed.
+-- Applied to production after the matching PaperTrader caller was deployed.
 begin;
 
 do $migration$

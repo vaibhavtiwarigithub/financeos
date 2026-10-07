@@ -53,9 +53,12 @@ exact `candidateQty` alongside `buyNotional`. PaperTrader must pass that quantit
 through unchanged; reconstructing shares by dividing notional by price can drift
 by one US micro-share. The append-only `rotation_events.audit_json.p1_plan` and
 the atomic RPC now bind the same signal, source, candidate quantity, and notional;
-any mismatch is refused before the atomic sell-and-buy. Migration
-`20261007120000_bind_rotation_fractional_quantity.sql` must be applied before
-deploying this caller. The existing production migration ledger confirms
+any mismatch is refused before the atomic sell-and-buy. The caller was deployed
+first; production then applied migration
+`20261007135841_bind_rotation_fractional_quantity.sql`. The migration ledger
+version is `20261007135841`, and the deployed RPC was verified to include both
+`rotation_fractional_qty_contract_v1` and `rotation_ledger_binding_v1`. The
+existing production migration ledger confirms
 `20261006183156_fractional_paper_event_quantity` was applied, preserving actual
 fractional fills in `paper_order_events` rather than truncating the event quantity.
 
