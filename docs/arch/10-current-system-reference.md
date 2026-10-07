@@ -97,6 +97,15 @@ overlap-adjusted effective sample size are still insufficient for promotion.
 8. Closed lots feed learning and diagnostics only after taint, source, session and
    label checks.
 
+The Paper Portfolio position cards also show a read-only price-path sparkline
+when persisted marks exist. It reads `paper_position_marks` by the current open
+position ID and market, displays percent change from the first recorded mark
+(not the actual initial fill), and marks carry-forward/stale data distinctly.
+Because the ledger is daily mark history rather than a fill-level cash-flow
+ledger, this line is not historical position P&L and does not claim intraday
+ladder execution. Missing or single-mark histories remain explicitly unavailable
+or insufficient rather than being backfilled with invented prices.
+
 The historical sizing replay is an offline diagnostic. It compares fixed equal
 allocation with stop-risk allocation under finite cash, caps, costs, partial exits
 and supplied marks. It does not alter production sizing or claim a globally optimal
@@ -114,6 +123,26 @@ coverage is incomplete: the canonical cache has broad history, but 20 India symb
 roots have no matching price history, and partial-lot lineage/entry-stop provenance
 still require reconciliation. See `features/portfolio-sizing-replay/` and its
 read-only coverage queries.
+
+Paper allocation currently has a soft 5% cash objective (never a forced-buy rule),
+a paper-only 100% gross ceiling, an eight-name limit, and a 12% per-name cap.
+When qualified executable half-Kelly evidence is absent, PaperTrader falls back
+to the configured flat size (10% by default); when evidence is present, half-Kelly
+is capped by the owner-set size and the constructor may only reduce it further.
+The deployed top-up path can add to a held symbol only after a fresh eligible
+signal, at a fill price above current weighted average cost, at most once per
+symbol/session, and subject to the same cash, daily, name, sector, volatility,
+correlation and gross limits. This policy is implemented; its historical
+return/drawdown superiority is not established until the replay's missing
+lineage and mark evidence are resolved.
+
+Do not interpret broad-symbol screening as independent portfolio breadth: only
+market-local, point-in-time eligible, liquid candidates that survive the same
+entry, capacity, correlation, and cost gates can become comparable bets. The
+cross-sectional-rank feature remains off by default. Expanding its universe or
+changing position sizing requires a frozen point-in-time universe and paired,
+after-cost out-of-sample portfolio replay; neither the card chart nor a raw symbol
+count is evidence to change buy policy.
 
 ## 6. Benchmarks and performance truth
 

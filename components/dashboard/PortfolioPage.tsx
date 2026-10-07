@@ -13,6 +13,8 @@ import type { InternationalAllocationPolicyRead } from "@/lib/allocation/interna
 import type { RotationStatus } from "@/lib/agents/rotation-status";
 import { PAPER_BOOK_T, pnlColor, fmtSignedMoney, fmtSignedPct, PaperBookHeader } from "@/components/dashboard/PaperBookHeader";
 import CapitalRotationActivityPanel from "@/components/dashboard/CapitalRotationActivityPanel";
+import PositionHistorySparkline from "@/components/dashboard/PositionHistorySparkline";
+import type { PositionHistorySeries } from "@/lib/portfolio/position-history";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -498,7 +500,7 @@ function SymbolName({ name, style }: { name?: string | null; style?: React.CSSPr
   );
 }
 
-function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewerMode = false }: { p: any; plan: PaperExitPlan | null; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null; viewerMode?: boolean }) {
+function PositionCard({ p, plan, history, historyLoading, onChart, cur = "$", market = "us", name, viewerMode = false }: { p: any; plan: PaperExitPlan | null; history?: PositionHistorySeries; historyLoading?: boolean; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null; viewerMode?: boolean }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
@@ -556,6 +558,7 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewer
             {hasLive ? fmtMoney(p.current_price, market === "india" ? "india" : "us") : "—"}
           </span>
         </div>
+        <PositionHistorySparkline series={history} loading={historyLoading} currency={cur} />
       </div>
 
       <ExitPlanColumn plan={plan} market={market} entryPrice={p.avg_cost} heldQty={p.qty} />
@@ -600,6 +603,8 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   const router = useRouter();
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue" | "rotation">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const [positionHistory, setPositionHistory] = useState<Record<string, PositionHistorySeries>>({});
+  const [positionHistoryLoading, setPositionHistoryLoading] = useState(false);
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
   // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 rows
@@ -620,6 +625,38 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
     (poolList.length === 1 && !poolList[0]?.market ? poolList[0] : null);
   // Scope EVERY market-tagged collection to the selected market (un-tagged = US).
   const positions = (allPositions ?? []).filter(inMarket);
+  const positionIdsKey = positions.map((p: any) => String(p.id ?? "")).filter(Boolean).sort().join(",");
+
+  useEffect(() => {
+    if (tab !== "positions" || !positionIdsKey) {
+      setPositionHistory({});
+      setPositionHistoryLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const ids = positionIdsKey.split(",");
+    setPositionHistory({});
+    setPositionHistoryLoading(true);
+    void (async () => {
+      const next: Record<string, PositionHistorySeries> = {};
+      try {
+        for (let start = 0; start < ids.length; start += 8) {
+          const batch = ids.slice(start, start + 8);
+          const params = new URLSearchParams({ market: activeMarket, positionIds: batch.join(",") });
+          const response = await fetch(`/api/portfolio/position-history?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+          if (!response.ok) throw new Error("position-history request failed");
+          const body = await response.json();
+          Object.assign(next, body.series ?? {});
+        }
+        if (!controller.signal.aborted) setPositionHistory(next);
+      } catch {
+        if (!controller.signal.aborted) setPositionHistory({});
+      } finally {
+        if (!controller.signal.aborted) setPositionHistoryLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [activeMarket, positionIdsKey, tab]);
   const trades = (allTrades ?? []).filter(inMarket);
   const perf = (allPerf ?? []).filter(inMarket);
   const signals = (allSignals ?? []).filter(inMarket);
@@ -748,7 +785,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} viewerMode={viewerMode} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} history={positionHistory[String(p.id)]} historyLoading={positionHistoryLoading} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} viewerMode={viewerMode} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}
