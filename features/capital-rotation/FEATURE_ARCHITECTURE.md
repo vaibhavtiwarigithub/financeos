@@ -14,7 +14,9 @@
 4. A passing P1 readiness contract for the exact source/candidate/size, no older than 60 s.
 5. In the RPC: a matching append-only `rotation_events` row (`planned`, `p1_ready=true`, same market/signal/source/buy notional, <120 s old). `p_gate_json` is caller-supplied, so it alone no longer authorizes a swap (`rotation_ledger_binding_v1`).
 
-**Verified state 2026-09-28 (production `dionkikgdmlaotvtbnfr`):** executor inert (key 3 closed); P1 blocked in both markets. Reproduced independently in SQL with the evaluator's own pairing rule (candidate vs holding on the same session, edge >= 12, latest observation per symbol/session, one observation per horizon block): at the 10-session horizon the US has 38 distinct sessions but **4 independent**, mean edge -1.37%, t -1.26; India 40/4, -2.07%, t -0.96 (the 5-session view is also negative in both: -0.54%/-0.52%). This is a measured negative edge on an immature sample, not a data defect. The earlier "US has zero pairs" reading (2026-09-18 events) predates the 2026-09-22 holding-classification fix; the current US cohort has 8,387 matched pairs. India's remaining P1 blocker on its latest event is the mapping alone (turnover, lot, post-swap, correlation and persistence cleared).
+**Verified state 2026-10-07 (production `dionkikgdmlaotvtbnfr`):** paper shadow and paper-execution config are true in both markets, but `rotation_allow_score_only_paper` is false and live proposals are false. Thus no rotation may execute. The latest US event is rejected with `candidate_not_eligible:no_feasible_replacement`, 5 independent h10 blocks, mean edge **-0.77%**, t **-0.45**. The latest India event (SPARC.NS vs SPECTRUM.NS) is rejected for score-edge below margin, persistence, turnover budget, and unvalidated mapping; its h10 mapping has 5 independent blocks, mean edge **-2.00%**, t **-1.19**. Neither result is ready for review or execution.
+
+**Confirmed production bug found 2026-10-07:** `replacementCapacity()` computed the exact constructor-approved share quantity but returned only its notional. The evaluator intentionally requires *both* `buyQty` and `buyQty × fillPrice === buyNotional`; therefore every production replacement candidate using the normal constructor path was falsely rejected as `no_feasible_replacement`. Fixed locally by returning that already-computed quantity and including it in the capacity audit; tests now compose `replacementCapacity()` with the evaluator to protect the contract. This removes a false blocker only. It does not pass the independent return, persistence, turnover, lot, friction, or executor-key gates. The production events above predate this fix and cannot prove the deployed behavior until the corrected build is released and a new market-local run is observed.
 
 **Rotation is currently unreachable in practice, correctly.** The owner-approved consolidation on 2026-09-28 left 8 US / 7 India open names with 62% / 52% cash, so the name cap, sector cap and constructor gross cap no longer bind. US candidates stopped reaching rotation after 2026-09-18 because their half-Kelly size is 0 (no calibrated edge): that is a sizing verdict, not a capacity block. It is now logged as `sizing_no_positive_edge` instead of `portfolio_constructor_denied` / `insufficient_cash_for_fractional_share`, and no longer writes a `below_minimum_fractional_order` row to the missed-entry ledger (8 mislabelled US rows on 2026-09-28).
 
@@ -61,6 +63,10 @@ version is `20261007135841`, and the deployed RPC was verified to include both
 existing production migration ledger confirms
 `20261006183156_fractional_paper_event_quantity` was applied, preserving actual
 fractional fills in `paper_order_events` rather than truncating the event quantity.
+The exact-quantity contract applies all the way back to `replacementCapacity()`:
+it must return both quantity and notional. Returning notional alone makes a
+valid replacement look infeasible, even though the downstream evaluator refuses
+to infer quantity from price.
 
 BE's 2026-09-18 record had score 80 versus MPC 70 (margin required: 12), proposed
 allocation 19.55%, post-swap capacity 4.42%, and an incorrectly computed 120.04%

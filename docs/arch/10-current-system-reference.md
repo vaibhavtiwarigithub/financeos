@@ -1,6 +1,6 @@
 # Kairos current system reference
 
-> Last reviewed: 2026-09-30
+> Last reviewed: 2026-10-07
 >
 > This is the friend-facing, current-state guide. It describes what the code and
 > production contracts do today. A feature marked **shadow**, **collecting**, or
@@ -97,14 +97,18 @@ overlap-adjusted effective sample size are still insufficient for promotion.
 8. Closed lots feed learning and diagnostics only after taint, source, session and
    label checks.
 
-The Paper Portfolio position cards also show a read-only price-path sparkline
-when persisted marks exist. It reads `paper_position_marks` by the current open
-position ID and market, displays percent change from the first recorded mark
-(not the actual initial fill), and marks carry-forward/stale data distinctly.
-Because the ledger is daily mark history rather than a fill-level cash-flow
-ledger, this line is not historical position P&L and does not claim intraday
-ladder execution. Missing or single-mark histories remain explicitly unavailable
-or insufficient rather than being backfilled with invented prices.
+The Paper Portfolio position cards also show a read-only price path and a
+separate execution-step chart. The price path reads `paper_position_marks` by
+current open position ID and market, and displays percent change from the first
+recorded mark (not the actual initial fill). The execution chart reconstructs
+buy/add and sold-share steps from `paper_trades` within the current position
+epoch and shows the exact fill price and traded notional on each event. It
+reconciles its ending share count to the open position and refuses to draw when
+the position epoch, partial-exit lineage, or exact quantity is ambiguous. The
+step line is shares held, not dollar market value or P&L; the price path and the
+activity path intentionally remain separate so buys/sells are not confused with
+price movement. Daily marks are stale/provenance-labelled. Neither line claims
+split-adjusted total return or intraday price history.
 
 The historical sizing replay is an offline diagnostic. It compares fixed equal
 allocation with stop-risk allocation under finite cash, caps, costs, partial exits
@@ -118,11 +122,16 @@ where available. The recent intraday-high repair prevents a target touch from be
 lost merely because the closing price fell back below target. This is an execution
 correctness fix, not evidence that the target formula is optimal.
 
-The sizing replay engine and fingerprinted CLI are implemented and tested. Historical
-coverage is incomplete: the canonical cache has broad history, but 20 India symbol
-roots have no matching price history, and partial-lot lineage/entry-stop provenance
-still require reconciliation. See `features/portfolio-sizing-replay/` and its
-read-only coverage queries.
+The sizing replay engine and fingerprinted CLI are implemented and tested. A
+read-only production recheck on 2026-10-07 found 115 US / 153 India original buy
+lots, strict pre-fill risk-plan matches for 92 US / 127 India, and at least one
+matching price bar for 92 US / 86 India. Those are not complete replay tapes:
+27 US lots are tainted or learning-excluded, and daily position marks cover only
+35 US / 36 India distinct sessions with stale rows. The replay still cannot
+support “best sizing” or historical portfolio uplift. No entry stop is inferred
+from today's stop, no absent market bar is fabricated, and no live sizing policy
+changes. A separate top-up counterfactual is not yet implemented. See
+`features/portfolio-sizing-replay/DATA_READINESS.md`.
 
 Paper allocation currently has a soft 5% cash objective (never a forced-buy rule),
 a paper-only 100% gross ceiling, an eight-name limit, and a 12% per-name cap.
@@ -164,6 +173,30 @@ than portfolio history, the relative-return headline and plotted comparison use 
 same exact overlapping sessions; the portfolio's full-window return is shown
 separately so the two periods cannot be mistaken for a like-for-like comparison.
 Missing benchmark sessions remain gaps rather than being visually bridged.
+
+Capital rotation's two paper books have their shadow and paper-execution config
+flags enabled, but `rotation_allow_score_only_paper` is false and no live proposal
+path is enabled. On 2026-10-07 both market-local producers wrote rotation decisions
+and neither executed. The current score-to-return gate remains insufficient:
+US h10 has 5 independent blocks, mean edge -0.77%, t -0.45; India has 5 blocks,
+mean edge -2.00%, t -1.19. A code defect found the same day dropped the
+constructor-sized quantity from `replacementCapacity()`, falsely logging US
+replacements as infeasible; the local fix now returns exact quantity and notional
+and is covered by an evaluator integration test. Production events predate that
+code fix, and the return/persistence/turnover/economic gates remain. No rotation
+execution flag is being opened to bypass them. See
+`features/capital-rotation/FEATURE_ARCHITECTURE.md`.
+
+The broad-universe evidence also has distinct layers. Current ResearchAgent
+`universe_snapshots` are still bounded mixed-source candidate lists (production
+maximum in the recent 14-day window: 105 US / 23 India). `edge_universe_members`
+contains a separate US point-in-time top-400 ADV20 sample, but only 10 persisted
+as-of dates from 2024-12-13 through 2026-07-21; the equivalent India PIT
+membership source is unavailable. The pure OOS orchestrator exists without a
+route or schedule invoking it in this checkout. Thus broad PIT factor research is
+not a continuously collected daily research shortlist and does not feed buys.
+Neither the static candidates nor the factor snapshots prove a full Robinhood
+universe or broker tradability.
 
 Upgrade Path attribution is append-only and requires a matched baseline and variant,
 common window/population, frozen versions/hashes, costs, benchmark, independent

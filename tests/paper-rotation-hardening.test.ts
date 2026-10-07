@@ -158,7 +158,7 @@ describe("paper capital-rotation hardening", () => {
   });
 
   it("binds both the checked plan and append-only ledger row to the exact sized quantity", () => {
-    const sql = readFileSync("supabase/migrations/20261007120000_bind_rotation_fractional_quantity.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261007135841_bind_rotation_fractional_quantity.sql", "utf8");
     expect(sql).toContain("p_gate_json #>> '{p1_plan,candidateQty}'");
     expect(sql).toContain("e.audit_json #>> '{p1_plan,candidateQty}'");
     expect(sql).toContain("rotation_fractional_qty_contract_v1");

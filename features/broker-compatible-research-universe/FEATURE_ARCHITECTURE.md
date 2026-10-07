@@ -30,6 +30,28 @@ The proposed result has three deliberately separate populations:
 This fixes the present evidence problem without implying that all Robinhood
 instruments are suitable for research or trading.
 
+### Verified implementation state — 2026-10-07
+
+Do not confuse the existing factor-validation PIT path with a broker-compatible
+daily research universe:
+
+| Layer | Production/code evidence | What it does **not** mean |
+|---|---|---|
+| Normal research snapshots | Recent 14-day `universe_snapshots` maximum: 105 US / 23 India; source `mixed` | Not the full US market; not all Robinhood-supported symbols; not point-in-time historical membership |
+| Research India list | `edge_universe_members` source `india_screen_cache`, 50 names per recent session | Current NIFTY-style screening, not point-in-time exchange membership |
+| US PIT factor sample | 4,000 persisted rows: 10 dates, top 400 each; 2024-12-13 to 2026-07-21; policy `us_pit_adv20_top400_v2` | Not a daily snapshot feed or a shortlist for ResearchAgent; no broker tradability proof |
+| India PIT | No rows with `is_point_in_time=true` | No valid India PIT factor/universe verdict |
+| OOS execution path | `lib/edges/oos-orchestrator.ts` is a pure callable module; there is no API route, cron, or repository caller invoking `orchestrateOosRun` in the current checkout | No continuously scheduled PIT OOS producer; historical library code is not evidence of a running collector |
+
+The new US PIT universe fixes survivorship bias for the dates it persisted, but
+its run cadence is stale and the current ResearchAgent queue remains bounded.
+No scoring, candidate, position-size, paper-execution, broker, or live policy
+was changed by the October 7 audit. The next safe implementation step is a
+separate owner-approved, budgeted OOS producer contract (fixed edge, horizon,
+membership cadence, provider-call ceiling, durable run status, and restart
+semantics). Do not bolt a large provider sweep onto the ordinary daily research
+cron or imply the PIT sample is production-ready for India.
+
 **Measured in production 2026-09-09** (correcting an earlier draft of this section,
 which claimed "117 canonical sector labels" — that figure was wrong by roughly 4x
 and pointed at the wrong problem):

@@ -21,10 +21,12 @@ describe("replacement sizing", () => {
     const result = replacementCapacity(args);
     expect(result.reason).toBeNull();
     expect(result.buyNotional).toBeCloseTo(442, 3);
+    expect(result.buyQty).toBeCloseTo(result.buyNotional / args.fillPrice, 8);
   });
   it("reserves adverse sell slippage when funding from a fully invested book", () => {
     const result = replacementCapacity({ ...args, cash: 0, limits: { ...DEFAULT_LIMITS, maxGrossExposurePct: 100 } });
     expect(result.buyNotional).toBeCloseTo(499.75, 3);
+    expect(result.buyQty! * args.fillPrice).toBeCloseTo(result.buyNotional, 8);
   });
   it("allows same-sector replacement but rejects a swap leaving the sector full", () => {
     const book = args.book.map(p => ({ ...p, valuePct: 5 }));
@@ -32,7 +34,7 @@ describe("replacement sizing", () => {
     expect(replacementCapacity({ ...args, book, sourceSymbol: "OTHER", maxPerSector: 1 }).reason).toBe("post_swap_sector_count_cap");
   });
   it("fails closed without a source or executable allocation", () => {
-    expect(replacementCapacity({ ...args, sourceSymbol: "MISSING" }).buyNotional).toBe(0);
-    expect(replacementCapacity({ ...args, fillPrice: NaN }).buyNotional).toBe(0);
+    expect(replacementCapacity({ ...args, sourceSymbol: "MISSING" })).toMatchObject({ buyNotional: 0, buyQty: null });
+    expect(replacementCapacity({ ...args, fillPrice: NaN })).toMatchObject({ buyNotional: 0, buyQty: null });
   });
 });

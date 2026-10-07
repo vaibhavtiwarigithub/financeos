@@ -14,7 +14,8 @@ import type { RotationStatus } from "@/lib/agents/rotation-status";
 import { PAPER_BOOK_T, pnlColor, fmtSignedMoney, fmtSignedPct, PaperBookHeader } from "@/components/dashboard/PaperBookHeader";
 import CapitalRotationActivityPanel from "@/components/dashboard/CapitalRotationActivityPanel";
 import PositionHistorySparkline from "@/components/dashboard/PositionHistorySparkline";
-import type { PositionHistorySeries } from "@/lib/portfolio/position-history";
+import PositionActivityChart from "@/components/dashboard/PositionActivityChart";
+import type { PositionActivitySeries, PositionHistorySeries } from "@/lib/portfolio/position-history";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -500,7 +501,7 @@ function SymbolName({ name, style }: { name?: string | null; style?: React.CSSPr
   );
 }
 
-function PositionCard({ p, plan, history, historyLoading, onChart, cur = "$", market = "us", name, viewerMode = false }: { p: any; plan: PaperExitPlan | null; history?: PositionHistorySeries; historyLoading?: boolean; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null; viewerMode?: boolean }) {
+function PositionCard({ p, plan, history, activity, historyLoading, onChart, cur = "$", market = "us", name, viewerMode = false }: { p: any; plan: PaperExitPlan | null; history?: PositionHistorySeries; activity?: PositionActivitySeries; historyLoading?: boolean; onChart: (sym: string) => void; cur?: string; market?: "us" | "india"; name?: string | null; viewerMode?: boolean }) {
   const px = p.current_price ?? p.avg_cost;
   const pnl = (px - p.avg_cost) * p.qty;
   const pnlPct = ((px - p.avg_cost) / p.avg_cost) * 100;
@@ -559,6 +560,7 @@ function PositionCard({ p, plan, history, historyLoading, onChart, cur = "$", ma
           </span>
         </div>
         <PositionHistorySparkline series={history} loading={historyLoading} currency={cur} />
+        <PositionActivityChart activity={activity} currentQty={Number(p.qty)} currency={cur} loading={historyLoading} />
       </div>
 
       <ExitPlanColumn plan={plan} market={market} entryPrice={p.avg_cost} heldQty={p.qty} />
@@ -604,6 +606,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue" | "rotation">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [positionHistory, setPositionHistory] = useState<Record<string, PositionHistorySeries>>({});
+  const [positionActivity, setPositionActivity] = useState<Record<string, PositionActivitySeries>>({});
   const [positionHistoryLoading, setPositionHistoryLoading] = useState(false);
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
@@ -630,15 +633,18 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   useEffect(() => {
     if (tab !== "positions" || !positionIdsKey) {
       setPositionHistory({});
+      setPositionActivity({});
       setPositionHistoryLoading(false);
       return;
     }
     const controller = new AbortController();
     const ids = positionIdsKey.split(",");
     setPositionHistory({});
+    setPositionActivity({});
     setPositionHistoryLoading(true);
     void (async () => {
       const next: Record<string, PositionHistorySeries> = {};
+      const nextActivity: Record<string, PositionActivitySeries> = {};
       try {
         for (let start = 0; start < ids.length; start += 8) {
           const batch = ids.slice(start, start + 8);
@@ -647,10 +653,17 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
           if (!response.ok) throw new Error("position-history request failed");
           const body = await response.json();
           Object.assign(next, body.series ?? {});
+          Object.assign(nextActivity, body.activity ?? {});
         }
-        if (!controller.signal.aborted) setPositionHistory(next);
+        if (!controller.signal.aborted) {
+          setPositionHistory(next);
+          setPositionActivity(nextActivity);
+        }
       } catch {
-        if (!controller.signal.aborted) setPositionHistory({});
+        if (!controller.signal.aborted) {
+          setPositionHistory({});
+          setPositionActivity({});
+        }
       } finally {
         if (!controller.signal.aborted) setPositionHistoryLoading(false);
       }
@@ -785,7 +798,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {positions.map((p: any) => (
-                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} history={positionHistory[String(p.id)]} historyLoading={positionHistoryLoading} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} viewerMode={viewerMode} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
+                <PositionCard key={p.id} p={p} plan={exitPlans?.[String(p.id)] ?? null} history={positionHistory[String(p.id)]} activity={positionActivity[String(p.id)]} historyLoading={positionHistoryLoading} cur={cur} market={activeMarket} name={symbolNames?.[p.symbol]} viewerMode={viewerMode} onChart={sym => router.push(`/dashboard/symbol/${sym}`)} />
               ))}
             </div>
           )}

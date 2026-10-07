@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateCapitalRotationShadow, type RotationHolding } from "@/lib/trading/capital-rotation";
+import { DEFAULT_LIMITS } from "@/lib/portfolio/constructor";
+import { replacementCapacity } from "@/lib/trading/rotation-capacity";
 
 const baseHolding = (over: Partial<RotationHolding> = {}): RotationHolding => ({
   id: "00000000-0000-0000-0000-000000000010",
@@ -37,6 +39,27 @@ const candidate = {
 };
 
 describe("evaluateCapitalRotationShadow", () => {
+  it("accepts the constructor's exact fractional quantity contract for a feasible post-swap replacement", () => {
+    const result = evaluateCapitalRotationShadow({
+      candidate: { ...candidate, targetNotional: 900, cash: 0, fillPrice: 100 },
+      config,
+      holdings: [baseHolding()],
+      sizeForSource: source => replacementCapacity({
+        book: [
+          { symbol: "WEAK", sector: "healthcare", valuePct: 10, beta: null, dailyVol: null },
+          { symbol: "OTHER", sector: "energy", valuePct: 40, beta: null, dailyVol: null },
+        ],
+        sourceSymbol: source.symbol, sellNotional: 1_000, symbol: "STRONG", market: "us",
+        sector: "technology", dailyVol: 0.02, intendedNotional: 900, nav: 10_000, cash: 0,
+        fillPrice: 100, limits: DEFAULT_LIMITS, maxPerSector: 4,
+      }),
+    });
+    expect(result.eligible).toBe(true);
+    expect(result.source?.symbol).toBe("WEAK");
+    expect(result.buyQty).toBe(9);
+    expect(result.buyQty! * 100).toBe(result.buyNotional);
+  });
+
   it("considers the next weakest holding when the weakest cannot free the required capacity", () => {
     const result = evaluateCapitalRotationShadow({ candidate, config,
       holdings: [baseHolding(), baseHolding({ id: "second", symbol: "SECOND", score: 65 })],

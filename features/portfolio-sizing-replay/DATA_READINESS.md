@@ -1,5 +1,31 @@
 # Production evidence audit — 2026-09-28
 
+## Read-only production recheck — 2026-10-07
+
+The original frozen September-19 replay window is retained below as historical
+evidence; it is not overwritten. A new live-ledger coverage query on October 7
+found:
+
+| Market | Original buy lots (residual clones excluded) | Any `paper_trades.stop_loss` | Strict pre-fill risk-plan match | Risk-plan match with at least one matching price bar | Tainted or learning-excluded |
+|---|---:|---:|---:|---:|---:|
+| US | 115 | 44 | 92 | 92 | 27 |
+| India | 153 | 53 | 127 | 86 | 0 |
+
+“At least one matching price bar” is a minimal coverage flag, not a complete
+holding-window tape. Stop-column presence is not proof of original entry-stop
+provenance. The append-only position-mark ledger contains only **35 distinct
+US sessions / 36 India sessions** (20 US and 52 India mark rows are stale); it
+does not fill the July-to-mid-August gap. Do not interpret these counts as
+eligible replay sample sizes.
+
+Result: the engine still correctly refuses a full-inception “best sizing” or
+portfolio-uplift claim. No historical stop has been synthesized, no missing
+price series has been backfilled, and no production position or sizing policy
+was changed. The next valid step is a frozen, traceable evidence tape that
+reconciles entry lineage, partial exits, taint, point-in-time prices and cash.
+Top-up comparison remains a separate experiment and is not inferred from the
+existing held-lot replay.
+
 ## Current sizing policy and cash-utilization reality
 
 Read-only production recheck on 2026-09-28 (project `dionkikgdmlaotvtbnfr`):
