@@ -1,6 +1,6 @@
 # Open Position History Chart — Feature Architecture
 
-**Status:** Initial read-only price-history chart merged to `main` in PR #46 and deployed on 2026-10-07. Execution-ladder extension is being implemented in the current Codex change; it is not production-ready until merged and deployed. No schema or trading-policy change.
+**Status:** The initial price-history chart (PR #46) and execution activity chart (PR #48, merge `7850d95b`) are deployed as read-only paper portfolio views as of 2026-10-07. The activity chart shows share-count steps reconstructed from fills and partial exits; it refuses an incomplete or unreconciled ledger. No schema or trading-policy change.
 **Owner:** Vaibhav
 **Why:** Make each held paper position's path since entry visible beside its current P&L, while preserving the distinction between share-price movement and portfolio cash-flow effects.
 
