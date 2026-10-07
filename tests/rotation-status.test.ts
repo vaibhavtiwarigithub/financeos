@@ -48,14 +48,26 @@ describe("describeRotationExecutor: an enabled switch is not an executable rotat
 });
 
 describe("loadRotationStatus", () => {
+  const portfolioPage = readFileSync("app/dashboard/portfolio/page.tsx", "utf8");
   const original = process.env.CAPITAL_ROTATION_PAPER_ENABLED;
   afterEach(() => {
     if (original == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
     else process.env.CAPITAL_ROTATION_PAPER_ENABLED = original;
   });
   const blockedEvent = {
+    id: 7,
     created_at: "2026-09-28T07:45:00Z", status: "planned", audit_json: { run_id: "r1", p1_ready: false },
-    gate_results_json: { p1_ready: false, p1_blockers: ["score_to_return_mapping_unvalidated"] },
+    candidate_symbol: "NEW", source_symbol: "HELD", candidate_score: 82, source_score: 70,
+    score_edge: 12, buy_notional: 500, sell_notional: 400, turnover_consumed: 900,
+    gate_results_json: {
+      p1_ready: false, p1_blockers: ["score_to_return_mapping_unvalidated"],
+      persistence_prior_runs: 1, persistence_required_prior_runs: 2,
+      monthly_turnover_used_pct: 4, proposed_turnover_pct: 9,
+      exact_tax_lot: { available: false, treatment: "unavailable" }, post_swap_allowed: true,
+      score_to_return_mapping: { status: "insufficient", independentSessions: 5, requiredIndependentSessions: 20 },
+      candidate_correlation: { status: "ok", pairCount: 3, expectedPairCount: 3 },
+      post_swap_adjustments: ["re-sized after sale"],
+    },
   };
 
   it("reports the production state: DB flag on, score-only key closed, live off => inert, not 'misconfigured'", async () => {
@@ -89,6 +101,30 @@ describe("loadRotationStatus", () => {
     const status = await loadRotationStatus(client([paper({ rotation_allow_score_only_paper: true }), live()],
       [{ ...blockedEvent, status: "paper_executed" }, blockedEvent]), "us");
     expect(status.paperExecutedCount).toBe(1);
+  });
+
+  it("projects auditable event details only when explicitly requested", async () => {
+    process.env.CAPITAL_ROTATION_PAPER_ENABLED = "true";
+    const status = await loadRotationStatus(client([paper({ rotation_allow_score_only_paper: true }), live()], [blockedEvent]), "us", true);
+    expect(status.activity[0]).toMatchObject({
+      id: "7", candidateSymbol: "NEW", sourceSymbol: "HELD", scoreEdge: 12,
+      p1Ready: false, p1ContractRecorded: true, blockers: ["score_to_return_mapping_unvalidated"],
+      persistencePriorRuns: 1, persistenceRequiredPriorRuns: 2,
+      monthlyTurnoverUsedPct: 4, proposedTurnoverPct: 9,
+      postSwapAllowed: true, postSwapAdjustments: ["re-sized after sale"],
+    });
+    expect(status.activity[0].candidateCorrelation).toMatchObject({ pairCount: 3, expectedPairCount: 3 });
+    expect(status.activity[0].scoreToReturn).toMatchObject({ independentSessions: 5, requiredIndependentSessions: 20 });
+  });
+
+  it("omits event detail for aggregate callers by default", async () => {
+    const status = await loadRotationStatus(client([paper(), live()], [blockedEvent]), "us");
+    expect(status.eventCount).toBe(1);
+    expect(status.activity).toEqual([]);
+  });
+
+  it("loads event-level service-role diagnostics only for a confirmed owner", () => {
+    expect(portfolioPage).toContain('role === "owner" ? loadRotationStatus(supabase, market, true) : Promise.resolve(null)');
   });
 });
 

@@ -529,7 +529,10 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap", marginBottom: "18px" }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: "14px" }}>Capital Rotation Readiness · {market === "india" ? "India" : "US"}</div>
-              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px" }}>Paper-only. PositionMonitor still owns exits; a swap needs the DB flag, deployment gate, owner score-only key and a passing P1 contract. Live rotation is unbuilt.</div>
+              <div style={{ color: T.muted, fontSize: "12px", marginTop: "4px", lineHeight: 1.5 }}>
+                Paper-only. PositionMonitor still owns exits; a swap needs the DB flag, deployment gate, owner score-only key and a passing P1 contract. Live rotation is unbuilt. See each candidate and gate in Paper Portfolio.
+                <a href="/dashboard/portfolio" style={{ color: T.accent, marginLeft: "6px", textDecoration: "underline", textUnderlineOffset: "2px" }}>Open activity ledger →</a>
+              </div>
             </div>
             {(() => {
               // The DB flag alone is not "enabled": the executor needs three keys and P1 evidence.
