@@ -67,6 +67,8 @@ export interface RotationEvaluation {
   scoreEdge: number | null;
   sellNotional: number | null;
   buyNotional: number;
+  /** Exact executable quantity sized against the post-swap constructor book. */
+  buyQty: number | null;
   gates: Record<string, unknown>;
 }
 
@@ -126,7 +128,7 @@ export function evaluateCapitalRotationShadow(args: {
   holdings: RotationHolding[];
   config: RotationConfig;
   now?: Date;
-  sizeForSource?: (source: RotationHolding) => { buyNotional: number; reason: string | null; adjustments?: string[] };
+  sizeForSource?: (source: RotationHolding) => { buyNotional: number; buyQty?: number | null; reason: string | null; adjustments?: string[] };
 }): RotationEvaluation {
   const now = args.now ?? new Date();
   const candidate = args.candidate;
@@ -138,10 +140,10 @@ export function evaluateCapitalRotationShadow(args: {
   };
 
   if (!cfg.shadowEnabled) {
-    return { eligible: false, status: "rejected", reason: "rotation_shadow_disabled", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, gates };
+    return { eligible: false, status: "rejected", reason: "rotation_shadow_disabled", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };
   }
   if (!Number.isFinite(candidate.score) || candidate.score <= 0) {
-    return { eligible: false, status: "rejected", reason: "candidate_score_missing", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, gates };
+    return { eligible: false, status: "rejected", reason: "candidate_score_missing", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };
   }
 
   const rejectCounts: Record<string, number> = {};
@@ -161,25 +163,30 @@ export function evaluateCapitalRotationShadow(args: {
   gates.sellable_holdings = sellable.length;
 
   if (sellable.length === 0) {
-    return { eligible: false, status: "rejected", reason: "no_sellable_holding", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, gates };
+    return { eligible: false, status: "rejected", reason: "no_sellable_holding", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };
   }
 
   sellable.sort((a, b) => (a.score ?? 101) - (b.score ?? 101));
-  const considered: Array<{ symbol: string; buyNotional: number; reason: string | null }> = [];
+  const considered: Array<{ symbol: string; buyNotional: number; buyQty?: number | null; reason: string | null; adjustments?: string[] }> = [];
   let source = sellable[0];
   let buyNotional = candidate.targetNotional;
+  let buyQty: number | null = null;
   if (args.sizeForSource) {
     let feasible = false;
     for (const holding of sellable) {
       const sizing = args.sizeForSource(holding);
       considered.push({ symbol: holding.symbol, ...sizing });
-      if (!sizing.reason && Number.isFinite(sizing.buyNotional) && sizing.buyNotional > 0
+      const sizedQty = Number(sizing.buyQty);
+      const fillPrice = finitePositive(candidate.fillPrice);
+      const exactNotional = fillPrice != null && Number.isFinite(sizedQty) && sizedQty > 0
+        && Math.abs(sizedQty * fillPrice - sizing.buyNotional) <= 1e-6;
+      if (!sizing.reason && exactNotional && Number.isFinite(sizing.buyNotional) && sizing.buyNotional > 0
         && sizing.buyNotional <= candidate.targetNotional + 1e-8) {
-        source = holding; buyNotional = sizing.buyNotional; feasible = true; break;
+        source = holding; buyNotional = sizing.buyNotional; buyQty = sizedQty; feasible = true; break;
       }
     }
     gates.replacement_capacity = considered;
-    if (!feasible) return { eligible: false, status: "rejected", reason: "no_feasible_replacement", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, gates };
+    if (!feasible) return { eligible: false, status: "rejected", reason: "no_feasible_replacement", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };
   }
   const scoreEdge = candidate.score - (source.score ?? 0);
   const sellNotional = holdingNotional(source);
@@ -188,10 +195,10 @@ export function evaluateCapitalRotationShadow(args: {
   gates.sell_notional_covers_buy = sellNotional + candidate.cash >= buyNotional;
 
   if (scoreEdge < cfg.marginScore) {
-    return { eligible: false, status: "rejected", reason: "score_edge_below_margin", source, scoreEdge, sellNotional, buyNotional, gates };
+    return { eligible: false, status: "rejected", reason: "score_edge_below_margin", source, scoreEdge, sellNotional, buyNotional, buyQty, gates };
   }
   if (sellNotional + candidate.cash < buyNotional) {
-    return { eligible: false, status: "rejected", reason: "source_does_not_fund_candidate", source, scoreEdge, sellNotional, buyNotional: candidate.targetNotional, gates };
+    return { eligible: false, status: "rejected", reason: "source_does_not_fund_candidate", source, scoreEdge, sellNotional, buyNotional: candidate.targetNotional, buyQty: null, gates };
   }
 
   return {
@@ -202,6 +209,7 @@ export function evaluateCapitalRotationShadow(args: {
     scoreEdge,
     sellNotional,
     buyNotional,
+    buyQty,
     gates,
   };
 }
@@ -300,7 +308,7 @@ export interface RotationShadowRecord {
   scoreEdgeEvidence: RotationScoreEdgeEvidence;
   evaluatedAt: string;
   plan: { sourceId: string; sourceQty: number; sourcePrice: number; sourceScore: number | null;
-    candidateSignalId: string; buyNotional: number } | null;
+    candidateSignalId: string; candidateQty: number | null; buyNotional: number } | null;
 }
 
 export async function recordCapitalRotationShadow(supabase: any, args: {
@@ -514,6 +522,15 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
       run_id: args.runId,
       p1_ready: readiness.ready,
       p1_blockers: readiness.blockers,
+      p1_plan: evaluation.source ? {
+        sourceId: evaluation.source.id,
+        sourceQty: evaluation.source.qty,
+        sourcePrice: evaluation.source.currentPrice,
+        sourceScore: evaluation.source.score,
+        candidateSignalId: candidate.signalId,
+        candidateQty: evaluation.buyQty,
+        buyNotional: evaluation.buyNotional,
+      } : null,
     },
   };
 
@@ -524,7 +541,8 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   const source = evaluation.source;
   return { evaluation, readiness, scoreEdgeEvidence, evaluatedAt: now.toISOString(),
     plan: source ? { sourceId: source.id, sourceQty: source.qty, sourcePrice: source.currentPrice,
-      sourceScore: source.score, candidateSignalId: candidate.signalId, buyNotional: evaluation.buyNotional } : null,
+      sourceScore: source.score, candidateSignalId: candidate.signalId, candidateQty: evaluation.buyQty,
+      buyNotional: evaluation.buyNotional } : null,
   } satisfies RotationShadowRecord;
 }
 
@@ -589,7 +607,9 @@ export async function executeCapitalRotationPaper(supabase: any, args: RotationE
       return { executed: false, reason: "p1_evidence_stale" };
     }
     const plan = args.p1Plan;
-    if (!plan || plan.candidateSignalId !== c.signalId || !Number.isFinite(c.qty * c.fillPrice)
+    if (!plan || plan.candidateSignalId !== c.signalId || plan.candidateQty == null
+      || !Number.isFinite(plan.candidateQty) || Math.abs(plan.candidateQty - c.qty) > 1e-9
+      || !Number.isFinite(c.qty * c.fillPrice)
       || Math.abs(plan.buyNotional - c.qty * c.fillPrice) > 1e-6
       || Math.abs(c.targetNotional - plan.buyNotional) > 1e-6) return { executed: false, reason: "p1_plan_mismatch" };
     if (!args.entryPolicy) return { executed: false, reason: "entry_policy_missing" };

@@ -2,7 +2,7 @@
 
 > Status: **P0 shadow and gated P1 paper executor built; execution readiness remains unproven.** Live rotation is unbuilt. Historical rollout notes below do not supersede this status.
 > Scope: deterministic opportunity-cost reallocation for PAPER first, LIVE approval proposals later.
-> Last updated: 2026-09-28
+> Last updated: 2026-10-07
 
 ## Activation keys and verified production state (2026-09-28)
 
@@ -47,6 +47,17 @@ entries into `execute_paper_fill`. A denied buy rolls back the sale. Migration
 `20260925163623_bind_paper_rotation_plan_and_entry_policy.sql` tightens the
 existing signature; old callers without this contract fail closed. Deployment
 does not turn on either execution flag or establish a measured return advantage.
+
+**Exact fractional quantity binding (2026-10-07):** post-swap sizing returns an
+exact `candidateQty` alongside `buyNotional`. PaperTrader must pass that quantity
+through unchanged; reconstructing shares by dividing notional by price can drift
+by one US micro-share. The append-only `rotation_events.audit_json.p1_plan` and
+the atomic RPC now bind the same signal, source, candidate quantity, and notional;
+any mismatch is refused before the atomic sell-and-buy. Migration
+`20261007120000_bind_rotation_fractional_quantity.sql` must be applied before
+deploying this caller. The existing production migration ledger confirms
+`20261006183156_fractional_paper_event_quantity` was applied, preserving actual
+fractional fills in `paper_order_events` rather than truncating the event quantity.
 
 BE's 2026-09-18 record had score 80 versus MPC 70 (margin required: 12), proposed
 allocation 19.55%, post-swap capacity 4.42%, and an incorrectly computed 120.04%
