@@ -1053,8 +1053,9 @@ export async function POST(req: NextRequest) {
             feasibleReplacementSource = rotationShadow.evaluation.source.symbol;
           }
           if (rotationShadow.plan) {
-            // The recorded plan is already rounded to an executable quantity.
-            qty = Math.round(rotationShadow.plan.buyNotional / fillPrice * (market === "us" ? 1_000_000 : 1)) / (market === "us" ? 1_000_000 : 1);
+            // Preserve the exact constructor-sized quantity. Reconstructing it
+            // from notional can differ by one micro-share due to floating point.
+            qty = rotationShadow.plan.candidateQty ?? 0;
             totalCost = qty * fillPrice;
             rotCandidate.targetNotional = totalCost;
           }

@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The custom webpack hook below disables Next's build worker by default.
+  // Re-enable the supported isolated worker and reduce webpack's retained
+  // string buffers so large client/server graphs do not exhaust the build host.
+  // These are build-resource controls; they do not change emitted semantics.
+  experimental: {
+    webpackBuildWorker: true,
+    webpackMemoryOptimizations: true,
+  },
   // Allow a build to target a scratch directory while `next dev` is watching
   // .next. Building into the watched directory has corrupted it twice.
   //

@@ -133,6 +133,45 @@ describe("paper capital-rotation hardening", () => {
     }
   });
 
+  it("refuses a candidate quantity that differs from the shadow plan before reading the book", async () => {
+    const previous = process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+    process.env.CAPITAL_ROTATION_PAPER_ENABLED = "true";
+    const chain: any = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: async () => ({ data: { rotation_paper_execute_enabled: true, rotation_allow_score_only_paper: true }, error: null }),
+    };
+    try {
+      const result = await executeCapitalRotationPaper({ from: () => chain }, {
+        runId: "00000000-0000-0000-0000-000000000001", rotationsThisRun: 0,
+        candidate: { signalId: "00000000-0000-0000-0000-000000000002", symbol: "TEST", market: "us", currency: "USD", score: 90, targetNotional: 1000, cash: 0, qty: 10, fillPrice: 100, priceTarget: 120, stopLoss: 90, sector: "Technology" },
+        scoreThreshold: 60, minHoldingDays: 2,
+        p1Readiness: { ready: true, blockers: [], netExpectedEdgePct: 1, turnoverAfterPct: 10 },
+        p1EvaluatedAt: new Date().toISOString(),
+        p1Plan: { sourceId: "00000000-0000-0000-0000-000000000003", sourceQty: 5, sourcePrice: 90, sourceScore: 60, candidateSignalId: "00000000-0000-0000-0000-000000000002", candidateQty: 9.999999, buyNotional: 1000 },
+      });
+      expect(result).toEqual({ executed: false, reason: "p1_plan_mismatch" });
+    } finally {
+      if (previous == null) delete process.env.CAPITAL_ROTATION_PAPER_ENABLED;
+      else process.env.CAPITAL_ROTATION_PAPER_ENABLED = previous;
+    }
+  });
+
+  it("binds both the checked plan and append-only ledger row to the exact sized quantity", () => {
+    const sql = readFileSync("supabase/migrations/20261007120000_bind_rotation_fractional_quantity.sql", "utf8");
+    expect(sql).toContain("p_gate_json #>> '{p1_plan,candidateQty}'");
+    expect(sql).toContain("e.audit_json #>> '{p1_plan,candidateQty}'");
+    expect(sql).toContain("rotation_fractional_qty_contract_v1");
+    const route = readFileSync("app/api/agents/paper-trade/route.ts", "utf8");
+    expect(route).toContain("qty = rotationShadow.plan.candidateQty ?? 0");
+    expect(route).not.toContain("rotationShadow.plan.buyNotional / fillPrice");
+  });
+
+  it("records paper fill-event quantities with fractional precision", () => {
+    const sql = readFileSync("supabase/migrations/20261006183156_fractional_paper_event_quantity.sql", "utf8");
+    expect(sql).toContain("alter column qty type numeric using qty::numeric");
+  });
+
   it("restores paper execution containment while keeping shadow measurement", () => {
     const sql = readFileSync("supabase/migrations/20260811033335_disable_unqualified_paper_rotation.sql", "utf8");
     expect(sql).toContain("rotation_paper_execute_enabled = false");

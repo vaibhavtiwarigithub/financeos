@@ -73,6 +73,8 @@ export type ViewerRoute = {
 
 export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   { prefix: "/api/portfolio/performance-series", methods: ["GET"] },
+  // Persisted paper-position marks only; no provider calls or trading capability.
+  { prefix: "/api/portfolio/position-history", methods: ["GET"], exact: true },
   { prefix: "/api/research/chart-data", methods: ["GET"] },
   { prefix: "/api/research/universe", methods: ["GET"] },
   { prefix: "/api/auth/role", methods: ["GET"] },
