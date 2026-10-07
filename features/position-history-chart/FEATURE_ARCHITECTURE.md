@@ -1,6 +1,6 @@
 # Open Position History Chart — Feature Architecture
 
-**Status:** Implemented locally; production build stalled before verification. Read-only UI; no migration or trading-policy change.
+**Status:** Implemented on an isolated branch; focused tests and TypeScript pass. Full local production build remains unverified: the custom webpack build is resource-heavy on this host, and no build ID/routes manifest was produced. Next's isolated webpack worker and memory optimizations are enabled; remote preview verification is pending. Read-only UI; no migration or trading-policy change.
 **Owner:** Vaibhav
 **Why:** Make each held paper position's path since entry visible beside its current P&L, while preserving the distinction between share-price movement and portfolio cash-flow effects.
 
