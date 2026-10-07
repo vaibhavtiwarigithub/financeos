@@ -4,6 +4,7 @@ import PortfolioPage from "@/components/dashboard/PortfolioPage";
 import { loadPaperExitPlans } from "@/lib/trading/load-paper-exit-plans";
 import { loadInternationalAllocationPolicy } from "@/lib/allocation/international-policy";
 import { getSessionRole } from "@/lib/auth/session-role";
+import { loadRotationStatus } from "@/lib/agents/rotation-status";
 
 export const revalidate = 30;
 
@@ -25,6 +26,7 @@ export default async function Page() {
   // as the Activity, Agents, and Home pages.
   const cookieStore = await cookies();
   const market = cookieStore.get("mkt")?.value === "india" ? "india" : "us";
+  const { role } = await getSessionRole();
 
   const [
     { data: pools },
@@ -38,6 +40,7 @@ export default async function Page() {
     { count: winCount },
     { count: lossCount },
     { count: breakevenCount },
+    rotationStatus,
   ] = await Promise.all([
     // Phase 4: fetch ALL pools (US + India ₹ post-057). The client component
     // filters by selected market and shows each in its own currency — never blended.
@@ -59,6 +62,9 @@ export default async function Page() {
     supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "win"),
     supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "loss"),
     supabase.from("paper_trades").select("*", { count: "exact", head: true }).eq("market", market).eq("outcome", "breakeven"),
+    // Full event-level diagnostics are owner-only. Viewer accounts never fetch
+    // or receive rotation candidates, scores, proposed trades, or gate details.
+    role === "owner" ? loadRotationStatus(supabase, market, true) : Promise.resolve(null),
   ]);
 
   // Company names for the symbols actually on screen. `paper_positions` and
@@ -80,8 +86,6 @@ export default async function Page() {
 
   // Viewers see the owner's book read-only: every write control is hidden here
   // AND refused server-side by the routes behind it.
-  const { role } = await getSessionRole();
-
   const [exitPlans, internationalAllocationPolicy] = await Promise.all([
     loadPaperExitPlans(supabase, positions ?? []),
     loadInternationalAllocationPolicy(supabase),
@@ -105,9 +109,10 @@ export default async function Page() {
       strategy={strategyArr?.[0] ?? null}
       tradeQueue={tradeQueueArr ?? []}
       symbolNames={symbolNames}
-      viewerMode={role === "viewer"}
+      viewerMode={role !== "owner"}
       exitPlans={exitPlans}
       internationalAllocationPolicy={internationalAllocationPolicy}
+      rotationStatus={rotationStatus}
     />
   );
 }

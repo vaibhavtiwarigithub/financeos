@@ -22,6 +22,35 @@ export interface RotationStatus {
   blockerCounts: Array<{ blocker: string; count: number }>;
   state: "no_evidence" | "accumulating" | "blocked";
   nextAction: string;
+  /** Owner-only projection of recent paper events. Empty for aggregate callers. */
+  activity: RotationActivityEvent[];
+}
+
+export interface RotationActivityEvent {
+  id: string;
+  createdAt: string;
+  status: string;
+  candidateSymbol: string;
+  sourceSymbol: string | null;
+  candidateScore: number | null;
+  sourceScore: number | null;
+  scoreEdge: number | null;
+  buyNotional: number | null;
+  sellNotional: number | null;
+  turnoverConsumed: number | null;
+  reason: string | null;
+  p1Ready: boolean | null;
+  p1ContractRecorded: boolean;
+  blockers: string[];
+  persistencePriorRuns: number | null;
+  persistenceRequiredPriorRuns: number | null;
+  monthlyTurnoverUsedPct: number | null;
+  proposedTurnoverPct: number | null;
+  exactTaxLot: Record<string, unknown> | null;
+  scoreToReturn: Record<string, unknown> | null;
+  postSwapAllowed: boolean | null;
+  candidateCorrelation: Record<string, unknown> | null;
+  postSwapAdjustments: string[];
 }
 
 export type RotationExecutorState =
@@ -39,10 +68,13 @@ export function describeRotationExecutor(input: {
   return input.latestP1Ready === true ? "armed_ready" : "armed_blocked";
 }
 
-export async function loadRotationStatus(supabase: any, market: "us" | "india"): Promise<RotationStatus> {
+export async function loadRotationStatus(supabase: any, market: "us" | "india", includeActivity = false): Promise<RotationStatus> {
+  const eventColumns = includeActivity
+    ? "id,created_at,status,candidate_symbol,source_symbol,candidate_score,source_score,score_edge,buy_notional,sell_notional,turnover_consumed,gate_results_json,audit_json"
+    : "created_at,status,gate_results_json,audit_json";
   const [eventsResult, configResult, mandateResult] = await Promise.all([
     supabase.from("rotation_events")
-      .select("created_at,status,gate_results_json,audit_json")
+      .select(eventColumns)
       .eq("market", market).eq("book_type", "paper")
       .order("created_at", { ascending: false }).limit(250),
     supabase.from("rotation_config")
@@ -109,7 +141,44 @@ export async function loadRotationStatus(supabase: any, market: "us" | "india"):
       ? "New shadow runs will collect the completed readiness contract; existing rows predate it."
       : turnoverBudget == null
         ? "Keep execution off. The mandate grants zero rotation turnover until an owner-approved budget exists."
-        : "Keep collecting independent market-session runs and resolve every repeated blocker before P1 review.";
+      : "Keep collecting independent market-session runs and resolve every repeated blocker before P1 review.";
+
+  const activity: RotationActivityEvent[] = includeActivity ? (events as any[]).slice(0, 100).map(event => {
+    const gate = event.gate_results_json && typeof event.gate_results_json === "object" ? event.gate_results_json : {};
+    const audit = event.audit_json && typeof event.audit_json === "object" ? event.audit_json : {};
+    const rawBlockers = Array.isArray(gate.p1_blockers)
+      ? gate.p1_blockers : Array.isArray(audit.p1_blockers) ? audit.p1_blockers : null;
+    const objectValue = (value: unknown): Record<string, unknown> | null =>
+      value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const numberValue = (value: unknown): number | null => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+    return {
+      id: String(event.id),
+      createdAt: String(event.created_at),
+      status: String(event.status ?? "unknown"),
+      candidateSymbol: String(event.candidate_symbol ?? "—"),
+      sourceSymbol: event.source_symbol == null ? null : String(event.source_symbol),
+      candidateScore: numberValue(event.candidate_score),
+      sourceScore: numberValue(event.source_score),
+      scoreEdge: numberValue(event.score_edge),
+      buyNotional: numberValue(event.buy_notional),
+      sellNotional: numberValue(event.sell_notional),
+      turnoverConsumed: numberValue(event.turnover_consumed),
+      reason: typeof audit.reason === "string" ? audit.reason : null,
+      p1Ready: typeof gate.p1_ready === "boolean" ? gate.p1_ready
+        : typeof audit.p1_ready === "boolean" ? audit.p1_ready : null,
+      p1ContractRecorded: rawBlockers != null,
+      blockers: rawBlockers?.map(String) ?? [],
+      persistencePriorRuns: numberValue(gate.persistence_prior_runs),
+      persistenceRequiredPriorRuns: numberValue(gate.persistence_required_prior_runs),
+      monthlyTurnoverUsedPct: numberValue(gate.monthly_turnover_used_pct),
+      proposedTurnoverPct: numberValue(gate.proposed_turnover_pct),
+      exactTaxLot: objectValue(gate.exact_tax_lot),
+      scoreToReturn: objectValue(gate.score_to_return_mapping),
+      postSwapAllowed: typeof gate.post_swap_allowed === "boolean" ? gate.post_swap_allowed : null,
+      candidateCorrelation: objectValue(gate.candidate_correlation),
+      postSwapAdjustments: Array.isArray(gate.post_swap_adjustments) ? gate.post_swap_adjustments.map(String) : [],
+    };
+  }) : [];
 
   return {
     market,
@@ -132,5 +201,6 @@ export async function loadRotationStatus(supabase: any, market: "us" | "india"):
     blockerCounts: [...blockers.entries()].map(([blocker, count]) => ({ blocker, count })).sort((a, b) => b.count - a.count || a.blocker.localeCompare(b.blocker)),
     state,
     nextAction,
+    activity,
   };
 }

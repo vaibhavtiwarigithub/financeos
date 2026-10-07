@@ -294,6 +294,12 @@ independent score/return windows for execution review.
 
 After P0 evidence is reviewed, enable market-by-market paper execution only. Requires atomic paper RPC, persistence, post-swap gate replay, turnover budget, cost/tax model, and complete audit rows.
 
+### Owner activity interface (2026-10-06)
+
+The detailed, market-local attempt ledger lives at **Dashboard → Paper Portfolio → Capital Rotation**. It is an owner-only view over the latest 250 paper `rotation_events` (the UI displays the latest 100), with candidate/source, decision status, score edge, proposed buy/sale/turnover amounts, reason, P1 blockers, persistence/turnover/tax-lot evidence, score-to-return statistics, and separate post-swap constructor and correlation verdicts. Proposed amounts are never presented as fills or realized/missed P&L. Legacy rows without the P1 contract are explicitly marked as legacy, not as passing decisions.
+
+Dashboard → Agents → Rotation remains the aggregate readiness and executor-state summary and links to the event ledger. Its configured database flag is not described as proof that execution is ready: the view retains the distinct deployment gate, owner score-only permission, P1 readiness, and live-rotation-off indicators. PositionMonitor remains the sole owner of exits. Viewer accounts do not fetch or receive event-level rotation diagnostics. This UI is read-only and does not modify rotation execution or portfolio state.
+
 **Historical containment (2026-07-22, superseded by later migrations):** P1 was not approved. A production audit
 found the US paper flag enabled while several required gates above were still
 absent. It was reset to false, and migration `20260722185000` adds a database

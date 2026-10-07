@@ -10,7 +10,9 @@ import { paperExitEconomics } from "@/lib/trading/paper-exit-economics";
 import { formatPaperPositionOpenedAt } from "@/lib/paper/position-opened-at";
 import InternationalExposurePanel from "@/components/dashboard/InternationalExposurePanel";
 import type { InternationalAllocationPolicyRead } from "@/lib/allocation/international-policy";
+import type { RotationStatus } from "@/lib/agents/rotation-status";
 import { PAPER_BOOK_T, pnlColor, fmtSignedMoney, fmtSignedPct, PaperBookHeader } from "@/components/dashboard/PaperBookHeader";
+import CapitalRotationActivityPanel from "@/components/dashboard/CapitalRotationActivityPanel";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
@@ -590,13 +592,13 @@ function PositionCard({ p, plan, onChart, cur = "$", market = "us", name, viewer
 
 export interface TradeRecord { wins: number; losses: number; breakeven: number; closed: number }
 
-export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, symbolNames, viewerMode = false, exitPlans, internationalAllocationPolicy }: {
+export default function PortfolioPage({ pools, dataMarket, positions: allPositions, trades: allTrades, perf: allPerf, signals: allSignals, pendingSignals: allPendingSignals, tradeRecord, strategy, tradeQueue: allTradeQueue, symbolNames, viewerMode = false, exitPlans, internationalAllocationPolicy, rotationStatus }: {
   dataMarket: "us" | "india";
   pools: any[]; positions: any[]; trades: any[]; perf: any[]; signals: any[];
-  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; symbolNames?: Record<string, string>; viewerMode?: boolean; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null;
+  pendingSignals: any[]; tradeRecord: TradeRecord; strategy: any; tradeQueue: any[]; symbolNames?: Record<string, string>; viewerMode?: boolean; exitPlans: Record<string, PaperExitPlan>; internationalAllocationPolicy: InternationalAllocationPolicyRead | null; rotationStatus: RotationStatus | null;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue">("positions");
+  const [tab, setTab] = useState<"positions" | "trades" | "signals" | "live" | "opportunity" | "tradequeue" | "rotation">("positions");
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
@@ -728,6 +730,9 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
         <button onClick={() => setTab("opportunity" as any)} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === ("opportunity" as any) ? T.accent : T.card, color: tab === ("opportunity" as any) ? "#fff" : T.muted }}>
           Opportunity Cost
         </button>
+        {!viewerMode && <button onClick={() => setTab("rotation")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "rotation" ? T.accent : T.card, color: tab === "rotation" ? "#fff" : T.muted }}>
+          Capital Rotation {rotationStatus?.eventCount ? `(${rotationStatus.eventCount})` : ""}
+        </button>}
         {!viewerMode && <button onClick={() => setTab("tradequeue")} style={{ padding: "8px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, cursor: "pointer", border: "none", background: tab === "tradequeue" ? T.accent : T.card, color: tab === "tradequeue" ? "#fff" : T.muted }}>
           Trade Queue {tradeQueue.length > 0 ? `(${tradeQueue.length})` : ""}
         </button>}
@@ -873,6 +878,11 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
             </div>
           )}
         </div>
+      )}
+
+      {/* Owner-only rotation ledger; details are also withheld server-side from viewers. */}
+      {tab === "rotation" && !viewerMode && (
+        <CapitalRotationActivityPanel status={rotationStatus} market={activeMarket} />
       )}
 
       {/* Trade Queue tab — Robinhood-US only. Under the India view there is no
