@@ -48,6 +48,70 @@ async function nseApi(path: string): Promise<any | null> {
 // Full NSE equity list from the archives host (less protected than the API).
 // ~2000 symbols → the real full-market scanner universe. Returns `.NS` tickers.
 let _eqList: { list: string[]; at: number } | null = null;
+
+export type NseEquityListParse = {
+  symbols: string[];
+  valid: boolean;
+  reason: string | null;
+  sourceRows: number;
+};
+
+function parseCsvRow(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') { cell += '"'; i++; }
+      else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  if (quoted) return [];
+  cells.push(cell.trim());
+  return cells;
+}
+
+/**
+ * Parse NSE's main-board equity directory conservatively. A blocked HTML page,
+ * changed schema, or truncated response must not masquerade as an empty market.
+ */
+export function parseNseEquityListCsv(text: string): NseEquityListParse {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const header = lines[0] ? parseCsvRow(lines[0]).map((cell) => cell.trim().toUpperCase()) : [];
+  if (header[0] !== "SYMBOL" || header[1] !== "NAME OF COMPANY" || header[2] !== "SERIES") {
+    return { symbols: [], valid: false, reason: "unexpected_header", sourceRows: Math.max(0, lines.length - 1) };
+  }
+
+  const symbols: string[] = [];
+  let malformedRows = 0;
+  for (const line of lines.slice(1)) {
+    const cols = parseCsvRow(line);
+    if (cols.length < 3) { malformedRows++; continue; }
+    const symbol = cols[0].trim().toUpperCase();
+    const series = cols[2].trim().toUpperCase();
+    if (!symbol || !/^[A-Z0-9&_-]+$/.test(symbol)) { malformedRows++; continue; }
+    if (series === "EQ" || series === "BE") symbols.push(`${symbol}.NS`);
+  }
+
+  const unique = [...new Set(symbols)];
+  // The established main-board EQ/BE directory is comfortably above 2,000
+  // symbols. A 1,000-name floor tolerates genuine changes while refusing a
+  // partial download or an accidental short response.
+  if (unique.length < 1000) {
+    return { symbols: [], valid: false, reason: "coverage_below_floor", sourceRows: Math.max(0, lines.length - 1) };
+  }
+  if (malformedRows > Math.max(10, Math.floor((lines.length - 1) * 0.01))) {
+    return { symbols: [], valid: false, reason: "too_many_malformed_rows", sourceRows: lines.length - 1 };
+  }
+  return { symbols: unique, valid: true, reason: null, sourceRows: lines.length - 1 };
+}
+
 export async function fetchNseEquityList(): Promise<string[]> {
   if (_eqList && Date.now() - _eqList.at < 24 * 3600 * 1000) return _eqList.list;
   try {
@@ -55,24 +119,10 @@ export async function fetchNseEquityList(): Promise<string[]> {
       headers: { "User-Agent": UA }, next: { revalidate: 86400 }, signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
-    const text = await res.text();
-    const lines = text.split(/\r?\n/).slice(1); // drop header
-    const list: string[] = [];
-    for (const ln of lines) {
-      const cols = ln.split(",");
-      const sym = cols[0]?.trim();
-      // Series is column 2, NOT column 1. The header is
-      //   SYMBOL, NAME OF COMPANY, SERIES, DATE OF LISTING, ...
-      // so column 1 is the company name. Comparing a company name to "EQ" never
-      // matched, this function returned [] on every call, and the India scan
-      // silently fell back to the static ~NIFTY-100 list. Measured against the
-      // live file: column 1 yields 0 symbols, column 2 yields 2,373
-      // (EQ 2123 + BE 250 of 2,401 rows; the rest are BZ, which stays excluded).
-      const series = cols[2]?.trim();
-      if (sym && (series === "EQ" || series === "BE")) list.push(`${sym}.NS`);
-    }
-    if (list.length) _eqList = { list, at: Date.now() };
-    return list;
+    const parsed = parseNseEquityListCsv(await res.text());
+    if (!parsed.valid) return [];
+    _eqList = { list: parsed.symbols, at: Date.now() };
+    return parsed.symbols;
   } catch { return []; }
 }
 
