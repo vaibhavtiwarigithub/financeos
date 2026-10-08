@@ -1,7 +1,7 @@
 # New Symbol, Listing, and Pre-IPO Discovery
 
-> Status: PARTIALLY IMPLEMENTED — P0 plus the filing-discovery slice of P1 shipped 2026-09-09. Exchange-listing events, identity reconciliation, broker candidate probes, 20/40/60 admission shadows, and every money-path effect remain unimplemented and separately gated.
-> Last revised: 2026-09-09 by Codex after code-path and source review.
+> Status: PARTIALLY IMPLEMENTED — P0, filing discovery, SEC CIK-to-current-ticker reconciliation, one source-verified historical listing correction, and a bounded measure-only listed-candidate research cohort are implemented. Broker candidate probes and 20/40/60 admission assessments remain unimplemented; candidates never alter money paths.
+> Last revised: 2026-10-07 by Codex after correcting SPCX identity and connecting listed-observing candidates to non-entry research.
 > Money-path influence: none until a later, separately approved promotion.
 
 ## 0. Decision summary
@@ -31,6 +31,8 @@ positions, or place live orders during this release.
 - **Expected value:** broader, broker-relevant research coverage and a measurable
   answer to whether newly listed instruments add benchmark-relative return.
 - **Shipped at:** 2026-09-09 (evidence-only SEC daily-index filing discovery, candidate/event/filing registry, Research and Upgrade Path read surfaces).
+- **Extended at:** 2026-10-07 (daily SEC current-ticker identity reconciliation; source-verified SPCX listing-event seed; oldest-observed-first research for at most two `listed_observing` candidates per US run, with `new_listing_observation` provenance and an enforced `entry_eligible=false` policy).
+- **Still not claimed as finished:** an exchange-wide historical listing event feed, all-source identity-change reconciliation, broker/account candidate probes, and statistically qualified admission shadows. The SEC current ticker map resolves identity only; it does not prove first-trade date.
 
 ## 1. Verified baseline
 

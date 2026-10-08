@@ -73,11 +73,13 @@ export async function POST(req: NextRequest) {
             supabase,
             null,
             runId ? String(runId) : null,
-            catchupEligibility.eligible ? {
-              status: "weekend_staged",
-              sessionValidated: false,
-              asOfSession: lastCompletedMarketSession(market),
-            } : undefined,
+            entry.discovery_source === "new_listing_observation"
+              ? { status: "weekend_staged", sessionValidated: false, asOfSession: lastCompletedMarketSession("us"), forceEntryIneligible: true }
+              : catchupEligibility.eligible ? {
+                  status: "weekend_staged",
+                  sessionValidated: false,
+                  asOfSession: lastCompletedMarketSession(market),
+                } : undefined,
           );
           totalTokensIn += result.tokensIn ?? 0;
           totalTokensOut += result.tokensOut ?? 0;

@@ -23,6 +23,7 @@ import {
 export interface RotationCandidate {
   signalId: string;
   symbol: string;
+  assetClass?: string | null;
   market: "us" | "india";
   currency: "USD" | "INR";
   score: number;
@@ -138,6 +139,14 @@ export function evaluateCapitalRotationShadow(args: {
     same_market_currency: true,
     candidate_blocked_only_by_cash: candidate.targetNotional > candidate.cash,
   };
+
+  const assetClass = String(candidate.assetClass ?? "").trim().toLowerCase();
+  const isCrypto = assetClass === "crypto" || /^[A-Z0-9]+-USD$/.test(candidate.symbol.trim().toUpperCase());
+  gates.equity_rotation_asset_class = assetClass || (isCrypto ? "crypto_symbol_fallback" : "unspecified");
+  if (isCrypto) {
+    return { eligible: false, status: "rejected", reason: "crypto_excluded_from_equity_rotation", source: null,
+      scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };
+  }
 
   if (!cfg.shadowEnabled) {
     return { eligible: false, status: "rejected", reason: "rotation_shadow_disabled", source: null, scoreEdge: null, sellNotional: null, buyNotional: candidate.targetNotional, buyQty: null, gates };

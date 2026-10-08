@@ -370,11 +370,13 @@ export async function POST(req: NextRequest) {
             supabase,
             universeSnapshotId,
             runId ? String(runId) : null,
-            closedDayCatchup && marketScope ? {
-              status: "weekend_staged",
-              sessionValidated: false,
-              asOfSession: lastCompletedMarketSession(marketScope),
-            } : undefined,
+            entry.discovery_source === "new_listing_observation"
+              ? { status: "weekend_staged", sessionValidated: false, asOfSession: lastCompletedMarketSession("us"), forceEntryIneligible: true }
+              : closedDayCatchup && marketScope ? {
+                  status: "weekend_staged",
+                  sessionValidated: false,
+                  asOfSession: lastCompletedMarketSession(marketScope),
+                } : undefined,
           ),
           PER_SYMBOL_TIMEOUT_MS,
           entry.symbol,

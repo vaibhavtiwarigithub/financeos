@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 
 // SEC's published sample identifies both the application and its contact.
-const SEC_USER_AGENT = "Kairos Research (contact: vterminater@gmail.com)";
+export const SEC_USER_AGENT = "Kairos Research (contact: vterminater@gmail.com)";
 const IPO_FORMS = new Set(["S-1", "S-1/A", "F-1", "F-1/A", "424B4"]);
 
 export type EdgarListingFiling = {
@@ -13,6 +13,44 @@ export type EdgarListingFiling = {
   sourceUrl: string;
   payloadHash: string;
 };
+
+export type SecCurrentIssuerListing = { cik: string; companyName: string; symbol: string; exchange: string };
+
+/** SEC's current issuer/ticker map resolves identity, but is not a listing-event feed. */
+export function parseSecCurrentIssuerListings(payload: unknown): SecCurrentIssuerListing[] {
+  if (!payload || typeof payload !== "object") throw new Error("SEC issuer ticker map has invalid shape");
+  const root = payload as { fields?: unknown; data?: unknown };
+  if (!Array.isArray(root.fields) || !Array.isArray(root.data)) throw new Error("SEC issuer ticker map is missing fields/data");
+  const fields = root.fields.map(value => String(value).trim().toLowerCase());
+  const indices = { cik: fields.indexOf("cik"), name: fields.indexOf("name"), ticker: fields.indexOf("ticker"), exchange: fields.indexOf("exchange") };
+  if (Object.values(indices).some(index => index < 0)) throw new Error("SEC issuer ticker map is missing expected columns");
+  const rows: SecCurrentIssuerListing[] = [];
+  for (const raw of root.data) {
+    if (!Array.isArray(raw)) continue;
+    const cikRaw = String(raw[indices.cik] ?? "").trim();
+    const companyName = String(raw[indices.name] ?? "").trim();
+    const symbol = String(raw[indices.ticker] ?? "").trim().toUpperCase();
+    const exchange = String(raw[indices.exchange] ?? "").trim();
+    if (!/^\d{1,10}$/.test(cikRaw) || !companyName || !/^[A-Z0-9.\-/]{1,16}$/.test(symbol) || !exchange) continue;
+    rows.push({ cik: cikRaw.padStart(10, "0"), companyName, symbol, exchange });
+  }
+  return rows;
+}
+
+export async function fetchSecCurrentIssuerListings(): Promise<SecCurrentIssuerListing[]> {
+  let response: Response;
+  try {
+    response = await fetch("https://www.sec.gov/files/company_tickers_exchange.json", {
+      headers: { "User-Agent": SEC_USER_AGENT, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch (error) {
+    throw new Error(`SEC issuer ticker map request failed: ${error instanceof Error ? error.name : "transport_error"}`);
+  }
+  if (!response.ok) throw new Error(`SEC issuer ticker map fetch failed: ${response.status}`);
+  return parseSecCurrentIssuerListings(await response.json());
+}
 
 /** Parse the SEC master-index body without treating a failed/changed page as zero filings. */
 export function parseEdgarMasterIndex(body: string): EdgarListingFiling[] {

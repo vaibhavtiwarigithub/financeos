@@ -43,6 +43,15 @@ describe("paper signal selection", () => {
     expect(selectBestPaperSignals([adr], "india", 10).selected).toEqual([]);
   });
 
+  it("keeps crypto out of generic US equity selection without marking it superseded", () => {
+    const crypto = { ...row("eth", "ETH-USD", 99, "2026-07-22T10:00:00Z"), asset_class: "crypto" };
+    const legacyCrypto = row("btc-legacy", "BTC-USD", 98, "2026-07-22T10:00:00Z");
+    const result = selectBestPaperSignals([crypto, legacyCrypto, row("equity", "NVDA", 80, "2026-07-22T10:00:00Z")], "us", 10);
+    expect(result.selected.map(signal => signal.id)).toEqual(["equity"]);
+    expect(result.duplicateIds).toEqual([]);
+    expect(result.excludedIds).toEqual([]);
+  });
+
   it("does not let an already-held name consume a new-entry slot", () => {
     const held = new Set(["AAA"]);
     const rows = [
