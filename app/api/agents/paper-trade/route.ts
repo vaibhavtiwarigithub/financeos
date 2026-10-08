@@ -9,6 +9,7 @@ import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
+import { resolvePaperExposureLimits } from "@/lib/portfolio/paper-limits";
 import { computeCorrelationShadow, loadShadowReturns } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
     // migration cannot make the legacy strategy-config query fail wholesale.
     const { data: paperExposureCfg, error: paperExposureError } = await supabase
       .from("strategy_config")
-      .select("max_gross_exposure_pct_paper")
+      .select("max_gross_exposure_pct_paper, max_sector_exposure_pct_paper, max_name_exposure_pct_paper")
       .limit(1)
       .single();
     let maxPerSector = 3;
@@ -356,8 +357,11 @@ export async function POST(req: NextRequest) {
       // never change the shared/live risk ceiling. Missing migration retains
       // the existing shared/default behavior.
       maxGrossExposurePct: (!paperExposureError ? (paperExposureCfg as any)?.max_gross_exposure_pct_paper : null) ?? (cfg as any)?.max_gross_exposure_pct ?? DEFAULT_LIMITS.maxGrossExposurePct,
-      maxSectorExposurePct: (cfg as any)?.max_sector_exposure_pct ?? DEFAULT_LIMITS.maxSectorExposurePct,
-      maxNameExposurePct: (cfg as any)?.max_name_exposure_pct ?? DEFAULT_LIMITS.maxNameExposurePct,
+      ...resolvePaperExposureLimits({
+        shared: cfg as any,
+        paper: paperExposureCfg as any,
+        paperConfigAvailable: !paperExposureError,
+      }),
       maxPortfolioVolPct: (cfg as any)?.max_portfolio_vol_pct ?? DEFAULT_LIMITS.maxPortfolioVolPct,
       maxAvgPairwiseCorr: (cfg as any)?.max_avg_pairwise_corr ?? DEFAULT_LIMITS.maxAvgPairwiseCorr,
     };
