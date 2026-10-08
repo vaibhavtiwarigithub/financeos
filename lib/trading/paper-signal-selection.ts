@@ -7,6 +7,13 @@ export interface PaperSignalCandidate {
   created_at: string;
 }
 
+/** Generic equity PaperTrader must never consume the dedicated crypto cohort. */
+export function isCryptoPaperSignal(signal: Pick<PaperSignalCandidate, "symbol" | "asset_class">): boolean {
+  const assetClass = String(signal.asset_class ?? "").trim().toLowerCase();
+  const symbol = String(signal.symbol ?? "").trim().toUpperCase();
+  return assetClass === "crypto" || /^[A-Z0-9]+-USD$/.test(symbol);
+}
+
 export interface PaperSignalSelectionOptions {
   /** Legacy hard exclusion for callers that intentionally disallow a held symbol. */
   excludedSymbols?: ReadonlySet<string>;
@@ -40,6 +47,7 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
   const excludedIds: string[] = [];
 
   for (const row of rows) {
+    if (isCryptoPaperSignal(row)) continue;
     if (candidateMarket(row) !== market) continue;
     const symbol = String(row.symbol ?? "").trim().toUpperCase();
     if (!symbol) continue;

@@ -20,7 +20,7 @@ export default function NewListingsPanel() {
   const candidates = data.candidates as any[];
   return <div style={{ display: "grid", gap: "12px" }}>
     <div style={{ background: "#241E10", border: `1px solid ${T.amber}`, borderRadius: "10px", padding: "13px 15px", color: T.sub, fontSize: "12px", lineHeight: 1.55 }}>
-      Evidence only — SEC registration/prospectus filings do not mean a symbol is listed, broker-supported, eligible, paper-traded, or live-traded. First-trade dates and broker probes remain unresolved until an authoritative listing source is added.
+      Evidence only — an SEC filing or ticker match alone does not prove first trade or broker support. Verified exchange/company event records can confirm a first-trade date. Listed-observing candidates may enter a small, rotating research-only sample; they are always marked not entry-eligible. Broker probes, policy admission, paper orders, and live orders are separate and are not implied here.
     </div>
     {!candidates.length ? <div style={{ color: T.muted, fontSize: "13px" }}>No filing candidates have been collected yet. The weekday SEC collector will record filings when it next runs.</div> : candidates.map(candidate => {
       const filing = [...(candidate.issuer_filings ?? [])].sort((a: any, b: any) => String(b.filed_at).localeCompare(String(a.filed_at)))[0];
@@ -32,6 +32,9 @@ export default function NewListingsPanel() {
         <div style={{ marginTop: "8px", color: T.sub, fontSize: "12px", display: "flex", gap: "14px", flexWrap: "wrap" }}>
           <span>CIK: {candidate.issuer_key}</span><span>Type: {stateLabel(candidate.instrument_type)}</span><span>First trade: {candidate.first_trade_date ?? "unverified"}</span><span>Broker BUY: {candidate.latest_preflight_id ? "evidence recorded" : "not probed"}</span>
         </div>
+        {candidate.state === "listed_observing" && <div style={{ marginTop: "8px", color: T.muted, fontSize: "11px" }}>
+          Research: rotating measure-only sample (up to 2 names per US run) · not entry-eligible · no paper/live order permission
+        </div>}
         {filing && <a href={filing.primary_document_url} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: "10px", fontSize: "12px", color: T.blue }}>Latest {filing.form} filing · {filing.filed_at}</a>}
       </div>;
     })}

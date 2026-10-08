@@ -51,6 +51,7 @@ import {
   financialDatasetsScreenerRows,
 } from "@/lib/data/financialdatasets-screener";
 import { US_BUCKETS, screenUsBucket } from "@/lib/data/yahoo-screener";
+import { isListingObservationEntryEligible } from "@/lib/listings/discovery";
 
 // Webull research belongs to the Evidence Router shadow. Calling its nine MCP
 // tools per symbol inside the scoring deadline caused repeated 30s symbol
@@ -247,6 +248,7 @@ export type DiscoverySource =
   | "india_holding"   // live Kite India position
   | "india_screener"  // india_screen_cache candidate
   | "edge_relative_strength" // completed-session EdgeScout candidate; admission only
+  | "new_listing_observation" // listed candidate; deterministic research only, never entry-eligible
   | "manual";         // manualOverride caller (e.g. ad-hoc research run)
 
 export type SymbolEntry = {
@@ -273,6 +275,7 @@ export type ResearchSignalWriteContext = {
   sessionValidated: boolean;
   asOfSession: string;
   status: "pending" | "weekend_staged";
+  forceEntryIneligible?: boolean;
 };
 
 const BUCKET_CRITERIA: Record<"momentum" | "value", string[]> = {
@@ -925,6 +928,41 @@ export async function gatherSymbols(
   // US-only: crypto is market="us", RH account, USD settlement. No India path.
   const cryptoBasket: SymbolEntry[] = [];
   const allWithMetals = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
+  const newListingObservations: SymbolEntry[] = [];
+  if (includeUs) try {
+    const { data: candidates, error: candidateError } = await supabase.from("listing_candidates")
+      .select("id,symbol,instrument_type").eq("market", "us").eq("state", "listed_observing")
+      .not("symbol", "is", null).order("first_trade_date", { ascending: false }).limit(200);
+    if (candidateError) throw candidateError;
+    const usable = (candidates ?? []).filter((row: any) => !allWithMetals.has(String(row.symbol).trim().toUpperCase()));
+    const candidateSymbols = usable.map((row: any) => String(row.symbol).trim().toUpperCase());
+    const latestSeen = new Map<string, number>();
+    if (candidateSymbols.length > 0) {
+      const { data: observations, error: observationError } = await supabase.from("decision_observations")
+        .select("symbol,ts").eq("market", "us").in("symbol", candidateSymbols).order("ts", { ascending: false }).limit(1000);
+      if (observationError) throw observationError;
+      for (const observation of observations ?? []) {
+        const key = String((observation as any).symbol).toUpperCase();
+        if (!latestSeen.has(key)) {
+          const at = new Date((observation as any).ts).getTime();
+          latestSeen.set(key, Number.isFinite(at) ? at : 0);
+        }
+      }
+    }
+    usable.sort((a: any, b: any) => (latestSeen.get(String(a.symbol).toUpperCase()) ?? 0)
+      - (latestSeen.get(String(b.symbol).toUpperCase()) ?? 0));
+    const requested = Number.parseInt(process.env.RESEARCH_NEW_LISTING_OBSERVATIONS_PER_RUN ?? "2", 10);
+    const cap = Number.isFinite(requested) ? Math.max(0, Math.min(4, requested)) : 2;
+    for (const row of usable.slice(0, cap) as any[]) {
+      const symbol = String(row.symbol).trim().toUpperCase();
+      allWithMetals.add(symbol);
+      newListingObservations.push({ symbol, isHeld: false,
+        isEtf: ["etf", "closed_end_fund"].includes(String(row.instrument_type)),
+        assetClass: classifyResearchAssetClass(symbol), discovery_source: "new_listing_observation" });
+    }
+  } catch (error) {
+    console.warn("[research] new-listing observation cohort unavailable:", error instanceof Error ? error.message : String(error));
+  }
   for (const sym of includeUs ? CRYPTO_BASKET : []) {
     if (!allWithMetals.has(sym)) {
       cryptoBasket.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "crypto", discovery_source: "crypto_basket" });
@@ -991,7 +1029,7 @@ export async function gatherSymbols(
   }
 
   return annotateFundamentalFreshness(
-    [...nonMetals, ...metals, ...cryptoBasket, ...regionEtfs, ...indiaSymbols],
+    [...nonMetals, ...newListingObservations, ...metals, ...cryptoBasket, ...regionEtfs, ...indiaSymbols],
     supabase,
   );
 }
@@ -2010,10 +2048,11 @@ export async function processSymbol(
   // exits are evaluated by PositionMonitor against the score and never read this
   // flag, so a breakdown can never delay or block getting OUT of a position.
   const breakdownVetoed = ((scores.evidence?.technical as any)?.breakdown_veto as any)?.vetoed === true;
-  const entryEligible = !earningsRepricing.pending
+  const entryEligible = writeContext?.forceEntryIneligible !== true
+    && isListingObservationEntryEligible(entry.discovery_source, !earningsRepricing.pending
     && !breakdownVetoed
     && signalDirection === "long"
-    && analystScore >= (scoreThreshold ?? 60);
+    && analystScore >= (scoreThreshold ?? 60));
   const deterministicNarrative = buildDeterministicNarrative({
     analystScore,
     scoreThreshold,

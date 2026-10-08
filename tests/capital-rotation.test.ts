@@ -147,6 +147,14 @@ describe("evaluateCapitalRotationShadow", () => {
     expect(result.reason).toBe("no_sellable_holding");
   });
 
+  it("rejects a crypto candidate from the equity rotation ledger", () => {
+    const result = evaluateCapitalRotationShadow({
+      candidate: { ...candidate, symbol: "ETH-USD", assetClass: "crypto" }, config, holdings: [baseHolding()],
+    });
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe("crypto_excluded_from_equity_rotation");
+  });
+
   it("cannot sell and rebuy the candidate's existing position", () => {
     const result = evaluateCapitalRotationShadow({
       candidate,

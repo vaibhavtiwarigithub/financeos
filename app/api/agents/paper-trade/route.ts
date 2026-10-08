@@ -21,7 +21,7 @@ import { loadTradingMandate, mandateSnapshot, resolveHorizonDays, type TradingMa
 import { isPaused, isTradingEnabled } from "@/lib/market-controls";
 import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/trading/capital-rotation";
 import { classifyConstructorSize } from "@/lib/trading/constructor-outcome";
-import { selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
+import { isCryptoPaperSignal, selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
@@ -212,6 +212,9 @@ export async function POST(req: NextRequest) {
       let expQ = supabase.from("agent_signals").update({ status: "expired" })
         .eq("status", "pending").eq("direction", "long").lt("created_at", cutoff);
       expQ = hasMarketCol ? expQ.eq("market", m) : expQ.neq("asset_class", "india");
+      // Crypto signals have their own paper executor and must not be expired by
+      // the generic equity pipeline merely because both use the US venue.
+      expQ = expQ.or("asset_class.is.null,asset_class.neq.crypto");
       const { data: expd, error: expireError } = await expQ.select("id");
       if (expireError) throw new Error(`stale signal expiry failed (${m}): ${expireError.message}`);
       const nExp = expd?.length ?? 0;
@@ -239,6 +242,17 @@ export async function POST(req: NextRequest) {
         throw new Error(`paper signal cohort truncated (${m}): ${data?.length ?? 0}/${count}`);
       }
       if (data) signals.push(...data);
+    }
+
+    const cryptoDeferred = signals.filter(isCryptoPaperSignal);
+    if (cryptoDeferred.length > 0) {
+      for (const signal of cryptoDeferred) {
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market: signal.market ?? "us",
+          stage: "asset_class_route", outcome: "deferred", reason: "routed_to_crypto_paper_trader",
+          detail: { asset_class: signal.asset_class ?? null, generic_equity_paper_trader: false } });
+      }
+      const equitySignals = signals.filter(signal => !isCryptoPaperSignal(signal));
+      signals.splice(0, signals.length, ...equitySignals);
     }
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
@@ -1013,6 +1027,7 @@ export async function POST(req: NextRequest) {
         const rotCandidate = {
           signalId: signal.id,
           symbol: signal.symbol,
+          assetClass: signal.asset_class ?? null,
           market: market as "us" | "india",
           currency: currency as "USD" | "INR",
           score: Number(signal.analyst_score ?? 0),

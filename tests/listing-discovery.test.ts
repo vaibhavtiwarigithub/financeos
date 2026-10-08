@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { candidateRowForFiling, candidateStateForFiling } from "@/lib/listings/discovery";
-import { edgarDailyIndexUrl, parseEdgarMasterIndex, publishedEdgarIndexDates, collectEdgarIndexes } from "@/lib/listings/sec-edgar";
+import { candidateRowForFiling, candidateStateForFiling, isListingObservationEntryEligible, selectUnambiguousIdentityForCik, stateAfterVerifiedFirstTrade } from "@/lib/listings/discovery";
+import { edgarDailyIndexUrl, parseEdgarMasterIndex, parseSecCurrentIssuerListings, publishedEdgarIndexDates, collectEdgarIndexes } from "@/lib/listings/sec-edgar";
 import { capability, preflightRow } from "@/lib/brokers/preflight";
 
 // Header matches SEC's real format (space in "File Name"), confirmed against
@@ -46,6 +46,29 @@ describe("SEC daily index real date format", () => {
 });
 
 describe("new-listing evidence discovery", () => {
+  it("resolves current issuer tickers by SEC CIK without inventing a first-trade date", () => {
+    const rows = parseSecCurrentIssuerListings({
+      fields: ["cik", "name", "ticker", "exchange"],
+      data: [[1181412, "Space Exploration Technologies Corp.", "SPCX", "Nasdaq"], ["bad", "Invalid", "???", "Nasdaq"]],
+    });
+    expect(rows).toEqual([{ cik: "0001181412", companyName: "Space Exploration Technologies Corp.", symbol: "SPCX", exchange: "Nasdaq" }]);
+    expect(() => parseSecCurrentIssuerListings({ fields: ["bad"], data: [] })).toThrow(/expected columns/i);
+    expect(selectUnambiguousIdentityForCik(rows, "1181412").identity?.symbol).toBe("SPCX");
+    expect(selectUnambiguousIdentityForCik([...rows, { ...rows[0], symbol: "SPCX.B" }], "1181412")).toEqual({ identity: null, ambiguous: true });
+  });
+
+  it("keeps newly-listed observation research permanently outside the entry-eligible cohort", () => {
+    expect(isListingObservationEntryEligible("new_listing_observation", true)).toBe(false);
+    expect(isListingObservationEntryEligible("screener_momentum", true)).toBe(true);
+    expect(isListingObservationEntryEligible("new_listing_observation", false)).toBe(false);
+  });
+
+  it("advances only pre-listing states; verified backfills never downgrade terminal/admitted states", () => {
+    expect(stateAfterVerifiedFirstTrade("announced")).toBe("listed_observing");
+    expect(stateAfterVerifiedFirstTrade("paper_admitted")).toBe("paper_admitted");
+    expect(stateAfterVerifiedFirstTrade("delisted")).toBe("delisted");
+  });
+
   it("never requests tonight's not-yet-published index", () => {
     expect(publishedEdgarIndexDates(new Date("2026-09-25T23:35:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-24");
     expect(publishedEdgarIndexDates(new Date("2026-09-26T08:35:00Z"))[0].toISOString().slice(0, 10)).toBe("2026-09-25");
