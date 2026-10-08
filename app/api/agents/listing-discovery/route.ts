@@ -7,6 +7,7 @@ import { collectEdgarIndexes, fetchSecCurrentIssuerListings, type EdgarListingFi
 import { createServiceClient } from "@/lib/supabase/service";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { fetchUsSymbolDirectory, US_SYMBOL_DIRECTORY_SOURCE, type DirectoryCandidate } from "@/lib/listings/us-symbol-directory";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -137,26 +138,149 @@ async function resolveCurrentIssuerSymbols(svc: any, identities: SecCurrentIssue
     still_unresolved: candidates.length - resolved };
 }
 
+async function observeUsDirectoryDelta(svc: any, directory: Awaited<ReturnType<typeof fetchUsSymbolDirectory>>) {
+  const { data: snapshot, error: snapshotError } = await svc.from("us_symbol_directory_snapshot")
+    .select("listing_keys,source_as_of,source_hash").eq("id", "us").maybeSingle();
+  if (snapshotError) throw new Error(`US symbol directory snapshot read failed: ${snapshotError.message}`);
+
+  if (!snapshot) {
+    const observedAt = new Date().toISOString();
+    const { error } = await svc.from("us_symbol_directory_snapshot").upsert({ id: "us", listing_keys: directory.listingKeys,
+      source_as_of: directory.sourceAsOf, source_hash: directory.sourceHash, observed_at: observedAt, updated_at: observedAt });
+    if (error) throw new Error(`US symbol directory baseline write failed: ${error.message}`);
+    return { status: "baseline" as const, as_of: directory.sourceAsOf, rows: directory.totalRows,
+      researchable_rows: directory.researchable.length, excluded_rows: directory.excludedRows, additions: 0, candidates_observed: 0,
+      source_hash: directory.sourceHash, note: "First valid directory snapshot is baseline only; existing market symbols were not labeled new." };
+  }
+
+  if (String(snapshot.source_as_of) > directory.sourceAsOf) throw new Error("US symbol directory source date moved backwards; prior snapshot was preserved");
+  const prior = new Set((snapshot.listing_keys as string[] | null) ?? []);
+  const added = directory.researchable.filter(row => !prior.has(row.listingKey));
+  let candidatesObserved = 0;
+  const chunkSize = 75;
+  for (let offset = 0; offset < added.length; offset += chunkSize) {
+    const batch = added.slice(offset, offset + chunkSize);
+    const symbols = [...new Set(batch.map(row => row.symbol))];
+    const existing = await fetchAllRows<any>((from, to) => svc.from("listing_candidates")
+      .select("id,symbol,listing_key,state,first_seen_at").eq("market", "us").in("symbol", symbols).range(from, to),
+    "existing US listing identities");
+    const bySymbol = new Map<string, any[]>();
+    for (const row of existing) {
+      const key = String(row.symbol ?? "").toUpperCase();
+      bySymbol.set(key, [...(bySymbol.get(key) ?? []), row]);
+    }
+
+    const exactKeys = new Set(existing.map((row: any) => String(row.listing_key)));
+    const newRows = batch.filter(row => !exactKeys.has(`exchange-directory:${row.exchangeCode}:${row.symbol}`)).map(row => ({
+      market: "us", issuer_key: `exchange-directory:${row.exchangeCode}:${row.symbol}`,
+      listing_key: `exchange-directory:${row.exchangeCode}:${row.symbol}`, symbol: row.symbol, company_name: row.companyName,
+      exchange: row.exchange, instrument_type: row.instrumentType, state: "directory_observed",
+      first_trade_date: null, source: US_SYMBOL_DIRECTORY_SOURCE, source_event_id: `${directory.sourceAsOf}:${row.listingKey}`,
+      source_url: row.exchangeCode === "Q" ? "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt" : "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+      source_payload_hash: row.payloadHash, first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
+    }));
+    if (newRows.length) {
+      const { error } = await svc.from("listing_candidates").upsert(newRows, { onConflict: "market,listing_key", ignoreDuplicates: true });
+      if (error) throw new Error(`US directory candidate insert failed: ${error.message}`);
+    }
+    const keys = batch.map(row => `exchange-directory:${row.exchangeCode}:${row.symbol}`);
+    const keyed = await fetchAllRows<any>((from, to) => svc.from("listing_candidates")
+      .select("id,listing_key,state,first_seen_at").eq("market", "us").in("listing_key", keys).range(from, to),
+    "US directory candidate IDs");
+    const byListingKey = new Map(keyed.map((row: any) => [String(row.listing_key), row]));
+    const now = new Date().toISOString();
+    const events: any[] = [];
+    const transitions: Array<{ id: number; state: string }> = [];
+    for (const row of batch) {
+      const listingKey = `exchange-directory:${row.exchangeCode}:${row.symbol}`;
+      const exact = byListingKey.get(listingKey);
+      const symbolMatches = bySymbol.get(row.symbol) ?? [];
+      // If a SEC/other feed already identifies this exact ticker unambiguously,
+      // keep its canonical candidate and attach an independent directory event.
+      const target = exact ?? (symbolMatches.length === 1 && !String(symbolMatches[0].listing_key).startsWith("exchange-directory:")
+        ? symbolMatches[0] : null);
+      if (!target) {
+        throw new Error(`US directory candidate could not be resolved for ${row.symbol}; snapshot not advanced`);
+      }
+      const id = Number(target.id);
+      const nextState = target.state === "pre_listing" || target.state === "announced" ? "directory_observed" : target.state;
+      if (nextState !== target.state) transitions.push({ id, state: nextState });
+      events.push({ candidate_id: id, event_type: "listing_observed", event_at: now, effective_at: null,
+        prior_state: target.state, next_state: target.state === "pre_listing" || target.state === "announced" ? "directory_observed" : target.state,
+        source: US_SYMBOL_DIRECTORY_SOURCE, source_event_id: `${directory.sourceAsOf}:${row.listingKey}:${row.payloadHash}`,
+        source_url: row.exchangeCode === "Q" ? "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt" : "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+        source_payload_hash: row.payloadHash, reason_code: "active_directory_member_first_observed",
+        calculations: { directory_as_of: directory.sourceAsOf, first_trade_date_verified: false,
+          broker_support_verified: false, entry_eligible: false, instrument_type: row.instrumentType }, code_version: LISTING_DISCOVERY_POLICY });
+      candidatesObserved++;
+    }
+    const { error: eventError } = await svc.from("listing_candidate_events").upsert(events, {
+      onConflict: "candidate_id,event_type,source,source_event_id,source_payload_hash", ignoreDuplicates: true,
+    });
+    if (eventError) throw new Error(`US directory evidence events failed: ${eventError.message}`);
+    // Persist the append-only transition event before mutable current state. If
+    // this update fails, a retry can replay the idempotent event and finish it.
+    for (const transition of transitions) {
+      const { error } = await svc.from("listing_candidates").update({ state: transition.state,
+        last_seen_at: now, updated_at: now }).eq("id", transition.id);
+      if (error) throw new Error(`US directory state update failed: ${error.message}`);
+    }
+  }
+
+  // Advance the baseline only after every new symbol and idempotent event is
+  // persisted. Any earlier failure leaves the old snapshot for safe replay.
+  const observedAt = new Date().toISOString();
+  const { error: writeError } = await svc.from("us_symbol_directory_snapshot").upsert({ id: "us",
+    listing_keys: directory.listingKeys, source_as_of: directory.sourceAsOf, source_hash: directory.sourceHash,
+    observed_at: observedAt, updated_at: observedAt });
+  if (writeError) throw new Error(`US symbol directory snapshot update failed: ${writeError.message}`);
+  return { status: added.length ? "complete" as const : "unchanged" as const, as_of: directory.sourceAsOf,
+    rows: directory.totalRows, researchable_rows: directory.researchable.length, excluded_rows: directory.excludedRows,
+    additions: added.length, candidates_observed: candidatesObserved, source_hash: directory.sourceHash };
+}
+
 async function runDiscovery() {
   const svc = createServiceClient();
   const startedAt = new Date().toISOString();
-  const fetched = await collectEdgarIndexes();
+  const [fetched, identityFetch, directoryFetch] = await Promise.all([
+    collectEdgarIndexes(),
+    fetchSecCurrentIssuerListings().then(identities => ({ identities, error: null as string | null }))
+      .catch(error => ({ identities: [], error: error instanceof Error ? error.message : "SEC issuer identity source unavailable" })),
+    fetchUsSymbolDirectory().then(directory => ({ directory, error: null as string | null }))
+      .catch(error => ({ directory: null, error: error instanceof Error ? error.message : "US exchange symbol directory unavailable" })),
+  ]);
   const byAccession = new Map<string, EdgarListingFiling>();
   for (const batch of fetched) for (const filing of batch.filings) byAccession.set(filing.accessionNumber, filing);
   let created = 0;
   for (const filing of byAccession.values()) if ((await persistFiling(svc, filing)).created) created++;
-  const identities = await fetchSecCurrentIssuerListings();
-  const identityResolution = await resolveCurrentIssuerSymbols(svc, identities);
+  let identityRows = 0;
+  let identityResolution: any = null;
+  let identityError: string | null = identityFetch.error;
+  if (!identityError) {
+    identityRows = identityFetch.identities.length;
+    try { identityResolution = await resolveCurrentIssuerSymbols(svc, identityFetch.identities); }
+    catch (error) { identityError = error instanceof Error ? error.message : "SEC issuer identity persistence failed"; }
+  }
   // Nasdaq confirmed actual first trade; SpaceX's IPO was missed by the short
   // SEC daily-index window. Keep this correction in the candidate registry,
   // never the owner watchlist or any scoring/trading input.
   const spacex = await persistVerifiedListing(svc);
   const available = fetched.filter(x => x.status === "available").length;
-  const status = available === fetched.length ? "completed" : available > 0 ? "partial" : "error";
-  const summary = { policy: LISTING_DISCOVERY_POLICY, source: "sec_edgar_daily_index", status,
+  let directory: any;
+  let directoryError: string | null = directoryFetch.error;
+  if (directoryFetch.directory) {
+    try { directory = await observeUsDirectoryDelta(svc, directoryFetch.directory); }
+    catch (error) { directoryError = error instanceof Error ? error.message : "US exchange symbol directory persistence failed"; }
+  }
+  const directoryOk = !!directory && ["baseline", "complete", "unchanged"].includes(directory.status);
+  const secOk = available === fetched.length && !identityError;
+  const anySourceOk = available > 0 || directoryOk;
+  const status = secOk && directoryOk ? "completed" : anySourceOk ? "partial" : "error";
+  const summary = { policy: LISTING_DISCOVERY_POLICY, source: "sec_edgar_and_nasdaq_symbol_directories", status,
     dates: fetched.map(x => x.date), indexes: fetched.map(({ filings, ...index }) => ({ ...index, filing_count: index.status === "available" ? filings.length : null })),
     filings_seen: byAccession.size, candidates_created: created, verified_historical_listings_seeded: spacex.created ? 1 : 0,
-    identity_map_source: "sec_company_tickers_exchange", identity_map_rows: identities.length, identity_resolution: identityResolution,
+    identity_map_source: "sec_company_tickers_exchange", identity_map_rows: identityRows, identity_resolution: identityResolution,
+    identity_map_error: identityError, exchange_directory_source: US_SYMBOL_DIRECTORY_SOURCE, exchange_directory: directory ?? { status: "unavailable", error: directoryError },
     identity_resolution_note: "unresolved SEC CIKs may be legitimate pre-listing issuers; current ticker mapping does not establish first trade",
     influence: "none" };
   // agent_runs is operational health only; it is not used as listing evidence.
@@ -164,8 +288,12 @@ async function runDiscovery() {
   if (runError) throw new Error(`listing discovery run recording failed: ${runError.message}`);
   if (status === "completed") await resolveIssue("listing-discovery:us", svc);
   else await reportIssue({ issueKey: "listing-discovery:us", severity: "warn", category: "data",
-    title: "SEC filing discovery has unavailable indexes",
-    detail: fetched.filter(x => x.status === "unavailable").map(x => `${x.date}: ${x.error}`).join("; ") }, svc);
+    title: "US listing discovery sources are incomplete",
+    detail: [
+      ...fetched.filter(x => x.status === "unavailable").map(x => `${x.date}: ${x.error}`),
+      identityError ? `SEC identity map: ${identityError}` : null,
+      directoryError ? `Exchange directory: ${directoryError}` : null,
+    ].filter(Boolean).join("; ") || "At least one listing evidence source did not complete." }, svc);
   return summary;
 }
 
@@ -175,9 +303,8 @@ export async function POST(req: NextRequest) {
   try { const result = await runDiscovery(); return NextResponse.json(result, { status: result.status === "error" ? 502 : 200 }); }
   catch (error) {
     const message = error instanceof Error ? error.message : "listing discovery failed";
-    // An unavailable regulator source must be visible as an errored run; no row
-    // would make a dashboard interpret the absence as an empty listing day.
-    await createServiceClient().from("agent_runs").insert({ agent_type: "listing_discovery", market: "us", status: "error", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), result_summary: JSON.stringify({ source: "sec_edgar_daily_index", error: message, influence: "none" }), symbols: [] });
+    // A failed source must be visible; no row could be misread as zero additions.
+    await createServiceClient().from("agent_runs").insert({ agent_type: "listing_discovery", market: "us", status: "error", started_at: new Date().toISOString(), completed_at: new Date().toISOString(), result_summary: JSON.stringify({ source: "sec_edgar_and_nasdaq_symbol_directories", error: message, influence: "none" }), symbols: [] });
     return NextResponse.json({ error: message, influence: "none" }, { status: 500 });
   }
 }

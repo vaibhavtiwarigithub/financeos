@@ -1,4 +1,19 @@
 # Kairos — Agents
+
+## Continuous US symbol discovery and research rotation (2026-10-08)
+
+`/api/agents/listing-discovery?market=us` combines SEC issuer/filing evidence with
+the official Nasdaq Trader `nasdaqlisted.txt` and `otherlisted.txt` active-symbol
+directories. The first valid directory run writes a baseline only. Later validated
+snapshots produce idempotent addition events and `directory_observed` candidates;
+directory presence does not assert first-trade date or broker support. ResearchAgent
+selects at most two of these candidates per run by oldest prior research-attempt
+first (hard maximum four), gathers the same deterministic features as its normal
+universe, and forces their observations to remain entry-ineligible. Neither the
+directory collector nor this sample writes the watchlist, alters scores/weights,
+creates paper eligibility, or places orders. See
+`features/new-symbol-and-ipo-discovery/FEATURE_ARCHITECTURE.md`.
+
 > 2026-10-03: **SEC listing discovery has never produced a candidate (fixed).** After the 2026-09-24 header fix the run reported `available, filing_count 0` every day because the parser only accepted ISO dates while the real SEC daily index writes `YYYYMMDD` (a live 2026-09-30 index holds 12 S-1/F-1/424B4 filings); the test fixture used ISO dates, so tests stayed green. The parser now normalizes both. Also: the prewarm route drops research-disabled unheld names (same rule as the freshness monitor), and the viewer price route paginates (PostgREST caps one response at 1,000 rows; `limit(2500)` returned the oldest 1,000 bars on long windows).
 >
 > 2026-10-03: **Sleeve evidence isolation.** Now that SOXL/TQQQ/SQQQ/SOXS are scored every weekday, their decisions are kept out of the equity chart-pattern evidence (no pattern-shadow write) and out of the capital-rotation candidate-vs-holding edge (3x returns are on a different scale). They remain in the generic eligible-long decision ledger (4 of ~100 names/day; measure-only IC cohorts), a known minor contamination.

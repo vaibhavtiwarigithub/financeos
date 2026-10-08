@@ -246,10 +246,10 @@ export async function POST(req: NextRequest) {
   // Alert keys are scoped by run type: the two runs cover different symbol sets,
   // so a shared key would let one resolve what the other had just raised.
   const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : ""}`;
-  const DISCOVERY_SOURCES = ["screener_momentum", "screener_value", "edge_relative_strength", "metals_basket", "region_etf", "india_screener"];
+  const DISCOVERY_SOURCES = ["screener_momentum", "screener_value", "edge_relative_strength", "metals_basket", "region_etf", "india_screener", "new_listing_observation"];
   const entries = discoveryOnly
     ? marketEntries.filter(e => !e.isHeld && DISCOVERY_SOURCES.includes(String(e.discovery_source ?? "")))
-    : marketEntries;
+    : marketEntries.filter(e => e.discovery_source !== "new_listing_observation");
   const batch = entries.map(e => e.symbol);
   // Set queue depth now that entries is resolved (closedDayCatchup already set this
   // for catchup runs; for normal session runs it was always null — set it here).
@@ -371,7 +371,7 @@ export async function POST(req: NextRequest) {
             universeSnapshotId,
             runId ? String(runId) : null,
             entry.discovery_source === "new_listing_observation"
-              ? { status: "weekend_staged", sessionValidated: false, asOfSession: lastCompletedMarketSession("us"), forceEntryIneligible: true }
+              ? { status: "pending", sessionValidated: true, asOfSession: lastCompletedMarketSession("us"), forceEntryIneligible: true }
               : closedDayCatchup && marketScope ? {
                   status: "weekend_staged",
                   sessionValidated: false,
@@ -405,6 +405,24 @@ export async function POST(req: NextRequest) {
     () => discoveryOnly ? "candidate" : "holding",
   );
   await Promise.all(workerPreferences.map(worker));
+
+  // Advance only the listing candidates the workers actually started. A
+  // budget-deferred candidate remains at the front of the queue; a timeout is
+  // recorded as an attempt so one pathological symbol cannot starve its peers.
+  const attemptedListingIds = [...new Set(entries.flatMap((entry, i) =>
+    entry.discovery_source === "new_listing_observation" && entry.listingCandidateIds?.length
+      && (results[i] != null || timedOutSymbols.includes(entry.symbol)) ? entry.listingCandidateIds : []))];
+  if (attemptedListingIds.length > 0) {
+    const { error: listingRotationError } = await supabase.from("listing_candidates")
+      .update({ last_research_attempt_at: new Date().toISOString() }).in("id", attemptedListingIds);
+    if (listingRotationError) {
+      await reportIssue({ issueKey: "listing-research-rotation:us", severity: "warn", category: "data",
+        title: "New-listing research rotation could not advance",
+        detail: `Research ran for ${attemptedListingIds.length} listing candidate(s), but the fair-rotation cursor was not saved: ${listingRotationError.message}. Those names may be selected again before their peers.` }, supabase).catch(() => {});
+    } else {
+      await resolveIssue("listing-research-rotation:us", supabase).catch(() => {});
+    }
+  }
 
   // Re-defer anything the budget didn't reach (results[i] still empty) so it
   // rotates to the FRONT of next run's queue instead of silently waiting.
