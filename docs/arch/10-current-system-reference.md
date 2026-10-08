@@ -135,10 +135,10 @@ changes. A separate top-up counterfactual is not yet implemented. See
 
 Paper allocation currently has a soft 5% cash objective (never a forced-buy rule),
 a paper-only 100% gross ceiling, and an eight-name limit. A 60% sector / 20%
-per-name paper ceiling amendment is owner-approved, with its migration applied
-but runtime deployment pending; until then paper remains at the deployed
-30%/12%. Live portfolio gates continue to use shared 80% gross / 30% sector /
-12% per-name limits. The higher paper ceilings only create room for qualified
+per-name paper ceiling amendment is owner-approved and deployed to production
+(PR #56, merge commit `3da0090d85ad6744bf70398ae8e45c3ba734b08f`). Live
+portfolio gates continue to use shared 80% gross / 30% sector / 12% per-name
+limits. The higher paper ceilings only create room for qualified
 buys/top-ups; they do not override daily volatility, correlation, signal,
 stop/target, cash, daily-order, or rotation-readiness checks and do not guarantee
 cash below 5%.
