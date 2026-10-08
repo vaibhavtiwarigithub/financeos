@@ -1,7 +1,7 @@
 # New Symbol, Listing, and Pre-IPO Discovery
 
 > Status: PARTIALLY IMPLEMENTED — P0, filing discovery, SEC CIK-to-current-ticker reconciliation, one source-verified historical listing correction, and a bounded measure-only listed-candidate research cohort are implemented. Broker candidate probes and 20/40/60 admission assessments remain unimplemented; candidates never alter money paths.
-> Last revised: 2026-10-07 by Codex after correcting SPCX identity and connecting listed-observing candidates to non-entry research.
+> Last revised: 2026-10-08 by Codex after auditing India exchange-universe coverage and hardening the existing NSE directory refresh against malformed/truncated responses.
 > Money-path influence: none until a later, separately approved promotion.
 
 ## 0. Decision summary
@@ -33,6 +33,7 @@ positions, or place live orders during this release.
 - **Shipped at:** 2026-09-09 (evidence-only SEC daily-index filing discovery, candidate/event/filing registry, Research and Upgrade Path read surfaces).
 - **Extended at:** 2026-10-07 (daily SEC current-ticker identity reconciliation; source-verified SPCX listing-event seed; oldest-observed-first research for at most two `listed_observing` candidates per US run, with `new_listing_observation` provenance and an enforced `entry_eligible=false` policy).
 - **Still not claimed as finished:** an exchange-wide historical listing event feed, all-source identity-change reconciliation, broker/account candidate probes, and statistically qualified admission shadows. The SEC current ticker map resolves identity only; it does not prove first-trade date.
+- **India coverage clarification (2026-10-08):** ordinary NSE symbol discovery already exists separately from this US listing-candidate registry. The nightly NSE equity-directory refresh rotates through a broad EQ/BE universe in `india_screen_cache`; fresh screened names then compete for the bounded India ResearchAgent cohort. This is prospective market-universe coverage, not an India listing-event history, broker-eligibility proof, or guarantee every listed name is deeply researched daily. BSE-only listings are not covered by this NSE source contract.
 
 ## 1. Verified baseline
 
@@ -520,9 +521,16 @@ admission system.
 Deferred. Requires forward paper evidence, last-mile broker-preflight enforcement,
 and a separate explicit owner decision.
 
-India follows P0-P2 only after an NSE/BSE listing source passes the same source
-contract. The schema and policy engine remain market-neutral; no `.NS` guessing is
-allowed as listing identity.
+India's existing broad NSE screen refresh is not the listing-event P0-P2 path above.
+It discovers current NSE EQ/BE membership, performs a bounded rotating pre-score,
+and allows fresh screened names into ordinary research. The collector now validates
+the CSV schema and a minimum unique-symbol floor; if the NSE directory is blocked,
+malformed, or truncated, it explicitly reports a System Health warning and labels
+the run as a NIFTY-100 fallback instead of presenting the reduced universe as
+healthy broad coverage. A stable, licensed/authorized BSE-only listing source and
+an India listing-event identity contract remain unverified and are still required
+before building India candidate-registry P0-P2. No `.NS` guessing is allowed as
+listing identity.
 
 ## 12. Acceptance criteria for the first approved release
 

@@ -6,6 +6,7 @@ import { fetchUpstoxBulkQuotes, applyPrefilter } from "@/lib/data/upstox-bulk";
 import { computeTechnicals } from "@/lib/data/technicals";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 // Rotates ~600 NSE names/run — needs Vercel Pro (300s cap) or higher; Hobby's
@@ -39,9 +40,23 @@ export async function POST(req: NextRequest) {
   try {
     const sb = createServiceClient();
 
-    // Full NSE list (~2000 .NS), fall back to ~NIFTY-100 if the NSE feed is blocked.
+    // Full NSE list (~2000 .NS), fail visibly to ~NIFTY-100 if the NSE feed is
+    // blocked or fails its schema/coverage checks. Discovery must not look healthy
+    // while operating on only the static index fallback.
     let universe = await fetchNseEquityList();
-    if (!universe.length) universe = indiaScreenUniverse();
+    const universeDegraded = universe.length === 0;
+    if (universeDegraded) {
+      universe = indiaScreenUniverse();
+      await reportIssue({
+        issueKey: "india-universe:nse-directory-unavailable",
+        severity: "warn",
+        category: "data",
+        title: "India broad-universe refresh fell back to NIFTY-100",
+        detail: "The NSE equity-directory response was unavailable or failed its CSV schema/coverage checks. This refresh is using the static NIFTY-100 list only; newly listed or broader-market NSE names may not be discovered until the official directory recovers.",
+      }, sb);
+    } else {
+      await resolveIssue("india-universe:nse-directory-unavailable", sb);
+    }
     universe = [...new Set(universe)];
     const total = universe.length;
 
@@ -151,6 +166,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       scored, skipped, total, processed: slice.length,
+      universe_source: universeDegraded ? "nifty100_fallback" : "nse_equity_directory",
+      universe_degraded: universeDegraded,
       // Null when the sweep was empty/failed and the run fell back to the full
       // staleness-ordered universe — so "prefilter did nothing" is visible
       // rather than indistinguishable from "prefilter rejected nothing".
