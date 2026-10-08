@@ -16,9 +16,12 @@ The production anti-pyramid trigger still rejects ordinary buy-lot inserts into
 an open alpha symbol; only the atomic, transaction-local authorization inside
 the validated `execute_paper_fill` path can permit a qualified add.
 
-The 2026-10-08 paper-only concentration amendment is implemented locally and its
-additive production migration is applied; the matching runtime code release is
-still pending. Do not treat 60%/20% as active until that release is verified.
+The 2026-10-08 paper-only concentration amendment is merged to `main` as PR #56
+(merge commit `3da0090d85ad6744bf70398ae8e45c3ba734b08f`) and its Vercel
+production deployment is READY. The additive production migration is applied.
+Paper runtime now uses 60% sector / 20% name ceilings; live gates remain on
+their shared 30% / 12% limits. First ordinary market-local paper run remains to
+be observed; no run was forced for verification.
 
 Implementation status of the 2026-10-03 daily-cap downsize amendment: PRs #40
 (`789f79ea`) and #41 (`7455793f`) are merged. Final production deployment
