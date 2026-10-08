@@ -134,7 +134,14 @@ changes. A separate top-up counterfactual is not yet implemented. See
 `features/portfolio-sizing-replay/DATA_READINESS.md`.
 
 Paper allocation currently has a soft 5% cash objective (never a forced-buy rule),
-a paper-only 100% gross ceiling, an eight-name limit, and a 12% per-name cap.
+a paper-only 100% gross ceiling, and an eight-name limit. A 60% sector / 20%
+per-name paper ceiling amendment is owner-approved, with its migration applied
+but runtime deployment pending; until then paper remains at the deployed
+30%/12%. Live portfolio gates continue to use shared 80% gross / 30% sector /
+12% per-name limits. The higher paper ceilings only create room for qualified
+buys/top-ups; they do not override daily volatility, correlation, signal,
+stop/target, cash, daily-order, or rotation-readiness checks and do not guarantee
+cash below 5%.
 When qualified executable half-Kelly evidence is absent, PaperTrader falls back
 to the configured flat size (10% by default); when evidence is present, half-Kelly
 is capped by the owner-set size and the constructor may only reduce it further.

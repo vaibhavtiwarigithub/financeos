@@ -16,6 +16,10 @@ The production anti-pyramid trigger still rejects ordinary buy-lot inserts into
 an open alpha symbol; only the atomic, transaction-local authorization inside
 the validated `execute_paper_fill` path can permit a qualified add.
 
+The 2026-10-08 paper-only concentration amendment is implemented locally and its
+additive production migration is applied; the matching runtime code release is
+still pending. Do not treat 60%/20% as active until that release is verified.
+
 Implementation status of the 2026-10-03 daily-cap downsize amendment: PRs #40
 (`789f79ea`) and #41 (`7455793f`) are merged. Final production deployment
 `dpl_7ohWV3UNECfianD6yLYCHo75gViL` is READY on the production aliases.
@@ -38,9 +42,6 @@ preference, not an instruction to buy weak or stale candidates.
   but permits fully invested positions when every other gate passes.
 - Keep current per-name, sector, volatility, correlation, score/freshness,
   position-count, sizing, daily-order and portfolio-construction controls.
-- The current 12% per-name limit and eight-name limit imply a nominal 96% max
-  gross allocation for eight equally capped names (about 4% residual cash).
-  Do not raise the per-name cap solely to chase sub-4% cash.
 - Keep the shared `max_gross_exposure_pct` field and its 80% fallback unchanged:
   the live portfolio gate also reads it. Live orders, sizing, flags and account
   settings are out of scope.
@@ -57,8 +58,8 @@ A top-up is only considered when the fresh signal clears the existing mandate
 score/session/data gates and its executable paper fill price is above the
 position's current weighted average cost. It may occur at most once per symbol
 per market trading session. The existing constructor then sizes only the
-incremental amount and enforces the unchanged 12% name, sector, gross, volatility
-and stacked-bet limits; available cash, per-order and daily-notional limits also
+incremental amount and enforces the applicable paper name/sector, gross,
+volatility and stacked-bet limits; available cash, per-order and daily-notional limits also
 remain hard caps. An add is never a reason to bypass a failed gate or to invoke
 capital rotation.
 
@@ -97,6 +98,23 @@ India's whole-share minimum prevent safe deployment. A candidate's cash need
 alone never authorizes a sale; replacements remain subject to the independent
 capital-rotation readiness contract.
 
+### Paper-only concentration ceilings (owner-approved 2026-10-08)
+
+The owner approved raising the **paper-only** constructor ceilings to 60% per
+sector and 20% per name to give eligible paper entries and top-ups more room.
+These are maximum exposure limits, not target weights or a promise to invest.
+Use dedicated `max_sector_exposure_pct_paper` and
+`max_name_exposure_pct_paper` settings, defaulting to 60 and 20. Leave shared
+live fields/defaults at 30%/12%; the live gate must never read the paper fields.
+
+The 100% paper gross ceiling, 2% daily portfolio-volatility budget, correlation
+and stacked-bet controls, eight-name limit, signal/freshness gates, stop/target
+checks, daily order limits, and atomic fill protections remain unchanged. A
+20%-of-NAV position can create materially larger single-name loss exposure, so
+20% is a ceiling—not a sizing target. Cash may still exceed 5% when signal
+quality, remaining risk budget, liquidity, or other hard limits bind. No
+expected-return improvement may be claimed without paired replay evidence.
+
 ## Implementation contract
 
 Add `strategy_config.max_gross_exposure_pct_paper`, default 100, bounded to
@@ -108,7 +126,7 @@ migration is available. Live risk code must not read the new field.
 ## Validation and limitations
 
 Tests must show that paper can use capacity above the old 80% default, remains
-under 100%, and still obeys the 12% name / 30% sector / volatility / correlation
+under 100%, and still obeys the 20% name / 60% sector / volatility / correlation
 and eight-position gates. Additional regressions prove held signals are ranked
 separately, profitable-only/session-limited top-ups are selected without
 cross-market leakage, direct inserts remain blocked, existing protection is
