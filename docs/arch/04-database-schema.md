@@ -1,5 +1,18 @@
 # Kairos — Database Schema
 
+## US symbol-directory discovery (2026-10-08; migration applied and access verified)
+
+The additive `us_symbol_directory_snapshot` singleton stores the latest validated
+set of `(exchange code, symbol)` keys with its source as-of date/hash and observation
+time, rather than retaining a full market directory every day. It has RLS enabled
+and no anon/authenticated grants or policies; only `service_role` may access it.
+`listing_candidates.last_research_attempt_at` is a fairness cursor, and
+`directory_observed` is an evidence state that does not set `first_trade_date`.
+Production verification confirmed RLS on, no anon/authenticated read grants, and
+service-role access. The Supabase security advisor reports its generic INFO lint
+“RLS enabled, no policy” for this service-role-only table; this is intentional,
+because there is no client policy or grant to broaden access.
+
 ## Upgrade Path paired-book attribution basis
 
 `upgrade_path_attribution_runs.return_basis` distinguishes `gross_and_net`

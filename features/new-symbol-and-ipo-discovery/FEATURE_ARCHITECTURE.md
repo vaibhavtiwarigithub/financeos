@@ -61,9 +61,10 @@ positions, or place live orders during this release.
   zero allocation. This means Kairos cannot automate IPO Access through the current
   MCP surface. It does not justify a permanent or industry-wide claim.
 
-### 1.2 What does not exist
+### 1.2 Remaining gaps (not an event-feed claim)
 
-- No authoritative, persistent new-listing event feed.
+- No full point-in-time history of exchange-directory membership before the first
+  validated snapshot; the new directory diff detects additions prospectively.
 - No stable issuer-to-listing identity spanning pre-ticker CIK, later ticker,
   exchange, symbol changes, postponements, withdrawals, or delistings.
 - No candidate lifecycle distinct from the owner watchlist.
@@ -115,11 +116,41 @@ their live schemas and content coverage are captured. They are not currently in
 `ROBINHOOD_RESEARCH_READ_TOOLS` and must not be assumed available to a new route merely
 because a historical tool inventory named them.
 
-### 3.2 Listing events
+### 3.2 Listing evidence and directory deltas
 
 `search`, `create_scan`, and `run_scan` are not accepted as an authoritative new-
-listing feed. Search requires a candidate query, and a scanner is not proven to emit
-every new equity and ETF or preserve listing dates.
+listing event feed. Search requires a candidate query, and a scanner is not proven
+to emit every new equity and ETF or preserve listing dates.
+
+The daily `nasdaqlisted.txt` and `otherlisted.txt` files are used as an active
+membership directory, not as a first-trade event feed. The first valid run writes
+one baseline snapshot and does not label the current universe as newly listed.
+Later runs compare stable exchange-code + symbol keys and record only additions.
+This catches future directory additions, but does not reconstruct names added
+before baseline or establish precise listing dates. Nasdaq documents the file
+fields and footer in its [Symbol Directory Definitions](https://www.nasdaqtrader.com/trader.aspx?id=symboldirdefs).
+
+The parser fails closed unless both files have their exact expected headers,
+matching as-of dates, freshness within seven days, minimum row-count floors, unique
+listing keys, and supported exchange codes. Test issues and non-common instruments
+(warrants, rights, units, preferreds and notes) are excluded; ETFs and common/ADR
+securities can enter the research-only intake. A current directory row proves
+neither first-trade date nor broker/account tradability. The SEC similarly notes
+its [current issuer/ticker files are not guaranteed accurate or complete](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data),
+so they remain an identity helper, not the universe source.
+
+```mermaid
+flowchart TD
+  A[Daily Nasdaq symbol files] --> B{Headers, date, coverage, key checks pass?}
+  B -- no --> C[Record partial/error; preserve prior snapshot]
+  B -- yes, first run --> D[Save baseline only; do not label current symbols new]
+  B -- yes, later run --> E[Diff stable exchange + symbol keys]
+  E --> F[Persist candidate + idempotent source event]
+  F --> G[Advance one-row directory snapshot]
+  G --> H[Research rotation: oldest attempt first, max 2/run]
+  H --> I[Deterministic research observation; force entry_eligible=false]
+  I --> J[Normal paper/live gates remain untouched]
+```
 
 Before choosing a provider, Stage 0 must compare candidate sources against these
 requirements:
@@ -259,18 +290,27 @@ after an owner-approved promotion.
 ## 5. State machine
 
 ```text
-pre_listing ──listing announced──> announced
+  pre_listing ──active directory membership observed──> directory_observed
+  announced ──active directory membership observed──> directory_observed
+  pre_listing ──listing announced──> announced
 announced ──first trade verified──> listed_observing
 announced ──delay──> postponed
 pre_listing/announced ──cancelled──> withdrawn
-listed_observing ──approved policy passes──> paper_admitted
+directory_observed/listed_observing ──approved policy passes──> paper_admitted
 listed_observing ──invalid/unsupported──> rejected
 listed_observing/paper_admitted ──delisted──> delisted
 ```
 
-Only `paper_admitted` can enter the ordinary new-buy ResearchAgent candidate pool in
-a future promoted stage. Pre-listing and observing candidates are researched by the
-dedicated shadow collector and never set `decision_observations.entry_eligible=true`.
+`directory_observed` means that a symbol appeared in the current official active
+directory; it deliberately leaves `first_trade_date` null. `listed_observing`
+additionally requires first-trade evidence. Both states can enter the deterministic
+ResearchAgent observation cohort, capped at two symbols per US run by default and
+four maximum. The oldest `last_research_attempt_at` rotates first. A symbol not
+reached because the run budget expired is not marked attempted. All such observations
+are forcibly entry-ineligible, regardless of score.
+
+Only `paper_admitted` may enter a normal new-buy candidate pool in a separately
+approved stage. Directory presence never promotes a symbol automatically.
 
 No state in this table grants live eligibility. Live execution still requires the
 normal signal/proposal/autonomy chain and a fresh last-mile broker preflight.
@@ -281,8 +321,9 @@ normal signal/proposal/autonomy chain and a fresh last-mile broker preflight.
 
 Run on US business days, not weekly:
 
-1. `listing-filing-discovery` — incrementally reads new/changed SEC submissions.
-2. `listing-event-discovery` — reads the approved listing-event adapter.
+1. `listing-filing-discovery` — reads bounded recent SEC daily-index submissions.
+2. `listing-directory-diff` — compares validated daily Nasdaq/other-listed files
+   with the compact prior snapshot; first success is baseline-only.
 3. `listing-identity-reconcile` — resolves CIK/listing/symbol without guessing.
 4. `listing-broker-capability` — refreshes exact account BUY capability after the
    listing becomes active and when prior evidence expires.
@@ -452,13 +493,14 @@ verification. The source comparison and Robinhood-schema corroboration remain op
 - Candidate detail and Research UI.
 - Mainline remains abstain.
 
-**Implemented slice:** the weekday `kairos-listing-discovery-us` job reads bounded
-SEC daily master indexes for S-1/S-1-A/F-1/F-1-A/424B4 metadata and persists issuer
-filing lineage. The Research Journal's New Listings tab and Upgrade Path show that
-evidence and the unresolved state. This is explicitly *not* an exchange-listing
-event collector: SEC filing metadata does not set `first_trade_date`, ticker,
-exchange, or broker capability. Those remaining P1 collectors must not be claimed
-as shipped until an approved authoritative source passes the source contract.
+**Implemented:** the scheduled US job reads bounded SEC filing indexes, resolves
+issuer/ticker identity separately, and diffs official Nasdaq-listed and other-
+listed active-directory files against one durable compact snapshot. First successful
+directory fetch establishes a baseline only. Later additions persist as
+`directory_observed` with no invented first-trade date; snapshot advancement follows
+successful, idempotent candidate/event persistence. The New Listings UI explains
+that boundary. This is not a complete listing-event feed, broker probe, or paper
+admission system.
 
 ### P2 — shadow admission study
 
@@ -501,6 +543,12 @@ allowed as listing identity.
     pass.
 12. Any migration is verified in production with rolled-back mutation/immutability
     checks before a route reads it.
+13. Directory baseline is never represented as thousands of new listings; later
+    additions are persisted before the directory snapshot advances.
+14. Unavailable, stale, malformed and unsupported directory responses are visible
+    as partial/error health and never interpreted as “zero new symbols.”
+15. Directory-observed research rotates oldest-attempt-first, defaults to two per
+    US run, is capped at four, and remains entry-ineligible.
 
 ## 13. Source references
 

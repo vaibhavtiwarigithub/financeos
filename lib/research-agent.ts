@@ -260,6 +260,7 @@ export type SymbolEntry = {
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
   discoveryContext?: RelativeStrengthDiscoveryContext; // provenance only; never a score input
+  listingCandidateIds?: number[]; // internal pointer(s) for fair, research-only listing rotation
 };
 
 export function classifyResearchAssetClass(symbol: string): "india" | "metal" | "etf" | "adr" | "us_equity" {
@@ -930,35 +931,30 @@ export async function gatherSymbols(
   const allWithMetals = new Set([...allNonMetalSyms, ...metals.map(m => m.symbol)]);
   const newListingObservations: SymbolEntry[] = [];
   if (includeUs) try {
-    const { data: candidates, error: candidateError } = await supabase.from("listing_candidates")
-      .select("id,symbol,instrument_type").eq("market", "us").eq("state", "listed_observing")
-      .not("symbol", "is", null).order("first_trade_date", { ascending: false }).limit(200);
-    if (candidateError) throw candidateError;
-    const usable = (candidates ?? []).filter((row: any) => !allWithMetals.has(String(row.symbol).trim().toUpperCase()));
-    const candidateSymbols = usable.map((row: any) => String(row.symbol).trim().toUpperCase());
-    const latestSeen = new Map<string, number>();
-    if (candidateSymbols.length > 0) {
-      const { data: observations, error: observationError } = await supabase.from("decision_observations")
-        .select("symbol,ts").eq("market", "us").in("symbol", candidateSymbols).order("ts", { ascending: false }).limit(1000);
-      if (observationError) throw observationError;
-      for (const observation of observations ?? []) {
-        const key = String((observation as any).symbol).toUpperCase();
-        if (!latestSeen.has(key)) {
-          const at = new Date((observation as any).ts).getTime();
-          latestSeen.set(key, Number.isFinite(at) ? at : 0);
-        }
-      }
+    const candidates = await fetchAllRows<any>((from, to) => supabase.from("listing_candidates")
+      .select("id,symbol,instrument_type,state,last_research_attempt_at,first_seen_at").eq("market", "us")
+      .in("state", ["directory_observed", "listed_observing"]).not("symbol", "is", null)
+      .order("last_research_attempt_at", { ascending: true, nullsFirst: true })
+      .order("first_seen_at", { ascending: true }).range(from, to), "US new-listing research rotation");
+    // Database ordering is the fair queue. Do not rank by newest first trade or
+    // infer freshness from a bounded observation query: that starved old names.
+    const candidatesBySymbol = new Map<string, any[]>();
+    for (const row of candidates) {
+      const symbol = String(row.symbol).trim().toUpperCase();
+      if (symbol) candidatesBySymbol.set(symbol, [...(candidatesBySymbol.get(symbol) ?? []), row]);
     }
-    usable.sort((a: any, b: any) => (latestSeen.get(String(a.symbol).toUpperCase()) ?? 0)
-      - (latestSeen.get(String(b.symbol).toUpperCase()) ?? 0));
+    const usable = [...candidatesBySymbol.entries()].filter(([symbol]) => !allWithMetals.has(symbol))
+      .map(([symbol, rows]) => ({ ...rows[0], symbol, listingCandidateIds: rows.map((row: any) => Number(row.id)) }));
     const requested = Number.parseInt(process.env.RESEARCH_NEW_LISTING_OBSERVATIONS_PER_RUN ?? "2", 10);
     const cap = Number.isFinite(requested) ? Math.max(0, Math.min(4, requested)) : 2;
     for (const row of usable.slice(0, cap) as any[]) {
       const symbol = String(row.symbol).trim().toUpperCase();
       allWithMetals.add(symbol);
+      const isEtf = ["etf", "closed_end_fund"].includes(String(row.instrument_type));
       newListingObservations.push({ symbol, isHeld: false,
-        isEtf: ["etf", "closed_end_fund"].includes(String(row.instrument_type)),
-        assetClass: classifyResearchAssetClass(symbol), discovery_source: "new_listing_observation" });
+        isEtf,
+        assetClass: isEtf ? "etf" : classifyResearchAssetClass(symbol), discovery_source: "new_listing_observation",
+        listingCandidateIds: row.listingCandidateIds });
     }
   } catch (error) {
     console.warn("[research] new-listing observation cohort unavailable:", error instanceof Error ? error.message : String(error));
