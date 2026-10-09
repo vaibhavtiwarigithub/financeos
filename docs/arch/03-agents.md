@@ -236,6 +236,37 @@ arrows exist.
 
 ---
 
+## Multi-LLM Research Council (shadow-only)
+
+The council is an owner-controlled research measurement lane, not a trading agent. When enabled,
+it records point-in-time forecasts from configured provider models, preserves initial and debated
+scores separately, and computes a deterministic median from valid final participant scores. A
+separate orchestrator may summarize evidence and disagreement; its prose is not itself a score.
+The council remains disconnected from scoring, eligibility, sizing, rotation, paper orders, live
+orders, stops, and exits.
+
+Forecast output is accepted only when the entire response is either a JSON object or a complete
+JSON code fence containing one. Prose-wrapped fragments, smart-quote pseudo-JSON, arrays, and
+coerced string scores/confidence fail closed as invalid output; they are excluded from score
+aggregation and evaluation. Citations must resolve to the frozen point-in-time packet. Requested
+and actual model identities, failures, tokens, and cost are logged so provider fallback cannot be
+mistaken for the selected model's result.
+
+Each model and the composite are evaluated separately against matured market-local benchmark-
+neutral labels across h2/h5/h10/h20. Rank IC is session-clustered, with overlapping horizons
+reducing effective windows; an insufficient sample remains explicitly insufficient. The detailed
+contract and limits live in
+[`features/llm-council-shadow/FEATURE_ARCHITECTURE.md`](../../features/llm-council-shadow/FEATURE_ARCHITECTURE.md).
+
+**Subscription-product boundary:** a one-off Claude Code Routine test used synthetic data only.
+Claude's routine trigger returns a run identifier/status rather than a structured forecast body,
+so it is not wired as a council provider. No Claude Pro or ChatGPT Plus membership credentials,
+browser sessions, or routine bearer tokens are reused by Kairos, and no real portfolio or symbol
+packet is sent through that path. Council providers still require their supported app-side
+provider integration and configured credentials.
+
+---
+
 ## Agent registry
 
 ### MacroSentinel — the economist

@@ -11,6 +11,23 @@ describe("LLM council score contract", () => {
     expect(() => extractJson("not json")).toThrow("model_output_not_json");
   });
 
+  it("fails closed on routine-style smart quotes, prose-wrapped JSON, and string scores", () => {
+    const routineStyle = '{“packet_id”:”synthetic-proof-001”,“score”:60,“confidence”:0.3}';
+    expect(() => extractJson(routineStyle)).toThrow("model_output_invalid_json");
+    expect(() => extractJson('Here is the forecast: {"score":60,"confidence":0.3}')).toThrow("model_output_not_json");
+    expect(() => parseForecast(JSON.stringify({
+      score: "60",
+      confidence: 0.3,
+      evidence_citations: [{ claim: "x", source: "price_at_decision", as_of: "unknown" }],
+    }))).toThrow("model_score_not_numeric");
+    expect(() => parseForecast(JSON.stringify({
+      score: 60,
+      confidence: "0.3",
+      evidence_citations: [{ claim: "x", source: "price_at_decision", as_of: "unknown" }],
+    }))).toThrow("model_confidence_not_numeric");
+    expect(() => extractJson('[{"score":60}]')).toThrow("model_output_not_json");
+  });
+
   it("uses the median to make composite aggregation reproducible", () => {
     expect(medianScore([90, 20, 60])).toBe(60);
     expect(medianScore([20, 80])).toBe(50);

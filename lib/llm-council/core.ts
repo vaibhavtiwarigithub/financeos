@@ -19,12 +19,19 @@ export function sha256(value: string): string {
 }
 
 export function extractJson(text: string): unknown {
-  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("model_output_not_json");
-  try { return JSON.parse(trimmed.slice(start, end + 1)); }
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i);
+  if (trimmed.startsWith("```") && !fenced) throw new Error("model_output_invalid_json");
+  const candidate = fenced ? fenced[1].trim() : trimmed;
+  if (!candidate.startsWith("{") || !candidate.endsWith("}")) throw new Error("model_output_not_json");
+
+  let value: unknown;
+  try { value = JSON.parse(candidate); }
   catch { throw new Error("model_output_invalid_json"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("model_output_invalid_shape");
+  }
+  return value;
 }
 
 const boundedText = (value: unknown, max = 1800): string =>
@@ -32,8 +39,10 @@ const boundedText = (value: unknown, max = 1800): string =>
 
 export function parseForecast(text: string): Forecast {
   const value = extractJson(text) as Record<string, unknown>;
-  const score = Number(value.score);
-  const confidence = Number(value.confidence);
+  const score = value.score;
+  const confidence = value.confidence;
+  if (typeof score !== "number") throw new Error("model_score_not_numeric");
+  if (typeof confidence !== "number") throw new Error("model_confidence_not_numeric");
   if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error("model_score_out_of_range");
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) throw new Error("model_confidence_out_of_range");
   const citations = Array.isArray(value.evidence_citations) ? value.evidence_citations : [];
