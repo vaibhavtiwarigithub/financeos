@@ -24,9 +24,9 @@ type UsagePayload = { days: number; asOf: string; rows: CouncilUsageRecord[] };
 
 const MODELS = COUNCIL_MODELS;
 const PROVIDER: Record<string, string> = {
-  "deepseek-flash": "DeepSeek", "deepseek-v4-pro": "DeepSeek", "llama-3.3-70b-versatile": "Groq", "llama-3.1-8b-instant": "Groq", "deepseek-r1-distill-llama-70b": "Groq",
+  "deepseek-flash": "DeepSeek V4.1 Flash API", "deepseek-v4-pro": "DeepSeek V4 Pro API", "llama-3.3-70b-versatile": "Groq", "llama-3.1-8b-instant": "Groq", "deepseek-r1-distill-llama-70b": "Groq",
   "claude-haiku-4-5": "Anthropic", "claude-sonnet-4-6": "Anthropic", "gemini-2.5-flash": "Google", "gemini-2.5-pro": "Google", "grok-4-fast": "xAI", "grok-4": "xAI",
-  "gpt-4o-mini": "OpenAI", "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
+  "gpt-4o-mini": "OpenAI", "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI", "gpt-5.6-luna": "OpenAI · reasoning: medium", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
 };
 const T = { card: "#1A1D27", border: "#252836", surface: "#13151C", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#818cf8", green: "#34D399", red: "#f87171", yellow: "#FBBF24" };
 
@@ -193,13 +193,14 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
         }} />{model}<span style={{ color: T.muted }}>({PROVIDER[model]})</span>
       </label>)}
     </div>
-    <div style={{ marginTop: 6, color: T.muted, fontSize: 11 }}>Choose 1–5 models. One model is a baseline (debate is skipped); with multiple models, at least two providers are required. The orchestrator summarizes but does not set the numeric median.</div>
+    <div style={{ marginTop: 6, color: T.muted, fontSize: 11 }}>Recommended starting trio: DeepSeek Flash, GPT-5.6 Luna (medium reasoning), and Claude Sonnet 4.6. Every member sees the same frozen packet independently; the orchestrator explains disagreements but cannot alter the numeric median. The paired table includes deterministic-only and a fixed 50/50 blend on the exact same observations—no weights are fit to history.</div>
     </>}
     {notice && <div style={{ color: T.green, fontSize: 12, marginTop: 8 }}>{notice}</div>}
     {error && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{error}</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Latest per-model / composite IC</div>
     <div style={{ overflowX: "auto", marginTop: 8 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 760 }}><thead><tr>{["Market", "Horizon", "Cohort", "Series", "Rank IC", "t-stat", "Sessions", "Effective windows", "State"].map((x) => <th key={x} style={{ textAlign: "left", color: T.muted, padding: 7, borderBottom: `1px solid ${T.border}` }}>{x}</th>)}</tr></thead><tbody>{latestCells.slice(0, 32).map((row) => <tr key={`${row.market}-${row.horizon_days}-${row.cohort_key}-${row.series_key}`}><td style={{ color: T.sub, padding: 7 }}>{row.market}</td><td style={{ color: T.sub, padding: 7 }}>h{row.horizon_days}</td><td style={{ color: T.sub, padding: 7 }}>{row.cohort_key}</td><td style={{ color: T.sub, padding: 7 }}>{row.series_key}</td><td style={{ color: T.text, padding: 7 }}>{row.mean_session_rank_ic == null ? "—" : Number(row.mean_session_rank_ic).toFixed(3)}</td><td style={{ color: T.text, padding: 7 }}>{row.t_stat == null ? "insufficient" : Number(row.t_stat).toFixed(2)}</td><td style={{ color: T.sub, padding: 7 }}>{row.qualifying_sessions}</td><td style={{ color: T.sub, padding: 7 }}>{Number(row.independent_windows).toFixed(1)}</td><td style={{ color: row.classification === "measured_descriptive" ? T.green : T.muted, padding: 7 }}>{row.classification}</td></tr>)}</tbody></table></div>
     {latestCells.length === 0 && <div style={{ color: T.muted, fontSize: 12, padding: 12 }}>No evaluation runs yet. Insufficient evidence is an expected status until enough labels mature.</div>}
+    {subscription && <div role="note" style={{ color: T.yellow, fontSize: 11, marginTop: 8 }}>Subscription forecasts arrive after the frozen research observation and are intentionally excluded from these IC/t-stat rows. They need a separate availability-aligned return label before they can be fairly compared.</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Recent council symbols</div>
     <div style={{ display: "grid", gap: 6, marginTop: 8 }}>{runs.slice(0, 8).map((row) => <a key={row.id} href={`/dashboard/research/${encodeURIComponent(row.symbol)}`} style={{ color: T.sub, display: "flex", justifyContent: "space-between", gap: 10, textDecoration: "none", padding: "7px 9px", background: T.surface, borderRadius: 6, fontSize: 11 }}><span>{row.market.toUpperCase()} · {row.symbol} · {new Date(row.decision_ts).toLocaleDateString()}</span><span style={{ color: T.accent }}>LLM {row.consensus_score ?? "—"} · {row.status}</span></a>)}</div>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 20 }}>

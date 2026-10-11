@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildCouncilIcCell, extractJson, medianScore, parseForecast, sha256, validateForecastCitations } from "@/lib/llm-council/core";
+import { isReasoningModel } from "@/lib/llm-router";
+import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { buildCouncilIcCell, equalWeightCouncilBlend, extractJson, medianScore, parseForecast, sha256, validateForecastCitations } from "@/lib/llm-council/core";
 
 describe("LLM council score contract", () => {
+  it("offers the requested GPT-5.6 Luna API model with explicit medium reasoning and nonzero pricing", () => {
+    expect(isCouncilModel("gpt-5.6-luna")).toBe(true);
+    expect(isReasoningModel("gpt-5.6-luna")).toBe(true);
+  });
+
   it("accepts only bounded structured scores and dated evidence citations", () => {
     const parsed = parseForecast('```json\n{"score":72,"confidence":0.7,"rationale":"Evidence is mixed.","bull_case":"Growth","bear_case":"Valuation","evidence_citations":[{"claim":"RSI 54","source":"features.technical.rsi","as_of":"2026-09-29"},{"claim":"ignored","source":"x"}]}\n```');
     expect(parsed.score).toBe(72);
@@ -32,6 +39,13 @@ describe("LLM council score contract", () => {
     expect(medianScore([90, 20, 60])).toBe(60);
     expect(medianScore([20, 80])).toBe(50);
     expect(medianScore([NaN, 120])).toBeNull();
+  });
+
+  it("computes only the fixed paired 50/50 blend and refuses missing or invalid inputs", () => {
+    expect(equalWeightCouncilBlend(60, 80)).toBe(70);
+    expect(equalWeightCouncilBlend("60", 80)).toBe(70);
+    expect(equalWeightCouncilBlend(null, 80)).toBeNull();
+    expect(equalWeightCouncilBlend(60, 101)).toBeNull();
   });
 
   it("computes date-clustered rank IC and withholds t-stat below the overlap floor", () => {

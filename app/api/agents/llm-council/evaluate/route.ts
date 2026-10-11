@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { buildCouncilIcCell, COUNCIL_HORIZONS, type CouncilLabelPoint } from "@/lib/llm-council/core";
+import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, type CouncilLabelPoint } from "@/lib/llm-council/core";
 import { COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
     for (const horizon of COUNCIL_HORIZONS) {
       const pointsBySeries = new Map<string, CouncilLabelPoint[]>();
       pointsBySeries.set("composite:median", []);
+      pointsBySeries.set("deterministic:analyst_score_paired", []);
+      pointsBySeries.set("blend:equal_weight_50_50_paired", []);
       for (const entry of modelHistory) {
         const run = Array.isArray(entry.llm_council_runs) ? entry.llm_council_runs[0] : entry.llm_council_runs;
         if (run?.market !== market || run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY || typeof entry.model_requested !== "string") continue;
@@ -84,6 +86,17 @@ export async function POST(req: NextRequest) {
               pointsBySeries.set(key, list);
             };
             if (run.consensus_score != null) addPoint("composite:median", run.consensus_score);
+            // Compare the deterministic baseline and a predeclared 50/50 blend
+            // only on the exact same run+label sample as the council composite.
+            // This is measurement-only; no fitted blend weight or money-path read.
+            if (run.consensus_score != null) {
+              const analystScore = item.obs.analyst_score == null ? null : Number(item.obs.analyst_score);
+              if (analystScore != null && Number.isFinite(analystScore)) {
+                addPoint("deterministic:analyst_score_paired", analystScore);
+                const blend = equalWeightCouncilBlend(analystScore, Number(run.consensus_score));
+                if (blend != null) addPoint("blend:equal_weight_50_50_paired", blend);
+              }
+            }
             for (const forecast of forecastsByRun.get(run.id) ?? []) {
               addPoint(`model:${forecast.model_requested}:independent`, forecast.initial_score);
               addPoint(`model:${forecast.model_requested}:debated`, forecast.final_score);

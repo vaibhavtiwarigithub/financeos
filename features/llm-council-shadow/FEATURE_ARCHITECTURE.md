@@ -100,6 +100,39 @@ Subscription usage is read from non-synthetic `llm_council_jobs` joined to its r
 
 US dates use `America/New_York`; India dates use `Asia/Kolkata`. API stages use their persisted turn timestamp. Subscription rows use result submission time when present and explicitly use queue/lease time when the job expired without a report. The database function bounds the scan to the chosen window (with a short queue-deadline buffer), validates the allowed lookbacks, and is executable only by `service_role`; the authenticated route additionally requires `requireOwner`. There is no new public data surface, browser-side service credential, score consumer, schedule, or money-path behavior.
 
+## GPT-5.6 Luna and paired deterministic comparison (implemented locally 2026-10-11)
+
+The API model catalogue now includes `gpt-5.6-luna`, with explicit `medium`
+reasoning effort, completion-token accounting and the published API token rates.
+The Settings picker calls out the recommended three API participants—DeepSeek
+Flash, GPT-5.6 Luna (medium), and Claude Sonnet 4.6—while the orchestrator remains
+separately selected. The council stays off until the owner enables it and all
+required provider API keys are present. GPT-5.6 Luna was also exercised once via
+the existing signed-in Codex CLI worker using only a synthetic
+`TEST-NO-REAL-ASSET` packet; it returned a structured score and token counts.
+
+The evaluator now adds `deterministic:analyst_score_paired` and
+`blend:equal_weight_50_50_paired`. Both are calculated only on the exact
+run/label observations where a valid council median and deterministic composite
+coexist. The 50/50 blend is frozen, measurement-only and deliberately not fit to
+the same history. Compare those rows with `composite:median` at h2/h5/h10/h20;
+they remain descriptive under the same session and overlap gates.
+
+**Execution-source limitation remains explicit:** API mode can run all three
+providers together, but bills OpenAI and Anthropic API usage. Subscription mode
+uses the official Codex/Claude CLI workers and is currently an all-subscription
+roster; it does not mix DeepSeek API with GPT/Claude workers. Subscription runs
+also remain excluded from the decision-time IC evaluator because their results
+arrive asynchronously. A production-ready API/subscription hybrid and a
+forecast-availability-aligned label producer are still required before the
+requested low-API-cost three-member daily council can be called complete.
+Codex CLI JSONL events do not report the executed model ID, so its worker can
+prove the requested CLI model was accepted and a structured result returned,
+but not independently attest a provider-reported actual model identity. Claude
+subscription use is unverified until the Claude Code client is signed in and
+passes a synthetic test. No subscription/API blend is silently represented as
+one verified execution path.
+
 ## Delivery sequence
 
 1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.

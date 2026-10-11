@@ -124,6 +124,15 @@ export function medianScore(scores: number[]): number | null {
   return valid.length % 2 ? valid[middle] : (valid[middle - 1] + valid[middle]) / 2;
 }
 
+/** Fixed, non-fitted 50/50 blend for paired research comparison only. */
+export function equalWeightCouncilBlend(deterministicScore: unknown, councilScore: unknown): number | null {
+  if (deterministicScore == null || councilScore == null || deterministicScore === "" || councilScore === "") return null;
+  const a = typeof deterministicScore === "number" ? deterministicScore : Number(deterministicScore);
+  const b = typeof councilScore === "number" ? councilScore : Number(councilScore);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || a > 100 || b < 0 || b > 100) return null;
+  return (a + b) / 2;
+}
+
 export type CouncilLabelPoint = {
   market: "us" | "india";
   symbol: string;
