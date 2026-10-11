@@ -7,6 +7,7 @@ import { councilProviderTimeoutMs, effectiveCouncilDebateRounds, limitCouncilCan
 import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_COHORT_HALF_WIDTH, COUNCIL_COHORT_KEY, isNearThresholdEntryLong, thresholdDistance } from "@/lib/llm-council/cohort";
+import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -180,7 +181,9 @@ export async function POST(req: NextRequest) {
   const svc = createServiceClient();
   const { data: config, error: configError } = await svc.from("llm_council_config").select("*").eq("id", "global").single();
   if (configError || !config) return NextResponse.json({ error: "LLM council migration is not installed" }, { status: 503 });
+  try { await sweepSubscriptionBatches(svc); } catch { return NextResponse.json({ error: "Subscription queue could not be checked" }, { status: 503 }); }
   if (!config.enabled) return NextResponse.json({ skipped: "disabled" });
+  const subscription = config.execution_mode === "subscription";
 
   const now = new Date();
   // Provider/process timeouts can leave a unique observation stuck as running.
@@ -188,9 +191,10 @@ export async function POST(req: NextRequest) {
   // blocking retries forever.
   const staleBefore = new Date(now.getTime() - 30 * 60_000).toISOString();
   const { data: staleRuns, error: staleReadError } = await svc.from("llm_council_runs")
-    .select("id").eq("status", "running").lt("created_at", staleBefore).limit(100);
+    .select("id,config_snapshot").eq("status", "running").lt("created_at", staleBefore).limit(100);
   if (staleReadError) return NextResponse.json({ error: "Could not inspect incomplete council runs" }, { status: 500 });
   for (const stale of staleRuns ?? []) {
+    if (stale.config_snapshot?.execution_mode === "subscription") continue;
     await svc.from("llm_council_runs").update({
       status: "failed", failure_code: "stale_incomplete_run", completed_at: now.toISOString(),
     }).eq("id", stale.id).eq("status", "running");
@@ -204,8 +208,8 @@ export async function POST(req: NextRequest) {
   const dailyCount = (dailyRuns ?? []).filter((r: any) => r.market === requestedMarket && r.status !== "budget_skipped").length;
   const remainingSymbols = Math.max(0, Number(config.max_symbols_per_market_day) - dailyCount);
   if (remainingSymbols === 0) return NextResponse.json({ skipped: "daily_symbol_cap", dailySpend });
-  const participants = config.participant_models as string[];
-  if (!validCouncilParticipants(participants, isCouncilModel, providerForModel)) {
+  const participants = (subscription ? config.subscription_worker_ids : config.participant_models) as string[];
+  if (!subscription && !validCouncilParticipants(participants, isCouncilModel, providerForModel)) {
     return NextResponse.json({ error: "Council roster is invalid or includes a retired model; update Settings → LLM Council" }, { status: 409 });
   }
   const debateRounds = effectiveCouncilDebateRounds(participants.length, Number(config.debate_rounds));
@@ -240,7 +244,7 @@ export async function POST(req: NextRequest) {
   const done = new Set((existing ?? []).map((x: any) => Number(x.observation_id)));
   // One symbol per cron invocation keeps the worst-case three-model / three-round
   // sequence inside the function runtime. Five spaced invocations fill the daily cap.
-  const candidates = limitCouncilCandidates(
+  const candidates = subscription ? rankedCandidates.filter((row) => !done.has(Number(row.id))).slice(0, remainingSymbols) : limitCouncilCandidates(
     rankedCandidates.filter((row) => !done.has(Number(row.id))),
     remainingSymbols,
     participants.length,
@@ -251,6 +255,13 @@ export async function POST(req: NextRequest) {
   for (const observation of candidates) {
     const snapshot = await addPointInTimeRelationships(svc, observation, asSnapshot(observation));
     const snapshotText = JSON.stringify(snapshot);
+    if (subscription) {
+      try {
+        const batchId = await enqueueSubscription(svc, config, snapshot, Number(observation.id));
+        outcomes.push({ symbol: observation.symbol, status: "queued_for_subscription_workers", batchId });
+      } catch (error) { outcomes.push({ symbol: observation.symbol, status: "queue_refused", issue: String(error).slice(0, 180) }); }
+      continue;
+    }
     const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view.`;
     if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });

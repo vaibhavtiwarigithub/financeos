@@ -1803,3 +1803,17 @@ and explicit owner switch.
 **Controls.** Owner-selectable providers/participants and orchestrator; owner-set rounds, daily symbol cap and USD budget; disabled by default. Provider fallback mismatches do not count as a valid model forecast. Missing/stale evidence is stated, not inferred from model memory.
 
 **Architecture:** `features/llm-council-shadow/FEATURE_ARCHITECTURE.md` (supersedes the deferred 2026-08-20 draft).
+
+## Decision 80: Official subscription-client workers for the LLM council (2026-10-10)
+
+**Status:** Approved by Vaibhav for implementation and synthetic verification. Shadow-only; it does not enable the council or affect any trading path.
+
+**Context.** The owner wants to use Claude and ChatGPT/Codex memberships without paying for Anthropic or OpenAI inference API calls. Personal memberships are not server API keys and must not be copied into Kairos.
+
+**Decision.** Add a distinct subscription execution mode. An owner-run official Claude Code or Codex client claims only its assigned, frozen council jobs through a scoped, revocable Kairos worker credential and submits strict, model-bound output. Provider login stays inside the official client; no mode silently falls back to API billing; synthetic tests cannot enter forecast evaluation. API execution remains a separate explicitly billed mode.
+
+**Reason.** This uses supported signed-in clients without pretending a personal membership provides a general-purpose unattended backend API. It preserves deterministic aggregation, auditability, and the money-path boundary.
+
+**Limitations.** Codex CLI and Claude Code authentication are local to their signed-in accounts; unattended execution needs the owner's awake machine and a scheduled local runner. The available Claude Routine trigger returns a run/session reference, not a structured result callback into Kairos; the inspected Routine is paused, has no project connector, and expects an obsolete schema. Claude cloud membership is not integrated. Async subscription forecasts remain outside IC until labels align to forecast submission time.
+
+**Architecture:** `features/llm-council-shadow/FEATURE_ARCHITECTURE.md`; implementation: `features/llm-council-shadow/SUBSCRIPTION_WORKERS.md`.
