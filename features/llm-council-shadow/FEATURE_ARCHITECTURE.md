@@ -36,6 +36,40 @@ One participant is allowed as a single-model baseline and skips peer debate; it 
 
 Estimated calls per symbol are `participants × (1 + effective_debate_rounds) + 1 orchestrator`; effective debate rounds are zero for a one-model baseline and otherwise are the configured 0–3 rounds. Settings shows this estimate before enabling. Initial defaults after owner enables are 2 participants, 1 round, 5 symbols/market/day, and a $2/day cap. These defaults are conservative starting controls, not a performance recommendation.
 
+## Versioned provider catalog and reasoning effort (2026-10-11)
+
+The API-mode model picker is a curated, version-controlled catalog in
+`lib/llm-model-catalog.ts`, grouped by provider. It is not populated by blindly
+accepting arbitrary provider IDs: each entry must have a supported text API
+transport, a validated response contract, current official model documentation,
+and tested effort-parameter behavior. Preview models are visibly marked. This
+keeps retired IDs and unsupported modalities out of the selector while allowing
+the catalog to be updated as vendors publish replacements.
+
+The API catalog includes GPT-6 Luna and its supported effort choices, alongside
+documented text models from Anthropic, Google, xAI, DeepSeek, and other
+configured providers. Per-model effort is optional and shown only where the
+selected API supports it. Participant and orchestrator efforts are validated
+server-side, passed through provider requests, frozen in each run's configuration
+snapshot, and included in pessimistic cost reservations. Provider-specific
+mappings are explicit; an effort value is never silently treated as universal.
+
+API catalog choices and membership-backed CLI choices are separate contracts.
+GPT-6 Luna in the API catalog requires an OpenAI API credential and API billing;
+it does not use or consume ChatGPT Plus/Codex membership. The subscription picker
+is limited to exact model IDs reported by the installed official CLI
+(`codex debug models` or the Claude CLI). A newer API model must not be offered
+as a membership model until that signed-in client itself reports and successfully
+runs it.
+
+Catalog freshness is maintained by a monthly Codex review routine. It checks
+official OpenAI, Anthropic, Google, xAI, and DeepSeek model/effort/deprecation
+documentation, plus local Codex subscription CLI inventory. It may update the
+catalog, provider adapters, tests, and documentation in a reviewable change, but
+must not auto-enable a model, change council settings, apply migrations,
+merge/deploy, or alter trading behavior. Each addition requires verified current
+provider contracts and passing tests; otherwise it records no change.
+
 ## Data and forecast contract
 
 The initial council cohort is `near_threshold_entry_long_v1`: the newest observation per symbol from the bounded recent research window, only when its resolved decision context is an entry candidate, direction is long, and deterministic score is within an inclusive ±5 points of that row's recorded score threshold. It intentionally includes both eligible and rejected long candidates so evaluation can ask whether council scores distinguish near-threshold winners the deterministic gate did not select. It excludes holding reviews, unknown contexts, shorts, and names the app did not research; it does not answer broad-universe discovery. The half-width, key, selection time, and input observation ID are frozen in run config/snapshot. A bounded scan overflow fails closed rather than choosing from a partial universe.
@@ -95,7 +129,7 @@ producer is required before subscription scores may appear in IC/t-stat results.
 1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.
 2. Bounded shadow collector with independent calls, up to three debate rounds, consensus median, exact provenance, and hard call/cost caps.
 3. Scheduled evaluator over matured h2/h5/h10/h20 labels using the shared cohort and IC methodology; persist each model/composite/horizon result.
-4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. Subscription mode also shows worker registration, revocation, liveness, synthetic round trips, and per-job state; its forecasts stay out of IC until availability-aligned labels exist.
+4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. API mode has a curated provider-grouped catalog and only exposes supported effort values. Subscription mode has its separate exact-CLI model picker, worker registration, revocation, liveness, synthetic round trips, and per-job state; its forecasts stay out of IC until availability-aligned labels exist.
 5. Tests: malformed output, provider fallback, stale/missing evidence, idempotency, disabled config, cap enforcement, owner/cron auth, label maturity, cohort integrity, horizon overlap floor, and proof no trading consumer exists.
 
 ## Deliberately not included

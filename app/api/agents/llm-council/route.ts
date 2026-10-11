@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getProviderKey, providerForModel } from "@/lib/llm-keys";
-import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { isCouncilModel, isValidCouncilEffort } from "@/lib/llm-model-catalog";
 import { isWorkerId } from "@/lib/llm-council/subscription";
 import { isValidCouncilSymbolLimit, MAX_COUNCIL_PARTICIPANTS, MIN_COUNCIL_PARTICIPANTS, MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY, validCouncilParticipants } from "@/lib/llm-council/limits";
 
@@ -76,6 +76,18 @@ export async function PATCH(req: NextRequest) {
   }
   if (!subscription && !validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported models from at least two providers" }, { status: 400 });
   if (!subscription && !isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
+  const participantEfforts = next.participant_efforts ?? {};
+  if (!participantEfforts || typeof participantEfforts !== "object" || Array.isArray(participantEfforts) || Object.keys(participantEfforts).length > 32) {
+    return NextResponse.json({ error: "Participant effort settings must be a bounded model-to-effort map" }, { status: 400 });
+  }
+  for (const [model, effort] of Object.entries(participantEfforts)) {
+    if (!isCouncilModel(model) || !isValidCouncilEffort(model, effort)) {
+      return NextResponse.json({ error: `Unsupported effort ${String(effort)} for ${model}` }, { status: 400 });
+    }
+  }
+  if (!subscription && next.orchestrator_effort != null && !isValidCouncilEffort(next.orchestrator_model, next.orchestrator_effort)) {
+    return NextResponse.json({ error: `Unsupported effort ${String(next.orchestrator_effort)} for ${next.orchestrator_model}` }, { status: 400 });
+  }
   if (!Number.isInteger(next.debate_rounds) || next.debate_rounds < 0 || next.debate_rounds > 3) return NextResponse.json({ error: "Debate rounds must be from 0 to 3" }, { status: 400 });
   if (!isValidCouncilSymbolLimit(Number(next.max_symbols_per_market_day))) return NextResponse.json({ error: `Daily symbol limit must be from 1 to ${MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY} per market` }, { status: 400 });
   if (!Number.isFinite(Number(next.daily_budget_usd)) || Number(next.daily_budget_usd) < 0 || Number(next.daily_budget_usd) > 100) return NextResponse.json({ error: "Daily budget must be between $0 and $100" }, { status: 400 });
@@ -107,7 +119,9 @@ export async function PATCH(req: NextRequest) {
     subscription_worker_ids: workerIds,
     enabled: next.enabled,
     participant_models: next.participant_models,
+    participant_efforts: participantEfforts,
     orchestrator_model: next.orchestrator_model,
+    orchestrator_effort: subscription ? null : (next.orchestrator_effort ?? null),
     debate_rounds: next.debate_rounds,
     max_symbols_per_market_day: next.max_symbols_per_market_day,
     daily_budget_usd: Number(next.daily_budget_usd),

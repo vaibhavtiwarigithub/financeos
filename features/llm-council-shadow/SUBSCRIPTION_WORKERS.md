@@ -24,7 +24,7 @@ Test wrong-worker, revoked token, duplicate/conflicting submission, expired/reis
 
 ## Owner setup (local membership worker)
 
-1. In Settings → AI & keys → Multi-LLM research council, keep the council **OFF** and choose **Subscription workers** as the execution source. The Codex model picker defaults to **GPT-5.6 Luna**; verify the exact ID with `codex debug models` on the worker machine. Registration returns a one-time `kcw_…` credential; copy it directly to a private local config file, not a prompt, chat, repository, or shared cloud secret store. This picker selects a membership-backed CLI model, not an OpenAI API model.
+1. In Settings → AI & keys → Multi-LLM research council, keep the council **OFF** and choose **Subscription workers** as the execution source. The Codex model picker defaults to **GPT-5.6 Luna**; verify the exact ID with `codex debug models` on the worker machine. The currently verified CLI inventory does not advertise GPT-6 Luna, so it is not offered as a membership-backed choice. GPT-6 Luna in the separate API catalog requires an OpenAI API key and API billing; it does not consume ChatGPT Plus/Codex membership. Registration returns a one-time `kcw_…` credential; copy it directly to a private local config file, not a prompt, chat, repository, or shared cloud secret store.
 2. Create a private JSON config containing only `origin` (the Kairos HTTPS origin, no path) and `token`. Keep the file outside the checkout, for example under `%LOCALAPPDATA%\Kairos\council-worker.json`; restrict it to the Windows account. Do not paste the token into a shell command, since command history can persist it.
 3. With Codex CLI signed in to ChatGPT, run `node scripts/council-subscription-worker.mjs <private-config-path>` once to claim and process one job. To test, select the worker in Kairos, queue a synthetic test, then run `node scripts/council-subscription-worker.mjs <private-config-path> --synthetic-only`. A missing CLI login is shown as a failed test, not silently replaced by an API call.
 4. For recurring collection, schedule this command locally at a modest interval (for example every 5 minutes during expected research windows). The app queues at most its configured daily symbol limit; when no job exists, the runner exits. Windows Task Scheduler runs only while the machine/session conditions you configure permit. No supported cloud executor currently consumes personal ChatGPT or Claude memberships.
@@ -33,3 +33,13 @@ Test wrong-worker, revoked token, duplicate/conflicting submission, expired/reis
 Council master enablement remains a separate, explicit switch after every selected worker passes the synthetic test. It turns on shadow collection only, not trading. Subscription forecasts are not included in IC until availability-aligned label production is verified. GPT-5.6 Luna passed a local Codex CLI-only synthetic call on 2026-10-11; production registration and the Kairos queue round trip remain owner setup steps.
 
 References: https://platform.claude.com/docs/en/api/claude-code/routines-fire ; https://code.claude.com/docs/en/routines ; https://learn.chatgpt.com/docs/non-interactive-mode ; https://learn.chatgpt.com/docs/auth
+
+## Provider catalog maintenance
+
+The API model picker is maintained from official provider catalogs, not from
+community rankings or the membership CLI list. Codex's monthly catalog-review
+routine checks OpenAI, Anthropic, Google, xAI, and DeepSeek for current text
+model IDs, lifecycle status, supported reasoning efforts, and pricing changes,
+and checks the installed Codex CLI separately for membership model availability.
+It prepares tested source/documentation changes for review; it does not publish
+models automatically or enable the council.
