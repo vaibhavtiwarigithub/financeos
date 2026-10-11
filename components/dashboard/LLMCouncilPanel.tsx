@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { COUNCIL_MODELS } from "@/lib/llm-model-catalog";
+import { COUNCIL_MODEL_CATALOG, CouncilEffort, defaultCouncilEffort, supportedCouncilEfforts } from "@/lib/llm-model-catalog";
 import { effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
 import CouncilSubscriptionWorkers from "./CouncilSubscriptionWorkers";
 
@@ -9,7 +9,9 @@ type CouncilConfig = {
   execution_mode?: "api" | "subscription";
   subscription_worker_ids?: string[];
   participant_models: string[];
+  participant_efforts?: Record<string, CouncilEffort>;
   orchestrator_model: string;
+  orchestrator_effort?: CouncilEffort | null;
   debate_rounds: number;
   max_symbols_per_market_day: number;
   daily_budget_usd: number;
@@ -20,12 +22,6 @@ type Turn = { run_id: string; model_requested: string; model_used: string | null
 type IcRow = { market: string; horizon_days: number; series_key: string; forecast_model: string | null; cohort_key: string; observation_count: number; qualifying_sessions: number; independent_windows: number; mean_session_rank_ic: number | null; t_stat: number | null; classification: string; evaluated_at: string };
 type Payload = { config: CouncilConfig; providerKeyReadiness: Record<string, boolean>; modelProviders: Record<string, string>; runs: Run[]; forecasts: Forecast[]; turns: Turn[]; ic: IcRow[] };
 
-const MODELS = COUNCIL_MODELS;
-const PROVIDER: Record<string, string> = {
-  "deepseek-flash": "DeepSeek", "deepseek-v4-pro": "DeepSeek", "llama-3.3-70b-versatile": "Groq", "llama-3.1-8b-instant": "Groq", "deepseek-r1-distill-llama-70b": "Groq",
-  "claude-haiku-4-5": "Anthropic", "claude-sonnet-4-6": "Anthropic", "gemini-2.5-flash": "Google", "gemini-2.5-pro": "Google", "grok-4-fast": "xAI", "grok-4": "xAI",
-  "gpt-4o-mini": "OpenAI", "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
-};
 const T = { card: "#1A1D27", border: "#252836", surface: "#13151C", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#818cf8", green: "#34D399", red: "#f87171" };
 
 export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; market?: "us" | "india" }) {
@@ -81,6 +77,12 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   const turns = symbol ? payload.turns.filter((row) => !current || row.run_id === current.id) : payload.turns;
   const config = payload.config;
   const subscription = config.execution_mode === "subscription";
+  const modelsByProvider = new Map<string, typeof COUNCIL_MODEL_CATALOG[number][]>();
+  for (const model of COUNCIL_MODEL_CATALOG) {
+    const group = modelsByProvider.get(model.provider) ?? [];
+    group.push(model);
+    modelsByProvider.set(model.provider, group);
+  }
 
   const card = { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 };
   const selectStyle = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", color: T.text };
@@ -142,7 +144,10 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
         <select disabled={busy || config.enabled} value={config.execution_mode ?? "api"} onChange={e => void save({ execution_mode: e.target.value as "api" | "subscription" })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}><option value="api">API models · metered billing</option><option value="subscription">Subscription workers · Claude / Codex</option></select>
       </label>
       {!subscription && <label style={labelStyle}>Orchestrator
-        <select disabled={busy} value={config.orchestrator_model} onChange={(e) => void save({ orchestrator_model: e.target.value })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{MODELS.map((m) => <option key={m} value={m}>{m} · {PROVIDER[m]}</option>)}</select>
+        <select disabled={busy} value={config.orchestrator_model} onChange={(e) => { const model = e.target.value; void save({ orchestrator_model: model, orchestrator_effort: defaultCouncilEffort(model) }); }} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{COUNCIL_MODEL_CATALOG.map((m) => <option key={m.id} value={m.id}>{m.id}{m.preview ? " · preview" : ""} · {m.provider}</option>)}</select>
+      </label>}
+      {!subscription && supportedCouncilEfforts(config.orchestrator_model).length > 0 && <label style={labelStyle}>Orchestrator reasoning effort
+        <select disabled={busy} value={config.orchestrator_effort ?? defaultCouncilEffort(config.orchestrator_model) ?? "medium"} onChange={(e) => void save({ orchestrator_effort: e.target.value as CouncilEffort })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{supportedCouncilEfforts(config.orchestrator_model).map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select>
       </label>}
       <label style={labelStyle}>Debate rounds (0–3)
         <select disabled={busy} value={config.debate_rounds} onChange={(e) => void save({ debate_rounds: Number(e.target.value) })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{[0,1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}</select>
@@ -167,16 +172,30 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
     <div style={{ marginTop: 8, color: missingProviders.length ? T.red : T.green, fontSize: 12 }}>
       {missingProviders.length ? `Missing provider API key: ${missingProviders.join(", ")} — add it in Settings → AI Models before enabling.` : "Provider API keys are configured for the selected models."}
     </div>
-    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>API mode uses provider API billing. To use Claude or Codex memberships instead, switch the council off and select Subscription workers above. Memberships do not become API keys.</div>
+    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>API mode bills the selected provider API key. GPT-6 Luna and its effort setting here require an OpenAI API key; they do not use your ChatGPT Plus/Codex membership. Subscription workers use only model IDs shown by your signed-in local CLI.</div>
     <div style={{ marginTop: 16, color: T.text, fontSize: 12, fontWeight: 700 }}>Independent model participants</div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 6, marginTop: 8 }}>
-      {MODELS.map((model) => <label key={model} style={{ color: T.sub, fontSize: 11, display: "flex", gap: 8, alignItems: "center", background: T.surface, padding: 8, borderRadius: 6 }}>
-        <input type="checkbox" disabled={busy} checked={config.participant_models.includes(model)} onChange={(e) => {
-          const next = e.target.checked ? [...config.participant_models, model] : config.participant_models.filter((x) => x !== model);
-          if (next.length > 5) { setError("Select at most 5 participants."); return; }
-          void save({ participant_models: next });
-        }} />{model}<span style={{ color: T.muted }}>({PROVIDER[model]})</span>
-      </label>)}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12, marginTop: 8 }}>
+      {[...modelsByProvider.entries()].map(([provider, models]) => <div key={provider} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: 10 }}>
+        <div style={{ color: T.text, fontSize: 12, fontWeight: 700, marginBottom: 7 }}>{provider}</div>
+        <div style={{ display: "grid", gap: 7 }}>{models.map((entry) => {
+          const selected = config.participant_models.includes(entry.id);
+          const efforts = supportedCouncilEfforts(entry.id);
+          return <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 7, background: T.card, padding: "7px 8px", borderRadius: 6 }}>
+            <label style={{ color: T.sub, fontSize: 11, display: "flex", gap: 7, alignItems: "center", flex: "1 1 150px" }}>
+              <input type="checkbox" disabled={busy} checked={selected} onChange={(e) => {
+                const next = e.target.checked ? [...config.participant_models, entry.id] : config.participant_models.filter((x) => x !== entry.id);
+                if (next.length > 5) { setError("Select at most 5 participants."); return; }
+                const participant_efforts = { ...(config.participant_efforts ?? {}) };
+                if (e.target.checked && defaultCouncilEffort(entry.id)) participant_efforts[entry.id] = defaultCouncilEffort(entry.id)!;
+                void save({ participant_models: next, participant_efforts });
+              }} />{entry.id}{entry.preview ? <span style={{ color: "#FBBF24" }}>preview</span> : null}
+            </label>
+            {selected && efforts.length > 0 && <label style={{ color: T.muted, fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>Effort
+              <select aria-label={`${entry.id} reasoning effort`} disabled={busy} value={config.participant_efforts?.[entry.id] ?? defaultCouncilEffort(entry.id) ?? efforts[0]} onChange={(e) => void save({ participant_efforts: { ...(config.participant_efforts ?? {}), [entry.id]: e.target.value as CouncilEffort } })} style={{ ...selectStyle, fontSize: 10, padding: "4px 5px" }}>{efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select>
+            </label>}
+          </div>;
+        })}</div>
+      </div>)}
     </div>
     <div style={{ marginTop: 6, color: T.muted, fontSize: 11 }}>Choose 1–5 models. One model is a baseline (debate is skipped); with multiple models, at least two providers are required. The orchestrator summarizes but does not set the numeric median.</div>
     </>}

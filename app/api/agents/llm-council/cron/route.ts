@@ -4,7 +4,7 @@ import { providerForModel, getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { councilProviderTimeoutMs, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
-import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { defaultCouncilEffort, isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_COHORT_HALF_WIDTH, COUNCIL_COHORT_KEY, isNearThresholdEntryLong, thresholdDistance } from "@/lib/llm-council/cohort";
 import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
@@ -17,11 +17,12 @@ const MAX_TURN_CHARS = 45_000;
 const MAX_OBSERVATION_SCAN = 5_000;
 const SYSTEM = "You are a research analyst in a shadow-only stock research experiment. Use only the supplied frozen evidence. Do not use or invent current facts from model memory. If a field has no source/as-of timestamp, say its date is unknown. Cite factual claims using evidence paths from the snapshot and their recorded as-of date. Output exactly one RFC 8259 JSON object using straight ASCII double quotes; no smart quotes, markdown fences, comments, trailing commas, or surrounding prose. Escape quotes inside strings. This opinion never places or changes trades.";
 
-function estimateCost(model: string, prompt: string, maxOutput = MAX_TURN_TOKENS): number {
+function estimateCost(model: string, prompt: string, maxOutput = MAX_TURN_TOKENS, effort?: string | null): number {
   const [inputRate, outputRate] = priceFor(model);
   // Deliberately pessimistic input estimate: one token per character, not the
   // usual ~3-4 characters/token. This is a reservation guard, not billing.
-  const effectiveOutputBudget = isReasoningModel(model) ? Math.max(maxOutput, 16_000) : maxOutput;
+  const effortUsesReasoning = effort != null && effort !== "none";
+  const effectiveOutputBudget = (isReasoningModel(model) || effortUsesReasoning) ? Math.max(maxOutput, 16_000) : maxOutput;
   return (prompt.length / 1_000_000 * inputRate) + (effectiveOutputBudget / 1_000_000 * outputRate);
 }
 
@@ -133,7 +134,7 @@ async function addPointInTimeRelationships(svc: any, row: any, base: Record<stri
 
 async function invoke(
   svc: any,
-  args: { runId: string; symbol: string; requestedModel: string; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; timeoutMs: number; parse?: boolean; snapshot?: unknown },
+  args: { runId: string; symbol: string; requestedModel: string; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; timeoutMs: number; parse?: boolean; snapshot?: unknown },
 ) {
   const provider = providerForModel(args.requestedModel);
   const persist = async (row: Record<string, unknown>) => {
@@ -152,6 +153,7 @@ async function invoke(
     result = await callLLM({
       task: "evaluate", model: args.requestedModel, prompt: args.prompt, systemPrompt: SYSTEM,
       maxTokens: MAX_TURN_TOKENS, timeoutMs: args.timeoutMs, symbol: args.symbol, agentLabel: "llm-council", runId: args.runId,
+      reasoningEffort: args.reasoningEffort,
     });
   } catch (error) {
     await persist({ status: "failed", output_text: String(error).slice(0, 500) });
@@ -209,6 +211,11 @@ export async function POST(req: NextRequest) {
   const remainingSymbols = Math.max(0, Number(config.max_symbols_per_market_day) - dailyCount);
   if (remainingSymbols === 0) return NextResponse.json({ skipped: "daily_symbol_cap", dailySpend });
   const participants = (subscription ? config.subscription_worker_ids : config.participant_models) as string[];
+  const effectiveParticipantEfforts = subscription ? {} : Object.fromEntries(participants.flatMap((model) => {
+    const effort = config.participant_efforts?.[model] ?? defaultCouncilEffort(model);
+    return effort ? [[model, effort]] : [];
+  }));
+  const effectiveOrchestratorEffort = subscription ? null : (config.orchestrator_effort ?? defaultCouncilEffort(config.orchestrator_model));
   if (!subscription && !validCouncilParticipants(participants, isCouncilModel, providerForModel)) {
     return NextResponse.json({ error: "Council roster is invalid or includes a retired model; update Settings → LLM Council" }, { status: 409 });
   }
@@ -263,13 +270,15 @@ export async function POST(req: NextRequest) {
       continue;
     }
     const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view.`;
-    if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
+    if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt, MAX_TURN_TOKENS, effectiveParticipantEfforts[participants[0]]) > Number(config.daily_budget_usd)) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
       break;
     }
     const configSnapshot = {
       participant_models: participants,
+      participant_efforts: effectiveParticipantEfforts,
       orchestrator_model: config.orchestrator_model,
+      orchestrator_effort: effectiveOrchestratorEffort,
       debate_rounds: debateRounds,
       configured_debate_rounds: config.debate_rounds,
       max_symbols_per_market_day: config.max_symbols_per_market_day,
@@ -291,7 +300,8 @@ export async function POST(req: NextRequest) {
     const forecasts = new Map<string, { initial: Forecast; final: Forecast; modelUsed: string }>();
     let budgetExhausted = false;
     const canCall = (model: string, prompt: string) => {
-      const reserve = estimateCost(model, SYSTEM + prompt);
+      const effort = model === config.orchestrator_model ? effectiveOrchestratorEffort : effectiveParticipantEfforts[model];
+      const reserve = estimateCost(model, SYSTEM + prompt, MAX_TURN_TOKENS, effort);
       if (dailySpend + costUsd + reserve > Number(config.daily_budget_usd)) return false;
       return true;
     };
@@ -306,7 +316,7 @@ export async function POST(req: NextRequest) {
       for (const model of participants) {
         if (!canCall(model, independentPrompt)) { budgetExhausted = true; break; }
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
+          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, reasoningEffort: effectiveParticipantEfforts[model], role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
           await refreshUsageFromLedger();
           const forecast = parsed as Forecast;
           forecasts.set(model, { initial: forecast, final: forecast, modelUsed: result.model });
@@ -324,7 +334,7 @@ export async function POST(req: NextRequest) {
           const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence.`;
           if (!canCall(model, prompt)) { budgetExhausted = true; break; }
           try {
-            const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
+            const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, reasoningEffort: effectiveParticipantEfforts[model], role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
             await refreshUsageFromLedger();
             value.final = parsed as Forecast;
           } catch (error) { await refreshUsageFromLedger(); outcomes.push({ symbol: observation.symbol, model, round, issue: String(error).slice(0, 100) }); }
@@ -341,7 +351,7 @@ export async function POST(req: NextRequest) {
       if (consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
         const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns.`;
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true });
+          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, reasoningEffort: effectiveOrchestratorEffort ?? undefined, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true });
           await refreshUsageFromLedger();
           const o = parsed as any;
           if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("orchestrator_output_invalid");

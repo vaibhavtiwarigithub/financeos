@@ -106,9 +106,13 @@ export const REASONING_MIN_TOKENS = 16000
  * carries here automatically instead of leaving a stale hardcoded id.
  */
 export function isReasoningModel(model: string): boolean {
-  // The tier label now resolves to Flash. Only an explicit V4 Pro choice in
-  // Settings enables the expensive reasoning budget floor.
+  // Providers with configurable thinking can consume a material portion of the
+  // output-token ceiling before returning the forecast JSON.
   return model === "deepseek-v4-pro" || model === "deepseek-reasoner"
+    || /^gpt-6(?:\.|-)/.test(model)
+    || /^claude-(?:sonnet|opus)-5/.test(model)
+    || model === "grok-4.7"
+    || /^gemini-3\./.test(model)
 }
 
 /**
@@ -148,10 +152,17 @@ function isAuthMissing(err: unknown): boolean {
 }
 
 /** Explicit V4 mode prevents Flash calls from silently defaulting to thinking. */
-export function deepSeekThinkingConfig(model: string): {
+export function deepSeekThinkingConfig(model: string, effort?: LLMCallOpts["reasoningEffort"]): {
   thinking: { type: "enabled" | "disabled" };
-  reasoning_effort?: "high";
+  reasoning_effort?: "low" | "high" | "max";
 } {
+  if (effort === "none") return { thinking: { type: "disabled" } };
+  if (effort) {
+    // DeepSeek's documented API levels are low/high/max; its compatibility
+    // mapping treats medium and xhigh as high.
+    const mapped = effort === "max" ? "max" : effort === "low" ? "low" : "high";
+    return { thinking: { type: "enabled" }, reasoning_effort: mapped };
+  }
   return model === "deepseek-v4-pro"
     ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
     : { thinking: { type: "disabled" } };
@@ -167,6 +178,8 @@ export interface LLMCallOpts {
   maxTokens?: number
   /** Per-call provider timeout. Defaults to the shared 120s timeout. */
   timeoutMs?: number
+  /** Model-specific effort, only passed for catalogued council models. */
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"
   runId?: string
 }
 
@@ -202,6 +215,8 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
 
 // Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
 const PRICING: Record<string, [number, number]> = {
+  "claude-sonnet-5":           [2.00,  10.00],
+  "claude-opus-5":             [2.50,  12.50],
   "claude-sonnet-4-6":         [3.00,  15.00],
   "claude-haiku-4-5":          [0.25,   1.25],
   "claude-haiku-4-5-20251001": [0.25,   1.25],
@@ -226,13 +241,19 @@ const PRICING: Record<string, [number, number]> = {
   "deepseek-v4-flash-vision-exp": [0.22, 0.66],
   "gemini-2.5-flash":          [0.075,  0.30],
   "gemini-2.5-pro":            [1.25,  10.00],
+  "gemini-3.8-flash":          [0.75,   3.75],
+  "gemini-3.1-pro-preview":    [2.00,  12.00],
   // xAI Grok — verify against x.ai pricing page; estimates below.
   "grok-4":                    [3.00,  15.00],
   "grok-4-fast":               [0.20,   0.50],
+  "grok-4.7":                 [2.00,   6.00],
   // OpenAI + Zhipu GLM — verify against each provider's price page; estimates.
   "gpt-4o":                    [2.50,  10.00],
   "gpt-4o-mini":               [0.15,   0.60],
   "gpt-4.1":                   [2.00,   8.00],
+  "gpt-6-luna":                [0.10,   0.50],
+  "gpt-6.1-sol":               [2.00,  10.00],
+  "gpt-6-astra":               [10.00, 50.00],
   "gpt-4.1-mini":              [0.40,   1.60],
   "glm-4.6":                   [0.60,   2.20],
   "glm-4.5-air":               [0.20,   1.10],
@@ -355,11 +376,11 @@ async function dispatchProvider(model: string, opts: LLMCallOpts): Promise<{ tex
     }
   }
   // Built-in dispatch
-  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.task, opts.timeoutMs)
-  if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
-  if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
-  if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
-  if (model.startsWith("gpt") || /^o[134]/.test(model)) return callOpenAI(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
+  if (model.startsWith("claude")) return callClaude(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.task, opts.timeoutMs, opts.reasoningEffort)
+  if (model.startsWith("deepseek")) return callDeepSeek(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs, opts.reasoningEffort)
+  if (model.startsWith("gemini")) return callGemini(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs, opts.reasoningEffort)
+  if (model.startsWith("grok")) return callGrok(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs, opts.reasoningEffort)
+  if (model.startsWith("gpt") || /^o[134]/.test(model)) return callOpenAI(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs, opts.reasoningEffort)
   if (model.startsWith("glm")) return callGLM(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
   if (GROQ_MODELS.has(model)) return callGroq(model, opts.prompt, opts.systemPrompt, opts.maxTokens, opts.timeoutMs)
   throw new Error(`Unknown model: ${model}`)
@@ -393,7 +414,7 @@ export async function callLLM(opts: LLMCallOpts): Promise<LLMResult> {
   // belong on the non-thinking tier instead — raising them to this floor to
   // obtain 400 tokens of prose is the wrong trade, and the alert says so.
   let effectiveOpts = opts
-  if (isReasoningModel(model) && (opts.maxTokens ?? 4096) < REASONING_MIN_TOKENS) {
+  if (isReasoningModel(model) && opts.reasoningEffort !== "none" && (opts.maxTokens ?? 4096) < REASONING_MIN_TOKENS) {
     const requested = opts.maxTokens ?? 4096
     effectiveOpts = { ...opts, maxTokens: REASONING_MIN_TOKENS }
     await reportIssue({
@@ -514,7 +535,8 @@ async function callClaude(
   system?: string,
   maxTokens = 4096,
   task?: LLMTask,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  reasoningEffort?: LLMCallOpts["reasoningEffort"]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; cacheWriteTokens: number; cacheReadTokens: number }> {
   // Use Anthropic SDK directly (server-side, uses ANTHROPIC_API_KEY env).
   // System prompt is sent with cache_control: { type: "ephemeral" } so repeated calls
@@ -534,16 +556,20 @@ async function callClaude(
   ]
   // Extended thinking for reasoning tasks. budget must be < max_tokens, so bump
   // max_tokens to leave room for the visible answer on top of the thinking budget.
-  const wantThinking = task != null && THINKING_TASKS.has(task)
+  const supportsAdaptiveEffort = /^(claude-(sonnet|opus)-5)/.test(model)
+  const wantThinking = supportsAdaptiveEffort || (task != null && THINKING_TASKS.has(task))
   const thinkingBudget = 2048
-  const effectiveMax = wantThinking ? Math.max(maxTokens, thinkingBudget + 1536) : maxTokens
-  const resp = await client.messages.create({
+  const effectiveMax = wantThinking && !supportsAdaptiveEffort ? Math.max(maxTokens, thinkingBudget + 1536) : maxTokens
+  const body: Record<string, unknown> = {
     model,
     max_tokens: effectiveMax,
-    ...(wantThinking ? { thinking: { type: "enabled" as const, budget_tokens: thinkingBudget } } : {}),
+    ...(supportsAdaptiveEffort
+      ? { thinking: { type: "adaptive" }, output_config: { effort: reasoningEffort ?? "high" } }
+      : wantThinking ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
     ...(system ? { system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }] } : {}),
     messages,
-  })
+  }
+  const resp = await client.messages.create(body as any)
   const textBlock = resp.content.find(b => b.type === "text")
   const text = textBlock && textBlock.type === "text" ? textBlock.text : ""
   const u = resp.usage as typeof resp.usage & { cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
@@ -561,7 +587,8 @@ async function callDeepSeek(
   prompt: string,
   system?: string,
   maxTokens = 4096,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  reasoningEffort?: LLMCallOpts["reasoningEffort"]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("deepseek")
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set")
@@ -576,7 +603,7 @@ async function callDeepSeek(
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...deepSeekThinkingConfig(model) }),
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...deepSeekThinkingConfig(model, reasoningEffort) }),
     signal: AbortSignal.timeout(timeoutMs),
   })
 
@@ -666,7 +693,8 @@ async function callGrok(
   prompt: string,
   system?: string,
   maxTokens = 4096,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  reasoningEffort?: LLMCallOpts["reasoningEffort"]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("grok")
   if (!apiKey) throw new Error("XAI_API_KEY not set")
@@ -678,7 +706,7 @@ async function callGrok(
   const resp = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}) }),
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!resp.ok) {
@@ -697,7 +725,8 @@ async function callGemini(
   prompt: string,
   system?: string,
   maxTokens = 4096,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  reasoningEffort?: LLMCallOpts["reasoningEffort"]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("gemini")
   if (!apiKey) throw new Error("GEMINI_API_KEY not set")
@@ -705,7 +734,10 @@ async function callGemini(
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens: maxTokens },
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      ...(reasoningEffort ? { thinkingConfig: { thinkingLevel: reasoningEffort } } : {}),
+    },
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
   }
   const resp = await fetch(url, {
@@ -734,7 +766,8 @@ async function callOpenAI(
   prompt: string,
   system?: string,
   maxTokens = 4096,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  reasoningEffort?: LLMCallOpts["reasoningEffort"]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
   const apiKey = await getProviderKey("openai")
   if (!apiKey) throw new Error("OPENAI_API_KEY not set")
@@ -744,9 +777,10 @@ async function callOpenAI(
   messages.push({ role: "user", content: prompt })
 
   // Reasoning models (o1/o3/o4) use max_completion_tokens and reject temperature.
-  const isReasoner = /^o[134]/.test(model)
+  const isReasoner = /^o[134]/.test(model) || /^gpt-6/.test(model)
   const body: Record<string, unknown> = { model, messages }
   body[isReasoner ? "max_completion_tokens" : "max_tokens"] = maxTokens
+  if (reasoningEffort) body.reasoning_effort = reasoningEffort
 
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",

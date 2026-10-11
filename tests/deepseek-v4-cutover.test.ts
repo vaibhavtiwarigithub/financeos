@@ -19,4 +19,11 @@ describe("DeepSeek V4 cutover", () => {
       reasoning_effort: "high",
     });
   });
+
+  it("maps exposed DeepSeek effort levels to API-supported effort levels", () => {
+    expect(deepSeekThinkingConfig("deepseek-flash", "none")).toEqual({ thinking: { type: "disabled" } });
+    expect(deepSeekThinkingConfig("deepseek-flash", "low")).toEqual({ thinking: { type: "enabled" }, reasoning_effort: "low" });
+    expect(deepSeekThinkingConfig("deepseek-v4-pro", "medium")).toEqual({ thinking: { type: "enabled" }, reasoning_effort: "high" });
+    expect(deepSeekThinkingConfig("deepseek-v4-pro", "max")).toEqual({ thinking: { type: "enabled" }, reasoning_effort: "max" });
+  });
 });
