@@ -1,5 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { COUNCIL_MODELS } from "@/lib/llm-model-catalog";
+import { effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
 
 type CouncilConfig = {
   enabled: boolean;
@@ -12,14 +14,10 @@ type CouncilConfig = {
 type Run = { id: string; symbol: string; market: string; decision_ts: string; status: string; consensus_score: number | null; consensus_summary: string | null; disagreement_summary: string | null; tokens_in: number; tokens_out: number; cost_usd: number };
 type Forecast = { run_id: string; model_requested: string; model_used: string | null; initial_score: number | null; final_score: number | null; confidence: number | null; initial_rationale: string | null; final_rationale: string | null; bull_case: string | null; bear_case: string | null; evidence_citations: Array<{ claim: string; source: string; as_of: string }>; status: string };
 type Turn = { run_id: string; model_requested: string; model_used: string | null; turn_role: string; round: number; output_json?: any; output_text?: string | null; tokens_in: number; tokens_out: number; cost_usd: number; status: string };
-type IcRow = { market: string; horizon_days: number; series_key: string; forecast_model: string | null; observation_count: number; qualifying_sessions: number; independent_windows: number; mean_session_rank_ic: number | null; t_stat: number | null; classification: string; evaluated_at: string };
-type Payload = { config: CouncilConfig; runs: Run[]; forecasts: Forecast[]; turns: Turn[]; ic: IcRow[] };
+type IcRow = { market: string; horizon_days: number; series_key: string; forecast_model: string | null; cohort_key: string; observation_count: number; qualifying_sessions: number; independent_windows: number; mean_session_rank_ic: number | null; t_stat: number | null; classification: string; evaluated_at: string };
+type Payload = { config: CouncilConfig; providerKeyReadiness: Record<string, boolean>; modelProviders: Record<string, string>; runs: Run[]; forecasts: Forecast[]; turns: Turn[]; ic: IcRow[] };
 
-const MODELS = [
-  "deepseek-flash", "deepseek-v4-pro", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b",
-  "claude-haiku-4-5", "claude-sonnet-4-6", "gemini-2.5-flash", "gemini-2.5-pro", "grok-4-fast", "grok-4",
-  "gpt-4o-mini", "gpt-4o", "gpt-4.1", "glm-4.5-air", "glm-4.6",
-];
+const MODELS = COUNCIL_MODELS;
 const PROVIDER: Record<string, string> = {
   "deepseek-flash": "DeepSeek", "deepseek-v4-pro": "DeepSeek", "llama-3.3-70b-versatile": "Groq", "llama-3.1-8b-instant": "Groq", "deepseek-r1-distill-llama-70b": "Groq",
   "claude-haiku-4-5": "Anthropic", "claude-sonnet-4-6": "Anthropic", "gemini-2.5-flash": "Google", "gemini-2.5-pro": "Google", "grok-4-fast": "xAI", "grok-4": "xAI",
@@ -56,7 +54,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
       const response = await fetch("/api/agents/llm-council", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload.config, ...patch }) });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "Save failed");
-      setPayload({ ...payload, config: json.config });
+      setPayload({ ...payload, config: json.config, providerKeyReadiness: json.providerKeyReadiness ?? payload.providerKeyReadiness, modelProviders: json.modelProviders ?? payload.modelProviders });
       setNotice("Saved");
     } catch (e) { setError(e instanceof Error ? e.message : "Save failed"); }
     setBusy(false);
@@ -65,7 +63,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   const latestCells = useMemo(() => {
     const map = new Map<string, IcRow>();
     for (const cell of payload?.ic ?? []) {
-      const key = `${cell.market}:${cell.horizon_days}:${cell.series_key}`;
+      const key = `${cell.market}:${cell.horizon_days}:${cell.cohort_key}:${cell.series_key}`;
       const prior = map.get(key);
       if (!prior || prior.evaluated_at < cell.evaluated_at) map.set(key, cell);
     }
@@ -113,7 +111,10 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
     </section>
   );
 
-  const estimatedCalls = config.participant_models.length * (1 + config.debate_rounds) + 1;
+  const effectiveRounds = effectiveCouncilDebateRounds(config.participant_models.length, config.debate_rounds);
+  const estimatedCalls = config.participant_models.length * (1 + effectiveRounds) + 1;
+  const requiredProviders = [...new Set([...config.participant_models, config.orchestrator_model].map((model) => payload.modelProviders?.[model]).filter(Boolean))];
+  const missingProviders = requiredProviders.filter((provider) => payload.providerKeyReadiness?.[provider] !== true);
   const modelUsage = new Map<string, { calls: number; input: number; output: number; cost: number; failures: number }>();
   for (const turn of turns) {
     const item = modelUsage.get(turn.model_requested) ?? { calls: 0, input: 0, output: 0, cost: 0, failures: 0 };
@@ -126,7 +127,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   }
   return <section style={{ ...card, marginTop: 18 }}>
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-      <div><div style={{ color: T.text, fontWeight: 700 }}>Multi-LLM research council</div><div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Independent scores → bounded debate → median consensus → multi-horizon IC. Shadow-only; it cannot trade.</div></div>
+      <div><div style={{ color: T.text, fontWeight: 700 }}>Multi-LLM research council</div><div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Independent scores → bounded debate → median (or single-model baseline) → multi-horizon IC. Shadow-only; it cannot trade.</div></div>
       <span style={{ borderRadius: 999, padding: "4px 9px", fontSize: 11, color: config.enabled ? T.green : T.muted, background: T.surface }}>{config.enabled ? "ENABLED · SHADOW" : "OFF"}</span>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14, marginTop: 18 }}>
@@ -139,7 +140,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
       <label style={labelStyle}>Debate rounds (0–3)
         <select disabled={busy} value={config.debate_rounds} onChange={(e) => void save({ debate_rounds: Number(e.target.value) })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{[0,1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}</select>
       </label>
-      <label style={labelStyle}>Max symbols / market / day (minimum 5 for rank IC)
+      <label style={labelStyle}>Max symbols / market / day (minimum 5 qualifying names per session for rank IC)
         <input type="number" min={1} max={5} disabled={busy} value={numericDrafts.symbols ?? String(config.max_symbols_per_market_day)} onChange={(e) => setNumericDrafts((d) => ({ ...d, symbols: e.target.value }))} onBlur={() => {
           const value = Number(numericDrafts.symbols);
           setNumericDrafts((d) => { const next = { ...d }; delete next.symbols; return next; });
@@ -155,20 +156,25 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
       </label>
     </div>
     <div style={{ marginTop: 14, color: T.sub, fontSize: 12 }}>Estimated maximum: {estimatedCalls} model calls per symbol · {config.max_symbols_per_market_day} symbols per market/day · {config.daily_budget_usd ? `$${config.daily_budget_usd}/day` : "$0 budget (no calls)"}. Calls reserve cost pessimistically before dispatch; actual spend comes from the LLM call ledger.</div>
+    <div style={{ marginTop: 8, color: missingProviders.length ? T.red : T.green, fontSize: 12 }}>
+      {missingProviders.length ? `Missing provider API key: ${missingProviders.join(", ")} — add it in Settings → AI Models before enabling.` : "Provider API keys are configured for the selected models."}
+    </div>
+    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>Provider API keys are separate from ChatGPT Plus, Claude Pro/Code, and DeepSeek Chat subscriptions. Kairos cannot spend those memberships from its server. Codex/Claude app or CLI sessions are not backend council endpoints; OpenAI account-based access would require an eligible, approved Sign in with ChatGPT integration, which this app does not currently have.</div>
     <div style={{ marginTop: 16, color: T.text, fontSize: 12, fontWeight: 700 }}>Independent model participants</div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 6, marginTop: 8 }}>
       {MODELS.map((model) => <label key={model} style={{ color: T.sub, fontSize: 11, display: "flex", gap: 8, alignItems: "center", background: T.surface, padding: 8, borderRadius: 6 }}>
         <input type="checkbox" disabled={busy} checked={config.participant_models.includes(model)} onChange={(e) => {
           const next = e.target.checked ? [...config.participant_models, model] : config.participant_models.filter((x) => x !== model);
-          if (next.length > 3) { setError("Select no more than 3 participants; swap models to compare more providers."); return; }
+          if (next.length > 5) { setError("Select at most 5 participants."); return; }
           void save({ participant_models: next });
         }} />{model}<span style={{ color: T.muted }}>({PROVIDER[model]})</span>
       </label>)}
     </div>
+    <div style={{ marginTop: 6, color: T.muted, fontSize: 11 }}>Choose 1–5 models. One model is a baseline (debate is skipped); with multiple models, at least two providers are required. The orchestrator summarizes but does not set the numeric median.</div>
     {notice && <div style={{ color: T.green, fontSize: 12, marginTop: 8 }}>{notice}</div>}
     {error && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{error}</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Latest per-model / composite IC</div>
-    <div style={{ overflowX: "auto", marginTop: 8 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 700 }}><thead><tr>{["Market", "Horizon", "Series", "Rank IC", "t-stat", "Sessions", "Effective windows", "State"].map((x) => <th key={x} style={{ textAlign: "left", color: T.muted, padding: 7, borderBottom: `1px solid ${T.border}` }}>{x}</th>)}</tr></thead><tbody>{latestCells.slice(0, 32).map((row) => <tr key={`${row.market}-${row.horizon_days}-${row.series_key}`}><td style={{ color: T.sub, padding: 7 }}>{row.market}</td><td style={{ color: T.sub, padding: 7 }}>h{row.horizon_days}</td><td style={{ color: T.sub, padding: 7 }}>{row.series_key}</td><td style={{ color: T.text, padding: 7 }}>{row.mean_session_rank_ic == null ? "—" : Number(row.mean_session_rank_ic).toFixed(3)}</td><td style={{ color: T.text, padding: 7 }}>{row.t_stat == null ? "insufficient" : Number(row.t_stat).toFixed(2)}</td><td style={{ color: T.sub, padding: 7 }}>{row.qualifying_sessions}</td><td style={{ color: T.sub, padding: 7 }}>{Number(row.independent_windows).toFixed(1)}</td><td style={{ color: row.classification === "measured_descriptive" ? T.green : T.muted, padding: 7 }}>{row.classification}</td></tr>)}</tbody></table></div>
+    <div style={{ overflowX: "auto", marginTop: 8 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 760 }}><thead><tr>{["Market", "Horizon", "Cohort", "Series", "Rank IC", "t-stat", "Sessions", "Effective windows", "State"].map((x) => <th key={x} style={{ textAlign: "left", color: T.muted, padding: 7, borderBottom: `1px solid ${T.border}` }}>{x}</th>)}</tr></thead><tbody>{latestCells.slice(0, 32).map((row) => <tr key={`${row.market}-${row.horizon_days}-${row.cohort_key}-${row.series_key}`}><td style={{ color: T.sub, padding: 7 }}>{row.market}</td><td style={{ color: T.sub, padding: 7 }}>h{row.horizon_days}</td><td style={{ color: T.sub, padding: 7 }}>{row.cohort_key}</td><td style={{ color: T.sub, padding: 7 }}>{row.series_key}</td><td style={{ color: T.text, padding: 7 }}>{row.mean_session_rank_ic == null ? "—" : Number(row.mean_session_rank_ic).toFixed(3)}</td><td style={{ color: T.text, padding: 7 }}>{row.t_stat == null ? "insufficient" : Number(row.t_stat).toFixed(2)}</td><td style={{ color: T.sub, padding: 7 }}>{row.qualifying_sessions}</td><td style={{ color: T.sub, padding: 7 }}>{Number(row.independent_windows).toFixed(1)}</td><td style={{ color: row.classification === "measured_descriptive" ? T.green : T.muted, padding: 7 }}>{row.classification}</td></tr>)}</tbody></table></div>
     {latestCells.length === 0 && <div style={{ color: T.muted, fontSize: 12, padding: 12 }}>No evaluation runs yet. Insufficient evidence is an expected status until enough labels mature.</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Recent council symbols</div>
     <div style={{ display: "grid", gap: 6, marginTop: 8 }}>{runs.slice(0, 8).map((row) => <a key={row.id} href={`/dashboard/research/${encodeURIComponent(row.symbol)}`} style={{ color: T.sub, display: "flex", justifyContent: "space-between", gap: 10, textDecoration: "none", padding: "7px 9px", background: T.surface, borderRadius: 6, fontSize: 11 }}><span>{row.market.toUpperCase()} · {row.symbol} · {new Date(row.decision_ts).toLocaleDateString()}</span><span style={{ color: T.accent }}>LLM {row.consensus_score ?? "—"} · {row.status}</span></a>)}</div>

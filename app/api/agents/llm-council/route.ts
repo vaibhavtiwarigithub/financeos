@@ -2,15 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getProviderKey, providerForModel } from "@/lib/llm-keys";
-import { isConfigurableModel } from "@/lib/llm-model-catalog";
+import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { isValidCouncilSymbolLimit, MAX_COUNCIL_PARTICIPANTS, MIN_COUNCIL_PARTICIPANTS, MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY, validCouncilParticipants } from "@/lib/llm-council/limits";
 
 export const dynamic = "force-dynamic";
 
+async function readProviderKeyReadiness(models: string[], svc: any): Promise<Record<string, boolean>> {
+  const providers = [...new Set(models.map(providerForModel).filter((x): x is NonNullable<typeof x> => !!x))];
+  const readiness: Record<string, boolean> = {};
+  await Promise.all(providers.map(async (provider) => {
+    readiness[provider] = !!(await getProviderKey(provider, svc));
+  }));
+  return readiness;
+}
+
+function mapModelProviders(models: string[]): Record<string, string> {
+  return Object.fromEntries(models.flatMap((model) => {
+    const provider = providerForModel(model);
+    return provider ? [[model, provider]] : [];
+  }));
+}
+
 function validParticipants(value: unknown): value is string[] {
-  return Array.isArray(value) && value.length >= 2 && value.length <= 3
-    && value.every(isConfigurableModel)
-    && new Set(value).size === value.length
-    && new Set(value.map((model) => providerForModel(model))).size >= 2;
+  return validCouncilParticipants(value, isCouncilModel, providerForModel);
 }
 
 export async function GET(req: NextRequest) {
@@ -25,6 +39,11 @@ export async function GET(req: NextRequest) {
   ]);
   if (config.error) return NextResponse.json({ error: "LLM council schema is not installed" }, { status: 503 });
   if (cells.error) return NextResponse.json({ error: "Could not load council evaluation evidence" }, { status: 500 });
+  const configuredModels = [...new Set([
+    ...((config.data?.participant_models as string[] | null) ?? []),
+    ...(config.data?.orchestrator_model ? [String(config.data.orchestrator_model)] : []),
+  ])];
+  const providerKeyReadiness = await readProviderKeyReadiness(configuredModels, svc);
   let runsQuery = svc.from("llm_council_runs").select("id,symbol,market,decision_ts,status,consensus_score,consensus_summary,disagreement_summary,tokens_in,tokens_out,cost_usd,created_at").order("created_at", { ascending: false }).limit(symbol ? 5 : 25);
   if (symbol) runsQuery = runsQuery.eq("symbol", symbol);
   if (market === "us" || market === "india") runsQuery = runsQuery.eq("market", market);
@@ -36,7 +55,7 @@ export async function GET(req: NextRequest) {
     svc.from("llm_council_turns").select(symbol ? "run_id,model_requested,model_used,turn_role,round,output_json,output_text,tokens_in,tokens_out,cost_usd,status,created_at" : "run_id,model_requested,model_used,turn_role,round,tokens_in,tokens_out,cost_usd,status,created_at").in("run_id", runIds).order("round", { ascending: true }).limit(1000),
   ]) : [{ data: [], error: null }, { data: [], error: null }];
   if (forecasts.error || turns.error) return NextResponse.json({ error: "Could not load council model evidence" }, { status: 500 });
-  return NextResponse.json({ config: config.data, runs: runs ?? [], forecasts: forecasts.data ?? [], turns: turns.data ?? [], ic: cells.data ?? [] });
+  return NextResponse.json({ config: config.data, providerKeyReadiness, modelProviders: mapModelProviders(configuredModels), runs: runs ?? [], forecasts: forecasts.data ?? [], turns: turns.data ?? [], ic: cells.data ?? [] });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -50,12 +69,12 @@ export async function PATCH(req: NextRequest) {
 
   const next = { ...current, ...body };
   if (body.participant_models !== undefined && !validParticipants(body.participant_models)) {
-    return NextResponse.json({ error: "Choose 2–3 distinct supported models from at least 2 providers" }, { status: 400 });
+    return NextResponse.json({ error: `Choose ${MIN_COUNCIL_PARTICIPANTS}–${MAX_COUNCIL_PARTICIPANTS} supported models; a single model is a baseline, while multi-model councils need at least two providers` }, { status: 400 });
   }
-  if (!validParticipants(next.participant_models)) return NextResponse.json({ error: "At least two distinct provider models are required" }, { status: 400 });
-  if (!isConfigurableModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported orchestrator model" }, { status: 400 });
+  if (!validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported models from at least two providers" }, { status: 400 });
+  if (!isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
   if (!Number.isInteger(next.debate_rounds) || next.debate_rounds < 0 || next.debate_rounds > 3) return NextResponse.json({ error: "Debate rounds must be from 0 to 3" }, { status: 400 });
-  if (!Number.isInteger(next.max_symbols_per_market_day) || next.max_symbols_per_market_day < 1 || next.max_symbols_per_market_day > 5) return NextResponse.json({ error: "Daily symbol limit must be from 1 to 5 per market" }, { status: 400 });
+  if (!isValidCouncilSymbolLimit(Number(next.max_symbols_per_market_day))) return NextResponse.json({ error: `Daily symbol limit must be from 1 to ${MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY} per market` }, { status: 400 });
   if (!Number.isFinite(Number(next.daily_budget_usd)) || Number(next.daily_budget_usd) < 0 || Number(next.daily_budget_usd) > 100) return NextResponse.json({ error: "Daily budget must be between $0 and $100" }, { status: 400 });
   if (typeof next.enabled !== "boolean") return NextResponse.json({ error: "Enabled must be boolean" }, { status: 400 });
 
@@ -80,5 +99,7 @@ export async function PATCH(req: NextRequest) {
   };
   const { data, error } = await svc.from("llm_council_config").update(update).eq("id", "global").select("*").single();
   if (error) return NextResponse.json({ error: "Could not save council settings" }, { status: 500 });
-  return NextResponse.json({ config: data });
+  const configuredModels = [...next.participant_models, next.orchestrator_model] as string[];
+  const providerKeyReadiness = await readProviderKeyReadiness(configuredModels, svc);
+  return NextResponse.json({ config: data, providerKeyReadiness, modelProviders: mapModelProviders(configuredModels) });
 }

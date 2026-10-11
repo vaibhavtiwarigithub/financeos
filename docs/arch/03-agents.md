@@ -1457,3 +1457,29 @@ US uses Massive/cache quotes plus Alpha Vantage fundamentals; India uses Yahoo
 INR quotes and Yahoo India fundamentals and never borrows the US macro regime.
 The configured LLM provider is resolved before its key is checked. The diagram
 source is `public/agent-diagrams/deep-dive.json`.
+
+## Multi-LLM Research Council (shadow-only)
+
+The owner-controlled council is configured in Settings → AI Models. It can use
+one selected model as a baseline or 2–5 distinct models (multi-model councils
+must span at least two providers), plus an independently selected synthesis
+model. Debate is bounded to 0–3 rounds; a one-model baseline skips debate. The
+daily symbol cap and hard USD budget are enforced before provider dispatch, and
+per-call deadlines/batch size adapt to the configured worst case. Retired or
+unsupported model IDs fail closed. The council remains OFF by default and has
+no scoring, sizing, paper-trading, rotation, or live-trading consumer.
+
+Collection uses a frozen, declared near-threshold long-entry cohort: the latest
+observation per symbol in a bounded recent scan, within ±5 points of its
+recorded deterministic entry threshold. Both eligible and rejected long-entry
+observations are included; holding reviews, unknown contexts, shorts, and
+unresearched symbols are excluded. Evaluations reuse the exact predicate and
+frozen cohort key, join only matured benchmark-neutral labels, and report
+per-session rank IC with overlap-adjusted effective windows. A scan beyond its
+safe bound refuses to select a partial cohort. Council outputs and model
+subscription credentials are not a substitute for provider API keys: Kairos
+requires the configured provider API key. ChatGPT, Claude, and DeepSeek paid
+consumer memberships do not by themselves authorize server API calls; any
+eligible account-based OpenAI integration would need a separately approved
+OAuth product integration. Codex/Claude desktop or CLI sessions are not
+background Kairos APIs.

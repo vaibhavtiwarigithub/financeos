@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { buildCouncilIcCell, COUNCIL_HORIZONS, type CouncilLabelPoint } from "@/lib/llm-council/core";
+import { COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   const modelHistory: any[] = [];
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc.from("llm_council_model_forecasts")
-      .select("model_requested,llm_council_runs!inner(market)")
+      .select("model_requested,llm_council_runs!inner(market,config_snapshot)")
       .order("created_at", { ascending: true }).range(offset, offset + PAGE - 1);
     if (error) return NextResponse.json({ error: "Could not load council model history" }, { status: 500 });
     modelHistory.push(...(data ?? []));
@@ -30,13 +30,13 @@ export async function POST(req: NextRequest) {
       pointsBySeries.set("composite:median", []);
       for (const entry of modelHistory) {
         const run = Array.isArray(entry.llm_council_runs) ? entry.llm_council_runs[0] : entry.llm_council_runs;
-        if (run?.market !== market || typeof entry.model_requested !== "string") continue;
+        if (run?.market !== market || run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY || typeof entry.model_requested !== "string") continue;
         pointsBySeries.set(`model:${entry.model_requested}:independent`, []);
         pointsBySeries.set(`model:${entry.model_requested}:debated`, []);
       }
       for (let offset = 0; ; offset += PAGE) {
         const { data: labels, error } = await svc.from("observation_labels")
-          .select("observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
+          .select("observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,entry_eligible,direction,decision_context,discovery_source)")
           .eq("horizon_days", horizon).eq("decision_observations.market", market)
           .order("observation_id", { ascending: true }).range(offset, offset + PAGE - 1);
         if (error) return NextResponse.json({ error: `Could not load matured labels for ${market} h${horizon}` }, { status: 500 });
@@ -49,21 +49,23 @@ export async function POST(req: NextRequest) {
           // unavailable; such rows are incomplete for this evaluator.
           const outcome = row.benchmark_neutral_return;
           if (!obs || outcome == null || !Number.isFinite(Number(outcome))) continue;
-          if (!isEntryCandidateLong({ entryEligible: obs.entry_eligible, direction: obs.direction, decisionContext: obs.decision_context, discoverySource: obs.discovery_source })) continue;
+          if (!isNearThresholdEntryLong(obs)) continue;
           eligible.push({ obs, outcome: Number(outcome) });
         }
         for (let start = 0; start < eligible.length; start += 100) {
           const chunk = eligible.slice(start, start + 100);
           const obsIds = chunk.map((x) => Number(x.obs.id));
           const { data: runs, error: runError } = await svc.from("llm_council_runs")
-            .select("id,observation_id,market,consensus_score,status")
+            .select("id,observation_id,market,consensus_score,status,config_snapshot")
             .in("observation_id", obsIds).in("status", ["completed", "partial", "failed"]);
           if (runError) return NextResponse.json({ error: `Could not read council runs for ${market}` }, { status: 500 });
           if (!runs?.length) continue;
-          const runByObs = new Map((runs as any[]).map((run) => [Number(run.observation_id), run]));
+          const cohortRuns = (runs as any[]).filter((run) => run.config_snapshot?.cohort_key === COUNCIL_COHORT_KEY);
+          if (!cohortRuns.length) continue;
+          const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
           const { data: forecasts, error: forecastError } = await svc.from("llm_council_model_forecasts")
             .select("run_id,model_requested,initial_score,final_score,status")
-            .in("run_id", (runs as any[]).map((run) => run.id)).eq("status", "completed");
+            .in("run_id", cohortRuns.map((run) => run.id)).eq("status", "completed");
           if (forecastError) return NextResponse.json({ error: `Could not read council forecasts for ${market}` }, { status: 500 });
           const forecastsByRun = new Map<string, any[]>();
           for (const forecast of (forecasts ?? []) as any[]) {
@@ -101,7 +103,7 @@ export async function POST(req: NextRequest) {
           horizon_days: cell.horizonDays,
           series_key: cell.seriesKey,
           forecast_model: cell.forecastModel,
-          cohort_key: "eligible_long_entry_candidate",
+          cohort_key: COUNCIL_COHORT_KEY,
           observation_count: cell.observationCount,
           qualifying_sessions: cell.qualifyingSessions,
           independent_windows: Number(cell.independentWindows.toFixed(4)),
@@ -116,5 +118,5 @@ export async function POST(req: NextRequest) {
       inserted.push({ market, horizon, series: cells.length });
     }
   }
-  return NextResponse.json({ batchId, results: inserted, horizons: COUNCIL_HORIZONS, cohort: "eligible long entry candidates", shadowOnly: true });
+  return NextResponse.json({ batchId, results: inserted, horizons: COUNCIL_HORIZONS, cohort: COUNCIL_COHORT_KEY, shadowOnly: true });
 }

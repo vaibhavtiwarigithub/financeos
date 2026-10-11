@@ -32,6 +32,9 @@ export function isLLMProvider(x: string): x is LLMProvider {
 
 // Map a concrete model id to its provider (mirrors the router's dispatch rules).
 export function providerForModel(model: string): LLMProvider | null {
+  // This Groq-hosted distillation model has a DeepSeek name; test its full
+  // model prefix before the generic DeepSeek provider rule below.
+  if (model.startsWith("deepseek-r1-distill-")) return "groq";
   if (model.startsWith("claude")) return "anthropic";
   if (model.startsWith("deepseek")) return "deepseek";
   if (model.startsWith("gemini")) return "gemini";
