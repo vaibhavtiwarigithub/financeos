@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getProviderKey, providerForModel } from "@/lib/llm-keys";
 import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { isWorkerId } from "@/lib/llm-council/subscription";
 import { isValidCouncilSymbolLimit, MAX_COUNCIL_PARTICIPANTS, MIN_COUNCIL_PARTICIPANTS, MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY, validCouncilParticipants } from "@/lib/llm-council/limits";
 
 export const dynamic = "force-dynamic";
@@ -68,17 +69,30 @@ export async function PATCH(req: NextRequest) {
   if (readError || !current) return NextResponse.json({ error: "LLM council schema is not installed" }, { status: 503 });
 
   const next = { ...current, ...body };
+  if (!["api", "subscription"].includes(next.execution_mode)) return NextResponse.json({ error: "Invalid execution mode" }, { status: 400 });
+  const subscription = next.execution_mode === "subscription";
   if (body.participant_models !== undefined && !validParticipants(body.participant_models)) {
     return NextResponse.json({ error: `Choose ${MIN_COUNCIL_PARTICIPANTS}–${MAX_COUNCIL_PARTICIPANTS} supported models; a single model is a baseline, while multi-model councils need at least two providers` }, { status: 400 });
   }
-  if (!validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported models from at least two providers" }, { status: 400 });
-  if (!isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
+  if (!subscription && !validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported models from at least two providers" }, { status: 400 });
+  if (!subscription && !isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
   if (!Number.isInteger(next.debate_rounds) || next.debate_rounds < 0 || next.debate_rounds > 3) return NextResponse.json({ error: "Debate rounds must be from 0 to 3" }, { status: 400 });
   if (!isValidCouncilSymbolLimit(Number(next.max_symbols_per_market_day))) return NextResponse.json({ error: `Daily symbol limit must be from 1 to ${MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY} per market` }, { status: 400 });
   if (!Number.isFinite(Number(next.daily_budget_usd)) || Number(next.daily_budget_usd) < 0 || Number(next.daily_budget_usd) > 100) return NextResponse.json({ error: "Daily budget must be between $0 and $100" }, { status: 400 });
   if (typeof next.enabled !== "boolean") return NextResponse.json({ error: "Enabled must be boolean" }, { status: 400 });
 
-  if (next.enabled) {
+  const workerIds = next.subscription_worker_ids;
+  if (!Array.isArray(workerIds) || workerIds.length > 5 || !workerIds.every(isWorkerId) || new Set(workerIds).size !== workerIds.length) return NextResponse.json({ error: "Select at most five distinct subscription workers" }, { status: 400 });
+  if (subscription && next.enabled) {
+    if (!workerIds.length) return NextResponse.json({ error: "Register and select a subscription worker first" }, { status: 409 });
+    const { data: workers, error: workerError } = await svc.from("llm_council_workers").select("id,family,expected_model,last_seen_at").in("id", workerIds).is("revoked_at", null);
+    if (workerError || workers?.length !== workerIds.length) return NextResponse.json({ error: "A selected worker is revoked or unavailable" }, { status: 409 });
+    if (workers.length > 1 && new Set(workers.map((w: any) => w.family)).size < 2) return NextResponse.json({ error: "A multi-model council needs both Claude and Codex families" }, { status: 409 });
+    if (new Set(workers.map((w: any) => `${w.family}/${w.expected_model}`)).size !== workers.length) return NextResponse.json({ error: "Do not count the same model twice" }, { status: 409 });
+    const { data: tested, error: testError } = await svc.from("llm_council_jobs").select("worker_id,llm_council_batches!inner(synthetic,status)").in("worker_id", workerIds).eq("status", "completed").eq("llm_council_batches.synthetic", true).eq("llm_council_batches.status", "completed").limit(100);
+    if (testError || workerIds.some((id: string) => !tested?.some((j: any) => j.worker_id === id))) return NextResponse.json({ error: "Complete a synthetic round trip for every selected worker before enabling" }, { status: 409 });
+  }
+  if (next.enabled && !subscription) {
     const allModels = [...next.participant_models, next.orchestrator_model] as string[];
     const providers = [...new Set(allModels.map(providerForModel).filter((x): x is NonNullable<typeof x> => !!x))];
     for (const provider of providers) {
@@ -89,6 +103,8 @@ export async function PATCH(req: NextRequest) {
   }
 
   const update = {
+    execution_mode: next.execution_mode,
+    subscription_worker_ids: workerIds,
     enabled: next.enabled,
     participant_models: next.participant_models,
     orchestrator_model: next.orchestrator_model,

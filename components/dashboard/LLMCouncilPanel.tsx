@@ -2,9 +2,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { COUNCIL_MODELS } from "@/lib/llm-model-catalog";
 import { effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
+import CouncilSubscriptionWorkers from "./CouncilSubscriptionWorkers";
 
 type CouncilConfig = {
   enabled: boolean;
+  execution_mode?: "api" | "subscription";
+  subscription_worker_ids?: string[];
   participant_models: string[];
   orchestrator_model: string;
   debate_rounds: number;
@@ -77,6 +80,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   const forecasts = payload.forecasts.filter((row) => !current || row.run_id === current.id);
   const turns = symbol ? payload.turns.filter((row) => !current || row.run_id === current.id) : payload.turns;
   const config = payload.config;
+  const subscription = config.execution_mode === "subscription";
 
   const card = { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 };
   const selectStyle = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px", color: T.text };
@@ -134,9 +138,12 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
       <label style={labelStyle}>Council
         <select disabled={busy} value={String(config.enabled)} onChange={(e) => void save({ enabled: e.target.value === "true" })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}><option value="false">Off (default)</option><option value="true">On · research shadow only</option></select>
       </label>
-      <label style={labelStyle}>Orchestrator
-        <select disabled={busy} value={config.orchestrator_model} onChange={(e) => void save({ orchestrator_model: e.target.value })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{MODELS.map((m) => <option key={m} value={m}>{m} · {PROVIDER[m]}</option>)}</select>
+      <label style={labelStyle}>Execution source
+        <select disabled={busy || config.enabled} value={config.execution_mode ?? "api"} onChange={e => void save({ execution_mode: e.target.value as "api" | "subscription" })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}><option value="api">API models · metered billing</option><option value="subscription">Subscription workers · Claude / Codex</option></select>
       </label>
+      {!subscription && <label style={labelStyle}>Orchestrator
+        <select disabled={busy} value={config.orchestrator_model} onChange={(e) => void save({ orchestrator_model: e.target.value })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{MODELS.map((m) => <option key={m} value={m}>{m} · {PROVIDER[m]}</option>)}</select>
+      </label>}
       <label style={labelStyle}>Debate rounds (0–3)
         <select disabled={busy} value={config.debate_rounds} onChange={(e) => void save({ debate_rounds: Number(e.target.value) })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{[0,1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}</select>
       </label>
@@ -147,19 +154,20 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
           if (Number.isInteger(value) && value >= 1 && value <= 5 && value !== config.max_symbols_per_market_day) void save({ max_symbols_per_market_day: value });
         }} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }} />
       </label>
-      <label style={labelStyle}>Hard daily budget (USD)
+      {!subscription && <label style={labelStyle}>Hard daily budget (USD)
         <input type="number" min={0} max={100} step={0.25} disabled={busy} value={numericDrafts.budget ?? String(config.daily_budget_usd)} onChange={(e) => setNumericDrafts((d) => ({ ...d, budget: e.target.value }))} onBlur={() => {
           const value = Number(numericDrafts.budget);
           setNumericDrafts((d) => { const next = { ...d }; delete next.budget; return next; });
           if (Number.isFinite(value) && value >= 0 && value <= 100 && value !== Number(config.daily_budget_usd)) void save({ daily_budget_usd: value });
         }} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }} />
-      </label>
+      </label>}
     </div>
+    {subscription ? <CouncilSubscriptionWorkers selected={config.subscription_worker_ids ?? []} disabled={busy} onSelect={ids => void save({ subscription_worker_ids: ids })} /> : <>
     <div style={{ marginTop: 14, color: T.sub, fontSize: 12 }}>Estimated maximum: {estimatedCalls} model calls per symbol · {config.max_symbols_per_market_day} symbols per market/day · {config.daily_budget_usd ? `$${config.daily_budget_usd}/day` : "$0 budget (no calls)"}. Calls reserve cost pessimistically before dispatch; actual spend comes from the LLM call ledger.</div>
     <div style={{ marginTop: 8, color: missingProviders.length ? T.red : T.green, fontSize: 12 }}>
       {missingProviders.length ? `Missing provider API key: ${missingProviders.join(", ")} — add it in Settings → AI Models before enabling.` : "Provider API keys are configured for the selected models."}
     </div>
-    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>Provider API keys are separate from ChatGPT Plus, Claude Pro/Code, and DeepSeek Chat subscriptions. Kairos cannot spend those memberships from its server. Codex/Claude app or CLI sessions are not backend council endpoints; OpenAI account-based access would require an eligible, approved Sign in with ChatGPT integration, which this app does not currently have.</div>
+    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>API mode uses provider API billing. To use Claude or Codex memberships instead, switch the council off and select Subscription workers above. Memberships do not become API keys.</div>
     <div style={{ marginTop: 16, color: T.text, fontSize: 12, fontWeight: 700 }}>Independent model participants</div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 6, marginTop: 8 }}>
       {MODELS.map((model) => <label key={model} style={{ color: T.sub, fontSize: 11, display: "flex", gap: 8, alignItems: "center", background: T.surface, padding: 8, borderRadius: 6 }}>
@@ -171,6 +179,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
       </label>)}
     </div>
     <div style={{ marginTop: 6, color: T.muted, fontSize: 11 }}>Choose 1–5 models. One model is a baseline (debate is skipped); with multiple models, at least two providers are required. The orchestrator summarizes but does not set the numeric median.</div>
+    </>}
     {notice && <div style={{ color: T.green, fontSize: 12, marginTop: 8 }}>{notice}</div>}
     {error && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{error}</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Latest per-model / composite IC</div>

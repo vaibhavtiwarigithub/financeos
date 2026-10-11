@@ -13,20 +13,26 @@ This is a testable research lane, not a claim that an LLM ensemble improves retu
 An owner-only Settings panel controls the council:
 
 - master enabled switch; default **off**;
-- 1–5 enabled model participants (a one-model configuration is a baseline; multi-model councils must use at least two providers);
+- 1–5 enabled model participants (a one-model configuration is a baseline; multi-model API councils must use at least two providers, while multi-worker subscription councils require both worker families);
 - one orchestrator model, independently selectable and allowed to also be a participant;
 - debate rounds from 0 through 3;
 - maximum 1–5 symbols per market per day and a hard daily USD budget;
 - explicit “shadow / not used for trading” status.
 
 Provider API-key readiness is shown without exposing credentials. A paid
-consumer membership (ChatGPT Plus/Pro, Claude Pro/Code, or DeepSeek Chat) is not
-a server API key and does not authorize background council calls. OpenAI's
-account-based Sign in with ChatGPT access is a separate OAuth integration
-available only to eligible/approved apps; Kairos has not implemented or been
-approved for it. Desktop/CLI app sessions are not used as backend credentials.
+consumer membership is not a server API key. The optional subscription-worker
+mode uses the official signed-in Claude Code or Codex CLI as a separately run
+local worker: Kairos queues a frozen, expiring job and receives its validated
+result. The personal session remains inside that client; Kairos never receives
+the provider login. The owner must schedule or start the local worker, and its
+machine must be awake and connected. A Claude web Routine is not currently
+integrated: its available trigger returns a run reference, not a structured
+result callback, and the inspected Routine is paused, lacks a project
+connector, and expects an older schema. The original API mode remains separate
+and uses provider API billing. No inference fallback crosses between the
+modes.
 
-One participant is allowed as a single-model baseline and skips peer debate; it is not represented as a multi-model vote. With multiple participants, at least two providers with resolvable provider API keys are required. The scheduler samples the predeclared near-threshold cohort up to the configured cap, orders candidates deterministically, and stops before exceeding its cost estimate/budget. It processes a bounded number of symbols per invocation based on worst-case model/round count, provider timeouts, and the 300-second route ceiling. No fallback model can silently stand in for a selected participant: if the router returns a different model, that participant is marked failed for this forecast. Groq model IDs past their published shutdown dates are excluded from the council picker even if retained for legacy agent assignments. Actual model identity and billed usage are recorded for every attempt, including failures through the existing `llm_call_log`.
+One participant is allowed as a single-model baseline and skips peer debate; it is not represented as a multi-model vote. With multiple participants in API mode, at least two providers with resolvable provider API keys are required. A multi-worker subscription roster requires both Claude and Codex families. The scheduler samples the predeclared near-threshold cohort up to the configured cap, orders candidates deterministically, and stops before exceeding its cost estimate/budget. It processes a bounded number of symbols per invocation based on worst-case model/round count, provider timeouts, and the 300-second route ceiling. No fallback model can silently stand in for a selected participant: if the router returns a different model, that participant is marked failed for this forecast. Groq model IDs past their published shutdown dates are excluded from the council picker even if retained for legacy agent assignments. Actual model identity and billed usage are recorded for every attempt, including failures through the existing `llm_call_log`.
 
 Estimated calls per symbol are `participants × (1 + effective_debate_rounds) + 1 orchestrator`; effective debate rounds are zero for a one-model baseline and otherwise are the configured 0–3 rounds. Settings shows this estimate before enabling. Initial defaults after owner enables are 2 participants, 1 round, 5 symbols/market/day, and a $2/day cap. These defaults are conservative starting controls, not a performance recommendation.
 
@@ -56,12 +62,40 @@ The primary prediction is each participant's initial independent score; revised/
 - A coupling test forbids council table/score imports from the scoring, paper/live execution, sizing, exits, rotation, promotion, and learner decision modules. The current release adds no consumer to those systems.
 - Enabling the council only enables measurement. A later trading integration requires a separate architecture decision and out-of-sample evidence review.
 
+## Subscription-worker execution mode (approved 2026-10-10)
+
+The owner may choose API mode or subscription-worker mode. The latter uses at
+most five registered worker identities, one per exact family/model pairing.
+Each worker authenticates to the Kairos queue using a random revocable token
+whose SHA-256 digest alone is stored. A job freezes the ordinary council packet
+and hash, then provides a leased claim with a hard 45-minute deadline. Worker
+results bind the job, lease, frozen-input hash, and expected model. Initial
+member scores are independent; later bounded rounds receive only prior-round
+anonymous scores/evidence. Median consensus is deterministic and no orchestrator
+inference call is billed. A concurrent poll will not repeat an active job.
+
+The official-client runner has no Kairos service credentials, drops project
+configuration and provider-key environment variables, disables model tools,
+web search and MCPs, and uses an isolated temporary working directory. Claude
+membership use requires Claude Code's own authenticated subscription session;
+Codex requires a Codex CLI login using the owner's ChatGPT account. Those logins
+remain local to the client. There is no server-side credential extraction or
+API fallback. Workers report token use where the official client exposes it;
+subscription usage is not converted to a made-up dollar charge.
+
+Synthetic batches are identified as `TEST-NO-REAL-ASSET`, have no linked
+observation or normal run, and are rate-limited. They prove transport and parsing
+only. Forecasts submitted asynchronously have a later information-availability
+time than the original ResearchAgent decision; therefore the existing
+observation-time evaluator excludes them. A separate availability-aligned label
+producer is required before subscription scores may appear in IC/t-stat results.
+
 ## Delivery sequence
 
 1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.
 2. Bounded shadow collector with independent calls, up to three debate rounds, consensus median, exact provenance, and hard call/cost caps.
 3. Scheduled evaluator over matured h2/h5/h10/h20 labels using the shared cohort and IC methodology; persist each model/composite/horizon result.
-4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity.
+4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. Subscription mode also shows worker registration, revocation, liveness, synthetic round trips, and per-job state; its forecasts stay out of IC until availability-aligned labels exist.
 5. Tests: malformed output, provider fallback, stale/missing evidence, idempotency, disabled config, cap enforcement, owner/cron auth, label maturity, cohort integrity, horizon overlap floor, and proof no trading consumer exists.
 
 ## Deliberately not included
