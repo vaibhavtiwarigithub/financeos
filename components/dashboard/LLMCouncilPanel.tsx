@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { COUNCIL_MODELS } from "@/lib/llm-model-catalog";
 import { effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
+import { groupCouncilUsageRows, type CouncilUsageRecord } from "@/lib/llm-council/usage-view";
 import CouncilSubscriptionWorkers from "./CouncilSubscriptionWorkers";
 
 type CouncilConfig = {
@@ -19,6 +20,7 @@ type Forecast = { run_id: string; model_requested: string; model_used: string | 
 type Turn = { run_id: string; model_requested: string; model_used: string | null; turn_role: string; round: number; output_json?: any; output_text?: string | null; tokens_in: number; tokens_out: number; cost_usd: number; status: string };
 type IcRow = { market: string; horizon_days: number; series_key: string; forecast_model: string | null; cohort_key: string; observation_count: number; qualifying_sessions: number; independent_windows: number; mean_session_rank_ic: number | null; t_stat: number | null; classification: string; evaluated_at: string };
 type Payload = { config: CouncilConfig; providerKeyReadiness: Record<string, boolean>; modelProviders: Record<string, string>; runs: Run[]; forecasts: Forecast[]; turns: Turn[]; ic: IcRow[] };
+type UsagePayload = { days: number; asOf: string; rows: CouncilUsageRecord[] };
 
 const MODELS = COUNCIL_MODELS;
 const PROVIDER: Record<string, string> = {
@@ -26,7 +28,7 @@ const PROVIDER: Record<string, string> = {
   "claude-haiku-4-5": "Anthropic", "claude-sonnet-4-6": "Anthropic", "gemini-2.5-flash": "Google", "gemini-2.5-pro": "Google", "grok-4-fast": "xAI", "grok-4": "xAI",
   "gpt-4o-mini": "OpenAI", "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
 };
-const T = { card: "#1A1D27", border: "#252836", surface: "#13151C", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#818cf8", green: "#34D399", red: "#f87171" };
+const T = { card: "#1A1D27", border: "#252836", surface: "#13151C", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#818cf8", green: "#34D399", red: "#f87171", yellow: "#FBBF24" };
 
 export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; market?: "us" | "india" }) {
   const [payload, setPayload] = useState<Payload | null>(null);
@@ -35,6 +37,10 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   const [notice, setNotice] = useState("");
   const [showTurns, setShowTurns] = useState(false);
   const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>({});
+  const [usage, setUsage] = useState<UsagePayload | null>(null);
+  const [usageDays, setUsageDays] = useState(30);
+  const [usageBusy, setUsageBusy] = useState(false);
+  const [usageError, setUsageError] = useState("");
   const load = useCallback(async () => {
     try {
       const params = new URLSearchParams();
@@ -49,6 +55,24 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
     } catch (e) { setError(e instanceof Error ? e.message : "Could not load LLM council"); }
   }, [symbol, market]);
   useEffect(() => { void load(); }, [load]);
+
+  const loadUsage = useCallback(async (days: number) => {
+    setUsageBusy(true);
+    setUsageError("");
+    try {
+      const response = await fetch(`/api/agents/llm-council/usage?days=${days}`, { cache: "no-store" });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? "Could not load council usage");
+      setUsage(json);
+    } catch (e) {
+      setUsageError(e instanceof Error ? e.message : "Could not load council usage");
+    } finally {
+      setUsageBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!symbol) void loadUsage(usageDays);
+  }, [symbol, usageDays, loadUsage]);
 
   async function save(patch: Partial<CouncilConfig>) {
     if (!payload) return;
@@ -119,16 +143,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
   const estimatedCalls = config.participant_models.length * (1 + effectiveRounds) + 1;
   const requiredProviders = [...new Set([...config.participant_models, config.orchestrator_model].map((model) => payload.modelProviders?.[model]).filter(Boolean))];
   const missingProviders = requiredProviders.filter((provider) => payload.providerKeyReadiness?.[provider] !== true);
-  const modelUsage = new Map<string, { calls: number; input: number; output: number; cost: number; failures: number }>();
-  for (const turn of turns) {
-    const item = modelUsage.get(turn.model_requested) ?? { calls: 0, input: 0, output: 0, cost: 0, failures: 0 };
-    item.calls += 1;
-    item.input += Number(turn.tokens_in ?? 0);
-    item.output += Number(turn.tokens_out ?? 0);
-    item.cost += Number(turn.cost_usd ?? 0);
-    if (turn.status !== "completed") item.failures += 1;
-    modelUsage.set(turn.model_requested, item);
-  }
+  const usageGroups = groupCouncilUsageRows(usage?.rows ?? []);
   return <section style={{ ...card, marginTop: 18 }}>
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
       <div><div style={{ color: T.text, fontWeight: 700 }}>Multi-LLM research council</div><div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>Independent scores → bounded debate → median (or single-model baseline) → multi-horizon IC. Shadow-only; it cannot trade.</div></div>
@@ -187,7 +202,36 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
     {latestCells.length === 0 && <div style={{ color: T.muted, fontSize: 12, padding: 12 }}>No evaluation runs yet. Insufficient evidence is an expected status until enough labels mature.</div>}
     <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Recent council symbols</div>
     <div style={{ display: "grid", gap: 6, marginTop: 8 }}>{runs.slice(0, 8).map((row) => <a key={row.id} href={`/dashboard/research/${encodeURIComponent(row.symbol)}`} style={{ color: T.sub, display: "flex", justifyContent: "space-between", gap: 10, textDecoration: "none", padding: "7px 9px", background: T.surface, borderRadius: 6, fontSize: 11 }}><span>{row.market.toUpperCase()} · {row.symbol} · {new Date(row.decision_ts).toLocaleDateString()}</span><span style={{ color: T.accent }}>LLM {row.consensus_score ?? "—"} · {row.status}</span></a>)}</div>
-    <div style={{ marginTop: 18, color: T.text, fontSize: 12, fontWeight: 700 }}>Per-model usage · recent runs</div>
-    <div style={{ overflowX: "auto", marginTop: 8 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 580 }}><thead><tr>{["Requested model", "Calls", "Input tokens", "Output tokens", "Cost", "Failures"].map((x) => <th key={x} style={{ textAlign: "left", color: T.muted, padding: 7, borderBottom: `1px solid ${T.border}` }}>{x}</th>)}</tr></thead><tbody>{[...modelUsage.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([model, usage]) => <tr key={model}><td style={{ color: T.sub, padding: 7 }}>{model}</td><td style={{ color: T.sub, padding: 7 }}>{usage.calls}</td><td style={{ color: T.sub, padding: 7 }}>{usage.input.toLocaleString()}</td><td style={{ color: T.sub, padding: 7 }}>{usage.output.toLocaleString()}</td><td style={{ color: T.text, padding: 7 }}>${usage.cost.toFixed(4)}</td><td style={{ color: usage.failures ? T.red : T.sub, padding: 7 }}>{usage.failures}</td></tr>)}</tbody></table></div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
+      <div>
+        <div style={{ color: T.text, fontSize: 12, fontWeight: 700 }}>Daily model usage by pipeline</div>
+        <div style={{ color: T.muted, fontSize: 10, marginTop: 3 }}>Dates use US Eastern or India time. API cost is Kairos&apos; router estimate; subscription jobs are not assigned a made-up API charge.</div>
+      </div>
+      <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 7 }}>Lookback
+        <select aria-label="Council usage lookback" disabled={usageBusy} value={usageDays} onChange={(e) => setUsageDays(Number(e.target.value))} style={selectStyle}>
+          {[7, 30, 90].map((days) => <option key={days} value={days}>{days} days</option>)}
+        </select>
+      </label>
+    </div>
+    {usage?.asOf && <div style={{ color: T.muted, fontSize: 10, marginTop: 5 }}>Snapshot retrieved {new Date(usage.asOf).toLocaleString()} · {usageBusy ? "refreshing…" : ""}</div>}
+    {usageError && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{usageError}</div>}
+    {usageBusy && !usage ? <div style={{ color: T.muted, fontSize: 12, padding: 12 }}>Loading dated usage…</div> : usageGroups.length === 0 ? <div style={{ color: T.muted, fontSize: 12, padding: 12 }}>{usageError ? "Usage could not be verified." : `No council usage records in the last ${usageDays} market-local days.`}</div> : <div style={{ overflowX: "auto", marginTop: 8 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 850 }}>
+        <thead><tr>{["Market-local date", "Pipeline", "Source", "Turns / jobs", "Input tokens", "Output tokens", "Unreported fields", "API cost estimate", "Failures", "Details"].map((x) => <th key={x} style={{ textAlign: "left", color: T.muted, padding: 7, borderBottom: `1px solid ${T.border}` }}>{x}</th>)}</tr></thead>
+        <tbody>{usageGroups.map((group) => <tr key={`${group.usageDate}-${group.market}-${group.executionSource}`}>
+          <td title={group.timestampBasis} style={{ color: T.sub, padding: 7, whiteSpace: "nowrap" }}><div>{group.usageDate} <span style={{ color: T.muted }}>{group.market === "india" ? "IST" : "ET"}</span></div><div style={{ color: T.muted, fontSize: 9, marginTop: 2 }}>{group.timestampBasis}</div></td>
+          <td style={{ color: T.sub, padding: 7 }}>{group.market.toUpperCase()}</td>
+          <td style={{ color: T.sub, padding: 7 }}>{group.executionSource === "api" ? "API" : "Subscription"}</td>
+          <td title={group.executionSource === "subscription" ? "Unique persisted worker jobs, not necessarily provider invocations; retries can consume membership usage without a second row." : "Persisted council turn records; each row represents a council stage."} style={{ color: T.sub, padding: 7 }}>{group.records.toLocaleString()}{group.executionSource === "subscription" && group.leaseAttempts ? <span style={{ color: T.muted }}> · {group.leaseAttempts} lease claims</span> : null}</td>
+          <td style={{ color: T.sub, padding: 7 }}>{group.inputTokens.toLocaleString()}</td>
+          <td style={{ color: T.sub, padding: 7 }}>{group.outputTokens.toLocaleString()}</td>
+          <td title="Rows where the provider/client did not report this token count; not treated as zero usage." style={{ color: group.inputUnknownRecords || group.outputUnknownRecords ? T.yellow : T.sub, padding: 7 }}>{group.inputUnknownRecords + group.outputUnknownRecords || "—"}</td>
+          <td title={group.executionSource === "api" ? "Estimated by Kairos from the configured model rate; unknown means a failed call did not return verifiable usage." : "Subscription usage; Kairos does not have a per-call dollar amount."} style={{ color: T.text, padding: 7 }}>{group.estimatedApiCostUsd == null ? (group.executionSource === "subscription" ? "Membership · n/a" : "Unknown") : `$${group.estimatedApiCostUsd.toFixed(4)}`}</td>
+          <td style={{ color: group.failures ? T.red : T.sub, padding: 7 }}>{group.failures}</td>
+          <td style={{ color: T.sub, padding: 7 }}><details><summary style={{ cursor: "pointer" }}>Models ({group.details.length})</summary><div style={{ minWidth: 300, paddingTop: 6 }}>{group.details.map((detail, index) => <div key={`${detail.modelRequested}-${detail.role}-${index}`} style={{ padding: "5px 0", borderTop: `1px solid ${T.border}` }}><div style={{ color: T.text }}>{detail.modelRequested}{detail.modelActual !== detail.modelRequested ? ` → ${detail.modelActual}` : ""}</div><div style={{ color: T.muted, marginTop: 2 }}>{detail.role} · {detail.records} record(s) · {detail.inputTokens.toLocaleString()} in / {detail.outputTokens.toLocaleString()} out{detail.inputUnknownRecords || detail.outputUnknownRecords ? ` · token fields missing ${detail.inputUnknownRecords + detail.outputUnknownRecords}` : ""}{detail.estimatedApiCostUsd == null ? (group.executionSource === "subscription" ? " · membership; no API price" : " · usage cost unknown") : ` · $${detail.estimatedApiCostUsd.toFixed(4)}`} · {detail.failures} failure(s){detail.leaseAttempts ? ` · ${detail.leaseAttempts} lease claim(s)` : ""}</div></div>)}</div></details></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+    <div style={{ color: T.muted, fontSize: 10, marginTop: 6 }}>“Turns / jobs” are ledger records, not guaranteed unique provider invocations. Subscription retries may consume membership usage without a second submitted result; lease claims are shown separately. Synthetic test batches are excluded. “Unreported” token counts are unknown, never counted as zero. Subscription dates use result-reported time; expired jobs without a result use the queued/lease date and are marked as uncertain.</div>
   </section>;
 }
