@@ -90,12 +90,55 @@ time than the original ResearchAgent decision; therefore the existing
 observation-time evaluator excludes them. A separate availability-aligned label
 producer is required before subscription scores may appear in IC/t-stat results.
 
+## Dated usage and pipeline attribution (approved 2026-10-11)
+
+Settings → AI Models shows a 7-, 30-, or 90-market-local-day usage history. Each daily summary stays separate by market (`us` or `india`) and execution source (`api` or `subscription`); expanding a summary shows requested and actual model identity, council role, failures, token-report completeness, and subscription lease claims.
+
+API usage is read from `llm_council_turns`, preserving each independent/debate/orchestrator stage and the requested-versus-returned model. Token totals and cost come from the persisted turn result. The displayed dollar amount is Kairos' router estimate, not an invoice. A failed stage with no returned model is marked as having unknown token use/cost unless its persisted reason proves the request was rejected before dispatch (`provider_key_missing` or `prompt_too_large`).
+
+Subscription usage is read from non-synthetic `llm_council_jobs` joined to its research run and worker family. Token values remain unknown if the official client did not report them; subscription use is not assigned a fabricated API dollar cost. A row counts one persisted stage/job, not guaranteed provider invocations: the queue can reclaim an expired lease and the current schema cannot prove whether a timed-out worker consumed membership usage before its result arrived. Lease claims are displayed separately, and expired jobs without a submitted result are visible as uncertain usage on the queued/lease day. Synthetic `TEST-NO-REAL-ASSET` batches are excluded.
+
+US dates use `America/New_York`; India dates use `Asia/Kolkata`. API stages use their persisted turn timestamp. Subscription rows use result submission time when present and explicitly use queue/lease time when the job expired without a report. The database function bounds the scan to the chosen window (with a short queue-deadline buffer), validates the allowed lookbacks, and is executable only by `service_role`; the authenticated route additionally requires `requireOwner`. There is no new public data surface, browser-side service credential, score consumer, schedule, or money-path behavior.
+
+## GPT-5.6 Luna and paired deterministic comparison (implemented locally 2026-10-11)
+
+The API model catalogue now includes `gpt-5.6-luna`, with explicit `medium`
+reasoning effort, completion-token accounting and the published API token rates.
+The Settings picker calls out the recommended three API participants—DeepSeek
+Flash, GPT-5.6 Luna (medium), and Claude Sonnet 4.6—while the orchestrator remains
+separately selected. The council stays off until the owner enables it and all
+required provider API keys are present. GPT-5.6 Luna was also exercised once via
+the existing signed-in Codex CLI worker using only a synthetic
+`TEST-NO-REAL-ASSET` packet; it returned a structured score and token counts.
+
+The evaluator now adds `deterministic:analyst_score_paired` and
+`blend:equal_weight_50_50_paired`. Both are calculated only on the exact
+run/label observations where a valid council median and deterministic composite
+coexist. The 50/50 blend is frozen, measurement-only and deliberately not fit to
+the same history. Compare those rows with `composite:median` at h2/h5/h10/h20;
+they remain descriptive under the same session and overlap gates.
+
+**Execution-source limitation remains explicit:** API mode can run all three
+providers together, but bills OpenAI and Anthropic API usage. Subscription mode
+uses the official Codex/Claude CLI workers and is currently an all-subscription
+roster; it does not mix DeepSeek API with GPT/Claude workers. Subscription runs
+also remain excluded from the decision-time IC evaluator because their results
+arrive asynchronously. A production-ready API/subscription hybrid and a
+forecast-availability-aligned label producer are still required before the
+requested low-API-cost three-member daily council can be called complete.
+Codex CLI JSONL events do not report the executed model ID, so its worker can
+prove the requested CLI model was accepted and a structured result returned,
+but not independently attest a provider-reported actual model identity. Claude
+subscription use is unverified until the Claude Code client is signed in and
+passes a synthetic test. No subscription/API blend is silently represented as
+one verified execution path.
+
 ## Delivery sequence
 
 1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.
 2. Bounded shadow collector with independent calls, up to three debate rounds, consensus median, exact provenance, and hard call/cost caps.
 3. Scheduled evaluator over matured h2/h5/h10/h20 labels using the shared cohort and IC methodology; persist each model/composite/horizon result.
-4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. Subscription mode also shows worker registration, revocation, liveness, synthetic round trips, and per-job state; its forecasts stay out of IC until availability-aligned labels exist.
+4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. Subscription mode also shows worker registration, revocation, liveness, synthetic round trips, per-job state, and dated usage by market/pipeline; its forecasts stay out of IC until availability-aligned labels exist.
 5. Tests: malformed output, provider fallback, stale/missing evidence, idempotency, disabled config, cap enforcement, owner/cron auth, label maturity, cohort integrity, horizon overlap floor, and proof no trading consumer exists.
 
 ## Deliberately not included

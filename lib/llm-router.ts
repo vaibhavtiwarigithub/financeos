@@ -108,7 +108,7 @@ export const REASONING_MIN_TOKENS = 16000
 export function isReasoningModel(model: string): boolean {
   // The tier label now resolves to Flash. Only an explicit V4 Pro choice in
   // Settings enables the expensive reasoning budget floor.
-  return model === "deepseek-v4-pro" || model === "deepseek-reasoner"
+  return model === "deepseek-v4-pro" || model === "deepseek-reasoner" || model === "gpt-5.6-luna"
 }
 
 /**
@@ -233,6 +233,8 @@ const PRICING: Record<string, [number, number]> = {
   "gpt-4o":                    [2.50,  10.00],
   "gpt-4o-mini":               [0.15,   0.60],
   "gpt-4.1":                   [2.00,   8.00],
+  // Official published GPT-5.6 Luna rates: $0.20 / $1.20 per 1M tokens.
+  "gpt-5.6-luna":              [0.20,   1.20],
   "gpt-4.1-mini":              [0.40,   1.60],
   "glm-4.6":                   [0.60,   2.20],
   "glm-4.5-air":               [0.20,   1.10],
@@ -744,9 +746,10 @@ async function callOpenAI(
   messages.push({ role: "user", content: prompt })
 
   // Reasoning models (o1/o3/o4) use max_completion_tokens and reject temperature.
-  const isReasoner = /^o[134]/.test(model)
+  const isReasoner = /^o[134]/.test(model) || model === "gpt-5.6-luna"
   const body: Record<string, unknown> = { model, messages }
   body[isReasoner ? "max_completion_tokens" : "max_tokens"] = maxTokens
+  if (model === "gpt-5.6-luna") body.reasoning_effort = "medium"
 
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
