@@ -167,7 +167,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
     <div style={{ marginTop: 8, color: missingProviders.length ? T.red : T.green, fontSize: 12 }}>
       {missingProviders.length ? `Missing provider API key: ${missingProviders.join(", ")} — add it in Settings → AI Models before enabling.` : "Provider API keys are configured for the selected models."}
     </div>
-    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>API mode uses provider API billing. To use Claude or Codex memberships instead, switch the council off and select Subscription workers above. Memberships do not become API keys.</div>
+    <div style={{ marginTop: 5, color: T.muted, fontSize: 11 }}>API mode uses provider API billing. GPT-5.6 Luna is not an API model choice: to use it through your ChatGPT membership, keep the council OFF, switch Execution source to Subscription workers, then register a Codex worker. Luna will be preselected there. Memberships do not become API keys.</div>
     <div style={{ marginTop: 16, color: T.text, fontSize: 12, fontWeight: 700 }}>Independent model participants</div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 6, marginTop: 8 }}>
       {MODELS.map((model) => <label key={model} style={{ color: T.sub, fontSize: 11, display: "flex", gap: 8, alignItems: "center", background: T.surface, padding: 8, borderRadius: 6 }}>
