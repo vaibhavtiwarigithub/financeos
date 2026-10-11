@@ -35,7 +35,7 @@ export default function CouncilSubscriptionWorkers({ selected, disabled, onSelec
     setBusy(false);
   }
   return <div style={{ marginTop: 16, color: T.sub, fontSize: 12 }}>
-    <p>Use your signed-in Claude Code or Codex client. Kairos supplies a frozen packet; workers return structured scores. The server never receives your provider login. No paid API fallback. Subscription usage limits still apply.</p>
+    <p>Use your signed-in Claude Code or Codex client. Kairos supplies a frozen packet; workers return structured scores. The server never receives your provider login. This is not cloud execution: schedule the local runner and keep its machine awake. No paid API fallback; subscription usage limits still apply.</p>
     <p>1. Register a worker → 2. Configure its private runner → 3. Select it and pass a synthetic test → 4. Turn on the council above.</p>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,200px),1fr))", gap: 10 }}>
       <label>Worker name<input aria-label="Worker name" value={label} onChange={e => setLabel(e.target.value)} maxLength={80} style={{ ...control, width: "100%", boxSizing: "border-box", display: "block" }} /></label>
