@@ -236,6 +236,37 @@ arrows exist.
 
 ---
 
+## Multi-LLM Research Council (shadow-only)
+
+The council is an owner-controlled research measurement lane, not a trading agent. When enabled,
+it records point-in-time forecasts from configured provider models, preserves initial and debated
+scores separately, and computes a deterministic median from valid final participant scores. A
+separate orchestrator may summarize evidence and disagreement; its prose is not itself a score.
+The council remains disconnected from scoring, eligibility, sizing, rotation, paper orders, live
+orders, stops, and exits.
+
+Forecast output is accepted only when the entire response is either a JSON object or a complete
+JSON code fence containing one. Prose-wrapped fragments, smart-quote pseudo-JSON, arrays, and
+coerced string scores/confidence fail closed as invalid output; they are excluded from score
+aggregation and evaluation. Citations must resolve to the frozen point-in-time packet. Requested
+and actual model identities, failures, tokens, and cost are logged so provider fallback cannot be
+mistaken for the selected model's result.
+
+Each model and the composite are evaluated separately against matured market-local benchmark-
+neutral labels across h2/h5/h10/h20. Rank IC is session-clustered, with overlapping horizons
+reducing effective windows; an insufficient sample remains explicitly insufficient. The detailed
+contract and limits live in
+[`features/llm-council-shadow/FEATURE_ARCHITECTURE.md`](../../features/llm-council-shadow/FEATURE_ARCHITECTURE.md).
+
+**Subscription-product boundary:** a one-off Claude Code Routine test used synthetic data only.
+Claude's routine trigger returns a run identifier/status rather than a structured forecast body,
+so it is not wired as a council provider. No Claude Pro or ChatGPT Plus membership credentials,
+browser sessions, or routine bearer tokens are reused by Kairos, and no real portfolio or symbol
+packet is sent through that path. Council providers still require their supported app-side
+provider integration and configured credentials.
+
+---
+
 ## Agent registry
 
 ### MacroSentinel — the economist
@@ -1426,3 +1457,29 @@ US uses Massive/cache quotes plus Alpha Vantage fundamentals; India uses Yahoo
 INR quotes and Yahoo India fundamentals and never borrows the US macro regime.
 The configured LLM provider is resolved before its key is checked. The diagram
 source is `public/agent-diagrams/deep-dive.json`.
+
+## Multi-LLM Research Council (shadow-only)
+
+The owner-controlled council is configured in Settings → AI Models. It can use
+one selected model as a baseline or 2–5 distinct models (multi-model councils
+must span at least two providers), plus an independently selected synthesis
+model. Debate is bounded to 0–3 rounds; a one-model baseline skips debate. The
+daily symbol cap and hard USD budget are enforced before provider dispatch, and
+per-call deadlines/batch size adapt to the configured worst case. Retired or
+unsupported model IDs fail closed. The council remains OFF by default and has
+no scoring, sizing, paper-trading, rotation, or live-trading consumer.
+
+Collection uses a frozen, declared near-threshold long-entry cohort: the latest
+observation per symbol in a bounded recent scan, within ±5 points of its
+recorded deterministic entry threshold. Both eligible and rejected long-entry
+observations are included; holding reviews, unknown contexts, shorts, and
+unresearched symbols are excluded. Evaluations reuse the exact predicate and
+frozen cohort key, join only matured benchmark-neutral labels, and report
+per-session rank IC with overlap-adjusted effective windows. A scan beyond its
+safe bound refuses to select a partial cohort. Council outputs and model
+subscription credentials are not a substitute for provider API keys: Kairos
+requires the configured provider API key. ChatGPT, Claude, and DeepSeek paid
+consumer memberships do not by themselves authorize server API calls; any
+eligible account-based OpenAI integration would need a separately approved
+OAuth product integration. Codex/Claude desktop or CLI sessions are not
+background Kairos APIs.

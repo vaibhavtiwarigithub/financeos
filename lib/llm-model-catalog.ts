@@ -21,6 +21,25 @@ export const CONFIGURABLE_MODELS = [
 
 export type ConfigurableModel = (typeof CONFIGURABLE_MODELS)[number];
 
+// Groq's official shutdown schedule: https://console.groq.com/docs/deprecations
+// These IDs are retired for standard/developer usage. Keep them in the legacy
+// general-agent catalog, but do not offer them to the council.
+export const COUNCIL_RETIRED_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "deepseek-r1-distill-llama-70b",
+] as const;
+
+export const COUNCIL_MODELS = CONFIGURABLE_MODELS.filter(
+  (model) => !(COUNCIL_RETIRED_MODELS as readonly string[]).includes(model),
+);
+
+export type CouncilModel = (typeof COUNCIL_MODELS)[number];
+
 export function isConfigurableModel(value: unknown): value is ConfigurableModel {
   return typeof value === "string" && (CONFIGURABLE_MODELS as readonly string[]).includes(value);
+}
+
+export function isCouncilModel(value: unknown): value is CouncilModel {
+  return typeof value === "string" && (COUNCIL_MODELS as readonly string[]).includes(value);
 }

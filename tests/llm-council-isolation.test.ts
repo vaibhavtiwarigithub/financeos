@@ -33,4 +33,25 @@ describe("LLM council safety boundary", () => {
     expect(evaluate).toContain("const outcome = row.benchmark_neutral_return;");
     expect(evaluate).not.toMatch(/benchmark_neutral_return\s*\?\?\s*fwd_return/);
   });
+
+  it("instructs every council stage to emit strict ASCII JSON without prose", () => {
+    const collect = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    expect(collect).toContain("RFC 8259 JSON object using straight ASCII double quotes");
+    expect(collect).toContain("No smart quotes, code fence, comments, trailing comma");
+    expect(collect).toContain("no smart quotes, markdown fences, comments, trailing commas, or surrounding prose");
+  });
+
+  it("freezes one declared near-threshold cohort and shares its predicate with evaluation", () => {
+    const collect = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    const evaluate = readFileSync("app/api/agents/llm-council/evaluate/route.ts", "utf8");
+    const cohort = readFileSync("lib/llm-council/cohort.ts", "utf8");
+    expect(collect).toContain("COUNCIL_COHORT_KEY");
+    expect(collect).toContain("COUNCIL_COHORT_HALF_WIDTH");
+    expect(collect).toContain("isNearThresholdEntryLong");
+    expect(collect.indexOf("for (const row of obsRows)")).toBeLessThan(collect.indexOf(".filter((row) => isNearThresholdEntryLong(row))"));
+    expect(evaluate).toContain("isNearThresholdEntryLong(obs)");
+    expect(evaluate).toContain("run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY");
+    expect(cohort).toContain("Math.abs(score - threshold) <= halfWidth");
+    expect(cohort).not.toContain("entryEligible");
+  });
 });

@@ -3,18 +3,18 @@ import { callLLM, isReasoningModel, priceFor } from "@/lib/llm-router";
 import { providerForModel, getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { councilProviderTimeoutMs, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
+import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
+import { COUNCIL_COHORT_HALF_WIDTH, COUNCIL_COHORT_KEY, isNearThresholdEntryLong, thresholdDistance } from "@/lib/llm-council/cohort";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const MAX_TURN_TOKENS = 900;
-// At the maximum configuration (3 participants × 4 turns + orchestrator), a
-// 12s hard timeout leaves ample room for persistence/finalization in 300s.
-const PROVIDER_TIMEOUT_MS = 12_000;
 const MAX_TURN_CHARS = 45_000;
-const SYSTEM = "You are a research analyst in a shadow-only stock research experiment. Use only the supplied frozen evidence. Do not use or invent current facts from model memory. If a field has no source/as-of timestamp, say its date is unknown. Cite factual claims using evidence paths from the snapshot and their recorded as-of date. Output only the requested JSON. This opinion never places or changes trades.";
+const MAX_OBSERVATION_SCAN = 5_000;
+const SYSTEM = "You are a research analyst in a shadow-only stock research experiment. Use only the supplied frozen evidence. Do not use or invent current facts from model memory. If a field has no source/as-of timestamp, say its date is unknown. Cite factual claims using evidence paths from the snapshot and their recorded as-of date. Output exactly one RFC 8259 JSON object using straight ASCII double quotes; no smart quotes, markdown fences, comments, trailing commas, or surrounding prose. Escape quotes inside strings. This opinion never places or changes trades.";
 
 function estimateCost(model: string, prompt: string, maxOutput = MAX_TURN_TOKENS): number {
   const [inputRate, outputRate] = priceFor(model);
@@ -132,7 +132,7 @@ async function addPointInTimeRelationships(svc: any, row: any, base: Record<stri
 
 async function invoke(
   svc: any,
-  args: { runId: string; symbol: string; requestedModel: string; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; parse?: boolean; snapshot?: unknown },
+  args: { runId: string; symbol: string; requestedModel: string; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; timeoutMs: number; parse?: boolean; snapshot?: unknown },
 ) {
   const provider = providerForModel(args.requestedModel);
   const persist = async (row: Record<string, unknown>) => {
@@ -150,7 +150,7 @@ async function invoke(
     if (!provider || !(await getProviderKey(provider, svc))) throw new Error(`provider_key_missing:${provider ?? "unknown"}`);
     result = await callLLM({
       task: "evaluate", model: args.requestedModel, prompt: args.prompt, systemPrompt: SYSTEM,
-      maxTokens: MAX_TURN_TOKENS, timeoutMs: PROVIDER_TIMEOUT_MS, symbol: args.symbol, agentLabel: "llm-council", runId: args.runId,
+      maxTokens: MAX_TURN_TOKENS, timeoutMs: args.timeoutMs, symbol: args.symbol, agentLabel: "llm-council", runId: args.runId,
     });
   } catch (error) {
     await persist({ status: "failed", output_text: String(error).slice(0, 500) });
@@ -204,35 +204,54 @@ export async function POST(req: NextRequest) {
   const dailyCount = (dailyRuns ?? []).filter((r: any) => r.market === requestedMarket && r.status !== "budget_skipped").length;
   const remainingSymbols = Math.max(0, Number(config.max_symbols_per_market_day) - dailyCount);
   if (remainingSymbols === 0) return NextResponse.json({ skipped: "daily_symbol_cap", dailySpend });
-  const participants = (config.participant_models as string[]).filter((m) => !!providerForModel(m));
-  const uniqueProviders = new Set(participants.map(providerForModel).filter(Boolean));
-  if (participants.length < 2 || uniqueProviders.size < 2) return NextResponse.json({ error: "Council needs two configured models from distinct providers" }, { status: 409 });
+  const participants = config.participant_models as string[];
+  if (!validCouncilParticipants(participants, isCouncilModel, providerForModel)) {
+    return NextResponse.json({ error: "Council roster is invalid or includes a retired model; update Settings → LLM Council" }, { status: 409 });
+  }
+  const debateRounds = effectiveCouncilDebateRounds(participants.length, Number(config.debate_rounds));
+  const providerTimeoutMs = councilProviderTimeoutMs(participants.length, debateRounds);
 
-  const { data: obsRows, error: obsError } = await svc.from("decision_observations")
-    .select("id,ts,market,symbol,code_version,features,availability_mask,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,direction,entry_eligible,score_threshold,price_at_decision,currency,decision_context,discovery_source")
-    .eq("market", requestedMarket).eq("entry_eligible", true).eq("direction", "long")
-    .gte("ts", new Date(now.getTime() - 3 * 86_400_000).toISOString())
-    .order("ts", { ascending: false }).limit(500);
-  if (obsError) return NextResponse.json({ error: "Could not load frozen research observations" }, { status: 500 });
-  const eligible = (obsRows ?? []).filter((row: any) => isEntryCandidateLong({
-    entryEligible: row.entry_eligible, direction: row.direction, decisionContext: row.decision_context, discoverySource: row.discovery_source,
-  }));
+  const observationCutoff = new Date(now.getTime() - 3 * 86_400_000).toISOString();
+  const obsRows: any[] = [];
+  for (let offset = 0; offset <= MAX_OBSERVATION_SCAN; offset += 500) {
+    const pageSize = Math.min(500, MAX_OBSERVATION_SCAN + 1 - offset);
+    const { data, error } = await svc.from("decision_observations")
+      .select("id,ts,market,symbol,code_version,features,availability_mask,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,direction,entry_eligible,score_threshold,price_at_decision,currency,decision_context,discovery_source")
+      .eq("market", requestedMarket).gte("ts", observationCutoff)
+      .order("ts", { ascending: false }).order("id", { ascending: false }).range(offset, offset + pageSize - 1);
+    if (error) return NextResponse.json({ error: "Could not load frozen research observations" }, { status: 500 });
+    obsRows.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+    if (obsRows.length > MAX_OBSERVATION_SCAN) {
+      return NextResponse.json({ error: "Recent research universe exceeds the council's safe candidate-scan limit; no partial cohort was selected" }, { status: 503 });
+    }
+  }
   const latestBySymbol = new Map<string, any>();
-  for (const row of eligible) if (!latestBySymbol.has(row.symbol)) latestBySymbol.set(row.symbol, row);
-  const rankedCandidates = [...latestBySymbol.values()].sort((a, b) => Number(b.analyst_score) - Number(a.analyst_score));
+  // Choose the newest observation first, then test its cohort. Filtering before
+  // this step could silently fall back to an older in-band row after a newer
+  // holding review or out-of-band decision for the same symbol.
+  for (const row of obsRows) if (!latestBySymbol.has(row.symbol)) latestBySymbol.set(row.symbol, row);
+  const rankedCandidates = [...latestBySymbol.values()]
+    .filter((row) => isNearThresholdEntryLong(row))
+    .sort((a, b) => thresholdDistance(a) - thresholdDistance(b) || String(b.ts).localeCompare(String(a.ts)) || String(a.symbol).localeCompare(String(b.symbol)));
   const { data: existing } = rankedCandidates.length
     ? await svc.from("llm_council_runs").select("observation_id").in("observation_id", rankedCandidates.map((x) => x.id))
     : { data: [] };
   const done = new Set((existing ?? []).map((x: any) => Number(x.observation_id)));
   // One symbol per cron invocation keeps the worst-case three-model / three-round
   // sequence inside the function runtime. Five spaced invocations fill the daily cap.
-  const candidates = rankedCandidates.filter((row) => !done.has(Number(row.id))).slice(0, Math.min(remainingSymbols, 1));
+  const candidates = limitCouncilCandidates(
+    rankedCandidates.filter((row) => !done.has(Number(row.id))),
+    remainingSymbols,
+    participants.length,
+    debateRounds,
+  );
 
   const outcomes: Array<Record<string, unknown>> = [];
   for (const observation of candidates) {
     const snapshot = await addPointInTimeRelationships(svc, observation, asSnapshot(observation));
     const snapshotText = JSON.stringify(snapshot);
-    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return JSON only: {"score": number, "confidence": 0..1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view.`;
+    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view.`;
     if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
       break;
@@ -240,9 +259,12 @@ export async function POST(req: NextRequest) {
     const configSnapshot = {
       participant_models: participants,
       orchestrator_model: config.orchestrator_model,
-      debate_rounds: config.debate_rounds,
+      debate_rounds: debateRounds,
+      configured_debate_rounds: config.debate_rounds,
       max_symbols_per_market_day: config.max_symbols_per_market_day,
       daily_budget_usd: config.daily_budget_usd,
+      cohort_key: COUNCIL_COHORT_KEY,
+      cohort_half_width_points: COUNCIL_COHORT_HALF_WIDTH,
     };
     const { data: run, error: createError } = await svc.from("llm_council_runs").insert({
       observation_id: observation.id, market: requestedMarket, symbol: observation.symbol, decision_ts: observation.ts,
@@ -273,7 +295,7 @@ export async function POST(req: NextRequest) {
       for (const model of participants) {
         if (!canCall(model, independentPrompt)) { budgetExhausted = true; break; }
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, parse: true, snapshot });
+          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
           await refreshUsageFromLedger();
           const forecast = parsed as Forecast;
           forecasts.set(model, { initial: forecast, final: forecast, modelUsed: result.model });
@@ -285,13 +307,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      for (let round = 1; round <= Number(config.debate_rounds) && forecasts.size >= 2 && !budgetExhausted; round++) {
+      for (let round = 1; round <= debateRounds && forecasts.size >= 2 && !budgetExhausted; round++) {
         const peers = [...forecasts.entries()].map(([model, value]) => ({ model, score: value.final.score, confidence: value.final.confidence, rationale: value.final.rationale, bull_case: value.final.bull_case, bear_case: value.final.bear_case }));
         for (const [model, value] of forecasts) {
           const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence.`;
           if (!canCall(model, prompt)) { budgetExhausted = true; break; }
           try {
-            const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, parse: true, snapshot });
+            const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
             await refreshUsageFromLedger();
             value.final = parsed as Forecast;
           } catch (error) { await refreshUsageFromLedger(); outcomes.push({ symbol: observation.symbol, model, round, issue: String(error).slice(0, 100) }); }
@@ -301,14 +323,14 @@ export async function POST(req: NextRequest) {
       const finalEntries = [...forecasts.entries()];
       const finalProviderCount = new Set(finalEntries.map(([model]) => providerForModel(model)).filter(Boolean)).size;
       const finalScores = finalEntries.map(([, value]) => value.final.score);
-      const consensus = finalEntries.length >= 2 && finalProviderCount >= 2 ? medianScore(finalScores) : null;
+      const consensus = validCouncilConsensus(participants.length, finalEntries.length, finalProviderCount) ? medianScore(finalScores) : null;
       const finalReports = [...forecasts.entries()].map(([model, value]) => ({ model, initial_score: value.initial.score, final_score: value.final.score, rationale: value.final.rationale, bull_case: value.final.bull_case, bear_case: value.final.bear_case }));
       let summary: string | null = null;
       let dissent: string | null = null;
       if (consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
         const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns.`;
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, parse: true });
+          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true });
           await refreshUsageFromLedger();
           const o = parsed as any;
           if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("orchestrator_output_invalid");
@@ -344,5 +366,5 @@ export async function POST(req: NextRequest) {
       outcomes.push({ symbol: observation.symbol, status: finalizeError ? "failed_to_finalize" : "failed", issue: String(error).slice(0, 180) });
     }
   }
-  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, outcomes, dailySpendUsd: dailySpend, shadowOnly: true });
+  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, cohort: COUNCIL_COHORT_KEY, cohortHalfWidthPoints: COUNCIL_COHORT_HALF_WIDTH, outcomes, dailySpendUsd: dailySpend, shadowOnly: true });
 }
