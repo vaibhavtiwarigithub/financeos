@@ -1,5 +1,7 @@
 # Kairos — Agents
 
+> **Capital-rotation diagnostics (2026-10-11):** new audit rows use `cash_shortfall_before_rotation` only to say idle cash is below the candidate notional before a funding sale. It does not mean cash is the only blocker; the authoritative P1 blockers remain the separate full gate list in the event. Historical append-only rows are not rewritten.
+
 ## Continuous US symbol discovery and research rotation (2026-10-08)
 
 `/api/agents/listing-discovery?market=us` combines SEC issuer/filing evidence with

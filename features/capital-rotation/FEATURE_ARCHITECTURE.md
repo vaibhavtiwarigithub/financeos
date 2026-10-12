@@ -1,6 +1,8 @@
 # Feature Architecture - Capital Rotation
 
 > Status: **P0 shadow and gated P1 paper executor built; execution readiness remains unproven.** Live rotation is unbuilt. Historical rollout notes below do not supersede this status.
+
+> **Diagnostic wording repair (2026-10-11):** `cash_shortfall_before_rotation` means only that idle cash is below the candidate's target notional before selling a source position. It is not a claim that cash is the sole P1 blocker. The former `candidate_blocked_only_by_cash` key was semantically false whenever turnover, persistence, tax-lot, score-edge, or evidence gates also failed. Existing append-only rows retain their historical key; new rows use the explicit name. This does not change sizing, eligibility, or execution.
 > Scope: deterministic opportunity-cost reallocation for PAPER first, LIVE approval proposals later.
 > Last updated: 2026-10-07
 
