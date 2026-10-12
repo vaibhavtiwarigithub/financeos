@@ -14,4 +14,11 @@ describe("council worker supervisor output classification", () => {
     expect(mod.classifyOutput("worker_http_422: model_citation_path_missing").kind).toBe("error");
     expect(mod.classifyOutput("").kind).toBe("error");
   });
+  it("pauses a worker after repeated client_failed instead of draining the queue", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("scripts/council-worker-supervisor.mjs", "utf8");
+    expect(source).toContain("result.outcome === 'client_failed' ? (state.failStreak ?? 0) + 1 : 0");
+    expect(source).toContain("state.failStreak >= 3");
+    expect(source).toContain("paused 10 min: repeated client_failed");
+  });
 });

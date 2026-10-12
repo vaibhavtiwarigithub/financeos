@@ -50,7 +50,13 @@ async function lane(name, config, state) {
     if (Date.now() < state.pausedUntil) { await sleep(Math.min(60_000, state.pausedUntil - Date.now())); continue; }
     const result = classifyOutput(await runOnce(config));
     if (result.kind === 'idle') { await sleep(60_000); continue; }
-    if (result.kind === 'job') { log(`${name} job ${result.outcome}`); continue; }
+    if (result.kind === 'job') {
+      // A client that keeps failing (usage limit, throttling) must not burn through the whole queue: 3 in a row pauses the worker.
+      state.failStreak = result.outcome === 'client_failed' ? (state.failStreak ?? 0) + 1 : 0;
+      log(`${name} job ${result.outcome}`);
+      if (state.failStreak >= 3) { state.failStreak = 0; state.pausedUntil = Date.now() + 10 * 60_000; log(`${name} paused 10 min: repeated client_failed`); }
+      continue;
+    }
     if (result.kind === 'pause') { state.pausedUntil = Date.now() + result.ms; log(`${name} paused ${Math.round(result.ms / 60000)} min: ${result.why}`); continue; }
     log(`${name} worker pass failed`);
     await sleep(30_000);
