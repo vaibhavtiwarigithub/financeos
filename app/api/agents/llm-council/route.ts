@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   if (cells.error) return NextResponse.json({ error: "Could not load council evaluation evidence" }, { status: 500 });
   const configuredModels = [...new Set([
     ...((config.data?.participant_models as string[] | null) ?? []),
-    ...(config.data?.orchestrator_model ? [String(config.data.orchestrator_model)] : []),
+    ...(config.data?.execution_mode === "api" && config.data?.orchestrator_model ? [String(config.data.orchestrator_model)] : []),
   ])];
   const providerKeyReadiness = await readProviderKeyReadiness(configuredModels, svc);
   let runsQuery = svc.from("llm_council_runs").select("id,symbol,market,decision_ts,status,consensus_score,consensus_summary,disagreement_summary,tokens_in,tokens_out,cost_usd,created_at").order("created_at", { ascending: false }).limit(symbol ? 5 : 25);
@@ -52,11 +52,23 @@ export async function GET(req: NextRequest) {
   if (runsError) return NextResponse.json({ error: "Could not load council runs" }, { status: 500 });
   const runIds = (runs ?? []).map((row: any) => row.id);
   const [forecasts, turns] = runIds.length ? await Promise.all([
-    svc.from("llm_council_model_forecasts").select("run_id,model_requested,model_used,initial_score,final_score,confidence,initial_rationale,final_rationale,bull_case,bear_case,evidence_citations,status").in("run_id", runIds),
+    svc.from("llm_council_model_forecasts").select("run_id,model_requested,model_used,execution_source,available_at,initial_score,final_score,confidence,initial_rationale,final_rationale,bull_case,bear_case,evidence_citations,status").in("run_id", runIds),
     svc.from("llm_council_turns").select(symbol ? "run_id,model_requested,model_used,turn_role,round,output_json,output_text,tokens_in,tokens_out,cost_usd,status,created_at" : "run_id,model_requested,model_used,turn_role,round,tokens_in,tokens_out,cost_usd,status,created_at").in("run_id", runIds).order("round", { ascending: true }).limit(1000),
   ]) : [{ data: [], error: null }, { data: [], error: null }];
   if (forecasts.error || turns.error) return NextResponse.json({ error: "Could not load council model evidence" }, { status: 500 });
-  return NextResponse.json({ config: config.data, providerKeyReadiness, modelProviders: mapModelProviders(configuredModels), runs: runs ?? [], forecasts: forecasts.data ?? [], turns: turns.data ?? [], ic: cells.data ?? [] });
+  const forecastRows = (forecasts.data ?? []).map((row: any) => {
+    // Rows written before source provenance existed used this sentinel name.
+    // They are not relabelled in the append-only ledger or included in the new
+    // delayed evaluator, but the UI should not misreport them as API forecasts.
+    const legacySubscription = row.execution_source === "api" && String(row.model_requested).startsWith("subscription-");
+    return {
+      ...row,
+      execution_source: legacySubscription ? "subscription" : row.execution_source,
+      available_at: legacySubscription ? null : row.available_at,
+      availability_unknown: legacySubscription,
+    };
+  });
+  return NextResponse.json({ config: config.data, providerKeyReadiness, modelProviders: mapModelProviders(configuredModels), runs: runs ?? [], forecasts: forecastRows, turns: turns.data ?? [], ic: cells.data ?? [] });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -69,13 +81,14 @@ export async function PATCH(req: NextRequest) {
   if (readError || !current) return NextResponse.json({ error: "LLM council schema is not installed" }, { status: 503 });
 
   const next = { ...current, ...body };
-  if (!["api", "subscription"].includes(next.execution_mode)) return NextResponse.json({ error: "Invalid execution mode" }, { status: 400 });
+  if (!["api", "subscription", "hybrid"].includes(next.execution_mode)) return NextResponse.json({ error: "Invalid execution mode" }, { status: 400 });
   const subscription = next.execution_mode === "subscription";
+  const hybrid = next.execution_mode === "hybrid";
   if (body.participant_models !== undefined && !validParticipants(body.participant_models)) {
     return NextResponse.json({ error: `Choose ${MIN_COUNCIL_PARTICIPANTS}–${MAX_COUNCIL_PARTICIPANTS} supported models; a single model is a baseline, while multi-model councils need at least two providers` }, { status: 400 });
   }
-  if (!subscription && !validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported models from at least two providers" }, { status: 400 });
-  if (!subscription && !isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
+  if ((!subscription || hybrid) && !validParticipants(next.participant_models)) return NextResponse.json({ error: "Choose one baseline model or 2–5 distinct supported API models; multi-model API rosters need provider diversity" }, { status: 400 });
+  if (!subscription && !hybrid && !isCouncilModel(next.orchestrator_model)) return NextResponse.json({ error: "Unsupported or retired orchestrator model" }, { status: 400 });
   if (!Number.isInteger(next.debate_rounds) || next.debate_rounds < 0 || next.debate_rounds > 3) return NextResponse.json({ error: "Debate rounds must be from 0 to 3" }, { status: 400 });
   if (!isValidCouncilSymbolLimit(Number(next.max_symbols_per_market_day))) return NextResponse.json({ error: `Daily symbol limit must be from 1 to ${MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY} per market` }, { status: 400 });
   if (!Number.isFinite(Number(next.daily_budget_usd)) || Number(next.daily_budget_usd) < 0 || Number(next.daily_budget_usd) > 100) return NextResponse.json({ error: "Daily budget must be between $0 and $100" }, { status: 400 });
@@ -83,17 +96,20 @@ export async function PATCH(req: NextRequest) {
 
   const workerIds = next.subscription_worker_ids;
   if (!Array.isArray(workerIds) || workerIds.length > 5 || !workerIds.every(isWorkerId) || new Set(workerIds).size !== workerIds.length) return NextResponse.json({ error: "Select at most five distinct subscription workers" }, { status: 400 });
-  if (subscription && next.enabled) {
+  if (hybrid && (workerIds.length < 1 || next.participant_models.length < 1 || workerIds.length + next.participant_models.length > 5)) return NextResponse.json({ error: "Hybrid mode needs at least one API model and one subscription worker, with no more than five members total" }, { status: 400 });
+  if ((subscription || hybrid) && next.enabled) {
     if (!workerIds.length) return NextResponse.json({ error: "Register and select a subscription worker first" }, { status: 409 });
     const { data: workers, error: workerError } = await svc.from("llm_council_workers").select("id,family,expected_model,last_seen_at").in("id", workerIds).is("revoked_at", null);
     if (workerError || workers?.length !== workerIds.length) return NextResponse.json({ error: "A selected worker is revoked or unavailable" }, { status: 409 });
-    if (workers.length > 1 && new Set(workers.map((w: any) => w.family)).size < 2) return NextResponse.json({ error: "A multi-model council needs both Claude and Codex families" }, { status: 409 });
+    if (subscription && workers.length > 1 && new Set(workers.map((w: any) => w.family)).size < 2) return NextResponse.json({ error: "A multi-worker subscription council needs both Claude and Codex families" }, { status: 409 });
     if (new Set(workers.map((w: any) => `${w.family}/${w.expected_model}`)).size !== workers.length) return NextResponse.json({ error: "Do not count the same model twice" }, { status: 409 });
+    if (hybrid && new Set([...next.participant_models, ...workers.map((w: any) => w.expected_model)]).size !== next.participant_models.length + workers.length) return NextResponse.json({ error: "The same exact model cannot be selected through both API and subscription" }, { status: 409 });
+    if (hybrid && new Set([...next.participant_models.map((model: string) => providerForModel(model)), ...workers.map((w: any) => w.family)]).size < 2) return NextResponse.json({ error: "Hybrid members must represent at least two provider families" }, { status: 409 });
     const { data: tested, error: testError } = await svc.from("llm_council_jobs").select("worker_id,llm_council_batches!inner(synthetic,status)").in("worker_id", workerIds).eq("status", "completed").eq("llm_council_batches.synthetic", true).eq("llm_council_batches.status", "completed").limit(100);
     if (testError || workerIds.some((id: string) => !tested?.some((j: any) => j.worker_id === id))) return NextResponse.json({ error: "Complete a synthetic round trip for every selected worker before enabling" }, { status: 409 });
   }
-  if (next.enabled && !subscription) {
-    const allModels = [...next.participant_models, next.orchestrator_model] as string[];
+  if (next.enabled && (!subscription || hybrid)) {
+    const allModels = [...next.participant_models, ...(!hybrid && !subscription ? [next.orchestrator_model] : [])] as string[];
     const providers = [...new Set(allModels.map(providerForModel).filter((x): x is NonNullable<typeof x> => !!x))];
     for (const provider of providers) {
       if (!(await getProviderKey(provider, svc))) {
@@ -115,7 +131,7 @@ export async function PATCH(req: NextRequest) {
   };
   const { data, error } = await svc.from("llm_council_config").update(update).eq("id", "global").select("*").single();
   if (error) return NextResponse.json({ error: "Could not save council settings" }, { status: 500 });
-  const configuredModels = [...next.participant_models, next.orchestrator_model] as string[];
+  const configuredModels = [...next.participant_models, ...(!subscription && !hybrid ? [next.orchestrator_model] : [])] as string[];
   const providerKeyReadiness = await readProviderKeyReadiness(configuredModels, svc);
   return NextResponse.json({ config: data, providerKeyReadiness, modelProviders: mapModelProviders(configuredModels) });
 }

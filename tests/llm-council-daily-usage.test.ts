@@ -69,7 +69,8 @@ describe("LLM council daily usage view", () => {
   });
 
   it("keeps the daily RPC bounded, market-local, synthetic-excluding, owner-route-only", () => {
-    const sql = readFileSync("supabase/migrations/20261011061905_llm_council_daily_usage.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261012023126_llm_council_daily_usage.sql", "utf8");
+    const hybridSql = readFileSync("supabase/migrations/20261012033836_llm_council_hybrid_availability.sql", "utf8");
     const route = readFileSync("app/api/agents/llm-council/usage/route.ts", "utf8");
     expect(sql).toContain("p_days not in (7, 30, 90)");
     expect(sql).toContain("America/New_York");
@@ -78,6 +79,7 @@ describe("LLM council daily usage view", () => {
     expect(sql).toContain("where coalesce(r.config_snapshot->>'execution_mode', 'api') = 'api'");
     expect(sql).toContain("revoke all on function public.llm_council_daily_usage(integer) from public, anon, authenticated");
     expect(sql).toContain("grant execute on function public.llm_council_daily_usage(integer) to service_role");
+    expect(hybridSql).toContain("coalesce(r.config_snapshot->>'execution_mode','api') in ('api','hybrid')");
     expect(route).toContain("await requireOwner()");
     expect(route).toContain("llm_council_daily_usage");
     expect(route).toContain("Cache-Control");

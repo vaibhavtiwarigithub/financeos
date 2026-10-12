@@ -184,6 +184,7 @@ export async function POST(req: NextRequest) {
   try { await sweepSubscriptionBatches(svc); } catch { return NextResponse.json({ error: "Subscription queue could not be checked" }, { status: 503 }); }
   if (!config.enabled) return NextResponse.json({ skipped: "disabled" });
   const subscription = config.execution_mode === "subscription";
+  const hybrid = config.execution_mode === "hybrid";
 
   const now = new Date();
   // Provider/process timeouts can leave a unique observation stuck as running.
@@ -194,7 +195,7 @@ export async function POST(req: NextRequest) {
     .select("id,config_snapshot").eq("status", "running").lt("created_at", staleBefore).limit(100);
   if (staleReadError) return NextResponse.json({ error: "Could not inspect incomplete council runs" }, { status: 500 });
   for (const stale of staleRuns ?? []) {
-    if (stale.config_snapshot?.execution_mode === "subscription") continue;
+    if (["subscription", "hybrid"].includes(stale.config_snapshot?.execution_mode)) continue;
     await svc.from("llm_council_runs").update({
       status: "failed", failure_code: "stale_incomplete_run", completed_at: now.toISOString(),
     }).eq("id", stale.id).eq("status", "running");
@@ -212,7 +213,8 @@ export async function POST(req: NextRequest) {
   if (!subscription && !validCouncilParticipants(participants, isCouncilModel, providerForModel)) {
     return NextResponse.json({ error: "Council roster is invalid or includes a retired model; update Settings → LLM Council" }, { status: 409 });
   }
-  const debateRounds = effectiveCouncilDebateRounds(participants.length, Number(config.debate_rounds));
+  if (hybrid && participants.length + (config.subscription_worker_ids as string[]).length > 5) return NextResponse.json({ error: "Hybrid roster exceeds five total council members" }, { status: 409 });
+  const debateRounds = hybrid ? 0 : effectiveCouncilDebateRounds(participants.length, Number(config.debate_rounds));
   const providerTimeoutMs = councilProviderTimeoutMs(participants.length, debateRounds);
 
   const observationCutoff = new Date(now.getTime() - 3 * 86_400_000).toISOString();
@@ -247,7 +249,7 @@ export async function POST(req: NextRequest) {
   const candidates = subscription ? rankedCandidates.filter((row) => !done.has(Number(row.id))).slice(0, remainingSymbols) : limitCouncilCandidates(
     rankedCandidates.filter((row) => !done.has(Number(row.id))),
     remainingSymbols,
-    participants.length,
+    hybrid ? participants.length + (config.subscription_worker_ids as string[]).length : participants.length,
     debateRounds,
   );
 
@@ -268,7 +270,9 @@ export async function POST(req: NextRequest) {
       break;
     }
     const configSnapshot = {
+      execution_mode: hybrid ? "hybrid" : "api",
       participant_models: participants,
+      subscription_worker_ids: hybrid ? config.subscription_worker_ids : [],
       orchestrator_model: config.orchestrator_model,
       debate_rounds: debateRounds,
       configured_debate_rounds: config.debate_rounds,
@@ -334,11 +338,11 @@ export async function POST(req: NextRequest) {
       const finalEntries = [...forecasts.entries()];
       const finalProviderCount = new Set(finalEntries.map(([model]) => providerForModel(model)).filter(Boolean)).size;
       const finalScores = finalEntries.map(([, value]) => value.final.score);
-      const consensus = validCouncilConsensus(participants.length, finalEntries.length, finalProviderCount) ? medianScore(finalScores) : null;
+      const consensus = !hybrid && validCouncilConsensus(participants.length, finalEntries.length, finalProviderCount) ? medianScore(finalScores) : null;
       const finalReports = [...forecasts.entries()].map(([model, value]) => ({ model, initial_score: value.initial.score, final_score: value.final.score, rationale: value.final.rationale, bull_case: value.final.bull_case, bear_case: value.final.bear_case }));
       let summary: string | null = null;
       let dissent: string | null = null;
-      if (consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
+      if (!hybrid && consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
         const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns.`;
         try {
           const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true });
@@ -361,6 +365,17 @@ export async function POST(req: NextRequest) {
       if (forecastRows.length) {
         const { error } = await svc.from("llm_council_model_forecasts").insert(forecastRows);
         if (error) throw new Error(`forecast_persist_failed:${error.message}`);
+      }
+      if (hybrid) {
+        try {
+          const batchId = await enqueueSubscription(svc, config, snapshot, Number(observation.id));
+          outcomes.push({ symbol: observation.symbol, status: "api_forecasts_complete_subscription_pending", batchId, apiModels: forecastRows.length, selectedApiModels: participants.length });
+        } catch (error) {
+          await svc.from("llm_council_runs").update({ status: "partial", tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: costUsd, failure_code: "hybrid_subscription_queue_refused", completed_at: new Date().toISOString() }).eq("id", run.id).eq("status", "running");
+          outcomes.push({ symbol: observation.symbol, status: "subscription_queue_refused", issue: String(error).slice(0, 180) });
+        }
+        dailySpend += costUsd;
+        continue;
       }
       const status = consensus == null ? (budgetExhausted ? "budget_skipped" : "failed") : budgetExhausted || forecastRows.length < participants.length || !summary ? "partial" : "completed";
       const { error: finishError } = await svc.from("llm_council_runs").update({

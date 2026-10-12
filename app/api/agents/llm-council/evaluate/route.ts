@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, type CouncilLabelPoint } from "@/lib/llm-council/core";
+import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, medianScore, type CouncilLabelPoint } from "@/lib/llm-council/core";
 import { COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
+import { availabilityAlignedLabel } from "@/lib/llm-council/availability-label";
+import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -15,7 +17,7 @@ export async function POST(req: NextRequest) {
   const modelHistory: any[] = [];
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc.from("llm_council_model_forecasts")
-      .select("model_requested,llm_council_runs!inner(market,config_snapshot)")
+      .select("model_requested,execution_source,llm_council_runs!inner(market,config_snapshot)")
       .order("created_at", { ascending: true }).range(offset, offset + PAGE - 1);
     if (error) return NextResponse.json({ error: "Could not load council model history" }, { status: 500 });
     modelHistory.push(...(data ?? []));
@@ -32,7 +34,7 @@ export async function POST(req: NextRequest) {
       pointsBySeries.set("blend:equal_weight_50_50_paired", []);
       for (const entry of modelHistory) {
         const run = Array.isArray(entry.llm_council_runs) ? entry.llm_council_runs[0] : entry.llm_council_runs;
-        if (run?.market !== market || run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY || typeof entry.model_requested !== "string") continue;
+        if (run?.market !== market || run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY || entry.execution_source === "subscription" || typeof entry.model_requested !== "string") continue;
         pointsBySeries.set(`model:${entry.model_requested}:independent`, []);
         pointsBySeries.set(`model:${entry.model_requested}:debated`, []);
       }
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
           if (!cohortRuns.length) continue;
           const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
           const { data: forecasts, error: forecastError } = await svc.from("llm_council_model_forecasts")
-            .select("run_id,model_requested,initial_score,final_score,status")
+            .select("run_id,model_requested,initial_score,final_score,status,execution_source")
             .in("run_id", cohortRuns.map((run) => run.id)).eq("status", "completed");
           if (forecastError) return NextResponse.json({ error: `Could not read council forecasts for ${market}` }, { status: 500 });
           const forecastsByRun = new Map<string, any[]>();
@@ -78,6 +80,13 @@ export async function POST(req: NextRequest) {
           for (const item of chunk) {
             const run: any = runByObs.get(Number(item.obs.id));
             if (!run) continue;
+            const runForecasts = forecastsByRun.get(run.id) ?? [];
+            const apiForecasts = runForecasts.filter((forecast) => forecast.execution_source !== "subscription");
+            const hybrid = run.config_snapshot?.execution_mode === "hybrid";
+            const comparisonScore = hybrid
+              ? medianScore(apiForecasts.map((forecast) => Number(forecast.final_score)).filter(Number.isFinite))
+              : run.consensus_score == null ? null : Number(run.consensus_score);
+            const compositeSeriesKey = hybrid ? "composite:api_members_median" : "composite:median";
             const addPoint = (key: string, score: unknown) => {
               const value = Number(score);
               if (!Number.isFinite(value)) return;
@@ -85,19 +94,19 @@ export async function POST(req: NextRequest) {
               list.push({ market, symbol: item.obs.symbol, ts: item.obs.ts, score: value, benchmarkNeutralReturn: item.outcome });
               pointsBySeries.set(key, list);
             };
-            if (run.consensus_score != null) addPoint("composite:median", run.consensus_score);
+            if (comparisonScore != null) addPoint(compositeSeriesKey, comparisonScore);
             // Compare the deterministic baseline and a predeclared 50/50 blend
             // only on the exact same run+label sample as the council composite.
             // This is measurement-only; no fitted blend weight or money-path read.
-            if (run.consensus_score != null) {
+            if (comparisonScore != null) {
               const analystScore = item.obs.analyst_score == null ? null : Number(item.obs.analyst_score);
               if (analystScore != null && Number.isFinite(analystScore)) {
                 addPoint("deterministic:analyst_score_paired", analystScore);
-                const blend = equalWeightCouncilBlend(analystScore, Number(run.consensus_score));
+                const blend = equalWeightCouncilBlend(analystScore, comparisonScore);
                 if (blend != null) addPoint("blend:equal_weight_50_50_paired", blend);
               }
             }
-            for (const forecast of forecastsByRun.get(run.id) ?? []) {
+            for (const forecast of apiForecasts) {
               addPoint(`model:${forecast.model_requested}:independent`, forecast.initial_score);
               addPoint(`model:${forecast.model_requested}:debated`, forecast.final_score);
             }
@@ -131,5 +140,106 @@ export async function POST(req: NextRequest) {
       inserted.push({ market, horizon, series: cells.length });
     }
   }
-  return NextResponse.json({ batchId, results: inserted, horizons: COUNCIL_HORIZONS, cohort: COUNCIL_COHORT_KEY, shadowOnly: true });
+
+  // Subscription results arrive after the research observation. Give them a
+  // separate, availability-aligned label: first regular close strictly after
+  // each submitted forecast, then h complete matched closes beyond it.
+  const delayed: any[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await svc.from("llm_council_model_forecasts")
+      .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source,available_at,llm_council_runs!inner(id,market,symbol,status,completed_at,consensus_score,input_snapshot,config_snapshot)")
+      .eq("execution_source", "subscription").eq("status", "completed")
+      .order("available_at", { ascending: true }).range(offset, offset + PAGE - 1);
+    if (error) return NextResponse.json({ error: "Could not load delayed subscription forecasts" }, { status: 500 });
+    delayed.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  const delayedRuns = new Map<string, any>();
+  for (const row of delayed) {
+    const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
+    if (!run || !["completed", "partial"].includes(run.status) || !["subscription", "hybrid"].includes(run.config_snapshot?.execution_mode)) continue;
+    delayedRuns.set(run.id, run);
+  }
+  const availabilityCells: Array<{ market: string; horizon: number; series: number }> = [];
+  for (const market of ["us", "india"] as const) {
+    const marketRows = delayed.flatMap((row) => {
+      const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
+      return run?.market === market && delayedRuns.has(run.id) ? [{ forecast: row, run }] : [];
+    });
+    const symbols = [...new Set([benchmarkSymbolFor(market, "research"), ...marketRows.map(({ run }) => String(run.symbol).toUpperCase())])];
+    const earliest = marketRows.reduce((min, row) => Math.min(min, Date.parse(row.forecast.available_at)), Date.now());
+    const fromDate = new Date(earliest - 4 * 86_400_000).toISOString().slice(0, 10);
+    const markMap = new Map<string, Array<{ date: string; close: number | null }>>();
+    for (let symbolStart = 0; symbolStart < symbols.length; symbolStart += 40) {
+      const symbolChunk = symbols.slice(symbolStart, symbolStart + 40);
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await svc.from("price_cache").select("symbol,date,close")
+          .in("symbol", symbolChunk).gte("date", fromDate).order("date", { ascending: true }).range(offset, offset + PAGE - 1);
+        if (error) return NextResponse.json({ error: `Could not load ${market} availability-aligned closes` }, { status: 500 });
+        for (const mark of data ?? []) {
+          const key = String(mark.symbol).toUpperCase();
+          const list = markMap.get(key) ?? [];
+          list.push({ date: String(mark.date).slice(0, 10), close: mark.close == null ? null : Number(mark.close) });
+          markMap.set(key, list);
+        }
+        if (!data || data.length < PAGE) break;
+      }
+    }
+    for (const horizon of COUNCIL_HORIZONS) {
+      const pointMap = new Map<string, CouncilLabelPoint[]>();
+      const add = (key: string, symbol: string, session: string, score: unknown, outcome: number) => {
+        const value = typeof score === "number" ? score : Number(score);
+        if (!Number.isFinite(value) || !Number.isFinite(outcome)) return;
+        const points = pointMap.get(key) ?? [];
+        points.push({ market, symbol, ts: `${session}T12:00:00.000Z`, score: value, benchmarkNeutralReturn: outcome });
+        pointMap.set(key, points);
+      };
+      const benchmarkMarks = markMap.get(benchmarkSymbolFor(market, "research")) ?? [];
+      const compositeSeen = new Set<string>();
+      for (const { forecast, run } of marketRows) {
+        const symbol = String(run.symbol).toUpperCase();
+        const symbolMarks = markMap.get(symbol) ?? [];
+        const label = availabilityAlignedLabel({ market, availableAt: forecast.available_at, horizonDays: horizon, symbolMarks, benchmarkMarks });
+        const model = String(forecast.model_used ?? forecast.model_requested);
+        const prefix = `model:${model}:subscription`;
+        pointMap.set(`${prefix}:independent`, pointMap.get(`${prefix}:independent`) ?? []);
+        pointMap.set(`${prefix}:debated`, pointMap.get(`${prefix}:debated`) ?? []);
+        if (label) {
+          add(`${prefix}:independent`, symbol, label.entrySession, forecast.initial_score, label.benchmarkNeutralReturn);
+          add(`${prefix}:debated`, symbol, label.entrySession, forecast.final_score, label.benchmarkNeutralReturn);
+        }
+        if (compositeSeen.has(run.id)) continue;
+        compositeSeen.add(run.id);
+        const consensusLabel = run.completed_at ? availabilityAlignedLabel({ market, availableAt: run.completed_at, horizonDays: horizon, symbolMarks, benchmarkMarks }) : null;
+        for (const key of ["composite:availability_median", "deterministic:availability_paired", "blend:availability_equal_weight_50_50_paired"]) pointMap.set(key, pointMap.get(key) ?? []);
+        if (consensusLabel && run.consensus_score != null) {
+          add("composite:availability_median", symbol, consensusLabel.entrySession, Number(run.consensus_score), consensusLabel.benchmarkNeutralReturn);
+          const deterministic = run.input_snapshot?.deterministic_score?.composite;
+          if (deterministic != null && Number.isFinite(Number(deterministic))) {
+            add("deterministic:availability_paired", symbol, consensusLabel.entrySession, Number(deterministic), consensusLabel.benchmarkNeutralReturn);
+            const blend = equalWeightCouncilBlend(Number(deterministic), Number(run.consensus_score));
+            if (blend != null) add("blend:availability_equal_weight_50_50_paired", symbol, consensusLabel.entrySession, blend, consensusLabel.benchmarkNeutralReturn);
+          }
+        }
+      }
+      const cells = [...pointMap.entries()].map(([key, points]) => {
+        const parts = key.split(":");
+        return buildCouncilIcCell(market, horizon, key, parts[0] === "model" ? parts[1] : null, points);
+      });
+      if (cells.length) {
+        const { error } = await svc.from("llm_council_ic_runs").insert(cells.map((cell) => ({
+          evaluation_batch_id: batchId, market: cell.market, horizon_days: cell.horizonDays,
+          series_key: cell.seriesKey, forecast_model: cell.forecastModel,
+          cohort_key: "forecast_available_close_v1", observation_count: cell.observationCount,
+          qualifying_sessions: cell.qualifyingSessions, independent_windows: Number(cell.independentWindows.toFixed(4)),
+          mean_session_rank_ic: cell.meanSessionRankIc, sd_session_rank_ic: cell.sdSessionRankIc,
+          t_stat: cell.tStat, classification: cell.classification,
+          reason: `${cell.reason} Subscription labels use price_cache closes strictly after forecast availability and the versioned research benchmark; gross close-to-close price movement, not execution P&L.`,
+        })));
+        if (error) return NextResponse.json({ error: `Could not persist ${market} availability-aligned IC cells` }, { status: 500 });
+      }
+      availabilityCells.push({ market, horizon, series: cells.length });
+    }
+  }
+  return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohort: COUNCIL_COHORT_KEY, delayedCohort: "forecast_available_close_v1", shadowOnly: true });
 }

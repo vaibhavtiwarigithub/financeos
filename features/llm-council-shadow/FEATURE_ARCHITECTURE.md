@@ -118,14 +118,28 @@ coexist. The 50/50 blend is frozen, measurement-only and deliberately not fit to
 the same history. Compare those rows with `composite:median` at h2/h5/h10/h20;
 they remain descriptive under the same session and overlap gates.
 
-**Execution-source limitation remains explicit:** API mode can run all three
-providers together, but bills OpenAI and Anthropic API usage. Subscription mode
-uses the official Codex/Claude CLI workers and is currently an all-subscription
-roster; it does not mix DeepSeek API with GPT/Claude workers. Subscription runs
-also remain excluded from the decision-time IC evaluator because their results
-arrive asynchronously. A production-ready API/subscription hybrid and a
-forecast-availability-aligned label producer are still required before the
-requested low-API-cost three-member daily council can be called complete.
+**Hybrid mode and delayed evaluation (implemented locally; release pending):**
+The roster can contain one or more metered API members (for example DeepSeek)
+plus official Codex/Claude subscription workers, with a hard maximum of five
+members in total. Hybrid mode makes one independent API forecast per selected
+API member; debate rounds, when selected, are limited to subscription workers.
+The final score is a deterministic median across every successfully persisted
+API and subscription forecast, and remains null unless the complete selected
+roster succeeds. There is no API orchestrator call in hybrid mode, no silent
+fallback, and API calls remain bounded by the configured daily budget. The
+entire feature remains disabled by default and has no trading consumer.
+
+Subscription forecasts are stored with source and availability timestamps at
+insert time. The separate `forecast_available_close_v1` evaluator starts at
+the first valid regular-session close strictly after a forecast is available,
+then measures h2/h5/h10/h20 benchmark-neutral close-to-close returns using the
+versioned research benchmark. It requires complete symbol/benchmark closes on
+every included session and fails closed outside the maintained market-calendar
+years. It reports gross market-price movement, not fill-level or execution P&L.
+The original decision-time cohort is unchanged; asynchronous subscription
+scores are not backdated into it. Historical forecast ledgers remain immutable;
+legacy subscription rows without trustworthy availability timestamps are
+displayed as unknown and are excluded from the delayed cohort.
 Codex CLI JSONL events do not report the executed model ID, so its worker can
 prove the requested CLI model was accepted and a structured result returned,
 but not independently attest a provider-reported actual model identity. Claude
@@ -140,6 +154,13 @@ one verified execution path.
 3. Scheduled evaluator over matured h2/h5/h10/h20 labels using the shared cohort and IC methodology; persist each model/composite/horizon result.
 4. Settings controls and council dashboard: latest score/rationale/as-of date per symbol, dissent, model identity, calls/tokens/cost, and IC evidence maturity. Subscription mode also shows worker registration, revocation, liveness, synthetic round trips, per-job state, and dated usage by market/pipeline; its forecasts stay out of IC until availability-aligned labels exist.
 5. Tests: malformed output, provider fallback, stale/missing evidence, idempotency, disabled config, cap enforcement, owner/cron auth, label maturity, cohort integrity, horizon overlap floor, and proof no trading consumer exists.
+
+The local hybrid implementation is not production verified until its migration
+is released, selected workers pass synthetic round trips, and real labels
+mature. Codex CLI JSONL does not independently attest the executed model ID.
+Claude subscription use also requires an authenticated Claude CLI and its own
+synthetic test. A local implementation does not prove unattended worker
+scheduling or enable the council.
 
 ## Deliberately not included
 
