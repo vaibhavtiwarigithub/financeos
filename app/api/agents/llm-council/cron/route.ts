@@ -386,7 +386,8 @@ export async function POST(req: NextRequest) {
       }
       if (hybrid) {
         try {
-          const batchId = await enqueueSubscription(svc, config, snapshot, Number(observation.id));
+          // Hybrid councils never debate: the database would add a second job per member (doubling Claude/Codex work).
+          const batchId = await enqueueSubscription(svc, { ...config, debate_rounds: 0 }, snapshot, Number(observation.id));
           outcomes.push({ symbol: observation.symbol, status: "api_forecasts_complete_subscription_pending", batchId, apiModels: forecastRows.length, selectedApiModels: participants.length });
         } catch (error) {
           await svc.from("llm_council_runs").update({ status: "partial", tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: costUsd, failure_code: "hybrid_subscription_queue_refused", completed_at: new Date().toISOString() }).eq("id", run.id).eq("status", "running");

@@ -69,4 +69,9 @@ describe("council prompts stay inside the output-token cap", () => {
     expect(source).toContain("attempt: args.attempt ?? 0");
     expect(readFileSync("supabase/migrations/20261012144810_llm_council_turns_repair_attempt.sql", "utf8")).toContain("(run_id, model_requested, turn_role, round, attempt)");
   });
+  it("hybrid enqueue never asks for debate rounds (they double every member's jobs)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    expect(source).toContain("enqueueSubscription(svc, { ...config, debate_rounds: 0 }, snapshot");
+  });
 });
