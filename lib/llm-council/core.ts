@@ -64,8 +64,16 @@ export function parseForecast(text: string): Forecast {
   };
 }
 
+/** Reduce common model notations to a dotted path: JSON pointer, ["key"] brackets, and wrapper prefixes like "snapshot." or "FROZEN SNAPSHOT.". */
+export function normalizeCitationPath(path: string): string {
+  let p = path.trim();
+  if (p.startsWith("/")) p = p.slice(1).replace(/\//g, ".");
+  p = p.replace(/\[\s*["']([^"'\]]+)["']\s*\]/g, ".$1");
+  p = p.replace(/^(?:\$\.?|(?:frozen[ _]?snapshot|snapshot|evidence|input|data|json|root)\s*[.:]\s*)/i, "");
+  return p.replace(/^\.+/, "");
+}
 function resolvePath(root: unknown, path: string): { value: unknown; ancestors: unknown[] } | null {
-  const normalized = path.trim().replace(/^\$\.?/, "").replace(/\[(\d+)\]/g, ".$1");
+  const normalized = normalizeCitationPath(path).replace(/\[(\d+)\]/g, ".$1");
   const parts = normalized.split(".").filter(Boolean);
   if (!parts.length) return null;
   const ancestors: unknown[] = [root];
@@ -120,9 +128,9 @@ export function validateForecastCitations(forecast: Forecast, snapshot: unknown)
     for (const part of parts) {
       // A bare key that is not a top-level field may be a field under `features` (e.g. "trade_plan").
       // The real path must exist; nothing is invented, and the canonical path is what gets stored.
-      let path = part;
+      let path = normalizeCitationPath(part);
       let resolved = resolvePath(snapshot, path);
-      if (!resolved && !/^(\$\.)?features\./.test(part)) { path = `features.${part}`; resolved = resolvePath(snapshot, path); }
+      if (!resolved && !/^features\./.test(path)) { path = `features.${path}`; resolved = resolvePath(snapshot, path); }
       if (!resolved) throw new Error("model_citation_path_missing");
       const expected = citationAsOf(path, resolved.ancestors);
       const supplied = citation.as_of;

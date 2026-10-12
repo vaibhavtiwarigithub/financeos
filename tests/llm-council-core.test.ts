@@ -135,4 +135,13 @@ describe("LLM council score contract", () => {
     expect(() => validateForecastCitations(cite("symbol", "2026-10-01"), snapshot)).toThrow("model_citation_asof_mismatch");
     expect(() => validateForecastCitations(cite("facts.trend_score", "2026-10-12"), snapshot)).toThrow("model_citation_asof_mismatch");
   });
+  it("accepts common notations for real fields (pointer, brackets, wrapper prefix) but not for missing ones", () => {
+    const snapshot = { symbol: "TEST-NO-REAL-ASSET", observed_at: "2026-10-12T16:00:00.000Z", facts: { as_of: "2026-10-10", trend_score: 55 } };
+    const cite = (source: string) => parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "c", source, as_of: "2026-10-10" }] }));
+    for (const source of ["facts.trend_score", "/facts/trend_score", 'facts["trend_score"]', "snapshot.facts.trend_score", "FROZEN SNAPSHOT.facts.trend_score", "$.facts.trend_score"]) {
+      expect(validateForecastCitations(cite(source), snapshot).evidence_citations[0].source).toBe("facts.trend_score");
+    }
+    expect(() => validateForecastCitations(cite("snapshot.facts.growth"), snapshot)).toThrow("model_citation_path_missing");
+    expect(() => validateForecastCitations(cite("/facts/missing"), snapshot)).toThrow("model_citation_path_missing");
+  });
 });

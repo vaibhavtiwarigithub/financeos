@@ -204,4 +204,14 @@ describe("subscription worker boundary", () => {
     `], { encoding: "utf8" }));
     expect(result).toEqual(["model_citation_asof_unavailable", "Submission refused: check lease, model, master switch or duplicate result", null, null, null]);
   });
+  it("summarises a rejected synthetic forecast's citations without leaking free text", () => {
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const out = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      process.stdout.write(JSON.stringify(worker.rejectedCitationSummary({ evidence_citations: [{ claim: "SECRET prose", source: "facts.growth{bad}", as_of: "2026-10-10" }, { source: "x".repeat(300), as_of: "unknown" }] })));
+    `], { encoding: "utf8" }));
+    expect(out[0]).toBe("facts.growth?bad? @ 2026-10-10");
+    expect(out[1].length).toBeLessThan(170);
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+  });
 });

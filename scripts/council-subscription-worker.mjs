@@ -92,6 +92,11 @@ export function stripJsonFence(text) {
   const match = /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(String(text ?? ''));
   return match ? match[1] : text;
 }
+/** Synthetic jobs only: the cited paths/dates of a rejected forecast, restricted to path-safe characters. */
+export function rejectedCitationSummary(forecast) {
+  const cites = Array.isArray(forecast?.evidence_citations) ? forecast.evidence_citations.slice(0, 12) : [];
+  return cites.map(c => `${String(c?.source ?? '').replace(/[^A-Za-z0-9_.$\[\]\/ ,:'"-]/g, '?').slice(0, 120)} @ ${String(c?.as_of ?? '').replace(/[^A-Za-z0-9_.:+ -]/g, '?').slice(0, 40)}`);
+}
 /** Fixed Kairos error codes only: short, lowercase/underscore/space text. Anything else is dropped. */
 export function safeServerReason(body) {
   const reason = typeof body?.error === 'string' ? body.error.trim() : '';
@@ -221,6 +226,7 @@ export async function main() {
     try { const accepted = await post(submission); console.log(JSON.stringify({ job: job.job_id, status: accepted.status, outcome: result.failure_code ?? 'forecast_submitted' })); return; }
     catch (e) { lastError = e; }
   }
+  if (job.synthetic && lastError?.serverReason) for (const line of rejectedCitationSummary(result.forecast)) console.error(`[council-worker] rejected synthetic citation: ${line}`);
   throw lastError;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch(e => { console.error(e.serverReason ? `${e.message}: ${e.serverReason}` : e.message); process.exitCode = 1; });
