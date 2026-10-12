@@ -12,6 +12,12 @@ import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+const REPAIRABLE = /^Error: (model_output_not_json|model_citation_|model_citations_required|model_score_|model_confidence_)/;
+function citationGuidance(snapshot: Record<string, unknown>): string {
+  const roots = Object.keys(snapshot);
+  const features = snapshot.features && typeof snapshot.features === "object" ? Object.keys(snapshot.features as object).slice(0, 40) : [];
+  return ` Every evidence_citations[].source must be EXACTLY ONE dotted path that exists in the frozen JSON (never several paths joined by commas, never a key that is not there). Valid top-level keys: ${roots.join(", ")}.${features.length ? ` Keys directly under "features": ${features.join(", ")}.` : ""} Use as_of "unknown" unless that cited object carries its own timestamp.`;
+}
 const MAX_TURN_TOKENS = 900; // prompts demand a ~450-token answer; the cap is a backstop, not the target
 const MAX_TURN_CHARS = 45_000;
 const MAX_OBSERVATION_SCAN = 5_000;
@@ -174,10 +180,27 @@ async function invoke(
   return { result, parsed };
 }
 
+/**
+ * One bounded repair retry when the model's reply fails validation (bad JSON, bad citation path, out-of-range
+ * numbers). The validator's error is shown to the model; fabricated citations are still rejected. Skipped when
+ * the invocation has already used most of its runtime so a slow five-member run cannot overrun maxDuration.
+ */
+async function invokeWithRepair(svc: any, args: Parameters<typeof invoke>[1], startedAt: number) {
+  try { return await invoke(svc, args); }
+  catch (error) {
+    if (!args.parse || !REPAIRABLE.test(String(error)) || Date.now() - startedAt > 150_000) throw error;
+    const feedback = `
+
+Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected JSON object only. Each evidence_citations[].source must be exactly one existing dotted path from the frozen evidence (no commas, no invented keys); use as_of "unknown" unless that object carries its own timestamp.`;
+    return await invoke(svc, { ...args, prompt: args.prompt + feedback });
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const requestedMarket = new URL(req.url).searchParams.get("market");
   if (requestedMarket !== "us" && requestedMarket !== "india") return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  const invocationStartedAt = Date.now();
   const svc = createServiceClient();
   const { data: config, error: configError } = await svc.from("llm_council_config").select("*").eq("id", "global").single();
   if (configError || !config) return NextResponse.json({ error: "LLM council migration is not installed" }, { status: 503 });
@@ -264,7 +287,7 @@ export async function POST(req: NextRequest) {
       } catch (error) { outcomes.push({ symbol: observation.symbol, status: "queue_refused", issue: String(error).slice(0, 180) }); }
       continue;
     }
-    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.`;
+    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
     if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
       break;
@@ -310,7 +333,7 @@ export async function POST(req: NextRequest) {
       for (const model of participants) {
         if (!canCall(model, independentPrompt)) { budgetExhausted = true; break; }
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
+          const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt);
           await refreshUsageFromLedger();
           const forecast = parsed as Forecast;
           forecasts.set(model, { initial: forecast, final: forecast, modelUsed: result.model });
@@ -325,10 +348,10 @@ export async function POST(req: NextRequest) {
       for (let round = 1; round <= debateRounds && forecasts.size >= 2 && !budgetExhausted; round++) {
         const peers = [...forecasts.entries()].map(([model, value]) => ({ model, score: value.final.score, confidence: value.final.confidence, rationale: value.final.rationale, bull_case: value.final.bull_case, bear_case: value.final.bear_case }));
         for (const [model, value] of forecasts) {
-          const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.`;
+          const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
           if (!canCall(model, prompt)) { budgetExhausted = true; break; }
           try {
-            const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot });
+            const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt);
             await refreshUsageFromLedger();
             value.final = parsed as Forecast;
           } catch (error) { await refreshUsageFromLedger(); outcomes.push({ symbol: observation.symbol, model, round, issue: String(error).slice(0, 100) }); }

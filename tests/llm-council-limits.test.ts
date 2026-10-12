@@ -54,4 +54,14 @@ describe("council prompts stay inside the output-token cap", () => {
     const clauses = source.match(/Be compact: rationale at most 600 characters/g) ?? [];
     expect(clauses).toHaveLength(2);
   });
+  it("tells models the exact citation format and repairs a rejected reply once", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    expect(source.match(/\$\{citationGuidance\(snapshot as Record<string, unknown>\)\}/g) ?? []).toHaveLength(2);
+    expect(source.match(/await invokeWithRepair\(/g) ?? []).toHaveLength(2);
+    expect(source).toContain("EXACTLY ONE dotted path");
+    // Only validation failures are repaired, never provider/budget failures, and never past the runtime guard.
+    expect(source).toContain("model_citation_|model_citations_required");
+    expect(source).toContain("Date.now() - startedAt > 150_000");
+  });
 });
