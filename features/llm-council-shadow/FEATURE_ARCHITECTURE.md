@@ -118,7 +118,7 @@ coexist. The 50/50 blend is frozen, measurement-only and deliberately not fit to
 the same history. Compare those rows with `composite:median` at h2/h5/h10/h20;
 they remain descriptive under the same session and overlap gates.
 
-**Hybrid mode and delayed evaluation (implemented locally; release pending):**
+**Hybrid mode and delayed evaluation (merged and production-deployed 2026-10-12, PR #66):**
 The roster can contain one or more metered API members (for example DeepSeek)
 plus official Codex/Claude subscription workers, with a hard maximum of five
 members in total. Hybrid mode makes one independent API forecast per selected
