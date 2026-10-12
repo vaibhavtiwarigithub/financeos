@@ -260,6 +260,8 @@ reducing effective windows; an insufficient sample remains explicitly insufficie
 contract and limits live in
 [`features/llm-council-shadow/FEATURE_ARCHITECTURE.md`](../../features/llm-council-shadow/FEATURE_ARCHITECTURE.md).
 
+**Council output budget (2026-10-12):** each member call is capped at 900 output tokens, so the forecast prompts demand a compact answer (rationale <=600 chars, bull/bear <=250, <=4 citations, ~450 tokens). The first production run was truncated mid-JSON by a verbose rationale and failed `model_output_not_json`. Synthetic worker tests are capped at 20 per rolling 24h (`council_subscription_enqueue`, raised from 5; real-symbol runs are unaffected).
+
 **Subscription-product boundary:** a one-off Claude Code Routine test used synthetic data only.
 Claude's routine trigger returns a run identifier/status rather than a structured forecast body,
 so it is not wired as a council provider. No Claude Pro or ChatGPT Plus membership credentials,

@@ -46,3 +46,12 @@ describe("LLM council bounded configuration", () => {
     expect(isCouncilModel("gemini-2.5-flash")).toBe(true);
   });
 });
+
+describe("council prompts stay inside the output-token cap", () => {
+  it("both forecast prompts demand a compact answer (live run 2026-10-12 was truncated at 900 tokens)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
+    const clauses = source.match(/Be compact: rationale at most 600 characters/g) ?? [];
+    expect(clauses).toHaveLength(2);
+  });
+});
