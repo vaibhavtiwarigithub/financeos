@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   councilCallsPerSymbol,
   councilProviderTimeoutMs,
+  createCouncilBudgetGuard,
   effectiveCouncilDebateRounds,
   limitCouncilCandidates,
   validCouncilConsensus,
@@ -39,6 +40,21 @@ describe("LLM council bounded configuration", () => {
     expect(validCouncilConsensus(5, 4, 2)).toBe(true);
   });
 
+  it("atomically reserves parallel calls and retry headroom under one invocation budget", () => {
+    const budget = createCouncilBudgetGuard(0.5, 1);
+    const first = budget.reserve(0.3); // first attempt + one possible repair
+    expect(first).not.toBeNull();
+    expect(budget.reserve(0.3)).toBeNull(); // concurrent lane cannot double-spend the same headroom
+    budget.syncRunSpend("run-a", 0.18);
+    budget.release(first!);
+    expect(budget.spentUsd()).toBeCloseTo(0.68);
+    expect(budget.reserve(0.33)).toBeNull();
+    const second = budget.reserve(0.32);
+    expect(second).not.toBeNull();
+    budget.release(second!);
+    expect(budget.reservedUsd()).toBe(0);
+  });
+
   it("classifies the DeepSeek-named Groq distillation model under Groq", () => {
     expect(providerForModel("deepseek-r1-distill-llama-70b")).toBe("groq");
     expect(isCouncilModel("deepseek-r1-distill-llama-70b")).toBe(false);
@@ -58,7 +74,10 @@ describe("council prompts stay inside the output-token cap", () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
     expect(source.match(/\$\{citationGuidance\(snapshot as Record<string, unknown>\)\}/g) ?? []).toHaveLength(2);
-    expect(source.match(/await invokeWithRepair\(/g) ?? []).toHaveLength(3); // independent, debate, orchestrator
+    expect(source.match(/await invokeWithinBudget\(/g) ?? []).toHaveLength(3); // independent, debate, orchestrator
+    expect(source).toContain("estimateWorstCaseTurnCost");
+    expect(source).toContain("const reservation = budget.reserve(");
+    expect(source).toContain("budget.syncRunSpend(args.runId, actual)");
     expect(source).toContain("synthesis at most 700 characters");
     expect(source).toContain("EXACTLY ONE dotted path");
     // Only validation failures are repaired, never provider/budget failures, and never past the runtime guard.

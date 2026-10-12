@@ -4,6 +4,41 @@ export const MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY = 400;
 export const COUNCIL_PROVIDER_CALL_TIMEOUT_MS = 12_000;
 export const COUNCIL_PROVIDER_CALL_BUDGET_PER_INVOCATION_MS = 165_000;
 
+export type CouncilBudgetReservation = { id: number; amountUsd: number };
+
+/**
+ * Per-cron-invocation budget guard. Reserves are synchronous so concurrent
+ * symbol lanes cannot all pass the same stale spend check. Actual call-log
+ * totals are synchronized per run before a reservation is released.
+ */
+export function createCouncilBudgetGuard(initialSpendUsd: number, budgetUsd: number) {
+  const actualByRun = new Map<string, number>();
+  const reservations = new Map<number, number>();
+  let nextId = 1;
+
+  const spent = () => Math.max(0, initialSpendUsd) + [...actualByRun.values()].reduce((a, b) => a + b, 0);
+  const reserved = () => [...reservations.values()].reduce((a, b) => a + b, 0);
+  const canReserve = (amountUsd: number) => Number.isFinite(amountUsd) && amountUsd >= 0 && spent() + reserved() + amountUsd <= budgetUsd;
+
+  return {
+    canReserve,
+    reserve(amountUsd: number): CouncilBudgetReservation | null {
+      if (!canReserve(amountUsd)) return null;
+      const id = nextId++;
+      reservations.set(id, amountUsd);
+      return { id, amountUsd };
+    },
+    syncRunSpend(runId: string, actualUsd: number) {
+      if (Number.isFinite(actualUsd) && actualUsd >= 0) actualByRun.set(runId, Math.max(actualByRun.get(runId) ?? 0, actualUsd));
+    },
+    release(reservation: CouncilBudgetReservation) {
+      reservations.delete(reservation.id);
+    },
+    spentUsd: spent,
+    reservedUsd: reserved,
+  };
+}
+
 export function effectiveCouncilDebateRounds(participantCount: number, configuredRounds: number): number {
   return participantCount >= 2 ? Math.max(0, Math.min(3, Math.floor(configuredRounds))) : 0;
 }

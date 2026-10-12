@@ -13,6 +13,9 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, renameSync, openSync, closeSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import outputClassifier from './council-worker-output.cjs';
+
+const { classifyOutput } = outputClassifier;
 
 const dir = resolve(process.argv[2] ?? '.');
 const lanes = Math.max(1, Math.min(3, Number(process.argv[3] ?? 3)));
@@ -20,16 +23,6 @@ const only = process.argv[4] ?? '';
 const worker = join(dir, 'council-subscription-worker.mjs');
 const logFile = join(dir, 'worker.log');
 const lockFile = join(dir, `supervisor${only ? `-${only}` : ''}.lock`);
-
-export function classifyOutput(text) {
-  const out = String(text);
-  if (/No claimable job/i.test(out)) return { kind: 'idle' };
-  const status = [...out.matchAll(/"outcome":"([a-z_]+)"/g)].map(m => m[1]).at(-1);
-  if (status === 'quota_exhausted') return { kind: 'pause', ms: 30 * 60_000, why: 'quota_exhausted' };
-  if (status === 'authentication_required') return { kind: 'pause', ms: 10 * 60_000, why: 'authentication_required' };
-  if (status) return { kind: 'job', outcome: status };
-  return { kind: 'error' };
-}
 
 function log(line) {
   try {

@@ -3,7 +3,7 @@ import { callLLM, isReasoningModel, priceFor } from "@/lib/llm-router";
 import { providerForModel, getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { councilProviderTimeoutMs, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
+import { councilProviderTimeoutMs, createCouncilBudgetGuard, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
 import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
@@ -32,6 +32,14 @@ function estimateCost(model: string, prompt: string, maxOutput = MAX_TURN_TOKENS
   // usual ~3-4 characters/token. This is a reservation guard, not billing.
   const effectiveOutputBudget = isReasoningModel(model) ? Math.max(maxOutput, 16_000) : maxOutput;
   return (prompt.length / 1_000_000 * inputRate) + (effectiveOutputBudget / 1_000_000 * outputRate);
+}
+
+function estimateWorstCaseTurnCost(model: string, prompt: string, parsed: boolean): number {
+  const firstAttempt = estimateCost(model, SYSTEM + prompt);
+  if (!parsed) return firstAttempt;
+  // invokeWithRepair may make one more paid call after a validation failure.
+  // Reserve its fixed feedback overhead and short-output ceiling up front.
+  return firstAttempt + estimateCost(model, `${SYSTEM}${prompt}${" ".repeat(500)}`, 250);
 }
 
 function asSnapshot(row: any) {
@@ -200,6 +208,26 @@ Your previous reply was rejected by the validator with "${String(error).replace(
   }
 }
 
+async function invokeWithinBudget(
+  svc: any,
+  args: Parameters<typeof invoke>[1],
+  startedAt: number,
+  budget: ReturnType<typeof createCouncilBudgetGuard>,
+  refreshActualSpend: () => Promise<number>,
+) {
+  const reservation = budget.reserve(estimateWorstCaseTurnCost(args.requestedModel, args.prompt, !!args.parse));
+  if (!reservation) throw new Error("daily_budget_exhausted_before_call");
+  try {
+    return await invokeWithRepair(svc, args, startedAt);
+  } finally {
+    // Keep the pessimistic reserve if usage cannot be reconciled. Failing
+    // closed here prevents a ledger outage from reopening the budget gate.
+    const actual = await refreshActualSpend();
+    budget.syncRunSpend(args.runId, actual);
+    budget.release(reservation);
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const requestedMarket = new URL(req.url).searchParams.get("market");
@@ -233,6 +261,7 @@ export async function POST(req: NextRequest) {
   const { data: callLogs, error: callLogError } = await svc.from("llm_call_log").select("cost_usd").eq("agent_label", "llm-council").gte("created_at", dayStart);
   if (callLogError) return NextResponse.json({ error: "Could not read actual council LLM spend" }, { status: 500 });
   let dailySpend = (callLogs ?? []).reduce((sum: number, row: any) => sum + Number(row.cost_usd ?? 0), 0);
+  const budgetGuard = createCouncilBudgetGuard(dailySpend, Number(config.daily_budget_usd));
   const dailyCount = (dailyRuns ?? []).filter((r: any) => r.market === requestedMarket && r.status !== "budget_skipped").length;
   const remainingSymbols = Math.max(0, Number(config.max_symbols_per_market_day) - dailyCount);
   if (remainingSymbols === 0) return NextResponse.json({ skipped: "daily_symbol_cap", dailySpend });
@@ -281,7 +310,7 @@ export async function POST(req: NextRequest) {
       return;
     }
     const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
-    if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
+    if (!budgetGuard.canReserve(estimateWorstCaseTurnCost(participants[0], independentPrompt, true))) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
       stopAll = true;
       return;
@@ -312,30 +341,28 @@ export async function POST(req: NextRequest) {
     let tokensIn = 0, tokensOut = 0, costUsd = 0;
     const forecasts = new Map<string, { initial: Forecast; final: Forecast; modelUsed: string }>();
     let budgetExhausted = false;
-    const canCall = (model: string, prompt: string) => {
-      const reserve = estimateCost(model, SYSTEM + prompt);
-      if (dailySpend + costUsd + reserve > Number(config.daily_budget_usd)) return false;
-      return true;
-    };
+    const canCall = (model: string, prompt: string) => budgetGuard.canReserve(estimateWorstCaseTurnCost(model, prompt, true));
     const refreshUsageFromLedger = async () => {
-      const { data: usage } = await svc.from("llm_call_log").select("tokens_in,tokens_out,cost_usd").eq("run_id", run.id);
-      if (!usage) return;
+      const { data: usage, error } = await svc.from("llm_call_log").select("tokens_in,tokens_out,cost_usd").eq("run_id", run.id);
+      if (error || !usage) throw new Error("council_call_usage_ledger_unavailable");
       tokensIn = usage.reduce((sum: number, row: any) => sum + Number(row.tokens_in ?? 0), 0);
       tokensOut = usage.reduce((sum: number, row: any) => sum + Number(row.tokens_out ?? 0), 0);
       costUsd = usage.reduce((sum: number, row: any) => sum + Number(row.cost_usd ?? 0), 0);
+      return costUsd;
     };
     try {
       for (const model of participants) {
         if (!canCall(model, independentPrompt)) { budgetExhausted = true; break; }
         try {
-          const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt);
-          await refreshUsageFromLedger();
+          const { result, parsed } = await invokeWithinBudget(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "independent", round: 0, prompt: independentPrompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt, budgetGuard, refreshUsageFromLedger);
           const forecast = parsed as Forecast;
           forecasts.set(model, { initial: forecast, final: forecast, modelUsed: result.model });
         } catch (error) {
           // Invalid/model-fallback calls are logged as failed turns by invoke;
           // failures without an LLM response are omitted from the forecast set.
           await refreshUsageFromLedger();
+          budgetGuard.syncRunSpend(run.id, costUsd);
+          if (String(error).includes("daily_budget_exhausted_before_call")) { budgetExhausted = true; stopAll = true; }
           outcomes.push({ symbol: observation.symbol, model, issue: String(error).slice(0, 100) });
         }
       }
@@ -346,10 +373,13 @@ export async function POST(req: NextRequest) {
           const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
           if (!canCall(model, prompt)) { budgetExhausted = true; break; }
           try {
-            const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt);
-            await refreshUsageFromLedger();
+            const { result, parsed } = await invokeWithinBudget(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt, budgetGuard, refreshUsageFromLedger);
             value.final = parsed as Forecast;
-          } catch (error) { await refreshUsageFromLedger(); outcomes.push({ symbol: observation.symbol, model, round, issue: String(error).slice(0, 100) }); }
+          } catch (error) {
+            await refreshUsageFromLedger(); budgetGuard.syncRunSpend(run.id, costUsd);
+            if (String(error).includes("daily_budget_exhausted_before_call")) { budgetExhausted = true; stopAll = true; }
+            outcomes.push({ symbol: observation.symbol, model, round, issue: String(error).slice(0, 100) });
+          }
         }
       }
 
@@ -363,13 +393,12 @@ export async function POST(req: NextRequest) {
       if (!hybrid && consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
         const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns. Be compact: synthesis at most 700 characters, main_disagreement at most 300 characters, at most 4 key_risks of under 120 characters each; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.`;
         try {
-          const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true }, invocationStartedAt);
-          await refreshUsageFromLedger();
+          const { result, parsed } = await invokeWithinBudget(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true }, invocationStartedAt, budgetGuard, refreshUsageFromLedger);
           const o = parsed as any;
           if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("orchestrator_output_invalid");
           summary = typeof o.synthesis === "string" ? o.synthesis.slice(0, 4000) : null;
           dissent = [o.main_disagreement, ...(Array.isArray(o.key_risks) ? o.key_risks : [])].filter((x) => typeof x === "string").join("\n").slice(0, 3000);
-        } catch (error) { await refreshUsageFromLedger(); outcomes.push({ symbol: observation.symbol, role: "orchestrator", issue: String(error).slice(0, 100) }); }
+        } catch (error) { await refreshUsageFromLedger(); budgetGuard.syncRunSpend(run.id, costUsd); outcomes.push({ symbol: observation.symbol, role: "orchestrator", issue: String(error).slice(0, 100) }); }
       }
 
       await refreshUsageFromLedger();
