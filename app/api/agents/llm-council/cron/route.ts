@@ -189,9 +189,10 @@ async function invokeWithRepair(svc: any, args: Parameters<typeof invoke>[1], st
   try { return await invoke(svc, args); }
   catch (error) {
     if (!args.parse || !REPAIRABLE.test(String(error)) || Date.now() - startedAt > 150_000) throw error;
+    const citationNote = args.snapshot !== undefined ? ` Each evidence_citations[].source must be exactly one existing dotted path from the frozen evidence (no commas, no invented keys); use as_of "unknown" unless that object carries its own timestamp.` : "";
     const feedback = `
 
-Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected JSON object only. Each evidence_citations[].source must be exactly one existing dotted path from the frozen evidence (no commas, no invented keys); use as_of "unknown" unless that object carries its own timestamp.`;
+Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected, SHORTER JSON object only, well under 450 tokens.${citationNote}`;
     return await invoke(svc, { ...args, prompt: args.prompt + feedback, attempt: 1 });
   }
 }
@@ -366,9 +367,9 @@ export async function POST(req: NextRequest) {
       let summary: string | null = null;
       let dissent: string | null = null;
       if (!hybrid && consensus != null && canCall(config.orchestrator_model, `evidence=${snapshotText}; reports=${JSON.stringify(finalReports)}`)) {
-        const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns.`;
+        const orchestratorPrompt = `Frozen evidence:\n${snapshotText}\n\nIndependent/debated model reports:\n${JSON.stringify(finalReports)}\n\nThe deterministic composite of valid final model scores is ${consensus}/100 (median). Do not change that composite. Return JSON only: {"synthesis": string, "main_disagreement": string, "key_risks": string[], "confidence_note": string}. Explain the strongest evidence for and against, distinguish cited facts from uncertainty, and list exact input as-of dates or unknowns. Be compact: synthesis at most 700 characters, main_disagreement at most 300 characters, at most 4 key_risks of under 120 characters each; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.`;
         try {
-          const { result, parsed } = await invoke(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true });
+          const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: config.orchestrator_model, role: "orchestrator", round: 0, prompt: orchestratorPrompt, timeoutMs: providerTimeoutMs, parse: true }, invocationStartedAt);
           await refreshUsageFromLedger();
           const o = parsed as any;
           if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("orchestrator_output_invalid");
