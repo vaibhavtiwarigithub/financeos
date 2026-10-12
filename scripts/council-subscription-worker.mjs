@@ -92,6 +92,11 @@ export function stripJsonFence(text) {
   const match = /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(String(text ?? ''));
   return match ? match[1] : text;
 }
+/** Fixed Kairos error codes only: short, lowercase/underscore/space text. Anything else is dropped. */
+export function safeServerReason(body) {
+  const reason = typeof body?.error === 'string' ? body.error.trim() : '';
+  return /^[A-Za-z0-9_ :,.'-]{1,160}$/.test(reason) ? reason : null;
+}
 export function parseClaudeResponse(raw, expectedModel) {
   const response = JSON.parse(raw);
   if (response.is_error) {
@@ -184,7 +189,13 @@ export async function main() {
   const endpoint = endpointFor(config.origin);
   const post = async body => {
     const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!response.ok) throw new Error(`worker_http_${response.status}`);
+    if (!response.ok) {
+      // Kairos answers with fixed error codes (never provider output or credentials); keep them so a
+      // rejected forecast says WHY instead of only a status number.
+      const error = new Error(`worker_http_${response.status}`);
+      error.serverReason = safeServerReason(await response.json().catch(() => null));
+      throw error;
+    }
     return response.json();
   };
   const { job } = await post({ action: 'claim' });
@@ -212,4 +223,4 @@ export async function main() {
   }
   throw lastError;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch(e => { console.error(e.message); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch(e => { console.error(e.serverReason ? `${e.message}: ${e.serverReason}` : e.message); process.exitCode = 1; });

@@ -98,6 +98,11 @@ function citationAsOf(path: string, ancestors: unknown[]): string | null {
     const root = ancestors[0] as any;
     return typeof root?.observed_at === "string" ? root.observed_at : null;
   }
+  // Packet-level identity fields were written when the snapshot was frozen, so the freeze timestamp is their date.
+  if (/^(\$\.)?(observed_at|symbol|market|currency|synthetic|note)$/.test(path.trim())) {
+    const root = ancestors[0] as any;
+    return typeof root?.observed_at === "string" ? root.observed_at : null;
+  }
   if (path === "price_at_decision" || path === "$.price_at_decision") {
     const root = ancestors[0] as any;
     return typeof root?.observed_at === "string" ? root.observed_at : null;

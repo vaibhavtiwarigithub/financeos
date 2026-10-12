@@ -190,4 +190,18 @@ describe("subscription worker boundary", () => {
       expect(result.twoBlocks).toBe("client_output_invalid");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it("keeps Kairos's fixed rejection reason but drops anything that could carry output or secrets", () => {
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      process.stdout.write(JSON.stringify([
+        worker.safeServerReason({ error: "model_citation_asof_unavailable" }),
+        worker.safeServerReason({ error: "Submission refused: check lease, model, master switch or duplicate result" }),
+        worker.safeServerReason({ error: "has {json} and \\"quotes\\"" }),
+        worker.safeServerReason({ error: "x".repeat(400) }),
+        worker.safeServerReason(null),
+      ]));
+    `], { encoding: "utf8" }));
+    expect(result).toEqual(["model_citation_asof_unavailable", "Submission refused: check lease, model, master switch or duplicate result", null, null, null]);
+  });
 });

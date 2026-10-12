@@ -127,4 +127,12 @@ describe("LLM council score contract", () => {
     expect(() => validateForecastCitations(forecast(["risk_free_rate", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
     expect(() => validateForecastCitations(forecast(["features.technical, made_up_field", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
   });
+  it("dates packet-level identity fields at the freeze timestamp (synthetic worker replies cite observed_at/symbol)", () => {
+    const snapshot = { symbol: "TEST-NO-REAL-ASSET", market: "us", observed_at: "2026-10-12T16:00:00.000Z", synthetic: true, note: "n", facts: { as_of: "2026-10-10", trend_score: 55 } };
+    const cite = (source: string, as_of: string) => parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "c", source, as_of }] }));
+    for (const source of ["observed_at", "symbol", "market", "synthetic", "note"]) expect(validateForecastCitations(cite(source, "2026-10-12T16:00:00.000Z"), snapshot).evidence_citations).toHaveLength(1);
+    expect(validateForecastCitations(cite("facts.trend_score", "2026-10-10"), snapshot).evidence_citations).toHaveLength(1);
+    expect(() => validateForecastCitations(cite("symbol", "2026-10-01"), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(() => validateForecastCitations(cite("facts.trend_score", "2026-10-12"), snapshot)).toThrow("model_citation_asof_mismatch");
+  });
 });
