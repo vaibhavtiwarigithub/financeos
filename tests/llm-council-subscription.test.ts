@@ -33,6 +33,7 @@ describe("subscription worker boundary", () => {
   it("records failures without inventing neutral scores or token usage", () => {
     const r = validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "authentication_required" }, job, packet);
     expect(r.result).toBeNull(); expect(r.tokens_out).toBeNull();
+    expect(validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "client_failed" }, job, packet).failure_code).toBe("client_failed");
     expect(() => validateSubscriptionResult({ ...body, tokens_in: -1 }, job, packet)).toThrow("invalid_usage");
   });
   it("initial answers never see peers; debate preserves the frozen packet", () => {
@@ -71,5 +72,35 @@ describe("subscription worker boundary", () => {
     `], { encoding: "utf8" }));
     expect(result.valid).toEqual(["https://example.com/api/agents/llm-council/worker", "http://localhost:3000/api/agents/llm-council/worker"]);
     expect(result.invalid).toEqual([true, true, true]);
+  });
+  it("classifies local CLI failures without persisting provider diagnostics", () => {
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      const classify = worker.clientFailureCategory;
+      const persist = worker.persistedFailureCode;
+      process.stdout.write(JSON.stringify([
+        classify({ message: "client_failed", diagnostic: "Usage limit reached" }),
+        classify({ message: "client_failed", diagnostic: "Model not found" }),
+        classify({ message: "client_failed", diagnostic: "Invalid JSON schema" }),
+        classify({ message: "client_failed", diagnostic: "opaque stderr" }),
+        persist("authentication_required"), persist("subscription_quota_or_capacity"), persist("structured_output_rejected"), persist("unclassified_cli_failure"),
+      ]));
+    `], { encoding: "utf8" }));
+    expect(result).toEqual(["subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "unclassified_cli_failure", "authentication_required", "quota_exhausted", "invalid_output", "client_failed"]);
+  });
+  it("parses Claude's JSON envelope and rejects a model identity mismatch", () => {
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      const raw = JSON.stringify({ result: ${JSON.stringify(JSON.stringify(forecast))}, modelUsage: { "claude-sonnet-4-6": { inputTokens: 7, outputTokens: 4 } }, usage: { input_tokens: 7, output_tokens: 4 } });
+      const good = worker.parseClaudeResponse(raw, "claude-sonnet-4-6");
+      let mismatch = false;
+      try { worker.parseClaudeResponse(raw, "other-model"); } catch (error) { mismatch = error.message === "model_mismatch"; }
+      process.stdout.write(JSON.stringify({ good, mismatch }));
+    `], { encoding: "utf8" }));
+    expect(result.good.forecast).toEqual(forecast);
+    expect(result.good.actual_model).toBe("claude-sonnet-4-6");
+    expect(result.mismatch).toBe(true);
   });
 });

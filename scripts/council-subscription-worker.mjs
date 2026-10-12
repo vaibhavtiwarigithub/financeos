@@ -27,6 +27,40 @@ export function endpointFor(origin) {
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname))) throw new Error('HTTPS is required');
   return new URL('/api/agents/llm-council/worker', u).href;
 }
+export function clientFailureCategory(error) {
+  const message = String(error?.message ?? '');
+  const diagnostic = String(error?.diagnostic ?? '');
+  const text = `${message}\n${diagnostic}`.toLowerCase();
+  if (message === 'authentication_required' || /not logged in|authentication required|unauthorized/.test(text)) return 'authentication_required';
+  if (/rate.?limit|usage limit|quota exceeded|capacity limit/.test(text)) return 'subscription_quota_or_capacity';
+  if (/model.{0,40}(not found|unsupported|unavailable|invalid)/.test(text)) return 'model_unavailable';
+  if (/schema|structured output|json schema/.test(text)) return 'structured_output_rejected';
+  if (message === 'client_timeout') return 'client_timeout';
+  if (message === 'client_unavailable') return 'client_unavailable';
+  if (message === 'client_output_limit') return 'client_output_limit';
+  if (message === 'model_mismatch') return 'reported_model_mismatch';
+  if (message === 'invalid_client') return 'invalid_client_configuration';
+  return 'unclassified_cli_failure';
+}
+export function persistedFailureCode(category) {
+  if (category === 'authentication_required') return 'authentication_required';
+  if (category === 'subscription_quota_or_capacity') return 'quota_exhausted';
+  if (category === 'structured_output_rejected') return 'invalid_output';
+  return 'client_failed';
+}
+export function parseClaudeResponse(raw, expectedModel) {
+  const response = JSON.parse(raw);
+  if (response.is_error) throw new Error('client_failed');
+  const reported = Object.keys(response.modelUsage ?? {});
+  if (reported.length !== 1 || reported[0] !== expectedModel) throw new Error('model_mismatch');
+  const forecast = response.structured_output ?? JSON.parse(response.result);
+  return {
+    forecast,
+    actual_model: reported[0],
+    tokens_in: response.usage?.input_tokens ?? null,
+    tokens_out: response.usage?.output_tokens ?? null,
+  };
+}
 function client(command, args, prompt, cwd, captureAuthStatus = false) {
   return new Promise((resolveRun, reject) => {
     const env = safeClientEnv();
@@ -60,11 +94,11 @@ export async function runClient(family, model, prompt, invoke = client) {
     }
     const auth = JSON.parse(await invoke('claude', ['auth', 'status'], '', dir));
     if (!auth.loggedIn || auth.authMethod !== 'claude.ai') throw new Error('authentication_required');
-    const result = JSON.parse(await invoke('claude', ['--print', '--safe-mode', '--tools', '', '--no-session-persistence', '--permission-mode', 'dontAsk', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(forecastSchema)], prompt, dir));
-    if (result.is_error) throw new Error('client_failed');
-    const reported = Object.keys(result.modelUsage ?? {});
-    if (reported.length !== 1 || reported[0] !== model) throw new Error('model_mismatch');
-    return { forecast: result.structured_output ?? JSON.parse(result.result), actual_model: reported[0], tokens_in: result.usage?.input_tokens ?? null, tokens_out: result.usage?.output_tokens ?? null };
+    // Ask the CLI for its normal JSON envelope, then validate the forecast
+    // locally and again in the Kairos worker route. Avoid CLI-side schema mode:
+    // the signed-in subscription client can reject the schema before inference.
+    const raw = await invoke('claude', ['--print', '--safe-mode', '--tools', '', '--no-session-persistence', '--permission-mode', 'dontAsk', '--model', model, '--output-format', 'json'], prompt, dir);
+    return parseClaudeResponse(raw, model);
   } finally { await rm(dir, { recursive: true, force: true }); } // Only the exact mkdtemp-created private directory.
 }
 export async function main() {
@@ -83,7 +117,15 @@ export async function main() {
   if (process.argv.includes('--synthetic-only') && !job.synthetic) throw new Error('Refusing non-synthetic job');
   let result;
   try { result = await runClient(job.family, job.expected_model, job.prompt); }
-  catch (e) { result = { actual_model: job.expected_model, failure_code: e.message === 'authentication_required' ? 'authentication_required' : 'client_failed' }; }
+  catch (e) {
+    // Keep diagnostics local and categorical. Never persist CLI stderr, prompts,
+    // account identifiers, or provider-session material to Kairos.
+    const category = clientFailureCategory(e);
+    console.error(`[council-worker] client failure: ${category}`);
+    // Persist only failure codes accepted by the deployed worker API. The
+    // finer category is local diagnostics, not part of the public contract.
+    result = { actual_model: job.expected_model, failure_code: persistedFailureCode(category) };
+  }
   const submission = { action: 'submit', job_id: job.job_id, lease_id: job.lease_id, input_sha256: job.input_sha256, ...result };
   // Retry the same result, never rerun inference after an ambiguous network response.
   let lastError;
