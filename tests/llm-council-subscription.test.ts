@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isWorkerId, isWorkerModel, subscriptionPrompt, validateSubscriptionResult, workerTokenHash } from "@/lib/llm-council/subscription";
 import { sha256 } from "@/lib/llm-council/core";
-import { endpointFor, forecastSchema, safeClientEnv } from "../scripts/council-subscription-worker.mjs";
 
 const job = { expected_model: "test-model" };
 const packet = { symbol: "TEST-NO-REAL-ASSET", facts: { as_of: "2026-10-10", growth: 8 } };
@@ -46,13 +48,28 @@ describe("subscription worker boundary", () => {
     expect(sql).toContain("j.lease_id is distinct from p_lease");
   });
   it("keeps Kairos and provider credentials out of model subprocesses", () => {
-    const env = safeClientEnv({ PATH: "path", CODEX_HOME: "private-login-location", KAIROS_WORKER_TOKEN: "secret", ANTHROPIC_API_KEY: "secret", OPENAI_API_KEY: "secret", ANTHROPIC_BASE_URL: "evil" } as unknown as NodeJS.ProcessEnv);
-    expect(env).toEqual({ PATH: "path", CODEX_HOME: "private-login-location" });
-    expect(forecastSchema.additionalProperties).toBe(false);
+    // The worker is a standalone ESM executable. Run it through Node itself so
+    // Vitest does not try to transform the .mjs script with its TS test loader.
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      const env = worker.safeClientEnv({ PATH: "path", CODEX_HOME: "private-login-location", KAIROS_WORKER_TOKEN: "secret", ANTHROPIC_API_KEY: "secret", OPENAI_API_KEY: "secret", ANTHROPIC_BASE_URL: "evil" });
+      process.stdout.write(JSON.stringify({ env, additionalProperties: worker.forecastSchema.additionalProperties }));
+    `], { encoding: "utf8" }));
+    expect(result.env).toEqual({ PATH: "path", CODEX_HOME: "private-login-location" });
+    expect(result.additionalProperties).toBe(false);
   });
   it("only permits HTTPS production origins or loopback test origins", () => {
-    expect(endpointFor("https://example.com")).toBe("https://example.com/api/agents/llm-council/worker");
-    expect(endpointFor("http://localhost:3000")).toBe("http://localhost:3000/api/agents/llm-council/worker");
-    for (const origin of ["http://example.com", "https://user:pass@example.com", "https://example.com/path"]) expect(() => endpointFor(origin)).toThrow();
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      const valid = [worker.endpointFor("https://example.com"), worker.endpointFor("http://localhost:3000")];
+      const invalid = ["http://example.com", "https://user:pass@example.com", "https://example.com/path"].map(value => {
+        try { worker.endpointFor(value); return false; } catch { return true; }
+      });
+      process.stdout.write(JSON.stringify({ valid, invalid }));
+    `], { encoding: "utf8" }));
+    expect(result.valid).toEqual(["https://example.com/api/agents/llm-council/worker", "http://localhost:3000/api/agents/llm-council/worker"]);
+    expect(result.invalid).toEqual([true, true, true]);
   });
 });
