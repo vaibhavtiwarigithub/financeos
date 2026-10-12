@@ -39,6 +39,17 @@ const candidate = {
 };
 
 describe("evaluateCapitalRotationShadow", () => {
+  it("reports a pre-rotation cash shortfall without claiming cash is the only blocker", () => {
+    const shortfall = evaluateCapitalRotationShadow({ candidate, config, holdings: [] });
+    expect(shortfall.gates.cash_shortfall_before_rotation).toBe(true);
+    expect(shortfall.gates).not.toHaveProperty("candidate_blocked_only_by_cash");
+
+    const funded = evaluateCapitalRotationShadow({
+      candidate: { ...candidate, targetNotional: 90, cash: 100 }, config, holdings: [],
+    });
+    expect(funded.gates.cash_shortfall_before_rotation).toBe(false);
+  });
+
   it("accepts the constructor's exact fractional quantity contract for a feasible post-swap replacement", () => {
     const result = evaluateCapitalRotationShadow({
       candidate: { ...candidate, targetNotional: 900, cash: 0, fillPrice: 100 },

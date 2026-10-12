@@ -137,7 +137,10 @@ export function evaluateCapitalRotationShadow(args: {
   const gates: Record<string, unknown> = {
     shadow_enabled: cfg.shadowEnabled,
     same_market_currency: true,
-    candidate_blocked_only_by_cash: candidate.targetNotional > candidate.cash,
+    // This is only the idle-cash shortfall before a possible rotation sale;
+    // it is not a summary of all P1 blockers or proof that cash is the sole
+    // reason the candidate cannot be bought.
+    cash_shortfall_before_rotation: candidate.targetNotional > candidate.cash,
   };
 
   const assetClass = String(candidate.assetClass ?? "").trim().toLowerCase();
