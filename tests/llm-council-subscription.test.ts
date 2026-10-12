@@ -159,4 +159,35 @@ describe("subscription worker boundary", () => {
       expect(out.tail.replace(/\s+$/, "").endsWith("END")).toBe(true);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it("accepts the live Claude reply shape: one json-fenced forecast, and nothing looser", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kairos-fence-test-"));
+    try {
+      const fence = "`".repeat(3);
+      const f = JSON.stringify(forecast, null, 2);
+      const cases = {
+        fenced: `${fence}json\n${f}\n${fence}`,
+        bare: f,
+        prose: `Here you go:\n${fence}json\n${f}\n${fence}`,
+        twoBlocks: `${fence}json\n${f}\n${fence}\n${fence}json\n{}\n${fence}`,
+      };
+      const casesFile = join(dir, "cases.json");
+      writeFileSync(casesFile, JSON.stringify(cases), "utf8");
+      const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+      const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+        import { readFileSync } from "node:fs";
+        const worker = await import(${JSON.stringify(moduleUrl)});
+        const cases = JSON.parse(readFileSync(${JSON.stringify(casesFile)}, "utf8"));
+        const out = {};
+        for (const [name, text] of Object.entries(cases)) {
+          const raw = JSON.stringify({ result: text, modelUsage: { "claude-sonnet-4-6": {} }, usage: { input_tokens: 5, output_tokens: 3 } });
+          try { out[name] = worker.parseClaudeResponse(raw, "claude-sonnet-4-6").forecast; } catch (e) { out[name] = e.message; }
+        }
+        process.stdout.write(JSON.stringify(out));
+      `], { encoding: "utf8" }));
+      expect(result.fenced).toEqual(forecast);
+      expect(result.bare).toEqual(forecast);
+      expect(result.prose).toBe("client_output_invalid");
+      expect(result.twoBlocks).toBe("client_output_invalid");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });

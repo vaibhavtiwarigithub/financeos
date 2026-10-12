@@ -87,6 +87,11 @@ export function failureFromClaudeExit(stdout, stderr) {
   error.diagnostic = String(stderr || stdout || '');
   return error;
 }
+/** Claude (without CLI schema mode) wraps JSON in one markdown fence. Strip exactly one outer fence; anything else stays invalid. */
+export function stripJsonFence(text) {
+  const match = /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(String(text ?? ''));
+  return match ? match[1] : text;
+}
 export function parseClaudeResponse(raw, expectedModel) {
   const response = JSON.parse(raw);
   if (response.is_error) {
@@ -100,7 +105,7 @@ export function parseClaudeResponse(raw, expectedModel) {
   if (reported.length !== 1 || reported[0] !== expectedModel) throw new Error('model_mismatch');
   let forecast = response.structured_output;
   if (forecast === undefined) {
-    try { forecast = JSON.parse(response.result); }
+    try { forecast = JSON.parse(stripJsonFence(response.result)); }
     catch {
       const error = new Error('client_output_invalid');
       if (typeof response.result === 'string') error.diagnostic = response.result;
