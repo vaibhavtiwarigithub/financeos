@@ -156,4 +156,12 @@ describe("LLM council score contract", () => {
     const bad = parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "x", source: "the growth figure in the snapshot", as_of: "unknown" }] }));
     expect(() => validateForecastCitations(bad, snapshot)).toThrow("model_citation_path_missing");
   });
+  it("uses an ISO `period` as the as-of date of its node (analyst ratings) but not a non-date period", () => {
+    const snapshot = { observed_at: "2026-10-12T18:00:00Z", features: { analyst: { score: 74, period: "2026-09-01", source: "finnhub" }, other: { period: "Q3", score: 1 } } };
+    const cite = (source: string, as_of: string) => parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "c", source, as_of }] }));
+    expect(validateForecastCitations(cite("features.analyst", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
+    expect(validateForecastCitations(cite("features.analyst.score", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
+    expect(() => validateForecastCitations(cite("features.analyst", "2026-08-01"), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(() => validateForecastCitations(cite("features.other", "2026-09-01"), snapshot)).toThrow("model_citation_asof_unavailable");
+  });
 });

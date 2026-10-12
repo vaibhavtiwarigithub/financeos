@@ -95,7 +95,7 @@ function resolvePath(root: unknown, path: string): { value: unknown; ancestors: 
 }
 
 function citationAsOf(path: string, ancestors: unknown[]): string | null {
-  const timeKeys = ["available_at", "snapshot_at", "as_of", "asOf", "latest_as_of_date", "reference_as_of", "observed_at", "fetched_at", "retrieved_at", "updated_at", "timestamp", "date"];
+  const timeKeys = ["available_at", "snapshot_at", "as_of", "asOf", "latest_as_of_date", "reference_as_of", "period", "observed_at", "fetched_at", "retrieved_at", "updated_at", "timestamp", "date"];
   // The snapshot's root observed_at is a decision cutoff, not proof that every
   // nested feature was freshly fetched then. Only trust field/record metadata.
   // Start at the cited node itself: citing an object (e.g. features.technical) uses that object's own as_of.
@@ -104,6 +104,8 @@ function citationAsOf(path: string, ancestors: unknown[]): string | null {
     if (!node || typeof node !== "object" || Array.isArray(node)) continue;
     for (const key of timeKeys) {
       const candidate = (node as Record<string, unknown>)[key];
+      // `period` is a date only when it looks like one (analyst ratings use it as their as-of date).
+      if (key === "period" && !(typeof candidate === "string" && /^\d{4}-\d{2}-\d{2}/.test(candidate))) continue;
       if (typeof candidate === "string" && candidate.trim()) return candidate;
     }
   }
