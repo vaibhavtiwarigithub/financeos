@@ -141,19 +141,12 @@ export function validateForecastCitations(forecast: Forecast, snapshot: unknown)
       if (!resolved && !/^features\./.test(path)) { path = `features.${path}`; resolved = resolvePath(snapshot, path); }
       if (!resolved) throw new Error("model_citation_path_missing");
       const expected = citationAsOf(path, resolved.ancestors);
-      const supplied = citation.as_of;
       // "unknown" is always an honest (under-)claim. A concrete date must match the cited node's recorded date.
-      let asOf = supplied;
-      if (supplied.toLowerCase() !== "unknown") {
-        if (expected == null) {
-          // The node records no timestamp, so the model's date cannot be verified. Never store it:
-          // keep the (real) path and record the honest value instead of discarding the whole forecast.
-          asOf = "unknown";
-        } else {
-          const matches = supplied === expected || supplied === expected.slice(0, 10) || expected === supplied.slice(0, 10);
-          if (!matches) throw new Error("model_citation_asof_mismatch");
-        }
-      }
+      // Dates are CANONICALIZED, never taken from the model: the cited node's recorded date when it has one,
+      // otherwise "unknown". A wrong or unverifiable date therefore cannot be persisted, but it also no longer
+      // discards an otherwise valid forecast (every rejected reply costs a real model call). The integrity
+      // check that remains is that the cited path exists in the frozen snapshot.
+      const asOf = expected ?? "unknown";
       citations.push({ ...citation, source: path, as_of: asOf });
     }
   }

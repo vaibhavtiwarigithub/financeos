@@ -101,7 +101,7 @@ describe("LLM council score contract", () => {
     }));
     expect(validateForecastCitations(forecast, snapshot).evidence_citations).toHaveLength(1);
   });
-  it("accepts the citation shapes DeepSeek Flash actually produced on 2026-10-12 (ITC.NS), still rejecting fabrication", () => {
+  it("accepts the citation shapes DeepSeek Flash actually produced on 2026-10-12 (ITC.NS), stored with canonical dates, rejecting only nonexistent paths", () => {
     // Trimmed copy of the real frozen snapshot: only the fields the two failed replies cited.
     const snapshot = {
       observed_at: "2026-10-12T07:00:17.360903+00:00", price_at_decision: 266,
@@ -123,7 +123,7 @@ describe("LLM council score contract", () => {
     // Comma-joined paths are split and each must resolve.
     expect(validateForecastCitations(forecast(["deterministic_score.composite, features.technical", "unknown"]), snapshot).evidence_citations.map((c) => c.source)).toEqual(["deterministic_score.composite", "features.technical"]);
     // Fabrication is still rejected: wrong date, date on an undated node, nonexistent path, one bad part in a list.
-    expect(() => validateForecastCitations(forecast(["features.technical", "2026-10-01"]), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(validateForecastCitations(forecast(["features.technical", "2026-10-01"]), snapshot).evidence_citations[0].as_of).toBe("2026-10-09");
     expect(validateForecastCitations(forecast(["features.weighting", "2026-10-09"]), snapshot).evidence_citations[0].as_of).toBe("unknown");
     expect(() => validateForecastCitations(forecast(["risk_free_rate", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
     expect(() => validateForecastCitations(forecast(["features.technical, made_up_field", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
@@ -133,8 +133,8 @@ describe("LLM council score contract", () => {
     const cite = (source: string, as_of: string) => parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "c", source, as_of }] }));
     for (const source of ["observed_at", "symbol", "market", "synthetic", "note"]) expect(validateForecastCitations(cite(source, "2026-10-12T16:00:00.000Z"), snapshot).evidence_citations).toHaveLength(1);
     expect(validateForecastCitations(cite("facts.trend_score", "2026-10-10"), snapshot).evidence_citations).toHaveLength(1);
-    expect(() => validateForecastCitations(cite("symbol", "2026-10-01"), snapshot)).toThrow("model_citation_asof_mismatch");
-    expect(() => validateForecastCitations(cite("facts.trend_score", "2026-10-12"), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(validateForecastCitations(cite("symbol", "2026-10-01"), snapshot).evidence_citations[0].as_of).toBe("2026-10-12T16:00:00.000Z");
+    expect(validateForecastCitations(cite("facts.trend_score", "2026-10-12"), snapshot).evidence_citations[0].as_of).toBe("2026-10-10");
   });
   it("accepts common notations for real fields (pointer, brackets, wrapper prefix) but not for missing ones", () => {
     const snapshot = { symbol: "TEST-NO-REAL-ASSET", observed_at: "2026-10-12T16:00:00.000Z", facts: { as_of: "2026-10-10", trend_score: 55 } };
@@ -162,7 +162,7 @@ describe("LLM council score contract", () => {
     const cite = (source: string, as_of: string) => parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "c", source, as_of }] }));
     expect(validateForecastCitations(cite("features.analyst", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
     expect(validateForecastCitations(cite("features.analyst.score", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
-    expect(() => validateForecastCitations(cite("features.analyst", "2026-08-01"), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(validateForecastCitations(cite("features.analyst", "2026-08-01"), snapshot).evidence_citations[0].as_of).toBe("2026-09-01");
     expect(validateForecastCitations(cite("features.other", "2026-09-01"), snapshot).evidence_citations[0].as_of).toBe("unknown");
   });
 });
