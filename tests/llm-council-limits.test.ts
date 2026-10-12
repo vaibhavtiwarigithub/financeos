@@ -63,5 +63,9 @@ describe("council prompts stay inside the output-token cap", () => {
     // Only validation failures are repaired, never provider/budget failures, and never past the runtime guard.
     expect(source).toContain("model_citation_|model_citations_required");
     expect(source).toContain("Date.now() - startedAt > 150_000");
+    // The repair gets its own turn row (attempt 1); the unique key includes attempt (migration 20261012144810).
+    expect(source).toContain("attempt: 1 })");
+    expect(source).toContain("attempt: args.attempt ?? 0");
+    expect(readFileSync("supabase/migrations/20261012144810_llm_council_turns_repair_attempt.sql", "utf8")).toContain("(run_id, model_requested, turn_role, round, attempt)");
   });
 });

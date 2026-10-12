@@ -139,13 +139,13 @@ async function addPointInTimeRelationships(svc: any, row: any, base: Record<stri
 
 async function invoke(
   svc: any,
-  args: { runId: string; symbol: string; requestedModel: string; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; timeoutMs: number; parse?: boolean; snapshot?: unknown },
+  args: { runId: string; symbol: string; requestedModel: string; role: "independent" | "debate" | "orchestrator"; round: number; prompt: string; timeoutMs: number; parse?: boolean; snapshot?: unknown; attempt?: 0 | 1 },
 ) {
   const provider = providerForModel(args.requestedModel);
   const persist = async (row: Record<string, unknown>) => {
     const { error } = await svc.from("llm_council_turns").insert({
       run_id: args.runId, model_requested: args.requestedModel, model_used: null,
-      turn_role: args.role, round: args.round, prompt_sha256: sha256(args.prompt),
+      turn_role: args.role, round: args.round, attempt: args.attempt ?? 0, prompt_sha256: sha256(args.prompt),
       output_json: null, output_text: null, tokens_in: 0, tokens_out: 0, cost_usd: 0,
       ...row,
     });
@@ -192,7 +192,7 @@ async function invokeWithRepair(svc: any, args: Parameters<typeof invoke>[1], st
     const feedback = `
 
 Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected JSON object only. Each evidence_citations[].source must be exactly one existing dotted path from the frozen evidence (no commas, no invented keys); use as_of "unknown" unless that object carries its own timestamp.`;
-    return await invoke(svc, { ...args, prompt: args.prompt + feedback });
+    return await invoke(svc, { ...args, prompt: args.prompt + feedback, attempt: 1 });
   }
 }
 
