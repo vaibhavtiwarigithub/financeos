@@ -100,4 +100,31 @@ describe("LLM council score contract", () => {
     }));
     expect(validateForecastCitations(forecast, snapshot).evidence_citations).toHaveLength(1);
   });
+  it("accepts the citation shapes DeepSeek Flash actually produced on 2026-10-12 (ITC.NS), still rejecting fabrication", () => {
+    // Trimmed copy of the real frozen snapshot: only the fields the two failed replies cited.
+    const snapshot = {
+      observed_at: "2026-10-12T07:00:17.360903+00:00", price_at_decision: 266,
+      deterministic_score: { composite: 65, availability_mask: { macro: false, technical: true } },
+      features: {
+        technical: { as_of: "2026-10-09", rsi14: 50.45 }, weighting: { renormalized: true },
+        fundamental: { pe_ratio: 16.66 }, trade_plan: { reference_as_of: "2026-10-09", executable: false },
+      },
+    };
+    const forecast = (...cites: Array<[string, string]>) => parseForecast(JSON.stringify({ score: 53, confidence: 0.6, rationale: "r", bull_case: "b", bear_case: "c",
+      evidence_citations: cites.map(([source, as_of]) => ({ claim: "claim", source, as_of })) }));
+    // Reply 1: root observed_at on deterministic_score.*, bare "fundamental"/"trade_plan", dated features.technical.
+    const first = validateForecastCitations(forecast(
+      ["deterministic_score.availability_mask", "2026-10-12T07:00:17.360903+00:00"], ["fundamental", "unknown"],
+      ["features.technical", "2026-10-09"], ["trade_plan", "2026-10-09"]), snapshot);
+    expect(first.evidence_citations.map((c) => c.source)).toEqual(["deterministic_score.availability_mask", "features.fundamental", "features.technical", "features.trade_plan"]);
+    // Reply 2: "unknown" on a node that does carry a date is an honest under-claim.
+    expect(validateForecastCitations(forecast(["features.weighting", "unknown"], ["features.technical", "unknown"], ["trade_plan", "2026-10-09"]), snapshot).evidence_citations).toHaveLength(3);
+    // Comma-joined paths are split and each must resolve.
+    expect(validateForecastCitations(forecast(["deterministic_score.composite, features.technical", "unknown"]), snapshot).evidence_citations.map((c) => c.source)).toEqual(["deterministic_score.composite", "features.technical"]);
+    // Fabrication is still rejected: wrong date, date on an undated node, nonexistent path, one bad part in a list.
+    expect(() => validateForecastCitations(forecast(["features.technical", "2026-10-01"]), snapshot)).toThrow("model_citation_asof_mismatch");
+    expect(() => validateForecastCitations(forecast(["features.weighting", "2026-10-09"]), snapshot)).toThrow("model_citation_asof_unavailable");
+    expect(() => validateForecastCitations(forecast(["risk_free_rate", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
+    expect(() => validateForecastCitations(forecast(["features.technical, made_up_field", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
+  });
 });

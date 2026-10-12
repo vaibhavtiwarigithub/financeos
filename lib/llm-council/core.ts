@@ -81,16 +81,22 @@ function resolvePath(root: unknown, path: string): { value: unknown; ancestors: 
 }
 
 function citationAsOf(path: string, ancestors: unknown[]): string | null {
-  const timeKeys = ["available_at", "snapshot_at", "as_of", "asOf", "latest_as_of_date", "observed_at", "fetched_at", "retrieved_at", "updated_at", "timestamp", "date"];
+  const timeKeys = ["available_at", "snapshot_at", "as_of", "asOf", "latest_as_of_date", "reference_as_of", "observed_at", "fetched_at", "retrieved_at", "updated_at", "timestamp", "date"];
   // The snapshot's root observed_at is a decision cutoff, not proof that every
   // nested feature was freshly fetched then. Only trust field/record metadata.
-  for (let i = ancestors.length - 2; i > 0; i--) {
+  // Start at the cited node itself: citing an object (e.g. features.technical) uses that object's own as_of.
+  for (let i = ancestors.length - 1; i > 0; i--) {
     const node = ancestors[i];
     if (!node || typeof node !== "object" || Array.isArray(node)) continue;
     for (const key of timeKeys) {
       const candidate = (node as Record<string, unknown>)[key];
       if (typeof candidate === "string" && candidate.trim()) return candidate;
     }
+  }
+  // The deterministic score block is computed at the decision cutoff, which is the observation timestamp.
+  if (/^(\$\.)?deterministic_score(\.|$)/.test(path.trim())) {
+    const root = ancestors[0] as any;
+    return typeof root?.observed_at === "string" ? root.observed_at : null;
   }
   if (path === "price_at_decision" || path === "$.price_at_decision") {
     const root = ancestors[0] as any;
@@ -101,20 +107,30 @@ function citationAsOf(path: string, ancestors: unknown[]): string | null {
 
 /** Reject citations to nonexistent fields or fabricated dates in the frozen snapshot. */
 export function validateForecastCitations(forecast: Forecast, snapshot: unknown): Forecast {
-  const citations = forecast.evidence_citations.map((citation) => {
-    const resolved = resolvePath(snapshot, citation.source);
-    if (!resolved) throw new Error("model_citation_path_missing");
-    const expected = citationAsOf(citation.source, resolved.ancestors);
-    if (expected == null) {
-      if (citation.as_of.toLowerCase() !== "unknown") throw new Error("model_citation_asof_unavailable");
-    } else {
+  const citations: Forecast["evidence_citations"] = [];
+  for (const citation of forecast.evidence_citations) {
+    // Models sometimes join several paths with commas; each part must resolve on its own.
+    const parts = citation.source.split(/\s*,\s*/).filter(Boolean);
+    if (!parts.length) throw new Error("model_citation_path_missing");
+    for (const part of parts) {
+      // A bare key that is not a top-level field may be a field under `features` (e.g. "trade_plan").
+      // The real path must exist; nothing is invented, and the canonical path is what gets stored.
+      let path = part;
+      let resolved = resolvePath(snapshot, path);
+      if (!resolved && !/^(\$\.)?features\./.test(part)) { path = `features.${part}`; resolved = resolvePath(snapshot, path); }
+      if (!resolved) throw new Error("model_citation_path_missing");
+      const expected = citationAsOf(path, resolved.ancestors);
       const supplied = citation.as_of;
-      const matches = supplied === expected || supplied === expected.slice(0, 10) || expected === supplied.slice(0, 10);
-      if (!matches) throw new Error("model_citation_asof_mismatch");
+      // "unknown" is always an honest (under-)claim. A concrete date must match the cited node's recorded date.
+      if (supplied.toLowerCase() !== "unknown") {
+        if (expected == null) throw new Error("model_citation_asof_unavailable");
+        const matches = supplied === expected || supplied === expected.slice(0, 10) || expected === supplied.slice(0, 10);
+        if (!matches) throw new Error("model_citation_asof_mismatch");
+      }
+      citations.push({ ...citation, source: path });
     }
-    return citation;
-  });
-  return { ...forecast, evidence_citations: citations };
+  }
+  return { ...forecast, evidence_citations: citations.slice(0, 12) };
 }
 
 export function medianScore(scores: number[]): number | null {
