@@ -226,7 +226,8 @@ export async function main() {
     try { const accepted = await post(submission); console.log(JSON.stringify({ job: job.job_id, status: accepted.status, outcome: result.failure_code ?? 'forecast_submitted' })); return; }
     catch (e) { lastError = e; }
   }
-  if (job.synthetic && lastError?.serverReason) for (const line of rejectedCitationSummary(result.forecast)) console.error(`[council-worker] rejected synthetic citation: ${line}`);
+  // Local log only (paths and dates, never claim text); lets a rejected reply be diagnosed instead of lost.
+  if (lastError?.serverReason) for (const line of rejectedCitationSummary(result.forecast)) console.error(`[council-worker] rejected citation: ${line}`);
   throw lastError;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch(e => { console.error(e.serverReason ? `${e.message}: ${e.serverReason}` : e.message); process.exitCode = 1; });

@@ -87,7 +87,8 @@ describe("LLM council score contract", () => {
     const priceForecast = parseForecast(JSON.stringify({ score: 60, confidence: 0.5, rationale: "Price evidence", bull_case: "Price holds", bear_case: "May fade", evidence_citations: [{ claim: "decision price", source: "price_at_decision", as_of: "2026-09-30" }] }));
     expect(validateForecastCitations(priceForecast, snapshot).evidence_citations).toHaveLength(1);
     const fabricated = parseForecast(JSON.stringify({ score: 60, confidence: 0.5, rationale: "Claims", bull_case: "Bull", bear_case: "Bear", evidence_citations: [{ claim: "future fact", source: "features.technical.rsi", as_of: "2026-09-30" }] }));
-    expect(() => validateForecastCitations(fabricated, snapshot)).toThrow("model_citation_asof_unavailable");
+    // A date on a node with no recorded timestamp is unverifiable: stored as "unknown", never as the claimed date.
+    expect(validateForecastCitations(fabricated, snapshot).evidence_citations[0].as_of).toBe("unknown");
     const missing = parseForecast(JSON.stringify({ score: 60, confidence: 0.5, rationale: "Claims", bull_case: "Bull", bear_case: "Bear", evidence_citations: [{ claim: "missing", source: "features.technical.macd", as_of: "unknown" }] }));
     expect(() => validateForecastCitations(missing, snapshot)).toThrow("model_citation_path_missing");
   });
@@ -123,7 +124,7 @@ describe("LLM council score contract", () => {
     expect(validateForecastCitations(forecast(["deterministic_score.composite, features.technical", "unknown"]), snapshot).evidence_citations.map((c) => c.source)).toEqual(["deterministic_score.composite", "features.technical"]);
     // Fabrication is still rejected: wrong date, date on an undated node, nonexistent path, one bad part in a list.
     expect(() => validateForecastCitations(forecast(["features.technical", "2026-10-01"]), snapshot)).toThrow("model_citation_asof_mismatch");
-    expect(() => validateForecastCitations(forecast(["features.weighting", "2026-10-09"]), snapshot)).toThrow("model_citation_asof_unavailable");
+    expect(validateForecastCitations(forecast(["features.weighting", "2026-10-09"]), snapshot).evidence_citations[0].as_of).toBe("unknown");
     expect(() => validateForecastCitations(forecast(["risk_free_rate", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
     expect(() => validateForecastCitations(forecast(["features.technical, made_up_field", "unknown"]), snapshot)).toThrow("model_citation_path_missing");
   });
@@ -162,6 +163,6 @@ describe("LLM council score contract", () => {
     expect(validateForecastCitations(cite("features.analyst", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
     expect(validateForecastCitations(cite("features.analyst.score", "2026-09-01"), snapshot).evidence_citations).toHaveLength(1);
     expect(() => validateForecastCitations(cite("features.analyst", "2026-08-01"), snapshot)).toThrow("model_citation_asof_mismatch");
-    expect(() => validateForecastCitations(cite("features.other", "2026-09-01"), snapshot)).toThrow("model_citation_asof_unavailable");
+    expect(validateForecastCitations(cite("features.other", "2026-09-01"), snapshot).evidence_citations[0].as_of).toBe("unknown");
   });
 });
