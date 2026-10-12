@@ -72,6 +72,12 @@ export function normalizeCitationPath(path: string): string {
   p = p.replace(/^(?:\$\.?|(?:frozen[ _]?snapshot|snapshot|evidence|input|data|json|root)\s*[.:]\s*)/i, "");
   return p.replace(/^\.+/, "");
 }
+/** A model may write "facts.x in frozen snapshot (note)" in `source`. Keep only the leading path token; it must still resolve. */
+export function leadingCitationPath(part: string): string {
+  const normalized = normalizeCitationPath(part).replace(/^[\s`'"]+/, "");
+  const match = /^[A-Za-z_$][\w$-]*(?:\.[\w$-]+|\[\d+\])*/.exec(normalized);
+  return match ? match[0] : normalized;
+}
 function resolvePath(root: unknown, path: string): { value: unknown; ancestors: unknown[] } | null {
   const normalized = normalizeCitationPath(path).replace(/\[(\d+)\]/g, ".$1");
   const parts = normalized.split(".").filter(Boolean);
@@ -123,12 +129,12 @@ export function validateForecastCitations(forecast: Forecast, snapshot: unknown)
   const citations: Forecast["evidence_citations"] = [];
   for (const citation of forecast.evidence_citations) {
     // Models sometimes join several paths with commas; each part must resolve on its own.
-    const parts = citation.source.split(/\s*,\s*/).filter(Boolean);
+    const parts = citation.source.split(/\s*(?:,|;|&|\band\b)\s*/i).filter(Boolean);
     if (!parts.length) throw new Error("model_citation_path_missing");
     for (const part of parts) {
       // A bare key that is not a top-level field may be a field under `features` (e.g. "trade_plan").
       // The real path must exist; nothing is invented, and the canonical path is what gets stored.
-      let path = normalizeCitationPath(part);
+      let path = leadingCitationPath(part);
       let resolved = resolvePath(snapshot, path);
       if (!resolved && !/^features\./.test(path)) { path = `features.${path}`; resolved = resolvePath(snapshot, path); }
       if (!resolved) throw new Error("model_citation_path_missing");

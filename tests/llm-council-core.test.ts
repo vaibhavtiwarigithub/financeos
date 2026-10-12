@@ -144,4 +144,16 @@ describe("LLM council score contract", () => {
     expect(() => validateForecastCitations(cite("snapshot.facts.growth"), snapshot)).toThrow("model_citation_path_missing");
     expect(() => validateForecastCitations(cite("/facts/missing"), snapshot)).toThrow("model_citation_path_missing");
   });
+  it("reads the real path out of the prose Claude Pro wrote in `source` (live synthetic reply, 2026-10-12)", () => {
+    const snapshot = { symbol: "TEST-NO-REAL-ASSET", synthetic: true, observed_at: "2026-10-12T16:30:00.000Z", facts: { as_of: "2026-10-10", trend_score: 55, debt_to_equity: 0.3, revenue_growth_pct: 8 } };
+    const forecast = parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [
+      { claim: "a", source: "facts.trend_score in frozen snapshot (symbol: TEST-NO-REAL-ASSET)", as_of: "2026-10-10" },
+      { claim: "b", source: "facts.debt_to_equity in frozen snapshot (symbol: TEST-NO-REAL-ASSET)", as_of: "2026-10-10" },
+      { claim: "c", source: "observed_at and synthetic fields in frozen snapshot (symbol: TEST-NO-REAL-ASSET)", as_of: "2026-10-12" },
+    ] }));
+    expect(validateForecastCitations(forecast, snapshot).evidence_citations.map((c) => c.source)).toEqual(["facts.trend_score", "facts.debt_to_equity", "observed_at", "synthetic"]);
+    // Prose that does not start with a real path is still rejected.
+    const bad = parseForecast(JSON.stringify({ score: 50, confidence: 0.1, rationale: "r", bull_case: "b", bear_case: "c", evidence_citations: [{ claim: "x", source: "the growth figure in the snapshot", as_of: "unknown" }] }));
+    expect(() => validateForecastCitations(bad, snapshot)).toThrow("model_citation_path_missing");
+  });
 });
