@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+/**
+ * Keeps the local council workers draining their queues. One long-lived process, no secrets of its own:
+ * it only launches `council-subscription-worker.mjs <private config>` and reads that script's status lines.
+ *
+ * usage: node council-worker-supervisor.mjs <dir-with-council-worker-*.json> [lanes-per-worker=3]
+ * - each config gets `lanes` parallel lanes (Kairos allows 3 concurrent leases per worker)
+ * - a lane re-runs immediately after a job, sleeps when the queue is empty
+ * - quota/auth problems pause that worker's lanes so a failing client cannot burn through the whole queue
+ */
+import { spawn } from 'node:child_process';
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, renameSync, openSync, closeSync, writeFileSync, unlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const dir = resolve(process.argv[2] ?? '.');
+const lanes = Math.max(1, Math.min(3, Number(process.argv[3] ?? 3)));
+const worker = join(dir, 'council-subscription-worker.mjs');
+const logFile = join(dir, 'worker.log');
+const lockFile = join(dir, 'supervisor.lock');
+
+export function classifyOutput(text) {
+  const out = String(text);
+  if (/No claimable job/i.test(out)) return { kind: 'idle' };
+  const status = [...out.matchAll(/"outcome":"([a-z_]+)"/g)].map(m => m[1]).at(-1);
+  if (status === 'quota_exhausted') return { kind: 'pause', ms: 30 * 60_000, why: 'quota_exhausted' };
+  if (status === 'authentication_required') return { kind: 'pause', ms: 10 * 60_000, why: 'authentication_required' };
+  if (status) return { kind: 'job', outcome: status };
+  return { kind: 'error' };
+}
+
+function log(line) {
+  try {
+    if (existsSync(logFile) && statSync(logFile).size > 2_000_000) renameSync(logFile, `${logFile}.old`);
+    appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`);
+  } catch { /* logging must never stop the workers */ }
+}
+
+function runOnce(config) {
+  return new Promise(resolveRun => {
+    const child = spawn(process.execPath, [worker, config], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => child.kill(), 6 * 60_000);
+    child.stdout.on('data', c => { out += c; });
+    child.stderr.on('data', c => { out += c; });
+    child.on('close', () => { clearTimeout(timer); resolveRun(out); });
+    child.on('error', () => { clearTimeout(timer); resolveRun(''); });
+  });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function lane(name, config, state) {
+  while (true) {
+    if (Date.now() < state.pausedUntil) { await sleep(Math.min(60_000, state.pausedUntil - Date.now())); continue; }
+    const result = classifyOutput(await runOnce(config));
+    if (result.kind === 'idle') { await sleep(60_000); continue; }
+    if (result.kind === 'job') { log(`${name} job ${result.outcome}`); continue; }
+    if (result.kind === 'pause') { state.pausedUntil = Date.now() + result.ms; log(`${name} paused ${Math.round(result.ms / 60000)} min: ${result.why}`); continue; }
+    log(`${name} worker pass failed`);
+    await sleep(30_000);
+  }
+}
+
+function acquireLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { const fd = openSync(lockFile, 'wx'); writeFileSync(fd, String(process.pid)); closeSync(fd); return true; }
+    catch {
+      let pid = 0;
+      try { pid = Number(readFileSync(lockFile, 'utf8')); } catch { /* unreadable lock: treat as stale */ }
+      try { if (pid && pid !== process.pid) { process.kill(pid, 0); return false; } } catch { /* pid gone: stale */ }
+      try { unlinkSync(lockFile); } catch { return false; }
+    }
+  }
+  return false;
+}
+
+async function main() {
+  if (!existsSync(worker)) { console.error('missing council-subscription-worker.mjs next to the supervisor'); process.exit(1); }
+  if (!acquireLock()) { console.error('supervisor already running'); process.exit(0); }
+  process.on('exit', () => { try { unlinkSync(lockFile); } catch { /* ignore */ } });
+  const configs = readdirSync(dir).filter(f => /^council-worker-.+\.json$/.test(f));
+  if (!configs.length) { console.error('no council-worker-*.json found'); process.exit(1); }
+  log(`supervisor start: ${configs.length} worker(s) x ${lanes} lane(s)`);
+  await Promise.all(configs.flatMap(file => {
+    const state = { pausedUntil: 0 };
+    return Array.from({ length: lanes }, (_, i) => lane(`${file.replace(/^council-worker-|\.json$/g, '')}#${i + 1}`, join(dir, file), state));
+  }));
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

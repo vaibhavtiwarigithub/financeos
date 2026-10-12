@@ -3,6 +3,8 @@ import { resolveDecisionContext } from "@/lib/learning/entry-cohort";
 /** Predeclared score-boundary sample for the council's missed-entry question. */
 export const COUNCIL_COHORT_KEY = "near_threshold_entry_long_v1";
 export const COUNCIL_COHORT_HALF_WIDTH = 5;
+/** Every research symbol, once per market session (newest observation). Superset of the near-threshold cohort. */
+export const COUNCIL_ALL_RESEARCH_COHORT_KEY = "all_research_v1";
 
 export type NearThresholdObservation = {
   analyst_score: unknown;

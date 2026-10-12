@@ -1,4 +1,9 @@
 # Kairos — Crons & Scheduling
+
+## LLM council schedule (2026-10-12)
+
+`kairos-council-india` `*/5 11-12 * * 1-5` and `kairos-council-us` `*/5 22-23 * * 1-5` (pg_cron, migration `20261012210000`) call `/api/agents/llm-council/cron?market=` repeatedly; each call scores up to ~30 unscored symbols and returns at once when none remain. The ten hourly `vercel.json` council crons were removed. `/api/agents/llm-council/evaluate` stays in `vercel.json` (23:30 UTC) and now evaluates two cohorts.
+
 > 2026-10-03: **Daily readiness check repaired.** `kairos-readiness-check` (23:30 UTC) timed out at the 60 s function limit every day from 2026-09-26 and `readiness_runs` stopped being written (last row 2026-09-25): it paged all 9,194 US observation ids and then sent them in one `.in()` filter. It now counts labels with a single `decision_observations!inner(market)` join.
 >
 > 2026-10-03: **`kairos-leveraged-etf-shadow` pg_cron job added** (`3 15,16 * * 1-5`, migration `20261003150000`). The L1 collector records only inside 11:00-11:14 ET; its sole schedule was `vercel.json`, and Vercel Hobby fires a cron at an unspecified minute inside the hour, so it never hit the window and `leveraged_etf_shadow_observations` has 0 rows. The route now also answers POST (kairos_call_agent always POSTs). Rule of thumb for this repo: any job with a narrow time window must run on pg_cron; `vercel.json` is hour-precision only.

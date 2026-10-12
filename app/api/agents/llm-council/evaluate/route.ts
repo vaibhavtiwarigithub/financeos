@@ -3,13 +3,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, medianScore, type CouncilLabelPoint } from "@/lib/llm-council/core";
-import { COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
+import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
 import { availabilityAlignedLabel } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 const PAGE = 500;
+
+/**
+ * Two cohorts, both evaluated every night. `all_research_v1` = every research symbol scored once per session.
+ * `near_threshold_entry_long_v1` = the original predeclared slice: runs tagged near-threshold plus the early runs that
+ * only ever covered it (their observation must also satisfy the near-threshold rule).
+ */
+function runInCohort(cohortKey: string, run: any): boolean {
+  const key = run?.config_snapshot?.cohort_key;
+  if (cohortKey === COUNCIL_ALL_RESEARCH_COHORT_KEY) return key === COUNCIL_ALL_RESEARCH_COHORT_KEY;
+  return key === COUNCIL_COHORT_KEY || (key === COUNCIL_ALL_RESEARCH_COHORT_KEY && run?.config_snapshot?.near_threshold_entry_long === true);
+}
 
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,6 +38,7 @@ export async function POST(req: NextRequest) {
   const inserted: Array<{ market: string; horizon: number; series: number }> = [];
 
   for (const market of ["us", "india"] as const) {
+    for (const cohortKey of [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY]) {
     for (const horizon of COUNCIL_HORIZONS) {
       const pointsBySeries = new Map<string, CouncilLabelPoint[]>();
       pointsBySeries.set("composite:median", []);
@@ -34,7 +46,7 @@ export async function POST(req: NextRequest) {
       pointsBySeries.set("blend:equal_weight_50_50_paired", []);
       for (const entry of modelHistory) {
         const run = Array.isArray(entry.llm_council_runs) ? entry.llm_council_runs[0] : entry.llm_council_runs;
-        if (run?.market !== market || run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY || entry.execution_source === "subscription" || typeof entry.model_requested !== "string") continue;
+        if (run?.market !== market || !runInCohort(cohortKey, run) || entry.execution_source === "subscription" || typeof entry.model_requested !== "string") continue;
         pointsBySeries.set(`model:${entry.model_requested}:independent`, []);
         pointsBySeries.set(`model:${entry.model_requested}:debated`, []);
       }
@@ -53,7 +65,7 @@ export async function POST(req: NextRequest) {
           // unavailable; such rows are incomplete for this evaluator.
           const outcome = row.benchmark_neutral_return;
           if (!obs || outcome == null || !Number.isFinite(Number(outcome))) continue;
-          if (!isNearThresholdEntryLong(obs)) continue;
+          if (cohortKey === COUNCIL_COHORT_KEY && !isNearThresholdEntryLong(obs)) continue;
           eligible.push({ obs, outcome: Number(outcome) });
         }
         for (let start = 0; start < eligible.length; start += 100) {
@@ -64,7 +76,7 @@ export async function POST(req: NextRequest) {
             .in("observation_id", obsIds).in("status", ["completed", "partial", "failed"]);
           if (runError) return NextResponse.json({ error: `Could not read council runs for ${market}` }, { status: 500 });
           if (!runs?.length) continue;
-          const cohortRuns = (runs as any[]).filter((run) => run.config_snapshot?.cohort_key === COUNCIL_COHORT_KEY);
+          const cohortRuns = (runs as any[]).filter((run) => runInCohort(cohortKey, run));
           if (!cohortRuns.length) continue;
           const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
           const { data: forecasts, error: forecastError } = await svc.from("llm_council_model_forecasts")
@@ -125,7 +137,7 @@ export async function POST(req: NextRequest) {
           horizon_days: cell.horizonDays,
           series_key: cell.seriesKey,
           forecast_model: cell.forecastModel,
-          cohort_key: COUNCIL_COHORT_KEY,
+          cohort_key: cohortKey,
           observation_count: cell.observationCount,
           qualifying_sessions: cell.qualifyingSessions,
           independent_windows: Number(cell.independentWindows.toFixed(4)),
@@ -138,6 +150,7 @@ export async function POST(req: NextRequest) {
         if (writeError) return NextResponse.json({ error: `Could not persist ${market} h${horizon} IC cells` }, { status: 500 });
       }
       inserted.push({ market, horizon, series: cells.length });
+    }
     }
   }
 
@@ -241,5 +254,5 @@ export async function POST(req: NextRequest) {
       availabilityCells.push({ market, horizon, series: cells.length });
     }
   }
-  return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohort: COUNCIL_COHORT_KEY, delayedCohort: "forecast_available_close_v1", shadowOnly: true });
+  return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v1", shadowOnly: true });
 }

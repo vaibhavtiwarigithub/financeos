@@ -1,5 +1,9 @@
 # Kairos — Database Schema
 
+## LLM council scale-up (2026-10-12; migration `20261012204125` applied)
+
+`llm_council_config.max_symbols_per_market_day` check widened to 1-400 (was 1-5); `llm_council_batches.deadline` default 12 h (was 45 min); `council_subscription_claim` patched in place to allow 3 concurrent leases per worker (was 1). No new tables. Runs gain `config_snapshot.cohort_key = all_research_v1` and `near_threshold_entry_long`; `llm_council_ic_runs.cohort_key` now carries both cohorts.
+
 ## LLM council turn repair attempts (2026-10-12; migration `20261012144810` applied)
 
 `llm_council_turns` gains `attempt smallint not null default 0` (0 or 1). The unique key is now `(run_id, model_requested, turn_role, round, attempt)` so one rejected model reply can be repaired once and both attempts keep their own audit row (the invalid first reply is never overwritten). The same day `council_subscription_enqueue` was patched in place (migration `20261012141420`) to raise the synthetic-test cap from 5 to 20 per rolling 24h; real-symbol enqueue rules are unchanged.

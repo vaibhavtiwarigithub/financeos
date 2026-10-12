@@ -6,7 +6,10 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { councilProviderTimeoutMs, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
 import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
-import { COUNCIL_COHORT_HALF_WIDTH, COUNCIL_COHORT_KEY, isNearThresholdEntryLong, thresholdDistance } from "@/lib/llm-council/cohort";
+import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
+import { exchangeSessionDate } from "@/lib/paper/quote-crosscheck";
+import { selectCouncilCandidates } from "@/lib/llm-council/selection";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
 
 export const dynamic = "force-dynamic";
@@ -192,7 +195,7 @@ async function invokeWithRepair(svc: any, args: Parameters<typeof invoke>[1], st
     const citationNote = args.snapshot !== undefined ? ` Each evidence_citations[].source must be exactly one existing dotted path from the frozen evidence (no commas, no invented keys); use as_of "unknown" unless that object carries its own timestamp.` : "";
     const feedback = `
 
-Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected, SHORTER JSON object only, well under 450 tokens.${citationNote}`;
+Your previous reply was rejected by the validator with "${String(error).replace(/^Error: /, "")}". Reply again with ONE corrected, SHORTER JSON object only, well under 250 tokens.${citationNote}`;
     return await invoke(svc, { ...args, prompt: args.prompt + feedback, attempt: 1 });
   }
 }
@@ -256,29 +259,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Recent research universe exceeds the council's safe candidate-scan limit; no partial cohort was selected" }, { status: 503 });
     }
   }
-  const latestBySymbol = new Map<string, any>();
-  // Choose the newest observation first, then test its cohort. Filtering before
-  // this step could silently fall back to an older in-band row after a newer
-  // holding review or out-of-band decision for the same symbol.
-  for (const row of obsRows) if (!latestBySymbol.has(row.symbol)) latestBySymbol.set(row.symbol, row);
-  const rankedCandidates = [...latestBySymbol.values()]
-    .filter((row) => isNearThresholdEntryLong(row))
-    .sort((a, b) => thresholdDistance(a) - thresholdDistance(b) || String(b.ts).localeCompare(String(a.ts)) || String(a.symbol).localeCompare(String(b.symbol)));
-  const { data: existing } = rankedCandidates.length
-    ? await svc.from("llm_council_runs").select("observation_id").in("observation_id", rankedCandidates.map((x) => x.id))
-    : { data: [] };
-  const done = new Set((existing ?? []).map((x: any) => Number(x.observation_id)));
-  // One symbol per cron invocation keeps the worst-case three-model / three-round
-  // sequence inside the function runtime. Five spaced invocations fill the daily cap.
-  const candidates = subscription ? rankedCandidates.filter((row) => !done.has(Number(row.id))).slice(0, remainingSymbols) : limitCouncilCandidates(
-    rankedCandidates.filter((row) => !done.has(Number(row.id))),
-    remainingSymbols,
-    hybrid ? participants.length + (config.subscription_worker_ids as string[]).length : participants.length,
-    debateRounds,
-  );
+  let priorRuns: any[];
+  try {
+    priorRuns = await fetchAllRows((from, to) => svc.from("llm_council_runs").select("observation_id,symbol,decision_ts")
+      .eq("market", requestedMarket).gte("decision_ts", observationCutoff).order("decision_ts", { ascending: true }).order("id", { ascending: true }).range(from, to), "council prior runs");
+  } catch { return NextResponse.json({ error: "Could not read existing council runs" }, { status: 500 }); }
+  // Every research symbol, once per market session (see selectCouncilCandidates for the exact rule).
+  const rankedCandidates = selectCouncilCandidates({ observations: obsRows, priorRuns, sessionOf: (iso) => exchangeSessionDate(iso, requestedMarket) });
+  const candidates = rankedCandidates.slice(0, remainingSymbols);
 
   const outcomes: Array<Record<string, unknown>> = [];
-  for (const observation of candidates) {
+  let stopAll = false;
+  const processObservation = async (observation: any): Promise<void> => {
     const snapshot = await addPointInTimeRelationships(svc, observation, asSnapshot(observation));
     const snapshotText = JSON.stringify(snapshot);
     if (subscription) {
@@ -286,12 +278,13 @@ export async function POST(req: NextRequest) {
         const batchId = await enqueueSubscription(svc, config, snapshot, Number(observation.id));
         outcomes.push({ symbol: observation.symbol, status: "queued_for_subscription_workers", batchId });
       } catch (error) { outcomes.push({ symbol: observation.symbol, status: "queue_refused", issue: String(error).slice(0, 180) }); }
-      continue;
+      return;
     }
-    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
+    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
     if (dailySpend + estimateCost(participants[0], SYSTEM + independentPrompt) > Number(config.daily_budget_usd)) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
-      break;
+      stopAll = true;
+      return;
     }
     const configSnapshot = {
       execution_mode: hybrid ? "hybrid" : "api",
@@ -302,7 +295,8 @@ export async function POST(req: NextRequest) {
       configured_debate_rounds: config.debate_rounds,
       max_symbols_per_market_day: config.max_symbols_per_market_day,
       daily_budget_usd: config.daily_budget_usd,
-      cohort_key: COUNCIL_COHORT_KEY,
+      cohort_key: COUNCIL_ALL_RESEARCH_COHORT_KEY,
+      near_threshold_entry_long: isNearThresholdEntryLong(observation),
       cohort_half_width_points: COUNCIL_COHORT_HALF_WIDTH,
     };
     const { data: run, error: createError } = await svc.from("llm_council_runs").insert({
@@ -312,7 +306,7 @@ export async function POST(req: NextRequest) {
     }).select("id").single();
     if (createError || !run) {
       outcomes.push({ symbol: observation.symbol, status: "already_started_or_persist_failed" });
-      continue;
+      return;
     }
 
     let tokensIn = 0, tokensOut = 0, costUsd = 0;
@@ -349,7 +343,7 @@ export async function POST(req: NextRequest) {
       for (let round = 1; round <= debateRounds && forecasts.size >= 2 && !budgetExhausted; round++) {
         const peers = [...forecasts.entries()].map(([model, value]) => ({ model, score: value.final.score, confidence: value.final.confidence, rationale: value.final.rationale, bull_case: value.final.bull_case, bear_case: value.final.bear_case }));
         for (const [model, value] of forecasts) {
-          const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence. Be compact: rationale at most 600 characters, bull_case and bear_case at most 250 characters each, at most 4 evidence_citations with claims under 120 characters; the whole JSON object must fit in about 450 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
+          const prompt = `Frozen evidence:\n${snapshotText}\n\nPrior peer positions (evaluate their cited arguments; do not defer to popularity):\n${JSON.stringify(peers)}\n\nYour previous score was ${value.final.score}. In debate round ${round}, identify the strongest argument against your view and the strongest support for it, then revise or retain your score. Return the same JSON forecast schema as before, adding "change_rationale". Do not invent facts; cite only the frozen evidence. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
           if (!canCall(model, prompt)) { budgetExhausted = true; break; }
           try {
             const { result, parsed } = await invokeWithRepair(svc, { runId: run.id, symbol: observation.symbol, requestedModel: model, role: "debate", round, prompt, timeoutMs: providerTimeoutMs, parse: true, snapshot }, invocationStartedAt);
@@ -399,7 +393,7 @@ export async function POST(req: NextRequest) {
           outcomes.push({ symbol: observation.symbol, status: "subscription_queue_refused", issue: String(error).slice(0, 180) });
         }
         dailySpend += costUsd;
-        continue;
+        return;
       }
       const status = consensus == null ? (budgetExhausted ? "budget_skipped" : "failed") : budgetExhausted || forecastRows.length < participants.length || !summary ? "partial" : "completed";
       const { error: finishError } = await svc.from("llm_council_runs").update({
@@ -415,6 +409,18 @@ export async function POST(req: NextRequest) {
       const { error: finalizeError } = await svc.from("llm_council_runs").update({ status: "failed", tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: costUsd, failure_code: "collection_failed", completed_at: new Date().toISOString() }).eq("id", run.id);
       outcomes.push({ symbol: observation.symbol, status: finalizeError ? "failed_to_finalize" : "failed", issue: String(error).slice(0, 180) });
     }
-  }
-  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, cohort: COUNCIL_COHORT_KEY, cohortHalfWidthPoints: COUNCIL_COHORT_HALF_WIDTH, outcomes, dailySpendUsd: dailySpend, shadowOnly: true });
+  };
+  // Bounded concurrency + a runtime guard: a few symbols overlap, and no new symbol starts after ~200 s so the
+  // invocation finishes inside maxDuration. Remaining symbols are picked up by the next scheduled invocation.
+  let cursor = 0;
+  let processed = 0;
+  const poolSize = Math.max(1, Math.min(6, candidates.length));
+  await Promise.all(Array.from({ length: poolSize }, async () => {
+    while (!stopAll && cursor < candidates.length && Date.now() - invocationStartedAt < 200_000) {
+      const next = candidates[cursor++];
+      await processObservation(next);
+      processed++;
+    }
+  }));
+  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, processed, remainingUnscored: rankedCandidates.length - processed, cohort: COUNCIL_ALL_RESEARCH_COHORT_KEY, cohortHalfWidthPoints: COUNCIL_COHORT_HALF_WIDTH, outcomes, dailySpendUsd: dailySpend, shadowOnly: true });
 }

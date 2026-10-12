@@ -41,17 +41,22 @@ describe("LLM council safety boundary", () => {
     expect(collect).toContain("no smart quotes, markdown fences, comments, trailing commas, or surrounding prose");
   });
 
-  it("freezes one declared near-threshold cohort and shares its predicate with evaluation", () => {
+  it("freezes the declared cohorts (all research symbols + the near-threshold slice) and shares the rules with evaluation", () => {
     const collect = readFileSync("app/api/agents/llm-council/cron/route.ts", "utf8");
     const evaluate = readFileSync("app/api/agents/llm-council/evaluate/route.ts", "utf8");
     const cohort = readFileSync("lib/llm-council/cohort.ts", "utf8");
-    expect(collect).toContain("COUNCIL_COHORT_KEY");
-    expect(collect).toContain("COUNCIL_COHORT_HALF_WIDTH");
-    expect(collect).toContain("isNearThresholdEntryLong");
-    expect(collect.indexOf("for (const row of obsRows)")).toBeLessThan(collect.indexOf(".filter((row) => isNearThresholdEntryLong(row))"));
-    expect(evaluate).toContain("isNearThresholdEntryLong(obs)");
-    expect(evaluate).toContain("run?.config_snapshot?.cohort_key !== COUNCIL_COHORT_KEY");
+    const selection = readFileSync("lib/llm-council/selection.ts", "utf8");
+    // Collection: every research symbol once per session, tagged with the cohort key and the near-threshold flag.
+    expect(collect).toContain("selectCouncilCandidates");
+    expect(collect).toContain("cohort_key: COUNCIL_ALL_RESEARCH_COHORT_KEY");
+    expect(collect).toContain("near_threshold_entry_long: isNearThresholdEntryLong(observation)");
+    expect(selection).toContain("isNearThresholdEntryLong");
+    // Evaluation: both cohorts, same near-threshold predicate for the slice.
+    expect(evaluate).toContain("[COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY]");
+    expect(evaluate).toContain("cohortKey === COUNCIL_COHORT_KEY && !isNearThresholdEntryLong(obs)");
+    expect(evaluate).toContain("runInCohort(cohortKey, run)");
     expect(cohort).toContain("Math.abs(score - threshold) <= halfWidth");
+    expect(cohort).toContain('COUNCIL_ALL_RESEARCH_COHORT_KEY = "all_research_v1"');
     expect(cohort).not.toContain("entryEligible");
   });
 });

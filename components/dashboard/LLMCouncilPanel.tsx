@@ -168,10 +168,10 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
         <select disabled={busy} value={config.debate_rounds} onChange={(e) => void save({ debate_rounds: Number(e.target.value) })} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }}>{[0,1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}</select>
       </label>
       <label style={labelStyle}>Max symbols / market / day (minimum 5 qualifying names per session for rank IC)
-        <input type="number" min={1} max={5} disabled={busy} value={numericDrafts.symbols ?? String(config.max_symbols_per_market_day)} onChange={(e) => setNumericDrafts((d) => ({ ...d, symbols: e.target.value }))} onBlur={() => {
+        <input type="number" min={1} max={400} disabled={busy} value={numericDrafts.symbols ?? String(config.max_symbols_per_market_day)} onChange={(e) => setNumericDrafts((d) => ({ ...d, symbols: e.target.value }))} onBlur={() => {
           const value = Number(numericDrafts.symbols);
           setNumericDrafts((d) => { const next = { ...d }; delete next.symbols; return next; });
-          if (Number.isInteger(value) && value >= 1 && value <= 5 && value !== config.max_symbols_per_market_day) void save({ max_symbols_per_market_day: value });
+          if (Number.isInteger(value) && value >= 1 && value <= 400 && value !== config.max_symbols_per_market_day) void save({ max_symbols_per_market_day: value });
         }} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }} />
       </label>
       {!subscription && <label style={labelStyle}>Hard daily API budget (USD)
