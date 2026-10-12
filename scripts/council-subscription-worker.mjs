@@ -35,6 +35,7 @@ export function clientFailureCategory(error) {
   if (/rate.?limit|usage limit|quota exceeded|capacity limit/.test(text)) return 'subscription_quota_or_capacity';
   if (/model.{0,40}(not found|unsupported|unavailable|invalid)/.test(text)) return 'model_unavailable';
   if (/schema|structured output|json schema/.test(text)) return 'structured_output_rejected';
+  if (message === 'client_output_invalid') return 'invalid_cli_output';
   if (message === 'client_timeout') return 'client_timeout';
   if (message === 'client_unavailable') return 'client_unavailable';
   if (message === 'client_output_limit') return 'client_output_limit';
@@ -45,7 +46,7 @@ export function clientFailureCategory(error) {
 export function persistedFailureCode(category) {
   if (category === 'authentication_required') return 'authentication_required';
   if (category === 'subscription_quota_or_capacity') return 'quota_exhausted';
-  if (category === 'structured_output_rejected') return 'invalid_output';
+  if (category === 'structured_output_rejected' || category === 'invalid_cli_output') return 'invalid_output';
   return 'client_failed';
 }
 export function safeLocalDiagnostic(error, synthetic = false) {
@@ -75,7 +76,15 @@ export function parseClaudeResponse(raw, expectedModel) {
   }
   const reported = Object.keys(response.modelUsage ?? {});
   if (reported.length !== 1 || reported[0] !== expectedModel) throw new Error('model_mismatch');
-  const forecast = response.structured_output ?? JSON.parse(response.result);
+  let forecast = response.structured_output;
+  if (forecast === undefined) {
+    try { forecast = JSON.parse(response.result); }
+    catch {
+      const error = new Error('client_output_invalid');
+      if (typeof response.result === 'string') error.diagnostic = response.result;
+      throw error;
+    }
+  }
   return {
     forecast,
     actual_model: reported[0],

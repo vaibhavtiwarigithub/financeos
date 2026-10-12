@@ -107,11 +107,15 @@ describe("subscription worker boundary", () => {
       let cliError = null;
       try { worker.parseClaudeResponse(JSON.stringify({ is_error: true, error: { message: "TEST-NO-REAL-ASSET: synthetic provider failure" } }), "claude-sonnet-4-6"); }
       catch (error) { cliError = { category: worker.clientFailureCategory(error), diagnostic: worker.safeLocalDiagnostic(error, true) }; }
-      process.stdout.write(JSON.stringify({ good, mismatch, cliError }));
+      let invalidResult = null;
+      try { worker.parseClaudeResponse(JSON.stringify({ result: "TEST-NO-REAL-ASSET: synthetic CLI result", modelUsage: { "claude-sonnet-4-6": {} } }), "claude-sonnet-4-6"); }
+      catch (error) { invalidResult = { category: worker.clientFailureCategory(error), failure: worker.persistedFailureCode(worker.clientFailureCategory(error)), diagnostic: worker.safeLocalDiagnostic(error, true) }; }
+      process.stdout.write(JSON.stringify({ good, mismatch, cliError, invalidResult }));
     `], { encoding: "utf8" }));
     expect(result.good.forecast).toEqual(forecast);
     expect(result.good.actual_model).toBe("claude-sonnet-4-6");
     expect(result.mismatch).toBe(true);
     expect(result.cliError).toEqual({ category: "unclassified_cli_failure", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
+    expect(result.invalidResult).toEqual({ category: "invalid_cli_output", failure: "invalid_output", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
   });
 });
