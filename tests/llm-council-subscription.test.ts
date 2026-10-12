@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -117,5 +119,44 @@ describe("subscription worker boundary", () => {
     expect(result.mismatch).toBe(true);
     expect(result.cliError).toEqual({ category: "unclassified_cli_failure", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
     expect(result.invalidResult).toEqual({ category: "invalid_cli_output", failure: "invalid_output", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
+  });
+  it("finds a native Windows executable and diagnoses Claude's stdout error envelope", () => {
+    const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const worker = await import(${JSON.stringify(moduleUrl)});
+      const exists = path => /bin.claude\.exe$/.test(path);
+      const found = worker.resolveNativeExecutable("claude", { PATH: "C:/other;C:/bin" }, exists);
+      const missing = worker.resolveNativeExecutable("claude", { PATH: "C:/other" }, exists);
+      // Non-zero exit with the error envelope on STDOUT and an empty stderr: the real Claude CLI shape.
+      const fromEnvelope = worker.failureFromClaudeExit(JSON.stringify({ is_error: true, result: "Please run /login" }), "");
+      const fromStderr = worker.failureFromClaudeExit("not json", "boom on stderr");
+      process.stdout.write(JSON.stringify({ found, missing,
+        envelope: { category: worker.clientFailureCategory(fromEnvelope), diagnostic: fromEnvelope.diagnostic },
+        stderr: { category: worker.clientFailureCategory(fromStderr), diagnostic: fromStderr.diagnostic } }));
+    `], { encoding: "utf8" }));
+    expect(result.found).toMatch(/claude\.exe$/);
+    expect(result.missing).toBeNull();
+    expect(result.envelope).toEqual({ category: "authentication_required", diagnostic: "Please run /login" });
+    expect(result.stderr).toEqual({ category: "unclassified_cli_failure", diagnostic: "boom on stderr" });
+  });
+  it("passes a large non-ASCII prompt to a client byte-for-byte on this platform", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kairos-worker-test-"));
+    try {
+      const script = join(dir, "echo.js");
+      writeFileSync(script, 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify({len:s.length,head:s.slice(0,12),tail:s.slice(-6)})));');
+      const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
+      const prompt = "héllo ₹ — " + "x".repeat(60_000) + "END";
+      const promptFile = join(dir, "prompt.txt");
+      writeFileSync(promptFile, prompt, "utf8");
+      const out = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+        const worker = await import(${JSON.stringify(moduleUrl)});
+        const out = await worker.client("node", [${JSON.stringify(script)}], (await import("node:fs")).readFileSync(${JSON.stringify(promptFile)}, "utf8"), ${JSON.stringify(dir)});
+        process.stdout.write(out);
+      `], { encoding: "utf8" }));
+      // PowerShell may append one trailing newline; nothing else may change.
+      expect(out.head.startsWith("héllo ₹ — ")).toBe(true);
+      expect(out.len === prompt.length || out.len === prompt.length + 1 || out.len === prompt.length + 2).toBe(true);
+      expect(out.tail.replace(/\s+$/, "").endsWith("END")).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

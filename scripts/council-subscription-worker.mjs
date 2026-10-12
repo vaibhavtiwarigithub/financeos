@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Official signed-in clients only. No provider tokens/API keys accepted by this runner. */
 import { spawn } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -31,7 +32,7 @@ export function clientFailureCategory(error) {
   const message = String(error?.message ?? '');
   const diagnostic = String(error?.diagnostic ?? '');
   const text = `${message}\n${diagnostic}`.toLowerCase();
-  if (message === 'authentication_required' || /not logged in|authentication required|unauthorized/.test(text)) return 'authentication_required';
+  if (message === 'authentication_required' || /not logged in|authentication required|unauthorized|please run \/login|invalid api key|oauth token|token.{0,20}expired/.test(text)) return 'authentication_required';
   if (/rate.?limit|usage limit|quota exceeded|capacity limit/.test(text)) return 'subscription_quota_or_capacity';
   if (/model.{0,40}(not found|unsupported|unavailable|invalid)/.test(text)) return 'model_unavailable';
   if (/schema|structured output|json schema/.test(text)) return 'structured_output_rejected';
@@ -65,6 +66,27 @@ export function safeLocalDiagnostic(error, synthetic = false) {
     .replace(/\s+/g, ' ')
     .slice(0, 240);
 }
+/**
+ * Windows: locate a real `<command>.exe` on PATH. Spawning it directly keeps the argument array
+ * intact. Windows PowerShell 5.1 silently drops empty-string arguments, which turned
+ * `--tools ""` (documented "disable all tools") into a dangling `--tools`.
+ */
+export function resolveNativeExecutable(command, env = process.env, exists = existsSync) {
+  const pathValue = env.PATH ?? env.Path ?? '';
+  for (const dir of pathValue.split(';').filter(Boolean)) {
+    const candidate = join(dir, `${command}.exe`);
+    if (exists(candidate)) return candidate;
+  }
+  return null;
+}
+/** The Claude CLI reports run errors as a JSON envelope on STDOUT with a non-zero exit. */
+export function failureFromClaudeExit(stdout, stderr) {
+  try { parseClaudeResponse(stdout, ''); }
+  catch (e) { if (e.message === 'client_failed' && e.diagnostic) return e; }
+  const error = new Error('client_failed');
+  error.diagnostic = String(stderr || stdout || '');
+  return error;
+}
 export function parseClaudeResponse(raw, expectedModel) {
   const response = JSON.parse(raw);
   if (response.is_error) {
@@ -92,21 +114,38 @@ export function parseClaudeResponse(raw, expectedModel) {
     tokens_out: response.usage?.output_tokens ?? null,
   };
 }
-function client(command, args, prompt, cwd, captureAuthStatus = false) {
+export function client(command, args, prompt, cwd, captureAuthStatus = false) {
   return new Promise((resolveRun, reject) => {
     const env = safeClientEnv();
     const windows = process.platform === 'win32';
-    if (windows) { env.KAIROS_CLIENT_NAME = command; env.KAIROS_CLIENT_ARGS = JSON.stringify(args); env.KAIROS_STDIN = prompt ?? ''; }
-    // Arguments cross Windows .cmd wrappers as an array, not concatenated shell code.
-    const child = spawn(windows ? 'powershell.exe' : command, windows ? ['-NoProfile', '-NonInteractive', '-Command', '$ErrorActionPreference="Stop"; $clientArgs = ConvertFrom-Json -InputObject $env:KAIROS_CLIENT_ARGS; $env:TERM=""; $env:KAIROS_CLIENT_NAME | Out-Null; $env:KAIROS_STDIN | & $env:KAIROS_CLIENT_NAME @clientArgs; exit $LASTEXITCODE'] : args,
-      { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let file = command; let spawnArgs = args;
+    if (windows && command === 'claude') {
+      // Direct spawn of the native executable. No PowerShell layer for the subscription client.
+      file = resolveNativeExecutable(command, env);
+      if (!file) { reject(new Error('client_unavailable')); return; }
+    } else if (windows) {
+      // Other clients may be .cmd shims. Prompt crosses via a UTF-8 file (PowerShell 5.1 pipes
+      // ASCII and env vars are capped near 32k characters); no arguments may be empty strings.
+      if (args.some(arg => arg === '')) { reject(new Error('invalid_client')); return; }
+      env.KAIROS_CLIENT_NAME = command; env.KAIROS_CLIENT_ARGS = JSON.stringify(args); env.KAIROS_STDIN_FILE = join(cwd, 'kairos-stdin.txt');
+      writeFileSync(env.KAIROS_STDIN_FILE, prompt ?? '', 'utf8');
+      file = 'powershell.exe';
+      spawnArgs = ['-NoProfile', '-NonInteractive', '-Command', '$ErrorActionPreference="Stop"; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Text.UTF8Encoding]::new($false); $clientArgs = ConvertFrom-Json -InputObject $env:KAIROS_CLIENT_ARGS; $env:TERM=""; Get-Content -LiteralPath $env:KAIROS_STDIN_FILE -Raw -Encoding UTF8 | & $env:KAIROS_CLIENT_NAME @clientArgs; exit $LASTEXITCODE'];
+    }
+    const child = spawn(file, spawnArgs, { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let size = 0;
     const timer = setTimeout(() => { child.kill(); reject(new Error('client_timeout')); }, 240_000);
     child.stdout.on('data', chunk => { size += chunk.length; if (size > 2_000_000) { child.kill(); reject(new Error('client_output_limit')); } else stdout += chunk; });
-    if (captureAuthStatus) child.stderr.on('data', chunk => { if (stdout.length < 16_000) stdout += chunk; });
-    else child.stderr.on('data', chunk => { if (stderr.length < 16_000) stderr += chunk; });
+    child.stderr.on('data', chunk => { if (stderr.length < 16_000) stderr += chunk; });
     child.on('error', () => { clearTimeout(timer); reject(new Error('client_unavailable')); });
-    child.on('close', code => { clearTimeout(timer); if (code !== 0) { const e = new Error('client_failed'); e.diagnostic = (captureAuthStatus ? stdout : stderr).replace(/(?:sk-|kcw_|Bearer\s+)[A-Za-z0-9_.-]+/g, '[REDACTED]').slice(0, 1500); reject(e); } else resolveRun(stdout); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) { resolveRun(captureAuthStatus ? stdout + stderr : stdout); return; }
+      const redact = text => String(text).replace(/(?:sk-|kcw_|Bearer\s+)[A-Za-z0-9_.-]+/g, '[REDACTED]').slice(0, 1500);
+      const e = command === 'claude' ? failureFromClaudeExit(stdout, stderr) : new Error('client_failed');
+      e.diagnostic = redact(e.diagnostic ?? (captureAuthStatus ? stdout : stderr));
+      reject(e);
+    });
     child.stdin.on('error', () => {}); child.stdin.end(prompt ?? '');
   });
 }
