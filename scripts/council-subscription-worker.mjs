@@ -48,9 +48,31 @@ export function persistedFailureCode(category) {
   if (category === 'structured_output_rejected') return 'invalid_output';
   return 'client_failed';
 }
+export function safeLocalDiagnostic(error, synthetic = false) {
+  if (!synthetic) return null;
+  let detail = String(error?.diagnostic ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  if (!detail) return null;
+  if (/FROZEN SNAPSHOT|TEST-NO-REAL-ASSET/i.test(detail)) return 'CLI diagnostic echoed synthetic prompt; content redacted';
+  detail = detail.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? '';
+  return detail
+    .replace(/(?:sk-|kcw_|gho_)[A-Za-z0-9_.-]+/gi, '[redacted credential]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[redacted email]')
+    .replace(/[A-Z]:\\[^\s]+/gi, '[redacted path]')
+    .replace(/(api[_-]?key|token|authorization)(\s*[:=]\s*)\S+/gi, '$1$2[redacted]')
+    .replace(/\b[A-Za-z0-9_-]{48,}\b/g, '[redacted long value]')
+    .replace(/\s+/g, ' ')
+    .slice(0, 240);
+}
 export function parseClaudeResponse(raw, expectedModel) {
   const response = JSON.parse(raw);
-  if (response.is_error) throw new Error('client_failed');
+  if (response.is_error) {
+    const candidate = response.error?.message ?? response.error ?? response.result ?? response.message;
+    const error = new Error('client_failed');
+    if (typeof candidate === 'string') error.diagnostic = candidate;
+    else if (candidate != null) error.diagnostic = JSON.stringify(candidate);
+    throw error;
+  }
   const reported = Object.keys(response.modelUsage ?? {});
   if (reported.length !== 1 || reported[0] !== expectedModel) throw new Error('model_mismatch');
   const forecast = response.structured_output ?? JSON.parse(response.result);
@@ -122,6 +144,8 @@ export async function main() {
     // account identifiers, or provider-session material to Kairos.
     const category = clientFailureCategory(e);
     console.error(`[council-worker] client failure: ${category}`);
+    const detail = safeLocalDiagnostic(e, Boolean(job.synthetic));
+    if (detail) console.error(`[council-worker] local synthetic diagnostic: ${detail}`);
     // Persist only failure codes accepted by the deployed worker API. The
     // finer category is local diagnostics, not part of the public contract.
     result = { actual_model: job.expected_model, failure_code: persistedFailureCode(category) };

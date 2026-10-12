@@ -79,15 +79,22 @@ describe("subscription worker boundary", () => {
       const worker = await import(${JSON.stringify(moduleUrl)});
       const classify = worker.clientFailureCategory;
       const persist = worker.persistedFailureCode;
+      const diagnostic = worker.safeLocalDiagnostic;
       process.stdout.write(JSON.stringify([
         classify({ message: "client_failed", diagnostic: "Usage limit reached" }),
         classify({ message: "client_failed", diagnostic: "Model not found" }),
         classify({ message: "client_failed", diagnostic: "Invalid JSON schema" }),
         classify({ message: "client_failed", diagnostic: "opaque stderr" }),
         persist("authentication_required"), persist("subscription_quota_or_capacity"), persist("structured_output_rejected"), persist("unclassified_cli_failure"),
+        diagnostic({ diagnostic: "API error: token=very-secret-value contact person@example.com at C:\\\\Users\\\\vaibh\\\\private" }, false),
+        diagnostic({ diagnostic: "API error: token=very-secret-value contact person@example.com at C:\\\\Users\\\\vaibh\\\\private" }, true),
+        diagnostic({ diagnostic: "FROZEN SNAPSHOT TEST-NO-REAL-ASSET" }, true),
       ]));
     `], { encoding: "utf8" }));
-    expect(result).toEqual(["subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "unclassified_cli_failure", "authentication_required", "quota_exhausted", "invalid_output", "client_failed"]);
+    expect(result.slice(0, 8)).toEqual(["subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "unclassified_cli_failure", "authentication_required", "quota_exhausted", "invalid_output", "client_failed"]);
+    expect(result[8]).toBeNull();
+    expect(result[9]).not.toMatch(/very-secret-value|person@example.com|vaibh|private/);
+    expect(result[10]).toBe("CLI diagnostic echoed synthetic prompt; content redacted");
   });
   it("parses Claude's JSON envelope and rejects a model identity mismatch", () => {
     const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;
@@ -97,10 +104,14 @@ describe("subscription worker boundary", () => {
       const good = worker.parseClaudeResponse(raw, "claude-sonnet-4-6");
       let mismatch = false;
       try { worker.parseClaudeResponse(raw, "other-model"); } catch (error) { mismatch = error.message === "model_mismatch"; }
-      process.stdout.write(JSON.stringify({ good, mismatch }));
+      let cliError = null;
+      try { worker.parseClaudeResponse(JSON.stringify({ is_error: true, error: { message: "TEST-NO-REAL-ASSET: synthetic provider failure" } }), "claude-sonnet-4-6"); }
+      catch (error) { cliError = { category: worker.clientFailureCategory(error), diagnostic: worker.safeLocalDiagnostic(error, true) }; }
+      process.stdout.write(JSON.stringify({ good, mismatch, cliError }));
     `], { encoding: "utf8" }));
     expect(result.good.forecast).toEqual(forecast);
     expect(result.good.actual_model).toBe("claude-sonnet-4-6");
     expect(result.mismatch).toBe(true);
+    expect(result.cliError).toEqual({ category: "unclassified_cli_failure", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
   });
 });
