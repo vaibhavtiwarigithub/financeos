@@ -220,6 +220,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "india_news_shadow",
   },
   {
+    name: "india-macro-series",
+    agent: "india-macro-series",
+    time: "6:30 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "India macro series collector (India 10Y, USD/INR, Brent, India VIX, NIFTY, FII/DII). Append-only dated history; no score or execution reader.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "india_macro_series",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",
