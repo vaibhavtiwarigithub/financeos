@@ -16,6 +16,9 @@ export const maxDuration = 60;
 
 const LOOKBACK_DAYS = 400;
 const CHUNK = 8;
+// Estimation method stamped on every row. v1 joined factor levels on the exact date and dropped ~30% of sessions;
+// v2 uses the last level within 4 days. Rows are append-only, so a method change needs a new key, not an overwrite.
+const METHOD = "asof4d_v2";
 
 export async function GET(req: NextRequest) {
   const cron = verifyCronSecret(req);
@@ -64,7 +67,7 @@ export async function GET(req: NextRequest) {
       if (!windowEnd) continue;
       outRows.push({
         symbol, window_start: res.window_start, window_end: windowEnd, n_obs: res.n_obs, factor_coverage: res.factor_coverage,
-        status, r2: res.r2 ?? null, betas: res.betas ?? null, tstats: res.tstats ?? null, significant: res.significant ?? null, run_id: runId,
+        status, r2: res.r2 ?? null, betas: res.betas ?? null, tstats: res.tstats ?? null, significant: res.significant ?? null, method: METHOD, run_id: runId,
       });
     }
   }
@@ -72,7 +75,7 @@ export async function GET(req: NextRequest) {
   let written = 0;
   for (let i = 0; i < outRows.length; i += 200) {
     const { data, error } = await svc.from("india_macro_exposures")
-      .upsert(outRows.slice(i, i + 200), { onConflict: "symbol,window_end", ignoreDuplicates: true }).select("id");
+      .upsert(outRows.slice(i, i + 200), { onConflict: "symbol,window_end,method", ignoreDuplicates: true }).select("id");
     if (error) return NextResponse.json({ ok: false, error: `write failed: ${error.message}` }, { status: 500 });
     written += data?.length ?? 0;
   }

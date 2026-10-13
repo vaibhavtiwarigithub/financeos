@@ -53,7 +53,15 @@ describe("india macro exposure", () => {
   });
   it("refuses when factor levels are missing for too many sessions", () => {
     const { levels, returns } = build(200, { market: 1, usdinr: 0, brent: 0, vix: 0 });
-    for (const [d] of [...levels.brent].filter((_, i) => i % 2 === 0)) levels.brent.delete(d);
+    // A long contiguous hole (not single missing days) must still fail; single gaps are bridged as-of.
+    for (const [d] of [...levels.brent].slice(20, 120)) levels.brent.delete(d);
     expect(computeExposure(returns, levels)).toMatchObject({ ok: false, reason: "insufficient_factor_coverage" });
+  });
+  it("bridges isolated missing factor days with the last level instead of dropping the session", () => {
+    const { levels, returns } = build(200, { market: 1, usdinr: 0, brent: 0, vix: 0 });
+    for (const [d] of [...levels.brent].filter((_, i) => i % 3 === 1)) levels.brent.delete(d);
+    const res = computeExposure(returns, levels);
+    expect(res.ok).toBe(true);
+    expect(res.factor_coverage).toBeGreaterThan(0.95);
   });
 });

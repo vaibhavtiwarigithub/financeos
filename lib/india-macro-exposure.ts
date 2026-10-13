@@ -41,12 +41,41 @@ export interface ExposureResult {
   significant?: ExposureFactor[];
 }
 
-/** Change in a factor between a stock's previous and current session; null if either level is missing. */
-function factorChange(levels: Map<string, number>, from: string, to: string): number | null {
-  const a = levels.get(from);
-  const b = levels.get(to);
-  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) || a === 0) return null;
-  return b / a - 1;
+export const MAX_FACTOR_STALENESS_DAYS = 4;
+
+const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86400_000);
+
+/**
+ * Latest factor level on or before `date`, within MAX_FACTOR_STALENESS_DAYS (past data only). 24h instruments (FX, Brent)
+ * have no bar on some Indian session dates and Yahoo drops weekends/holidays differently, so an exact-date join discarded
+ * ~30% of sessions in production. Note the timing mismatch this accepts: an FX/Brent daily bar spans 24h while Indian
+ * equities trade ~4h, which attenuates those betas; the estimate is descriptive, not a forecast.
+ */
+function levelAsOf(sorted: ReadonlyArray<readonly [number, number]>, date: string): number | null {
+  const target = dayNumber(date);
+  let lo = 0;
+  let hi = sorted.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid][0] <= target) { best = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (best < 0 || target - sorted[best][0] > MAX_FACTOR_STALENESS_DAYS) return null;
+  return sorted[best][1];
+}
+
+function sortedLevels(levels: Map<string, number>): Array<readonly [number, number]> {
+  return [...levels]
+    .filter(([, v]) => Number.isFinite(v) && v !== 0)
+    .map(([d, v]) => [dayNumber(d), v] as const)
+    .sort((x, y) => x[0] - y[0]);
+}
+
+/** Change in a factor between a stock's previous and current session; null if either level is unavailable. */
+function factorChange(sorted: ReadonlyArray<readonly [number, number]>, from: string, to: string): number | null {
+  const a = levelAsOf(sorted, from);
+  const b = levelAsOf(sorted, to);
+  return a == null || b == null ? null : b / a - 1;
 }
 
 /** Gauss-Jordan inverse of a small symmetric matrix; null when singular. */
@@ -110,6 +139,7 @@ export function ols(y: number[], X: number[][]): { coef: number[]; t: number[]; 
 export function computeExposure(returns: readonly SessionReturn[], levels: FactorLevels): ExposureResult {
   const y: number[] = [];
   const X: number[][] = [];
+  const sorted = Object.fromEntries(EXPOSURE_FACTORS.map((f) => [f, sortedLevels(levels[f])])) as Record<ExposureFactor, Array<readonly [number, number]>>;
   let first: string | null = null;
   let last: string | null = null;
   for (const r of returns) {
@@ -117,7 +147,7 @@ export function computeExposure(returns: readonly SessionReturn[], levels: Facto
     const row: number[] = [];
     let complete = true;
     for (const f of EXPOSURE_FACTORS) {
-      const ch = factorChange(levels[f], r.previous_session_date, r.session_date);
+      const ch = factorChange(sorted[f], r.previous_session_date, r.session_date);
       if (ch == null) { complete = false; break; }
       row.push(ch);
     }
