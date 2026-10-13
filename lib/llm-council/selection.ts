@@ -13,16 +13,14 @@ type Observation = {
 type PriorRun = { observation_id: number | string | null; symbol: string; decision_ts: string };
 
 /**
- * Council candidates for one market: every research symbol, once per market session.
- * - Newest observation per symbol (callers pass rows in any order).
- * - A symbol is skipped when it already has a council run for the same session, whichever observation that run used,
- *   so a later same-day research pass never double-scores it.
- * - Near-threshold entry-long candidates (the original predeclared cohort) are ordered first, then the rest.
+ * Council candidates for one market: the newest observation of every research symbol that has not been scored yet.
+ * Research runs several times a day and the paper trader acts after each run, so the council scores EVERY new
+ * observation (one per research slot), never a day-end sample. An observation that already has a council run is skipped.
+ * Near-threshold entry-long candidates (the original predeclared cohort) are ordered first, then the rest.
  */
 export function selectCouncilCandidates<T extends Observation>(args: {
   observations: T[];
   priorRuns: PriorRun[];
-  sessionOf: (iso: string) => string | null;
 }): T[] {
   const newest = new Map<string, T>();
   for (const row of args.observations) {
@@ -30,9 +28,8 @@ export function selectCouncilCandidates<T extends Observation>(args: {
     if (!current || String(row.ts).localeCompare(String(current.ts)) > 0 || (row.ts === current.ts && Number(row.id) > Number(current.id))) newest.set(row.symbol, row);
   }
   const doneObservations = new Set(args.priorRuns.map((run) => Number(run.observation_id)));
-  const doneSessions = new Set(args.priorRuns.map((run) => `${run.symbol}|${args.sessionOf(String(run.decision_ts))}`));
   return [...newest.values()]
-    .filter((row) => !doneObservations.has(Number(row.id)) && !doneSessions.has(`${row.symbol}|${args.sessionOf(String(row.ts))}`))
+    .filter((row) => !doneObservations.has(Number(row.id)))
     .sort((a, b) => Number(isNearThresholdEntryLong(b)) - Number(isNearThresholdEntryLong(a))
       || thresholdDistance(a) - thresholdDistance(b)
       || String(b.ts).localeCompare(String(a.ts))

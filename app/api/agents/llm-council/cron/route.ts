@@ -7,7 +7,6 @@ import { councilProviderTimeoutMs, createCouncilBudgetGuard, effectiveCouncilDeb
 import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
-import { exchangeSessionDate } from "@/lib/paper/quote-crosscheck";
 import { selectCouncilCandidates } from "@/lib/llm-council/selection";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
@@ -273,7 +272,8 @@ export async function POST(req: NextRequest) {
   const debateRounds = hybrid ? 0 : effectiveCouncilDebateRounds(participants.length, Number(config.debate_rounds));
   const providerTimeoutMs = councilProviderTimeoutMs(participants.length, debateRounds);
 
-  const observationCutoff = new Date(now.getTime() - 3 * 86_400_000).toISOString();
+  // Fresh research only: the council shadows the decision slots, so an observation older than 12 h is not scored late.
+  const observationCutoff = new Date(now.getTime() - 12 * 3_600_000).toISOString();
   const obsRows: any[] = [];
   for (let offset = 0; offset <= MAX_OBSERVATION_SCAN; offset += 500) {
     const pageSize = Math.min(500, MAX_OBSERVATION_SCAN + 1 - offset);
@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
       .eq("market", requestedMarket).gte("decision_ts", observationCutoff).order("decision_ts", { ascending: true }).order("id", { ascending: true }).range(from, to), "council prior runs");
   } catch { return NextResponse.json({ error: "Could not read existing council runs" }, { status: 500 }); }
   // Every research symbol, once per market session (see selectCouncilCandidates for the exact rule).
-  const rankedCandidates = selectCouncilCandidates({ observations: obsRows, priorRuns, sessionOf: (iso) => exchangeSessionDate(iso, requestedMarket) });
+  const rankedCandidates = selectCouncilCandidates({ observations: obsRows, priorRuns });
   const candidates = rankedCandidates.slice(0, remainingSymbols);
 
   const outcomes: Array<Record<string, unknown>> = [];

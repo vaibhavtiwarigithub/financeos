@@ -48,6 +48,7 @@ describe("LLM council safety boundary", () => {
     const selection = readFileSync("lib/llm-council/selection.ts", "utf8");
     // Collection: every research symbol once per session, tagged with the cohort key and the near-threshold flag.
     expect(collect).toContain("selectCouncilCandidates");
+    expect(collect).toContain("12 * 3_600_000"); // fresh research only: shadow the decision slots
     expect(collect).toContain("cohort_key: COUNCIL_ALL_RESEARCH_COHORT_KEY");
     expect(collect).toContain("near_threshold_entry_long: isNearThresholdEntryLong(observation)");
     expect(selection).toContain("isNearThresholdEntryLong");
