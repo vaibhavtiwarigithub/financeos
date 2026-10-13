@@ -98,6 +98,10 @@ export async function GET(req: NextRequest) {
   const held = new Set<string>((paperRes.data ?? []).map((row: any) => String(row.symbol).toUpperCase()));
   const candidates = new Set<string>(held);
   for (const row of watchRes.data ?? []) if ((row as any).research_enabled !== false) candidates.add(String((row as any).symbol).toUpperCase());
+  // Symbols the India research pipeline actually scored recently (~33/day, ~69/week) are the ones a news feature must cover; held + watchlist alone was only 8.
+  const sinceIso = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const { data: recentObs } = await svc.from("decision_observations").select("symbol").eq("market", "india").gte("ts", sinceIso).limit(5000);
+  for (const row of recentObs ?? []) candidates.add(String((row as any).symbol).toUpperCase());
   const lastFetched = new Map((priorRes.data ?? []).map((row: any) => [String(row.symbol).toUpperCase(), String(row.fetched_at ?? "")]));
   const symbols = [...candidates]
     .filter((symbol) => /\.(NS|BO)$/i.test(symbol))
