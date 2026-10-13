@@ -9,6 +9,7 @@ import {
 } from "recharts";
 import { SCORE_DIMENSIONS, type ScoreDimensionKey, type ScorePoint } from "@/lib/research/score-history";
 import LLMCouncilPanel from "@/components/dashboard/LLMCouncilPanel";
+import CouncilScoreCard from "@/components/dashboard/CouncilScoreCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,7 @@ export default function DeepDivePage() {
         sentiment: p?.sentiment ?? null,
         macro: p?.macro ?? null,
         insider: p?.insider ?? null,
+        council: p?.council ?? null,
         direction: p?.direction ?? null,
         conviction: p?.conviction ?? null,
         runs: p?.runs ?? 0,
@@ -833,6 +835,8 @@ export default function DeepDivePage() {
           )}
         </div>
       )}
+      {/* Council scores are stored shadow forecasts: visible to owner AND viewer. The configuration/turn panel stays owner-only. */}
+      <CouncilScoreCard symbol={symbol} market={market} />
       {role === "owner" && <LLMCouncilPanel symbol={symbol} market={market} />}
     </div>
   );

@@ -110,6 +110,34 @@ Subscription usage is read from non-synthetic `llm_council_jobs` joined to its r
 
 US dates use `America/New_York`; India dates use `Asia/Kolkata`. API stages use their persisted turn timestamp. Subscription rows use result submission time when present and explicitly use queue/lease time when the job expired without a report. The database function bounds the scan to the chosen window (with a short queue-deadline buffer), validates the allowed lookbacks, and is executable only by `service_role`; the authenticated route additionally requires `requireOwner`. There is no new public data surface, browser-side service credential, score consumer, schedule, or money-path behavior.
 
+## Surfaces, decision-slot timing and viewer boundary (2026-10-13)
+
+The council is a new, independent score dimension, so it is shown wherever the other dimensions are, always labelled
+**shadow** and always display-only. Owner and viewer see the same stored scores; only configuration stays owner-only.
+
+| Surface | What it shows | Source (stored rows only) | Roles |
+|---|---|---|---|
+| Symbol page → Score History chart | `LLM council (shadow)` line + toggle + latest score bar, one point per day (last council run of the day) | `/api/research/scores` (merges council days) | owner + viewer |
+| Symbol page → Council card | median, DeepSeek/Claude/Codex scores, deterministic score, council minus deterministic, member disagreement, last 12 observations, member reasoning | `/api/research/council` | owner + viewer |
+| Symbol page → Council panel | provider keys, config, turns, spend | `/api/agents/llm-council` | owner only |
+| Score Tracker (single-symbol decision chart) | `LLM council (shadow)` series on the exact decision observation | `/api/charts/score-history` (exact observation match) | owner + viewer |
+| Learning page → "LLM Council · rank IC (shadow)" | per member, composite, deterministic baseline and 50/50 blend: observations, sessions, independent windows, mean rank IC, t-stat, state, per horizon and cohort; daily coverage per member | `/api/learning/council-ic` | owner + viewer |
+| Trading page (pending signals, paper trades) | inline `Council 58 (60 · 55 · 58)` beside the deterministic score | `/api/research/council/latest` | owner + viewer |
+| Upgrade Path | program `llm-council-shadow` (operational-only attribution), liveness probe on `llm_council_runs` | registry + liveness | owner |
+| System Health alerts | `council-unscored:<market>` (newest observation unscored >90 min) and `council-workers-stalled:<family>` (subscription jobs queued >2 h = PC off / CLI signed out) | stale-check | owner |
+
+**Not integrated, on purpose:** the Fundamentals page (the council is a model opinion over all dimensions, not a fundamental metric); the
+paper trader, rotation, exits and sizing (shadow-only until evidence); the Learner's weight mutation and dimension IC ledger (those
+evaluate the five scoring dimensions; the council has its own per-model IC with different sample rules, so it is reported beside them
+rather than inside them). Viewers never trigger a model call: every route above reads stored rows.
+
+**Decision-slot timing.** The council scores every NEW research observation (newest per symbol, at most 12 h old, not already scored),
+so each research run, and the paper-trade slot that follows it, has a matching shadow forecast. pg_cron windows (UTC, Mon-Fri, every 5 min):
+India 04-05 (research 04:00/05:00, trader 04:10), 07-08 (research 07:00, trader 07:45), 11-12 catch-up; US 13-16 (research 09:00 ET,
+trader 11:15 ET), 18-20 (research 14:00 ET, trader 15:15 ET), 22-23 catch-up. DeepSeek completes within minutes; Claude and Codex run on the
+owner's PC and finish roughly 10-30 minutes later, so for the India 04:00 slot (trader at 04:10) the local-worker scores arrive after the trade.
+Claude and Codex forecasts are evaluated with availability-aligned labels (first close after the forecast was returned).
+
 ## GPT-5.6 Luna and paired deterministic comparison (implemented locally 2026-10-11)
 
 The API model catalogue now includes `gpt-5.6-luna`, with explicit `medium`

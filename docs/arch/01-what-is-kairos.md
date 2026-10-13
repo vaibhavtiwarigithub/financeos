@@ -5,6 +5,8 @@
 
 ---
 
+> **LLM council (shadow, 2026-10-13):** DeepSeek, Claude and Codex score every new research observation; scores appear on the symbol page (chart dimension + card), Score Tracker, Learning page (rank IC / t-stat), Trading page badges and Upgrade Path. Display and measurement only; no trade reads them. See `features/llm-council-shadow/FEATURE_ARCHITECTURE.md`.
+
 ## 1. The core idea
 
 Kairos is an **automated investing research assistant** that behaves like a small, careful

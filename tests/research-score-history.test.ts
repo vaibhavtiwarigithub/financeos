@@ -48,8 +48,9 @@ describe("score history — research runs, not trades", () => {
     // Name the dimensions explicitly. Looping over SCORE_DIMENSIONS to check
     // them made the test vacuous: deleting a dimension deleted its own
     // assertion, so dropping Insider passed cleanly.
+    // "council" is the shadow LLM council, merged in from stored forecasts (not a column the scorer writes).
     expect(SCORE_DIMENSIONS.map(d => d.key)).toEqual([
-      "analyst", "fundamental", "technical", "sentiment", "macro", "insider",
+      "analyst", "fundamental", "technical", "sentiment", "macro", "insider", "council",
     ]);
     const [p] = toScorePoints([row()]);
     expect(p.analyst).toBe(52);

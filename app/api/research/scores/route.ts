@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
-import { toScorePoints } from "@/lib/research/score-history";
+import { mergeCouncilPoints, toCouncilPoints, toScorePoints } from "@/lib/research/score-history";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +52,34 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const rows = data ?? [];
-  const points = toScorePoints(rows);
+  let points = toScorePoints(rows);
+
+  // LLM council (shadow): stored forecasts only, merged as one more dimension. A council read failure must not blank
+  // the research scores, so it degrades to "no council data" and says so.
+  let councilRuns = 0;
+  let councilError: string | null = null;
+  try {
+    const { data: runs, error: runsError } = await svc
+      .from("llm_council_runs")
+      .select("id,decision_ts,status,consensus_score")
+      .eq("symbol", symbol).eq("market", market).gte("decision_ts", since)
+      .order("decision_ts", { ascending: true }).limit(2000);
+    if (runsError) throw new Error(runsError.message);
+    const runRows = (runs ?? []) as any[];
+    councilRuns = runRows.length;
+    const forecasts: any[] = [];
+    for (let i = 0; i < runRows.length; i += 200) {
+      const { data: part, error: fError } = await svc
+        .from("llm_council_model_forecasts")
+        .select("run_id,model_requested,final_score")
+        .in("run_id", runRows.slice(i, i + 200).map((r) => r.id)).eq("status", "completed");
+      if (fError) throw new Error(fError.message);
+      forecasts.push(...(part ?? []));
+    }
+    points = mergeCouncilPoints(points, toCouncilPoints(runRows, forecasts));
+  } catch (e) {
+    councilError = e instanceof Error ? e.message : "council unavailable";
+  }
 
   return NextResponse.json({
     symbol,
@@ -62,6 +89,8 @@ export async function GET(req: NextRequest) {
     // whenever a symbol was researched more than once in a day. Reporting only
     // one of them would overstate or understate how much evidence there is.
     runs: rows.length,
+    councilRuns,
+    councilError,
     points,
   });
 }

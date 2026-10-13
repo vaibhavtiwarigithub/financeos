@@ -142,6 +142,11 @@ type DecisionChartPoint = {
   insider_score: number | null;
   score_source: string | null;
   scoring_version: string | null;
+  // LLM council (shadow) scores of this exact decision; absent when the council has not scored it.
+  council_score?: number | null;
+  council_deepseek?: number | null;
+  council_claude?: number | null;
+  council_codex?: number | null;
 };
 
 const DETAIL_SERIES = [
@@ -151,6 +156,7 @@ const DETAIL_SERIES = [
   { key: "sentiment_score", label: "Sentiment", color: T.amber },
   { key: "macro_score", label: "Macro", color: T.purple },
   { key: "insider_score", label: "Insider", color: T.red },
+  { key: "council_score", label: "LLM council (shadow)", color: "#ec4899" },
 ] as const;
 
 type StrategyVersion = {

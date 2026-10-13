@@ -1,3 +1,5 @@
+import { COUNCIL_QUEUE_GRACE_MIN, COUNCIL_UNSCORED_GRACE_MIN, findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
@@ -342,6 +344,64 @@ async function runCheck() {
     for (const key of programs) if (!stalledKeys.has(key)) await resolveIssue(key, svc);
   } catch { /* best-effort: monitoring of monitors must never break the check */ }
 
+  // LLM council (shadow). It writes no agent_runs rows, so cron liveness cannot see it. Two signals: research observations the
+  // council never scored (scorer/schedule down) and subscription jobs stuck in the queue (local Claude/Codex worker down).
+  const councilSignals: Record<string, unknown> = {};
+  try {
+    const { data: councilConfig } = await svc.from("llm_council_config").select("enabled").eq("id", "global").maybeSingle();
+    if (councilConfig?.enabled) {
+      const windowStart = new Date(now.getTime() - 12 * 3_600_000).toISOString();
+      const observations = await fetchAllRows((from, to) => svc.from("decision_observations").select("id,market,symbol,ts")
+        .gte("ts", windowStart).order("ts", { ascending: true }).order("id", { ascending: true }).range(from, to), "council lag observations");
+      const newestIds = [...new Set(observations.map((o: any) => Number(o.id)))];
+      const scored = new Set<number>();
+      for (let i = 0; i < newestIds.length; i += 200) {
+        const { data: runs } = await svc.from("llm_council_runs").select("observation_id").in("observation_id", newestIds.slice(i, i + 200));
+        for (const r of runs ?? []) scored.add(Number((r as any).observation_id));
+      }
+      const unscored = findUnscoredResearch({ now, observations: observations as any[], scoredObservationIds: scored });
+      for (const market of ["us", "india"] as const) {
+        if (market === "india" && !indiaEnabled) continue;
+        const key = `council-unscored:${market}`;
+        const hit = unscored.get(market);
+        councilSignals[key] = hit ?? null;
+        if (hit) {
+          await reportIssue({
+            issueKey: key, severity: "warn", category: "cron",
+            title: `LLM council has not scored ${hit.count} ${market.toUpperCase()} research symbol(s)`,
+            detail: [
+              `${hit.count} symbol(s) (e.g. ${hit.example}) have a research observation older than ${COUNCIL_UNSCORED_GRACE_MIN} min with no council run; oldest ${hit.oldestTs.slice(0, 16)} UTC.`,
+              "The council scores each new research observation shortly after research (pg_cron kairos-council-* windows). Check the council cron and /api/agents/llm-council/cron?market=" + market + ".",
+            ].join(" · "),
+            autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+          }, svc);
+        } else await resolveIssue(key, svc);
+      }
+      const { data: queued } = await svc.from("llm_council_jobs").select("created_at,llm_council_workers!inner(family),llm_council_batches!inner(synthetic)")
+        .eq("status", "queued").eq("llm_council_batches.synthetic", false).lt("created_at", new Date(now.getTime() - COUNCIL_QUEUE_GRACE_MIN * 60_000).toISOString()).limit(1000);
+      const stalledWorkers = findStalledWorkers({
+        now,
+        jobs: (queued ?? []).map((j: any) => ({ family: String((Array.isArray(j.llm_council_workers) ? j.llm_council_workers[0] : j.llm_council_workers)?.family ?? "unknown"), created_at: String(j.created_at) })),
+      });
+      for (const family of ["claude", "codex"]) {
+        const key = `council-workers-stalled:${family}`;
+        const hit = stalledWorkers.get(family);
+        councilSignals[key] = hit ?? null;
+        if (hit) {
+          await reportIssue({
+            issueKey: key, severity: "warn", category: "cron",
+            title: `LLM council ${family} worker is not draining its queue`,
+            detail: [
+              `${hit.count} council job(s) have been queued for over ${COUNCIL_QUEUE_GRACE_MIN} min (oldest ${hit.oldest.slice(0, 16)} UTC).`,
+              "The Claude/Codex members run on your PC (Kairos Council Worker supervisors). Likely the PC is off or asleep, the CLI is signed out, or a usage limit paused the worker. DeepSeek still scores; this member's scores are missing until it drains. Jobs expire 12 h after creation.",
+            ].join(" · "),
+            autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+          }, svc);
+        } else await resolveIssue(key, svc);
+      }
+    }
+  } catch { /* best-effort: monitoring must never break the check */ }
+
   return NextResponse.json({
     checked: true,
     paperEodHealth,
@@ -349,6 +409,7 @@ async function runCheck() {
     indiaEnabled,
     results,
     stalledProducers,
+    councilSignals,
     freshness: freshness.map((f) => ({
       contract: f.contractId, version: f.version, breached: f.breached,
       coverage: Number(f.coverage.toFixed(3)), scopes: f.totalScopes,

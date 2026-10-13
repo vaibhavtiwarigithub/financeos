@@ -90,6 +90,10 @@ export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   // sibling; the parent `/api/research/fundamentals` calls providers.
   { prefix: "/api/research/price", methods: ["GET"] },
   { prefix: "/api/research/scores", methods: ["GET"] },
+  // LLM council (shadow) forecasts: stored rows only, no model or provider call.
+  { prefix: "/api/research/council", methods: ["GET"], exact: true },
+  { prefix: "/api/research/council/latest", methods: ["GET"], exact: true },
+  { prefix: "/api/learning/council-ic", methods: ["GET"], exact: true },
   { prefix: "/api/research/trades", methods: ["GET"] },
   { prefix: "/api/research/fundamentals/cached", methods: ["GET"], exact: true },
   // Earnings Calendar (US). The parent route refreshes from Alpha Vantage.

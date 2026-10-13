@@ -265,3 +265,7 @@ Two rules that are easy to get wrong:
 **Any route reachable by a non-owner must be a pure read over already-persisted
 tables** — no provider call, no LLM call, no write. This is the cost guarantee for
 shared access, and `tests/viewer-route-sweep.test.ts` enforces it.
+
+## Council score display (2026-10-13)
+
+Council scores are rendered as an extra, clearly labelled **shadow** dimension (pink `#ec4899`) wherever dimension scores appear. Routes that serve them read stored rows only and are on the viewer allowlist (`lib/auth/roles.ts`); a viewer view must never call a model or provider.

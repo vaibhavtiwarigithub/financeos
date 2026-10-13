@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
 import MissedOpportunitiesPanel from "@/components/dashboard/MissedOpportunitiesPanel";
+import { CouncilInline, useCouncilLatest } from "@/components/dashboard/CouncilInline";
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney, fmtMoneyAbbrev, type Mkt } from "@/lib/format-money";
@@ -882,6 +883,8 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
   const nav = portfolio?.nav ?? seed;
   const cash = portfolio?.cash_balance ?? seed;
   const pnl = nav - seed;
+  // LLM council (shadow) scores for the symbols on screen: stored forecasts, one batched read, display only.
+  const councilLatest = useCouncilLatest([...pendingSignals.map((x: any) => x.symbol), ...tradeLog.map((x: any) => x.symbol)].filter(Boolean), market);
   const longSignals = pendingSignals.filter(s => s.direction === "long" && s.analyst_score >= 60);
 
   async function runPositionMonitor() {
@@ -1116,6 +1119,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
               <div>
                 <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>ANALYST SCORE</div>
                 <ScoreBar score={s.analyst_score ?? 0} />
+                <CouncilInline latest={councilLatest[String(s.symbol).toUpperCase()]} />
               </div>
               <div>
                 <div style={{ fontSize: "10px", color: T.muted, marginBottom: "4px" }}>CONVICTION</div>
@@ -1172,7 +1176,7 @@ export default function TradingPage({ pendingSignals, tradeLog, strategy, portfo
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.qty}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(Number(t.fill_price), market) : "—"}</td>
                     <td style={{ padding: "10px 12px 10px 0" }}>{t.fill_price != null ? fmtMoney(t.qty * t.fill_price, market, 0) : "—"}</td>
-                    <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}</td>
+                    <td style={{ padding: "10px 12px 10px 0", color: T.accent }}>{t.analyst_score ?? "—"}<CouncilInline latest={councilLatest[String(t.symbol).toUpperCase()]} /></td>
                     <td style={{ padding: "10px 12px 10px 0", fontWeight: 600, color: t.realized_pnl != null ? pnlColor(Number(t.realized_pnl)) : T.muted }}>
                       {t.realized_pnl != null ? fmtSigned(Number(t.realized_pnl), market) : "—"}
                     </td>

@@ -1,3 +1,4 @@
+import { councilByObservation } from "@/lib/research/score-history";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
@@ -204,6 +205,28 @@ export async function GET(req: NextRequest) {
         scoring_version: row.scoring_version,
       });
     }
+    // LLM council (shadow): attach each decision's own council scores (exact observation match, stored forecasts only).
+    // A council read failure leaves the points without council fields; it never blanks the score history.
+    try {
+      const obsIds = [...canonical.values()].map((p) => Number(p.observation_id)).filter(Number.isFinite);
+      const councilRuns: any[] = [];
+      const councilForecasts: any[] = [];
+      for (let i = 0; i < obsIds.length; i += 200) {
+        const { data: runs, error: runError } = await svc.from("llm_council_runs").select("id,observation_id,status,consensus_score").in("observation_id", obsIds.slice(i, i + 200));
+        if (runError) throw new Error(runError.message);
+        councilRuns.push(...(runs ?? []));
+      }
+      for (let i = 0; i < councilRuns.length; i += 200) {
+        const { data: fc, error: fError } = await svc.from("llm_council_model_forecasts").select("run_id,model_requested,final_score").in("run_id", councilRuns.slice(i, i + 200).map((r) => r.id)).eq("status", "completed");
+        if (fError) throw new Error(fError.message);
+        councilForecasts.push(...(fc ?? []));
+      }
+      const byObservation = councilByObservation(councilRuns, councilForecasts);
+      for (const point of canonical.values()) {
+        const c = byObservation.get(Number(point.observation_id));
+        if (c) Object.assign(point, { council_score: c.council, council_deepseek: c.deepseek, council_claude: c.claude, council_codex: c.codex });
+      }
+    } catch { /* council overlay unavailable: the research score history is unaffected */ }
     const decisionHistoryBySymbol: Record<string, any[]> = {};
     for (const point of canonical.values()) {
       (decisionHistoryBySymbol[point.symbol] ??= []).push(point);

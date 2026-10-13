@@ -2070,6 +2070,13 @@
       "nodeId": "EXITSTOP,RESEARCH,WATCHDOG,SOXLCRON,TQQQCRON,SQQQCRON,SOXSCRON",
       "label": "Review pass: leveraged doors now scored first, ATR forward book unblocked, chart-pattern v2, holiday-aware stale-check, door liveness jobs",
       "reason": "Leveraged doors never entered (symbols were budget-deferred on weekdays so no session-validated signal); ATR forward book stalled on an inverted cumulative-population check and a pre-open owner sale treated as ambiguous; chart-pattern v1 flagged a standing state, not a breakout; stale-check alerted on an NSE holiday; Monday door entries blocked by the 24 h liveness rule. Fixed with regression tests; 5 pg_cron jobs added."
+    },
+    {
+      "date": "2026-10-13",
+      "event": "modify",
+      "nodeId": "COUNCIL,RESEARCH,PAPER,LEARNPAGE",
+      "label": "LLM council scores each research slot and is surfaced across the app (shadow)",
+      "reason": "Council scheduled per decision slot (India 04-05/07-08/11-12 UTC, US 13-16/18-20/22-23 UTC) so every new research observation has a matching DeepSeek+Claude+Codex shadow forecast; scores shown on the symbol page (chart dimension + card), Score Tracker, Learning page rank IC/t-stat, Trading badges; registered in Upgrade Path; stale-check alerts for unscored research and stalled local workers. PaperTrader/rotation/exits still never read council scores."
     }
   ]
 }
