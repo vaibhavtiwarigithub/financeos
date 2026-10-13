@@ -498,7 +498,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     callAccounting: "tracked",
     owner: "Evidence / India Research",
     architectureRef: "features/llm-event-extraction-shadow/FEATURE_ARCHITECTURE.md",
-    mainline: { commit: "394d667a", enteredAt: "2026-10-13", implementationScope: "measure_only", reason: "Start the India macro history that no source currently provides, without changing any score." },
+    mainline: { commit: "d0e324e6", enteredAt: "2026-10-13", implementationScope: "measure_only", reason: "Start the India macro history that no source currently provides, without changing any score." },
     reviewDate: "2027-01-15",
     reviewNote: "Do the core series have 120 dated observations with stable source health? If yes, design the regime x exposure evaluation.",
   },
