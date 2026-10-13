@@ -126,6 +126,7 @@ The council is a new, independent score dimension, so it is shown wherever the o
 | Trading page (pending signals, paper trades) | inline `Council 58 (60 · 55 · 58)` beside the deterministic score | `/api/research/council/latest` | owner + viewer |
 | Upgrade Path | program `llm-council-shadow` (operational-only attribution), liveness probe on `llm_council_runs` | registry + liveness | owner |
 | System Health alerts | `council-unscored:<market>` (newest observation unscored >90 min) and `council-workers-stalled:<family>` (subscription jobs queued >2 h = PC off / CLI signed out) | stale-check | owner |
+| System Health alerts (divergence) | `council-divergence:<market>` (category `models`): a HELD or ENTRY-ELIGIBLE symbol whose council median differs from the deterministic composite by >= 20 points AFTER removing the market's own median offset (India ran ~12.6 below, US ~3.7 below on 2026-10-13), or whose three members disagree by >= 25 points. Lists up to 8 symbols with reasons; resolves when none; informational only (the trader never reads council scores) | stale-check every 4 h; `lib/monitoring/council-divergence.ts` | owner |
 
 **Not integrated, on purpose:** the paper trader, rotation, exits and sizing (shadow-only until evidence); the Learner's weight mutation and dimension IC ledger (those
 evaluate the five scoring dimensions; the council has its own per-model IC with different sample rules, so it is reported beside them

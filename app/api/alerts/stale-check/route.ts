@@ -1,5 +1,7 @@
 import { COUNCIL_QUEUE_GRACE_MIN, COUNCIL_UNSCORED_GRACE_MIN, findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { findCouncilDivergence, type DivergenceRun } from "@/lib/monitoring/council-divergence";
+import { councilMemberOf } from "@/lib/research/score-history";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
@@ -396,6 +398,56 @@ async function runCheck() {
               "The Claude/Codex members run on your PC (Kairos Council Worker supervisors). Likely the PC is off or asleep, the CLI is signed out, or a usage limit paused the worker. DeepSeek still scores; this member's scores are missing until it drains. Jobs expire 12 h after creation.",
             ].join(" · "),
             autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+          }, svc);
+        } else await resolveIssue(key, svc);
+      }
+    }
+  } catch { /* best-effort: monitoring must never break the check */ }
+
+  // LLM council vs the deterministic composite the paper trader uses. Only HELD or ENTRY-ELIGIBLE symbols can alert, and the gap is
+  // measured after removing each market's typical offset (see lib/monitoring/council-divergence.ts for the calibration facts).
+  try {
+    const { data: councilConfig2 } = await svc.from("llm_council_config").select("enabled").eq("id", "global").maybeSingle();
+    if (councilConfig2?.enabled) {
+      const biasSince = new Date(now.getTime() - 36 * 3_600_000).toISOString();
+      const alertSince = new Date(now.getTime() - 12 * 3_600_000).toISOString();
+      const runRows = await fetchAllRows((from, to) => svc.from("llm_council_runs")
+        .select("id,market,symbol,decision_ts,status,consensus_score,det:input_snapshot->deterministic_score->>composite,thr:input_snapshot->deterministic_score->>threshold,dir:input_snapshot->deterministic_score->>direction")
+        .eq("status", "completed").gte("decision_ts", biasSince).order("decision_ts", { ascending: true }).order("id", { ascending: true }).range(from, to), "council divergence runs") as any[];
+      const memberScores = new Map<string, number[]>();
+      const recentIds = runRows.filter((r) => String(r.decision_ts) >= alertSince).map((r) => r.id);
+      for (let i = 0; i < recentIds.length; i += 200) {
+        const { data: fc } = await svc.from("llm_council_model_forecasts").select("run_id,model_requested,final_score").in("run_id", recentIds.slice(i, i + 200)).eq("status", "completed");
+        for (const f of fc ?? []) {
+          if (!councilMemberOf((f as any).model_requested) || (f as any).final_score == null) continue;
+          const l = memberScores.get((f as any).run_id) ?? []; l.push(Number((f as any).final_score)); memberScores.set((f as any).run_id, l);
+        }
+      }
+      const { data: openPositions } = await svc.from("paper_positions").select("symbol,market,qty").gt("qty", 0);
+      const held = new Set<string>((openPositions ?? []).map((p: any) => `${p.market ?? "us"}:${p.symbol}`));
+      const n = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+      const runs: DivergenceRun[] = runRows.map((r) => {
+        const scores = memberScores.get(r.id) ?? [];
+        return { market: r.market, symbol: r.symbol, decision_ts: String(r.decision_ts), consensus: n(r.consensus_score), deterministic: n(r.det), threshold: n(r.thr), direction: r.dir ?? null,
+          memberSpread: scores.length >= 2 ? Math.max(...scores) - Math.min(...scores) : null };
+      });
+      const { hits, bias } = findCouncilDivergence({ runs, alertWindowStart: alertSince, held });
+      councilSignals["council-divergence:bias"] = bias;
+      for (const market of ["us", "india"] as const) {
+        if (market === "india" && !indiaEnabled) continue;
+        const key = `council-divergence:${market}`;
+        const mine = hits.filter((h) => h.market === market);
+        councilSignals[key] = mine.length ? mine.map((h) => h.symbol) : null;
+        if (mine.length) {
+          await reportIssue({
+            issueKey: key, severity: "warn", category: "models",
+            title: `LLM council disagrees with the deterministic score on ${mine.length} ${market.toUpperCase()} symbol(s) that matter`,
+            detail: [
+              ...mine.slice(0, 8).map((h) => `${h.symbol} (${[h.held ? "held" : null, h.entryEligible ? "entry-eligible" : null].filter(Boolean).join(", ")}): ${h.reasons.join("; ")}`),
+              mine.length > 8 ? `+${mine.length - 8} more` : null,
+              "Shadow information only: the paper trader does not use council scores. Open the symbol page > LLM Council card, or the Fundamentals page LLM/DS/CL/CX columns, to read the members' reasoning.",
+            ].filter(Boolean).join(" · "),
+            autoExpireAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
           }, svc);
         } else await resolveIssue(key, svc);
       }
