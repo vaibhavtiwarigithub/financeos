@@ -253,6 +253,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "llm_events",
   },
   {
+    name: "llm-events-evaluate",
+    agent: "llm-events/evaluate",
+    time: "8:00 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Nightly IC, partial IC and council-redundancy evaluation of the India LLM event score. Append-only; no score or execution reader.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "llm_events_evaluate",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",

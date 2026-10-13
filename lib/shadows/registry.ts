@@ -544,7 +544,7 @@ export const SHADOW_PROGRAMS: readonly ShadowProgramDefinition[] = [
     architectureRef: "features/llm-event-extraction-shadow/FEATURE_ARCHITECTURE.md",
     mainline: { commit: "f29bdd9c", enteredAt: "2026-10-13", implementationScope: "measure_only", reason: "Start measuring LLM-extracted event tags from supplied text, blind to the council and every score." },
     reviewDate: "2026-12-15",
-    reviewNote: "Do the scores have 20 dated sessions with ESS >= 12 and positive partial IC against the council? If not, retire the dimension.",
+    reviewNote: "Read llm_event_ic_runs (nightly evaluator): do the scores have 20 dated sessions with ESS >= 12, positive partial IC (event:partial_vs_composite_council) and correlation with the council below 0.6? If not, retire the dimension.",
   },
   {
     id: "setup-experts",
