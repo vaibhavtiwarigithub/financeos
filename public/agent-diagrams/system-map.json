@@ -2077,6 +2077,20 @@
       "nodeId": "COUNCIL,RESEARCH,PAPER,LEARNPAGE",
       "label": "LLM council scores each research slot and is surfaced across the app (shadow)",
       "reason": "Council scheduled per decision slot (India 04-05/07-08/11-12 UTC, US 13-16/18-20/22-23 UTC) so every new research observation has a matching DeepSeek+Claude+Codex shadow forecast; scores shown on the symbol page (chart dimension + card), Score Tracker, Learning page rank IC/t-stat, Trading badges; registered in Upgrade Path; stale-check alerts for unscored research and stalled local workers. PaperTrader/rotation/exits still never read council scores."
+    },
+    {
+      "date": "2026-10-13",
+      "event": "add",
+      "nodeId": "INDIA_NEWS,INDIA_MACRO,INDIA_EXPOSURE,LLM_EVENTS",
+      "label": "India measurement shadows: dated news snapshots, macro series, company macro-exposure, LLM event extraction",
+      "reason": "India has no sentiment or macro dimension and macro is a per-day constant that cannot rank symbols. Added four measure-only collectors that append dated, immutable history (india_news_snapshots, india_macro_observations, india_macro_exposures, llm_event_items/scores) plus a nightly evaluator (IC, partial IC vs composite and council, redundancy) shown on the Learning page. The LLM extractor is blind to price and every score to avoid duplicating the council. Nothing reads these tables for scoring, gates or trades."
+    },
+    {
+      "date": "2026-10-13",
+      "event": "modify",
+      "nodeId": "PAPER,POSITIONMONITOR",
+      "label": "Partial paper exits now recompute position avg_cost from surviving lots",
+      "reason": "execute_paper_exit shrank the position qty without recomputing avg_cost, leaving AAPL/PLTR cost basis stale and tripping the critical paper-nav-reconcile cash_ledger_identity check. Function patched and the two rows repaired; cash, realized P&L and NAV were never wrong."
     }
   ]
 }
