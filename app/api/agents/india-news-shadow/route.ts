@@ -14,13 +14,24 @@ const NSE_INTENT = "event.corporate_announcement_shadow";
 const RSS_PROVIDER = "google_news_rss";
 const NSE_PROVIDER = "nse_corporate_announcements";
 const CONTRACT = "india-news-shadow-v1";
-const MAX_SYMBOLS = 20;
+const MAX_SYMBOLS = 100;
+// RSS fetching stops starting new symbols past this budget (route ceiling is 60 s); the stalest symbols go first, so the second daily pass finishes the universe.
+const RSS_BUDGET_MS = 40_000;
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 async function ledger(svc: any, row: Record<string, unknown>): Promise<void> {
   const { error } = await svc.from("provider_call_ledger").insert(row);
   if (error) throw new Error(`provider ledger write failed: ${error.message}`);
+}
+
+// Append-only dated snapshot: the point-in-time history evidence_cache_v2 (an upsert) cannot provide. Best-effort, never breaks the shadow.
+async function appendSnapshot(svc: any, args: { symbol: string; source: string; runId: string; payload: unknown; itemCount: number }): Promise<void> {
+  const { error } = await svc.from("india_news_snapshots").upsert({
+    symbol: args.symbol, source: args.source, run_id: args.runId, item_count: args.itemCount,
+    payload: args.payload, payload_hash: hash(args.payload),
+  }, { onConflict: "symbol,source,run_id", ignoreDuplicates: true });
+  if (error) console.error(`india_news_snapshots write failed: ${error.message}`);
 }
 
 async function cacheEvidence(svc: any, args: {
@@ -67,6 +78,7 @@ export async function GET(req: NextRequest) {
   const runId = `india-news-shadow:${new Date().toISOString()}`;
   const nowIso = new Date().toISOString();
 
+  const startedAtMs = Date.now();
   const [paperRes, watchRes, profileRes, priorRes] = await Promise.all([
     svc.from("paper_positions").select("symbol,qty").eq("market", "india").gt("qty", 0),
     svc.from("watchlist").select("symbol,company_name,research_enabled,expires_at").eq("market", "india")
@@ -115,11 +127,13 @@ export async function GET(req: NextRequest) {
   for (const symbol of symbols) {
     const events = (announcementsBySymbol.get(symbol) ?? []).slice(0, 20);
     await cacheEvidence(svc, { symbol, intent: NSE_INTENT, provider: NSE_PROVIDER, payload: { events }, quality: events.length ? "fresh" : "partial" });
+    if (announcements.length) await appendSnapshot(svc, { symbol, source: NSE_PROVIDER, runId, payload: { events }, itemCount: events.length });
   }
 
   let rssAvailable = 0;
   let rssErrors = 0;
   for (let i = 0; i < symbols.length; i += 3) {
+    if (Date.now() - startedAtMs > RSS_BUDGET_MS) break;
     await Promise.all(symbols.slice(i, i + 3).map(async (symbol) => {
       const companyName = names.get(symbol) ?? symbol.replace(/\.(NS|BO)$/i, "");
       const started = Date.now();
@@ -133,6 +147,7 @@ export async function GET(req: NextRequest) {
       });
       if (!result.ok) { rssErrors++; return; }
       if (result.headlines.length) rssAvailable++;
+      await appendSnapshot(svc, { symbol, source: RSS_PROVIDER, runId, payload: { query: result.query.slice(0, 180), headlines: result.headlines }, itemCount: result.headlines.length });
       await cacheEvidence(svc, {
         symbol, intent: RSS_INTENT, provider: RSS_PROVIDER,
         payload: { query: result.query.slice(0, 180), headlines: result.headlines },
