@@ -242,6 +242,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "india_macro_exposure",
   },
   {
+    name: "llm-events",
+    agent: "llm-events",
+    time: "7:40 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "India LLM event extraction shadow: one news or NSE item per call, blind to scores, validated against the text. Append-only items and scores; no score or execution reader.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "llm_events",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",
