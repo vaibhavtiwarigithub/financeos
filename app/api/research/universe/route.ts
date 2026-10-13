@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { breakdownWithStatus, finiteNumber } from "@/lib/research/universe-truth";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
+import { loadCouncilLatest, type CouncilLatestRow } from "@/lib/research/council-latest";
 import { latestExecutionEvent, liveDecisionEvents, paperTradeEvents } from "@/lib/research/trade-timeline";
 import { createServiceClient } from "@/lib/supabase/service";
 import { explainTradeWhy, TRADING_STAGES, type ObservationRow, type ResearchSignalState, type StageEventRow } from "@/lib/trading/trade-why";
@@ -313,6 +314,12 @@ export async function GET(req: NextRequest) {
   try { why = await loadWhyInputs(sb, latest.map(whyKey)); }
   catch (e: any) { console.error("[research/universe] trade_why read failed:", e?.message ?? e); }
 
+  // LLM council (shadow): newest stored scores per symbol, three members + composite. Fail-soft like the Why column:
+  // a council read error leaves those cells empty, never a 500 on the table.
+  let council = new Map<string, CouncilLatestRow>();
+  try { council = await loadCouncilLatest(sb); }
+  catch (e: any) { console.error("[research/universe] council read failed:", e?.message ?? e); }
+
   const out = latest.map((r: any) => ({
     symbol: r.symbol,
     market: r.market ?? "us",
@@ -322,6 +329,11 @@ export async function GET(req: NextRequest) {
     sentiment_score: finiteNumber(r.sentiment_score),
     macro_score: finiteNumber(r.macro_score),
     insider_score: finiteNumber(r.insider_score),
+    council_score: council.get(`${r.symbol}:${r.market ?? "us"}`)?.council_score ?? null,
+    council_deepseek: council.get(`${r.symbol}:${r.market ?? "us"}`)?.council_deepseek ?? null,
+    council_claude: council.get(`${r.symbol}:${r.market ?? "us"}`)?.council_claude ?? null,
+    council_codex: council.get(`${r.symbol}:${r.market ?? "us"}`)?.council_codex ?? null,
+    council_as_of: council.get(`${r.symbol}:${r.market ?? "us"}`)?.council_as_of ?? null,
     direction: r.direction,
     last_researched_at: r.created_at,
     fundamentals: factsMap.get(`${r.symbol}:${r.market ?? "us"}`) ?? null,

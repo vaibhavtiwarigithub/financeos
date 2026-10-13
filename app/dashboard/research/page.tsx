@@ -149,6 +149,12 @@ No resolved evidence means unavailable and the dimension is excluded. India news
 A verdict is usable only when it is known, no more than 10 days old, and backed by at least 3 real US macro indicators.
 India FII/DII and event evidence is advisory/shadow-only. India macro is inapplicable to the active score and its weight is renormalized away.`,
   },
+  council_score: {
+    title: "LLM council (shadow)",
+    text: `Four columns: LLM (composite), DS (DeepSeek V4.1 Flash, API), CL (Claude Sonnet 5.5, local Claude Pro worker), CX (GPT-5.6 Luna medium, local Codex worker).
+Each member scores the SAME frozen research observation independently (0 = least attractive, 100 = most attractive over the next 10 sessions). The composite LLM column is the run's deterministic median of the member scores; if a run was finalized before its last member returned, the median is shown only once all three scores exist (never a median of two). A blank cell means that member (or the council) has not scored this symbol's newest research run yet.
+The council scores every new research observation shortly after each research run. SHADOW ONLY: the paper trader, rotation, exits and sizing never read these scores. Evidence for whether they predict returns is on the Learning page (rank IC / t-stat).`,
+  },
   insider_score: {
     title: "Insider Score (I-Score)",
     text: `US equities only: open-market purchases and sales over 90 days. Requires at least 3 qualifying transactions. Awards, exercises, gifts and tax withholding are excluded.
@@ -180,6 +186,15 @@ const ALL_COLS: ColDef[] = [
     tooltip: "Macro score (0–100). Click ⓘ for formula." },
   { key: "insider_score",     label: "I",   csvLabel: "Insider Score (0-100)",      width: 42, score: true, formulaKey: "insider_score",
     tooltip: "Insider score (0-100). Click for formula and applicability rules." },
+  // ── LLM council (shadow): three independent members + their deterministic median ──────────────────────
+  { key: "council_score",    label: "LLM",  csvLabel: "LLM Council Median (0-100)", width: 46, score: true, formulaKey: "council_score",
+    tooltip: "LLM council composite (shadow): the deterministic median of the three members' scores for the newest research run. Display only; no trade uses it. Click ⓘ for how it is built." },
+  { key: "council_deepseek", label: "DS",   csvLabel: "LLM DeepSeek (0-100)",       width: 42, score: true, formulaKey: "council_score",
+    tooltip: "DeepSeek V4.1 Flash (API) score for the newest research run. Shadow; no trade uses it." },
+  { key: "council_claude",   label: "CL",   csvLabel: "LLM Claude (0-100)",         width: 42, score: true, formulaKey: "council_score",
+    tooltip: "Claude Sonnet 5.5 (local Claude Pro worker) score for the newest research run. Shadow; no trade uses it." },
+  { key: "council_codex",    label: "CX",   csvLabel: "LLM Codex (0-100)",          width: 42, score: true, formulaKey: "council_score",
+    tooltip: "GPT-5.6 Luna, medium reasoning (local Codex worker) score for the newest research run. Shadow; no trade uses it." },
 
   // ── Trade column ─────────────────────────────────────────────────────────
   { key: "last_trade_side", label: "Trade", csvLabel: "Last Trade Side", width: 60,
@@ -281,6 +296,8 @@ interface SymbolRow {
   symbol: string; market: string; analyst_score: number | null;
   fundamental_score: number | null; technical_score: number | null;
   sentiment_score: number | null; macro_score: number | null; insider_score: number | null;
+  // LLM council (shadow): newest stored scores; null when the council has not scored this symbol yet.
+  council_score?: number | null; council_deepseek?: number | null; council_claude?: number | null; council_codex?: number | null; council_as_of?: string | null;
   direction: string; last_researched_at: string;
   fundamentals: Record<string, string> | null;
   last_trade: LastTrade | null;
@@ -620,7 +637,7 @@ export default function FundamentalsPage() {
 
   const DOMAIN_PRESETS: Record<string, string[]> = {
     all:         ALL_COLS.filter(c => !c.defaultHidden).map(c => c.key),
-    scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score","insider_score"],
+    scores:      ["run_date","symbol","market","direction","analyst_score","fundamental_score","technical_score","sentiment_score","macro_score","insider_score","council_score","council_deepseek","council_claude","council_codex"],
     fundamental: ["run_date","symbol","Sector","Industry","market","direction","fundamental_score","fund_status",
                   "PERatio","PEGRatio","ReturnOnEquityTTM","GrossMarginTTM","FCFYield",
                   "DebtToEquity","QuarterlyRevenueGrowthYOY","ProfitMargin","EPS","EpsGrowth3Y","52WeekHigh"],
@@ -1453,7 +1470,7 @@ export default function FundamentalsPage() {
                     } else if (col.score) {
                       const rawScore = (row as any)[col.key];
                       const v = rawScore == null ? null : Number(rawScore);
-                      content = <span style={{ fontWeight: 700, color: v == null || isNaN(v) ? T.muted : scoreColor(v) }}>{v == null || isNaN(v) ? "—" : v}</span>;
+                      content = <span title={col.key.startsWith("council_") && row.council_as_of ? `LLM council (shadow), research run ${String(row.council_as_of).slice(0, 16).replace("T", " ")} UTC` : undefined} style={{ fontWeight: 700, color: v == null || isNaN(v) ? T.muted : scoreColor(v) }}>{v == null || isNaN(v) ? "—" : col.key.startsWith("council_") ? Math.round(v) : v}</span>;
                     } else if (col.breakdownSource) {
                       // Breakdown cell
                       const raw = getCell(row, col);

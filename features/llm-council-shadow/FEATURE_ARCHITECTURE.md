@@ -117,6 +117,7 @@ The council is a new, independent score dimension, so it is shown wherever the o
 
 | Surface | What it shows | Source (stored rows only) | Roles |
 |---|---|---|---|
+| **Fundamentals page** (`/dashboard/research`) | Four sortable, exportable columns in the Scores group and the Scores view: `LLM` (composite median), `DS` (DeepSeek), `CL` (Claude), `CX` (Codex), newest research run per symbol; blank until the council has scored that symbol; formula panel explains them | `/api/research/universe` (latest mode, fail-soft) via `lib/research/council-latest.ts` | owner + viewer |
 | Symbol page → Score History chart | `LLM council (shadow)` line + toggle + latest score bar, one point per day (last council run of the day) | `/api/research/scores` (merges council days) | owner + viewer |
 | Symbol page → Council card | median, DeepSeek/Claude/Codex scores, deterministic score, council minus deterministic, member disagreement, last 12 observations, member reasoning | `/api/research/council` | owner + viewer |
 | Symbol page → Council panel | provider keys, config, turns, spend | `/api/agents/llm-council` | owner only |
@@ -126,8 +127,7 @@ The council is a new, independent score dimension, so it is shown wherever the o
 | Upgrade Path | program `llm-council-shadow` (operational-only attribution), liveness probe on `llm_council_runs` | registry + liveness | owner |
 | System Health alerts | `council-unscored:<market>` (newest observation unscored >90 min) and `council-workers-stalled:<family>` (subscription jobs queued >2 h = PC off / CLI signed out) | stale-check | owner |
 
-**Not integrated, on purpose:** the Fundamentals page (the council is a model opinion over all dimensions, not a fundamental metric); the
-paper trader, rotation, exits and sizing (shadow-only until evidence); the Learner's weight mutation and dimension IC ledger (those
+**Not integrated, on purpose:** the paper trader, rotation, exits and sizing (shadow-only until evidence); the Learner's weight mutation and dimension IC ledger (those
 evaluate the five scoring dimensions; the council has its own per-model IC with different sample rules, so it is reported beside them
 rather than inside them). Viewers never trigger a model call: every route above reads stored rows.
 
