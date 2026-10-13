@@ -1,5 +1,9 @@
 # Kairos — Database Schema
 
+## LLM council late-subscription backfill (2026-10-12; migration `20261013004805` applied)
+
+`llm_council_model_forecasts` and finalized `llm_council_runs` are append-only (triggers `llm_council_forecasts_immutable`, `llm_council_runs_finalize_once`) and are never reopened. To complete a partial hybrid run whose subscription job failed, reopen only its (unprotected) batch and failed jobs; when the job completes, `council_subscription_advance` now inserts forecast rows with `on conflict (run_id,model_requested,execution_source) do nothing`, so the missing member's forecast is APPENDED (true `available_at` = its submit time) and existing rows are skipped. The run row stays `partial` with a null consensus (its update is guarded by `status='running'`); per-model subscription evaluation uses the appended rows, the stored composite median is absent for backfilled runs.
+
 ## LLM council scale-up (2026-10-12; migration `20261012204125` applied)
 
 `llm_council_config.max_symbols_per_market_day` check widened to 1-400 (was 1-5); `llm_council_batches.deadline` default 12 h (was 45 min); `council_subscription_claim` patched in place to allow 3 concurrent leases per worker (was 1). No new tables. Runs gain `config_snapshot.cohort_key = all_research_v1` and `near_threshold_entry_long`; `llm_council_ic_runs.cohort_key` now carries both cohorts.
