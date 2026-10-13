@@ -231,6 +231,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "india_macro_series",
   },
   {
+    name: "india-macro-exposure",
+    agent: "india-macro-exposure",
+    time: "7:30 PM IST",
+    days: "Weekly",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Weekly per-symbol India macro-exposure betas (market, USD/INR, Brent, India VIX). Append-only; no score or execution reader.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "india_macro_exposure",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",
