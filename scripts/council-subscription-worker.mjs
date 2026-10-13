@@ -173,7 +173,7 @@ export async function runClient(family, model, prompt, invoke = client) {
       if (!/logged in using chatgpt/i.test(auth)) throw new Error('authentication_required');
       const schema = join(dir, 'schema.json'); const output = join(dir, 'forecast.json');
       await writeFile(schema, JSON.stringify(forecastSchema));
-      const events = await invoke('codex', ['exec', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only', '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'image_generation', '-c', 'web_search="disabled"', '--model', model, '--output-schema', schema, '--output-last-message', output, '--json', '-'], prompt, dir);
+      const events = await invoke('codex', ['exec', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only', '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'image_generation', '-c', 'web_search="disabled"', '-c', 'model_reasoning_effort="medium"', '--model', model, '--output-schema', schema, '--output-last-message', output, '--json', '-'], prompt, dir);
       const usage = events.split('\n').flatMap(line => { try { const e = JSON.parse(line); return e.type === 'turn.completed' ? [e.usage] : []; } catch { return []; } }).at(-1);
       return { forecast: JSON.parse(await readFile(output, 'utf8')), actual_model: model, tokens_in: usage?.input_tokens ?? null, tokens_out: usage?.output_tokens ?? null };
     }
