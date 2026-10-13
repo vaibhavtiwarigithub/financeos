@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   if (market !== "us" && market !== "india") return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
 
   const svc = createServiceClient();
-  const { data: latest, error: latestError } = await svc.from("llm_council_ic_runs").select("evaluation_batch_id,created_at").order("created_at", { ascending: false }).limit(1);
+  const { data: latest, error: latestError } = await svc.from("llm_council_ic_runs").select("evaluation_batch_id,evaluated_at").order("evaluated_at", { ascending: false }).limit(1);
   if (latestError) return NextResponse.json({ error: latestError.message }, { status: 500 });
   const batchId = latest?.[0]?.evaluation_batch_id ?? null;
 
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    market, shadowOnly: true, evaluationBatchId: batchId, evaluatedAt: latest?.[0]?.created_at ?? null,
+    market, shadowOnly: true, evaluationBatchId: batchId, evaluatedAt: latest?.[0]?.evaluated_at ?? null,
     cells,
     coverage: [...perDay.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([date, v]) => ({ date, ...v })),
   });

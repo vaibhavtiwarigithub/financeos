@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
 
 const now = new Date("2026-10-13T12:00:00Z");
@@ -25,5 +26,12 @@ describe("council silence detection", () => {
     const stalled = findStalledWorkers({ now, jobs: [{ family: "claude", created_at: "2026-10-13T08:00:00Z" }, { family: "claude", created_at: "2026-10-13T09:00:00Z" }, { family: "codex", created_at: "2026-10-13T11:30:00Z" }] });
     expect(stalled.get("claude")).toMatchObject({ count: 2, oldest: "2026-10-13T08:00:00Z" });
     expect(stalled.has("codex")).toBe(false);
+  });
+  it("the Learning IC route orders by the table's real timestamp column (production 500 on 2026-10-13: created_at does not exist)", () => {
+    const route = readFileSync("app/api/learning/council-ic/route.ts", "utf8");
+    expect(route).toContain('.order("evaluated_at"');
+    expect(route).not.toMatch(/llm_council_ic_runs"\)\.select\("[^"]*created_at/);
+    const migrations = readFileSync("supabase/migrations/20260930144755_llm_council_shadow.sql", "utf8");
+    expect(migrations).toMatch(/llm_council_ic_runs[\s\S]*evaluated_at/);
   });
 });
