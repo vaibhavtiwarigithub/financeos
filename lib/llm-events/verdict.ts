@@ -1,7 +1,7 @@
 // Plain-language verdict for the LLM event dimension, from one horizon's evaluation cells. Mirrors the registry decision rule:
 // keep only if the partial IC (after composite and council) is positive with evidence AND the event score is not a copy of the council.
 
-import { REDUNDANCY_CORRELATION } from "@/lib/llm-events/evaluate";
+import { REDUNDANCY_CORRELATION } from "@/lib/llm-events/constants";
 
 export interface VerdictCell {
   series_key: string;

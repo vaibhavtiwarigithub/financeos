@@ -8,9 +8,11 @@
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 import { MIN_COUNCIL_EFFECTIVE_WINDOWS, MIN_COUNSEL_CROSS_SECTION } from "@/lib/llm-council/core";
 import { ols } from "@/lib/india-macro-exposure";
+import { REDUNDANCY_CORRELATION } from "@/lib/llm-events/constants";
+
+export { REDUNDANCY_CORRELATION };
 
 export const EVENT_SCORE_MAX_AGE_MS = 3 * 86_400_000;
-export const REDUNDANCY_CORRELATION = 0.6;
 const MIN_PARTIAL_CROSS_SECTION = MIN_COUNSEL_CROSS_SECTION + 3;
 const MIN_SESSIONS = 20;
 
