@@ -1,7 +1,7 @@
 # Feature Architecture: LLM Event Extraction Shadow (sentiment / macro tags)
 
 ## Status
-**Part implemented 2026-10-13 (owner chose defaults): India, `deepseek-flash`, existing feeds.** Built: snapshots (`india_news_snapshots`), macro series, company macro-exposure betas, and the extractor `/api/agents/llm-events` (tables `llm_event_*`, kill switch `llm_event_config`). Evaluator built (`/api/agents/llm-events/evaluate`, table `llm_event_ic_runs`; reports `insufficient_evidence` until ~20 dated sessions). NOT built: LLM filing-text exposure tags, any UI. Original proposal: 2026-10-13 after the owner asked whether LLMs can supply sentiment or macro data for the Fundamentals page and whether that overlaps the LLM council.
+**Part implemented 2026-10-13 (owner chose defaults): India, `deepseek-flash`, existing feeds.** Built: snapshots (`india_news_snapshots`), macro series, company macro-exposure betas, and the extractor `/api/agents/llm-events` (tables `llm_event_*`, kill switch `llm_event_config`). Evaluator built (`/api/agents/llm-events/evaluate`, table `llm_event_ic_runs`; reports `insufficient_evidence` until ~20 dated sessions). Learning page panel built (`components/dashboard/EventIcPanel.tsx`, route `/api/learning/llm-events-ic`). NOT built: LLM filing-text exposure tags, any UI. Original proposal: 2026-10-13 after the owner asked whether LLMs can supply sentiment or macro data for the Fundamentals page and whether that overlaps the LLM council.
 
 ## Feature Purpose
 Measure whether LLM-extracted structured event tags from *supplied real text* (news items, filings) carry forward-return information beyond the existing sentiment/macro dimensions and beyond the council. Measure-only; never feeds a score, gate, or trade.
