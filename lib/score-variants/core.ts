@@ -8,7 +8,7 @@
 
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 
-export type Dim = "fundamental" | "technical" | "sentiment";
+export type Dim = "fundamental" | "technical" | "sentiment" | "insider_v2";
 export const VARIANT_SET = "variant_set_v1";
 export const MIN_CROSS_SECTION = 15;
 export const MIN_SESSIONS = 20;

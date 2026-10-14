@@ -4,7 +4,7 @@
 // 25/day slot on INSIDER_TRANSACTIONS. Same 90-day buy/sell-value scoring shape
 // as research-agent.ts:scoreInsider ({ score, summary, available }).
 
-const SEC_UA = "Kairos vterminater@gmail.com";
+export const SEC_UA = "Kairos vterminater@gmail.com";
 const LOOKBACK_DAYS = 90;
 const MAX_FILINGS_PER_SYMBOL = 8;
 const MIN_INSIDER_TRANSACTIONS = 3; // same sample-size gate as scoreInsider
@@ -12,7 +12,7 @@ const MIN_INSIDER_TRANSACTIONS = 3; // same sample-size gate as scoreInsider
 let tickerCikCache: Map<string, string> | null = null;
 let tickerCikFetchedAt = 0;
 
-async function getTickerCikMap(): Promise<Map<string, string>> {
+export async function getTickerCikMap(): Promise<Map<string, string>> {
   const now = Date.now();
   if (tickerCikCache && now - tickerCikFetchedAt < 24 * 3600_000) return tickerCikCache;
   const res = await fetch("https://www.sec.gov/files/company_tickers.json", {

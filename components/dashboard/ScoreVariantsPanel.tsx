@@ -22,8 +22,9 @@ const pct = (v: number | null | undefined, d = 2) => (v == null || !Number.isFin
 const num = (v: number | null | undefined, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 const fmtWeights = (w: Record<string, number>) => Object.entries(w).map(([k, v]) => `${k} ${v}`).join(" · ");
 
-export default function ScoreVariantsPanel() {
+export default function ScoreVariantsPanel({ set = "variant_set_v1" }: { set?: "variant_set_v1" | "insider_v2" }) {
   const { market } = useMarket();
+  const isInsider = set === "insider_v2";
   const [data, setData] = useState<Payload | null>(null);
   const [horizon, setHorizon] = useState(10);
   const [error, setError] = useState("");
@@ -31,12 +32,12 @@ export default function ScoreVariantsPanel() {
   useEffect(() => {
     let active = true;
     setData(null);
-    fetch(`/api/learning/score-variants?market=${market}`, { cache: "no-store" })
+    fetch(`/api/learning/score-variants?market=${market}&set=${set}`, { cache: "no-store" })
       .then(async (r) => { if (!r.ok) throw new Error(`Score variants unavailable (${r.status})`); return r.json(); })
       .then((b) => { if (active) { setData(b); setError(""); } })
       .catch((e) => { if (active) setError(e instanceof Error ? e.message : "Score variants unavailable"); });
     return () => { active = false; };
-  }, [market]);
+  }, [market, set]);
 
   const bySample = useMemo(() => {
     const pick = (sample: "forward" | "hindsight") => (data?.cells ?? []).filter((c) => c.sample === sample && c.horizon_days === horizon);
@@ -57,7 +58,7 @@ export default function ScoreVariantsPanel() {
             <tbody>
               {baselineRow(cells) && (
                 <tr style={{ borderTop: `1px solid ${T.border}`, color: T.sub }}>
-                  <td style={{ padding: "5px 10px 5px 0" }}>Live composite (same rows)</td><td style={{ padding: "5px 10px 5px 0" }}>{baselineRow(cells).sessions}</td>
+                  <td style={{ padding: "5px 10px 5px 0" }}>{isInsider ? "Insider v1 (same filings)" : "Live composite (same rows)"}</td><td style={{ padding: "5px 10px 5px 0" }}>{baselineRow(cells).sessions}</td>
                   <td style={{ padding: "5px 10px 5px 0" }}>{num(baselineRow(cells).baseline_mean_ic, 3)}</td>
                   <td style={{ padding: "5px 10px 5px 0" }}>{pct(baselineRow(cells).baseline_top_fifth)}</td><td style={{ padding: "5px 10px 5px 0" }}>{pct(baselineRow(cells).baseline_bottom_fifth)}</td>
                   <td style={{ padding: "5px 10px 5px 0", color: (baselineRow(cells).baseline_spread ?? 0) >= 0 ? T.green : T.red }}>{pct(baselineRow(cells).baseline_spread)}</td><td style={{ padding: "5px 10px 5px 0" }}>—</td><td style={{ padding: "5px 10px 5px 0" }}>baseline</td>
@@ -86,11 +87,13 @@ export default function ScoreVariantsPanel() {
     <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "18px 20px", marginBottom: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, color: T.text, fontSize: 15, fontWeight: 700 }}><FlaskConical size={16} color={T.accent} /> Score formulas · forward shadow</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, color: T.text, fontSize: 15, fontWeight: 700 }}><FlaskConical size={16} color={T.accent} /> {isInsider ? "Insider score v2 · forward shadow" : "Score formulas · forward shadow"}</div>
           <div style={{ color: T.sub, fontSize: 12, lineHeight: 1.55, marginTop: 6, maxWidth: 820 }}>
-            Does a simpler score rank {market === "india" ? "India" : "US"} stocks better than the live composite? Three formulas were declared in advance
+            {isInsider
+              ? "Does ignoring pre-planned (Rule 10b5-1) insider sales rank US stocks better than the current insider logic? Both are computed from the same SEC Form 4 filings and judged only on observations after the test was declared. Measurement only: no score, gate or trade uses this."
+              : <>Does a simpler score rank {market === "india" ? "India" : "US"} stocks better than the live composite? Three formulas were declared in advance
             {data?.declaredAt ? ` (${new Date(data.declaredAt).toISOString().slice(0, 16).replace("T", " ")} UTC)` : ""} and are judged only on observations after that moment, so they cannot be tuned in hindsight.
-            Spread = average 10-day (or 5-day) excess return of the top fifth of names by the score minus the bottom fifth. Measurement only: no score, gate or trade uses these.
+            Spread = average 10-day (or 5-day) excess return of the top fifth of names by the score minus the bottom fifth. Measurement only: no score, gate or trade uses these.</>}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
@@ -108,7 +111,7 @@ export default function ScoreVariantsPanel() {
             Verdict needs 20+ sessions and 12 effective windows (sessions ÷ horizon): about 3 months at h5 and 6 months at h10 of forward data. Adoption also needs spread t ≥ 2.4 (3 variants tested).
           </div>
           {table(bySample.forward, "FORWARD (counts as evidence): observations after the formulas were declared", T.green)}
-          {table(bySample.hindsight, "HINDSIGHT (reference only): observations before declaration, which the formulas were chosen from", T.amber)}
+          {!isInsider && table(bySample.hindsight, "HINDSIGHT (reference only): observations before declaration, which the formulas were chosen from", T.amber)}
           <div style={{ marginTop: 16, color: T.muted, fontSize: 11, lineHeight: 1.7 }}>
             {data.registry.map((r) => (
               <div key={r.variant_id}><strong style={{ color: T.sub }}>{r.label}</strong> ({fmtWeights(r.weights)}): {r.rationale}</div>

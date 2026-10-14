@@ -2126,6 +2126,20 @@
       "nodeId": "TRADER",
       "label": "Proposal lifecycle: unanswered proposals now expire",
       "reason": "Proposals whose 30-minute approval window passed stayed pending_review forever (147 over 3 months), inflating the portfolio proposal-impact panel. A 5-minute sweeper now moves them to the existing expired status; nothing about proposal generation, approval or order placement changed."
+    },
+    {
+      "date": "2026-10-14",
+      "event": "add",
+      "nodeId": "INSIDERV2",
+      "label": "Insider v2 forward shadow (planned 10b5-1 sales ignored)",
+      "reason": "The insider dimension was negative in both halves of the audit window and scores routine planned selling as bearish. A weekday job stores insider v1 and v2 from the same SEC Form 4 filings and a nightly evaluator judges them paired and forward-only. Measure-only: no score, gate or order reads it."
+    },
+    {
+      "date": "2026-10-14",
+      "event": "change",
+      "nodeId": "RESEARCH",
+      "label": "Sentiment source query and availability alert guard",
+      "reason": "US sentiment availability fell from 100% to about 89% over a week. GDELT is now queried by company name instead of the bare ticker, and a data-availability alert can only be critical for batches of at least 20 applicable symbols. No score formula changed."
     }
   ]
 }

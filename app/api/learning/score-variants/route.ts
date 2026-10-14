@@ -14,12 +14,14 @@ export async function GET(req: NextRequest) {
   if (gate) return gate;
   const market = req.nextUrl.searchParams.get("market");
   if (market !== "us" && market !== "india") return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  // Two registered sets share the evaluation table; each has its own latest batch.
+  const set = req.nextUrl.searchParams.get("set") === "insider_v2" ? "insider_v2" : "variant_set_v1";
   const svc = createServiceClient();
 
-  const { data: latest, error: latestError } = await svc.from("score_variant_eval_runs").select("evaluation_batch_id,evaluated_at").order("evaluated_at", { ascending: false }).limit(1);
+  const { data: latest, error: latestError } = await svc.from("score_variant_eval_runs").select("evaluation_batch_id,evaluated_at").eq("variant_set", set).order("evaluated_at", { ascending: false }).limit(1);
   if (latestError) return NextResponse.json({ error: latestError.message }, { status: 500 });
   const batchId = latest?.[0]?.evaluation_batch_id ?? null;
-  const { data: registry } = await svc.from("score_variant_registry").select("variant_id,label,weights,declared_at,rationale").eq("variant_set", "variant_set_v1").order("variant_id");
+  const { data: registry } = await svc.from("score_variant_registry").select("variant_id,label,weights,declared_at,rationale").eq("variant_set", set).order("variant_id");
 
   let cells: any[] = [];
   if (batchId) {
@@ -29,5 +31,5 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     cells = data ?? [];
   }
-  return NextResponse.json({ market, shadowOnly: true, evaluatedAt: latest?.[0]?.evaluated_at ?? null, declaredAt: registry?.[0]?.declared_at ?? null, registry: registry ?? [], cells });
+  return NextResponse.json({ market, set, shadowOnly: true, evaluatedAt: latest?.[0]?.evaluated_at ?? null, declaredAt: registry?.[0]?.declared_at ?? null, registry: registry ?? [], cells });
 }

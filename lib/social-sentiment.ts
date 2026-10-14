@@ -1,5 +1,6 @@
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchNewsToneSentiment } from "@/lib/india-news";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export interface SocialSentiment {
   symbol: string;
@@ -74,14 +75,40 @@ interface AVNewsResponse {
   feed?: AVArticle[];
 }
 
+
+// GDELT matches a quoted phrase against article text. A bare ticker like "LOW", "AMT" or "ABBV" is ambiguous or absent in prose, so US
+// names starved GDELT while StockTwits had fewer than MIN_SENTIMENT_SAMPLE tagged messages. Query the company name instead when known.
+// 2026-10-14: US sentiment availability fell from 100% to ~89% over a week; the misses were large caps with a thin StockTwits sample.
+export function cleanCompanyName(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const name = raw
+    .replace(/\s*[,(].*$/, "")
+    .replace(/(^|\s)(incorporated|inc|corporation|corp|company|co|ltd|limited|plc|holdings|holding|group|class [a-c]|common stock|ordinary shares|ads|adr)\.?(?=\s|$)/gi, " ")
+    .replace(/[.,]+\s*$/, "").replace(/\s+/g, " ").trim();
+  return name.length >= 3 ? name : undefined;
+}
+
+const companyNameCache = new Map<string, string | undefined>();
+async function companyNameFor(symbol: string): Promise<string | undefined> {
+  if (companyNameCache.has(symbol)) return companyNameCache.get(symbol);
+  let name: string | undefined;
+  try {
+    const { data } = await createServiceClient().from("symbol_profiles").select("company_name").eq("symbol", symbol).eq("market", "us").maybeSingle();
+    name = cleanCompanyName(data?.company_name as string | null | undefined);
+  } catch { name = undefined; }
+  companyNameCache.set(symbol, name);
+  return name;
+}
+
 export async function fetchSocialSentiment(symbol: string): Promise<SocialSentiment> {
+  const companyName = await companyNameFor(symbol);
   // FREE sources first (StockTwits + GDELT news-tone) — neither touches the Alpha
   // Vantage 25/day cap. On a 42-symbol US day, NEWS_SENTIMENT alone would blow the
   // whole AV budget, so AV is now a RESERVE: it is called only when BOTH free
   // sources come back thin/empty, keeping AV free for genuine emergencies.
   const [stocktwits, gdelt] = await Promise.allSettled([
     fetchStockTwits(symbol),
-    fetchNewsToneSentiment(symbol),
+    fetchNewsToneSentiment(symbol, companyName),
   ]);
 
   const stRaw = stocktwits.status === "fulfilled" ? stocktwits.value : null;

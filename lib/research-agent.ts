@@ -1325,6 +1325,9 @@ const THIN_RUN_MIN_SYMBOLS = 2;            // …and at least this many thin sym
 const DIM_AVAIL_MIN_APPLICABLE = 4;        // need this many applicable symbols before judging
 const DIM_AVAIL_WARN = 0.85;
 const DIM_AVAIL_CRIT = 0.70;
+// A critical needs a batch big enough to mean something: 9/14 symbols (a small intraday run of ETFs and thin names) paged critical on a
+// provider that was 89-92% available across the day's full runs. Smaller batches are capped at warn.
+const DIM_AVAIL_CRIT_MIN_APPLICABLE = 20;
 
 // `${market}:${dim}` combos whose SOURCE is sparse by nature — absence is EXPECTED,
 // not a starvation fault. For these the availability alert is capped at "info"
@@ -1389,7 +1392,7 @@ async function recordRunEvidence(market: string, runKey: string, includedDims: S
         await reportIssue({
           issueKey: dimKey,
           // Known-sparse source → info (expected, not a fault). Dense source low → warn/critical.
-          severity: expectedSparse ? "info" : (rate < DIM_AVAIL_CRIT ? "critical" : "warn"),
+          severity: expectedSparse ? "info" : (rate < DIM_AVAIL_CRIT && appl >= DIM_AVAIL_CRIT_MIN_APPLICABLE ? "critical" : "warn"),
           category: "data",
           title: expectedSparse
             ? `Expected sparse coverage: ${d} ${Math.round(rate * 100)}% (${market.toUpperCase()})`

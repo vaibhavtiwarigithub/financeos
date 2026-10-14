@@ -1,7 +1,7 @@
 # Feature Architecture: Insider Score, Routine Sales (PROPOSAL)
 
 ## Status
-**DRAFT proposal, 2026-10-14. Not implemented. Needs explicit approval.** Shadow-first: nothing here changes the live insider score or any weight.
+**IMPLEMENTED 2026-10-14 as a measure-only shadow (owner approved).** Nothing here changes the live insider score or any weight. Deviations from this draft: the live insider score is Massive-first (EDGAR is only its second source), so v2 could not reuse existing fetches and runs as its own SEC job (`/api/agents/insider-v2-shadow`) into the append-only `insider_v2_shadow` table instead of `decision_observations.features`; the flag is filing-level `<aff10b5One>` (verified on real AAPL filings), so all sales in a flagged filing count as planned. Evaluation reuses the score-variant machinery (`variant_set='insider_v2'`, baseline slot = insider v1 from the same filings).
 
 ## Problem (evidence)
 - US `insider_score` is 10% of the composite. In the sampled window it was negative in both halves (top-minus-bottom-fifth spread -0.14% then -1.81%, mean rank IC -0.094, t -1.54; `docs/audits/2026-10-14-us-book-vs-xlk-and-score-quality.md`).

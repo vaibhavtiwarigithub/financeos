@@ -152,6 +152,7 @@ export default function LearningPage({
       <EventIcPanel />
       <IndexSleevePanel />
       <ScoreVariantsPanel />
+      {market === "us" && <ScoreVariantsPanel set="insider_v2" />}
 
       {/* Agent Pipeline Diagram */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>
