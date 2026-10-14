@@ -172,6 +172,18 @@ describe("Upgrade Path liveness contracts", () => {
       nowMs: Date.parse("2026-09-26T12:00:00Z"),
     });
     expect(stale.verdict).toBe("stale_schedule_run");
+
+    const noPositionEvent = evaluateShadowLiveness({
+      program,
+      market: "us",
+      probe,
+      count: 28,
+      lastWrite: "2026-09-16T20:00:00Z",
+      cronRows: program.cronJobs.map((jobname) => ({ jobname, schedule: "0 3-20 * * 1-5", active: true, last_started_at: "2026-09-26T11:00:00Z", last_status: "succeeded" })),
+      nowMs: Date.parse("2026-09-26T12:00:00Z"),
+    });
+    expect(noPositionEvent.verdict).toBe("waiting_for_input");
+    expect(noPositionEvent.note).toContain("No position is a valid wait state");
   });
 
   it("calls disabled programs expected-empty only when they have no stray active job", () => {

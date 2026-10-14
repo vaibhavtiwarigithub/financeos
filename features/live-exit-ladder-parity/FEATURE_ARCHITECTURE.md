@@ -4,6 +4,14 @@
 > (2026-09-12). Both monitors now call the same ladder core. The 2026-09-12
 > correction makes the stop use the prior persisted high-water mark before the
 > current observation can ratchet the trail; `live_auto_enabled` remains off.
+> 2026-10-14 collection-health correction: each authenticated monitor invocation
+> now writes best-effort, market-local operational status to the existing
+> `upgrade_path_producer_runs` ledger. A successful run with no reconstructed
+> managed position is recorded as `waiting_for_managed_position`; stale/missing
+> shadow-event rows alone do not mean the scheduled collector is frozen. A
+> filled active-account buy that cannot be reconstructed, missing fresh quotes,
+> and failed state/shadow writes are explicit blockers. These run counters are
+> operational health only, never strategy or P&L evidence.
 > Owner-directed 2026-09-09, sequenced ahead of Guardian Stage 1 and any live
 > enablement: "before any live enablement, build live partial-exit/ladder
 > parity and test it against the paper behavior."
@@ -166,3 +174,23 @@ from its route. That extraction is part of this work, not a prerequisite.
    conservative, since it means an already-past-target position could take a
    partial it "should" have taken earlier, rather than assuming history it
    cannot know.
+
+## 7. Collection health contract
+
+The hourly authenticated cron records a separate `upgrade_path_producer_runs`
+row for US and India after the monitor invocation completes. The row contains
+only market-scoped counts and enumerated state (account configured, market
+open, fills read/matched, matched buys/sells, reconstructed positions, quote
+failures, state-write failures, and shadow rows written); it never stores an
+account identifier, symbol, or raw provider error. The write is best-effort and
+occurs after the exit monitor, so a health-ledger outage cannot prevent, repeat,
+or change an exit action.
+
+`collected` with `waiting_for_managed_position` or `outside_market_session` is
+a valid no-event result. `blocked` identifies a known collection gap, including
+a filled buy that fails reconstruction, an unusable quote, or failed state or
+shadow persistence. An exception before market diagnostics return records an
+`error` for both markets with a sanitized generic blocker. Upgrade Path shows
+this run health for operational-only programs too. Shadow-row freshness has no
+time promise: the cron's own last-run status is the liveness contract, while a
+new shadow row requires an eligible live position during that session.

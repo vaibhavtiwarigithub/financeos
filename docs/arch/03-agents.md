@@ -1,5 +1,21 @@
 # Kairos — Agents
 
+## Live-exit ladder collection health (2026-10-14)
+
+`/api/agents/live-exit-monitor/cron` writes one best-effort operational run
+record per market to the already-applied `upgrade_path_producer_runs` ledger
+after the protective monitor completes. These records are separate from
+`live_exit_ladder_shadow`: a scheduled run with no managed position is a valid
+`waiting_for_managed_position` result, while a fresh-quote miss, an active
+account buy that cannot be reconstructed, or failed state/shadow persistence
+is a visible blocker. Records contain market-scoped counts only (no symbol,
+account identifier, or raw provider error) and cannot gate or repeat exits.
+Upgrade Path now displays producer health for operational-only items as well as
+performance experiments. Shadow event freshness itself has no time promise;
+the authenticated cron's latest run is the schedule/liveness proof. This is
+operational telemetry, not performance attribution, and does not enable live
+execution.
+
 > **Capital-rotation diagnostics (2026-10-11):** new audit rows use `cash_shortfall_before_rotation` only to say idle cash is below the candidate notional before a funding sale. It does not mean cash is the only blocker; the authoritative P1 blockers remain the separate full gate list in the event. Historical append-only rows are not rewritten.
 
 ## Continuous US symbol discovery and research rotation (2026-10-08)
