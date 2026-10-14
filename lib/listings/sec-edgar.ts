@@ -117,14 +117,45 @@ export async function fetchEdgarListingFilings(date: Date): Promise<EdgarListing
   return parseEdgarMasterIndex(await res.text());
 }
 
+/**
+ * US federal holidays (observed dates), when EDGAR publishes no daily index. Fetching one returns 403, which previously raised a false
+ * "US listing discovery sources are incomplete" warning on holidays the stock market is open (e.g. Columbus Day 2026-10-12).
+ */
+export function federalHolidaysObserved(year: number): Set<string> {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const nth = (month: number, weekday: number, n: number) => {
+    const first = new Date(Date.UTC(year, month, 1));
+    return new Date(Date.UTC(year, month, 1 + ((weekday - first.getUTCDay() + 7) % 7) + (n - 1) * 7));
+  };
+  const lastMonday = (month: number) => {
+    const last = new Date(Date.UTC(year, month + 1, 0));
+    return new Date(Date.UTC(year, month, last.getUTCDate() - ((last.getUTCDay() + 6) % 7)));
+  };
+  const fixed = (month: number, day: number) => {
+    const d = new Date(Date.UTC(year, month, day));
+    if (d.getUTCDay() === 6) return new Date(Date.UTC(year, month, day - 1)); // Saturday -> observed Friday
+    if (d.getUTCDay() === 0) return new Date(Date.UTC(year, month, day + 1)); // Sunday -> observed Monday
+    return d;
+  };
+  return new Set([
+    fixed(0, 1), nth(0, 1, 3), nth(1, 1, 3), lastMonday(4), fixed(5, 19), fixed(6, 4), nth(8, 1, 1), nth(9, 1, 2), fixed(10, 11), nth(10, 4, 4), fixed(11, 25),
+  ].map(iso));
+}
+
+export function isSecHoliday(date: Date): boolean {
+  const key = date.toISOString().slice(0, 10);
+  // A Saturday Jan 1 is observed on Dec 31 of the previous year, so also consult the following year's set.
+  return federalHolidaysObserved(date.getUTCFullYear()).has(key) || federalHolidaysObserved(date.getUTCFullYear() + 1).has(key);
+}
+
 export function isFilingDay(date: Date): boolean {
   const day = date.getUTCDay();
-  return day !== 0 && day !== 6;
+  return day !== 0 && day !== 6 && !isSecHoliday(date);
 }
 
 /** SEC builds daily indexes starting around 22:00 ET and can take hours.
  * Use the previous ET date after 03:00 ET, and the date before that earlier.
- * Weekdays are candidates, not a claim about SEC holiday publication.
+ * Weekdays that are not US federal holidays are candidates (EDGAR publishes no index on federal holidays).
  */
 export function publishedEdgarIndexDates(now = new Date(), count = 3): Date[] {
   if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error("invalid SEC index lookback");

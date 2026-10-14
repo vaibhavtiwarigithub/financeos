@@ -25,6 +25,8 @@ describe("vault writes stamp updated_at", () => {
     const src = read("lib/robinhood-mcp.ts");
     expect(src).toContain('.eq("updated_at", updatedAt)');
     expect(src).toContain('.update({ updated_at: nowIso })');
-    expect(src).toContain("refresh in flight — retry");
+    // The in-flight guard text now lives in one shared constant so alerting can tell it apart from real failures.
+    expect(src).toContain("REFRESH_IN_FLIGHT");
+    expect(read("lib/brokers/refresh-errors.ts")).toContain("refresh in flight — retry");
   });
 });

@@ -1,3 +1,4 @@
+import { REFRESH_IN_FLIGHT, isTransientRefreshError } from "@/lib/brokers/refresh-errors";
 import { createServiceClient } from "@/lib/supabase/service";
 import { randomBytes } from "crypto";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -178,7 +179,7 @@ async function refreshAccessToken(svc: any, cfg: McpBrokerConfig): Promise<{ ok:
 
   // A refresh that started within the last 30s is very likely still in flight.
   if (updatedAt && Date.now() - Date.parse(updatedAt) < 30_000) {
-    return { ok: false, error: "refresh in flight — retry" };
+    return { ok: false, error: REFRESH_IN_FLIGHT };
   }
 
   // CAS claim: only proceed if this row's updated_at is still what we read.
@@ -224,7 +225,8 @@ export async function getValidAccessToken(svc: any, cfg: McpBrokerConfig): Promi
   if (expMs && Date.now() > expMs - 60_000) {
     const r = await refreshAccessToken(svc, cfg);
     if (!r.ok) {
-      await reportIssue({
+      // A refresh already in flight is transient: report nothing and keep the last real failure reason visible.
+      if (!isTransientRefreshError(r.error)) await reportIssue({
         issueKey,
         severity: "critical", category: "broker",
         title: `${cfg.label} connection expired — reconnect required`,
@@ -272,7 +274,7 @@ export async function checkTokenHealth(svc: any, cfg: McpBrokerConfig): Promise<
       await resolveIssue(issueKey, s);
       return { connected: true, stale: false, expiresAt: expiry, expiresInMs: expMs ? expMs - Date.now() : null, hasRefresh: true };
     }
-    await reportIssue({
+    if (!isTransientRefreshError(r.error)) await reportIssue({
       issueKey,
       severity: "critical", category: "broker",
       title: `${cfg.label} connection expired — reconnect required`,

@@ -1,3 +1,4 @@
+import { REFRESH_IN_FLIGHT, isTransientRefreshError } from "@/lib/brokers/refresh-errors";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
@@ -215,7 +216,7 @@ async function refreshAccessToken(svc: any): Promise<{ ok: boolean; error?: stri
   // with the OLD refresh token; if Robinhood rotates+invalidates on reuse, the
   // connection bricks. Retryable, not a hard failure.
   if (updatedAt && Date.now() - Date.parse(updatedAt) < 30_000) {
-    return { ok: false, error: "refresh in flight — retry" };
+    return { ok: false, error: REFRESH_IN_FLIGHT };
   }
 
   // CAS claim: only proceed if this row's updated_at is still what we read.
@@ -265,7 +266,7 @@ export async function getValidAccessToken(svc: any): Promise<{ ok: boolean; toke
     if (!r.ok) {
       // A previously-working connection whose refresh broke IS a fault — live
       // trading and the account snapshot silently stop working until reconnect.
-      await reportIssue({
+      if (!isTransientRefreshError(r.error)) await reportIssue({
         issueKey: "broker-token:robinhood",
         severity: "critical", category: "broker",
         title: "Robinhood connection expired — reconnect required",
@@ -323,7 +324,7 @@ export async function checkRobinhoodTokenHealth(svc?: any): Promise<RobinhoodTok
       return { connected: true, stale: false, expiresAt: expiry, expiresInMs: expMs ? expMs - Date.now() : null, hasRefresh: true };
     }
     // Refresh token itself is dead (the failure mode that dropped all RH accounts).
-    await reportIssue({
+    if (!isTransientRefreshError(r.error)) await reportIssue({
       issueKey: "broker-token:robinhood",
       severity: "critical", category: "broker",
       title: "Robinhood connection expired — reconnect required",
