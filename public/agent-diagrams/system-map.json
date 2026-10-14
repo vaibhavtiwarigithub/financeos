@@ -2105,6 +2105,13 @@
       "nodeId": "SLEEVESHADOW",
       "label": "India index-ETF sleeve shadow (what-if NAV with 10/20/30% in NIFTYBEES)",
       "reason": "After a rally day where the India paper book captured about half the index move, an index-ETF sleeve was proposed. Our own 66-session data showed the book beating a falling NIFTY (+3.22% vs -6.99%) at beta 0.49 and a 20% sleeve would have lowered return with unchanged drawdown, so the owner chose a measure-only shadow first. A daily job appends the blended NAV per weight; nothing is bought and no capital moves. A live paper sleeve (option B) stays gated on 60+ sessions covering both market phases."
+    },
+    {
+      "date": "2026-10-14",
+      "event": "add",
+      "nodeId": "SCOREVARIANTS",
+      "label": "Pre-registered forward shadow of alternative score formulas",
+      "reason": "The US composite did not rank stocks in the sampled 3-month window (IC +0.03, top fifth underperformed) while a fundamental-only ranking did, but the variants were chosen with hindsight. Three formulas are now declared in an immutable registry and judged nightly only on observations after declaration, paired against the live composite on the same rows. Measure-only: no score, gate, size or order changes; adoption would need the council-grade evidence gate, t >= 2.4 and owner approval."
     }
   ]
 }

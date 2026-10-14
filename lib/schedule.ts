@@ -275,6 +275,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "india_index_sleeve_shadow",
   },
   {
+    name: "score-variants-evaluate",
+    agent: "score-variants/evaluate",
+    time: "8:40 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Nightly forward evaluation of three pre-declared score formulas against the live composite on the same observations. Append-only; no score, gate or order changes.",
+    handoff: "→ Learning page (Score formulas panel)",
+    agentRunsType: "score_variants_evaluate",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",
