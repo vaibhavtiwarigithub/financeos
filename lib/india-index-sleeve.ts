@@ -113,11 +113,29 @@ export function bookVsEtf(rows: ReadonlyArray<Pick<SleeveRow, "as_of_date" | "bo
   };
 }
 
-/** Evidence gate only; this module never recommends allocating capital. The owner decides, using these facts. */
-export function sleeveEvidenceState(sessions: number, etfTotalReturnPct: number, upDays: number, downDays: number): { state: "collecting" | "one_regime" | "measured"; text: string } {
-  if (sessions < MIN_SESSIONS_FOR_VERDICT) return { state: "collecting", text: `${sessions} of ${MIN_SESSIONS_FOR_VERDICT} sessions needed before the comparison is read.` };
-  if (upDays < 15 || downDays < 15 || Math.abs(etfTotalReturnPct) < 3 && Math.min(upDays, downDays) < 20) {
-    return { state: "one_regime", text: "Enough sessions, but the market has not gone through both clear up and down phases; do not read a rising/falling-market conclusion into it." };
+export const PHASE_WINDOW_SESSIONS = 20;
+export const PHASE_MIN_MOVE = 0.03;
+
+/** Did the ETF go through at least one clear rising phase AND one clear falling phase (any rolling 20-session move of +/-3%)? */
+export function phaseCoverage(etfCloses: readonly number[]): { hasUp: boolean; hasDown: boolean } {
+  let hasUp = false, hasDown = false;
+  for (let i = PHASE_WINDOW_SESSIONS; i < etfCloses.length; i++) {
+    const move = etfCloses[i] / etfCloses[i - PHASE_WINDOW_SESSIONS] - 1;
+    if (move >= PHASE_MIN_MOVE) hasUp = true;
+    if (move <= -PHASE_MIN_MOVE) hasDown = true;
   }
-  return { state: "measured", text: "Enough sessions with both up and down days. Compare return, volatility and drawdown by sleeve weight; allocation remains an owner decision." };
+  return { hasUp, hasDown };
+}
+
+/**
+ * Evidence gate only; this module never recommends allocating capital. Up/down DAYS are not market phases: a falling market still has
+ * plenty of up days, so the gate looks at rolling 20-session ETF moves instead.
+ */
+export function sleeveEvidenceState(sessions: number, etfCloses: readonly number[]): { state: "collecting" | "one_regime" | "measured"; text: string } {
+  if (sessions < MIN_SESSIONS_FOR_VERDICT) return { state: "collecting", text: `${sessions} of ${MIN_SESSIONS_FOR_VERDICT} sessions needed before the comparison is read.` };
+  const { hasUp, hasDown } = phaseCoverage(etfCloses);
+  if (!hasUp || !hasDown) {
+    return { state: "one_regime", text: `Enough sessions, but the market has only gone through a ${hasDown ? "falling" : hasUp ? "rising" : "flat"} phase (no rolling 20-session move of ${hasDown ? "+" : "-"}3% yet). The sleeve cannot be judged on one market phase.` };
+  }
+  return { state: "measured", text: "Enough sessions with both a clear rising and a clear falling phase. Compare return, volatility and drawdown by sleeve weight; allocation remains an owner decision." };
 }

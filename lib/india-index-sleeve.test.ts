@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookVsEtf, extendBlend, pathMetrics, sleeveEvidenceState, type SleeveRow } from "@/lib/india-index-sleeve";
+import { bookVsEtf, extendBlend, pathMetrics, phaseCoverage, sleeveEvidenceState, type SleeveRow } from "@/lib/india-index-sleeve";
 
 const d = (i: number) => new Date(Date.UTC(2026, 6, 1 + i)).toISOString().slice(0, 10);
 const book = (navs: number[]) => navs.map((nav, i) => ({ date: d(i), nav }));
@@ -53,9 +53,14 @@ describe("india index sleeve shadow", () => {
     expect(m.upDays + m.downDays).toBe(5);
     expect(bookVsEtf(rows.slice(0, 2))).toBeNull();
   });
-  it("gates any reading on enough sessions and both market phases", () => {
-    expect(sleeveEvidenceState(30, -5, 12, 18).state).toBe("collecting");
-    expect(sleeveEvidenceState(70, -7, 26, 40).state).toBe("measured");
-    expect(sleeveEvidenceState(70, 1, 8, 62).state).toBe("one_regime");
+  it("gates any reading on enough sessions AND both a rising and a falling 20-session phase, not on up/down day counts", () => {
+    const falling = Array.from({ length: 70 }, (_, i) => 100 * Math.pow(0.998, i)); // about -4% per 20 sessions, with many individual up days possible
+    expect(sleeveEvidenceState(30, falling).state).toBe("collecting");
+    const oneRegime = sleeveEvidenceState(70, falling);
+    expect(oneRegime.state).toBe("one_regime");
+    expect(oneRegime.text).toContain("falling");
+    const both = [...Array.from({ length: 35 }, (_, i) => 100 * Math.pow(1.002, i)), ...Array.from({ length: 35 }, (_, i) => 107 * Math.pow(0.998, i))];
+    expect(phaseCoverage(both)).toEqual({ hasUp: true, hasDown: true });
+    expect(sleeveEvidenceState(70, both).state).toBe("measured");
   });
 });

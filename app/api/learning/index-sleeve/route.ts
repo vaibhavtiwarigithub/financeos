@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     const m = pathMetrics(list.map((r) => Number(r.blended_nav)));
     return { weight: w, sessions: list.length, metrics: m };
   });
-  const state = sleeveEvidenceState(vs?.sessions ?? 0, vs?.etfTotalReturnPct ?? 0, vs?.upDays ?? 0, vs?.downDays ?? 0);
+  const state = sleeveEvidenceState(vs?.sessions ?? 0, base.map((r) => Number(r.etf_close)));
   return NextResponse.json({
     market: "india", shadowOnly: true, instrument: "NIFTYBEES.NS", method: SLEEVE_METHOD,
     firstDate: base[0]?.as_of_date ?? null, lastDate: base[base.length - 1]?.as_of_date ?? null, sessions: vs?.sessions ?? 0,
