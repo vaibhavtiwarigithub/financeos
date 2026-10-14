@@ -2091,6 +2091,13 @@
       "nodeId": "PAPER,POSITIONMONITOR",
       "label": "Partial paper exits now recompute position avg_cost from surviving lots",
       "reason": "execute_paper_exit shrank the position qty without recomputing avg_cost, leaving AAPL/PLTR cost basis stale and tripping the critical paper-nav-reconcile cash_ledger_identity check. Function patched and the two rows repaired; cash, realized P&L and NAV were never wrong."
+    },
+    {
+      "date": "2026-10-13",
+      "event": "modify",
+      "nodeId": "PAPER",
+      "label": "India paper entries gated by a liquidity floor",
+      "reason": "India paper fills assumed 0.05% slippage in stocks that trade a few hundred shares a day; the 8 buys in sub-INR-1-crore names held more than all realized India profit. New India entries and top-ups now require 20-session average turnover >= INR 1 crore (fail closed) and an order <= 5% of it, checked before pricing. Exits and existing holdings are unaffected; stale quotes on quiet names are expected skips in run accounting."
     }
   ]
 }

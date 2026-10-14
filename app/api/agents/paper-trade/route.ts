@@ -24,6 +24,7 @@ import { recordCapitalRotationShadow, executeCapitalRotationPaper } from "@/lib/
 import { classifyConstructorSize } from "@/lib/trading/constructor-outcome";
 import { isCryptoPaperSignal, selectBestPaperSignals } from "@/lib/trading/paper-signal-selection";
 import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
+import { assessLiquidityFloor, assessParticipation, averageTurnover, isQuietNameStaleQuote, type AdvEstimate } from "@/lib/trading/liquidity-floor";
 import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
@@ -565,6 +566,24 @@ export async function POST(req: NextRequest) {
       }
     };
 
+    // India liquidity floor inputs (lib/trading/liquidity-floor.ts): 20-session average turnover per candidate, one bulk read.
+    // A read failure leaves the map empty, which fails CLOSED (liquidity_unknown) rather than letting thin names through.
+    const advByIndiaSymbol = new Map<string, AdvEstimate>();
+    {
+      const indiaSymbols = [...new Set(signals.filter((sg) => String(sg.market ?? (sg.asset_class === "india" ? "india" : "us")) === "india")
+        .map((sg) => String(sg.symbol).trim().toUpperCase()))];
+      if (indiaSymbols.length) {
+        const sinceDate = new Date(Date.now() - 45 * 86_400_000).toISOString().slice(0, 10);
+        const { data: advRows, error: advError } = await supabase.from("price_cache").select("symbol,date,close,volume")
+          .in("symbol", indiaSymbols).gte("date", sinceDate).order("date", { ascending: false }).limit(5000);
+        if (!advError) {
+          const bySym = new Map<string, any[]>();
+          for (const r of advRows ?? []) { const l = bySym.get(String(r.symbol).toUpperCase()) ?? []; l.push(r); bySym.set(String(r.symbol).toUpperCase(), l); }
+          for (const [sym, rows] of bySym) advByIndiaSymbol.set(sym, averageTurnover(rows.map((r) => ({ date: String(r.date), close: r.close == null ? null : Number(r.close), volume: r.volume == null ? null : Number(r.volume) }))));
+        }
+      }
+    }
+
     const rotatedMarkets = new Set<string>();
     for (const signal of signals) {
       const market = hasMarketCol ? String(signal.market ?? (signal.asset_class === "india" ? "india" : "us")) : "us";
@@ -632,6 +651,18 @@ export async function POST(req: NextRequest) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: "reentry_cooldown (closed within 3 trading days)" });
           await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "reentry_gate", outcome: "rejected", reason: "reentry_cooldown", detail: { cooldownCutoff } });
+          continue;
+        }
+      }
+
+      // India liquidity floor (new entries and top-ups; exits and existing holdings are never touched). Checked before pricing so a
+      // thin name never reaches the stale-quote gate and cannot be filled at a modeled 0.05% slippage it could not really deliver.
+      if (market === "india") {
+        const liquidity = assessLiquidityFloor(advByIndiaSymbol.get(candidateSymbol));
+        if (!liquidity.ok) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: liquidity.reason });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "liquidity_gate", outcome: "rejected", reason: liquidity.reason, detail: { note: liquidity.detail } });
           continue;
         }
       }
@@ -1014,6 +1045,15 @@ export async function POST(req: NextRequest) {
         continue;
       }
       let totalCost = qty * fillPrice;
+      if (market === "india") {
+        const participation = assessParticipation(advByIndiaSymbol.get(candidateSymbol), totalCost);
+        if (!participation.ok) {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: participation.reason });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "liquidity_gate", outcome: "rejected", reason: participation.reason, detail: { note: participation.detail, notional: totalCost } });
+          continue;
+        }
+      }
       // Rotation is evaluated when the book cannot take this candidate as-is:
       // either it is out of cash (original trigger) or it is out of name slots
       // (added — this is the trigger that actually binds in practice).
@@ -1593,7 +1633,10 @@ export async function POST(req: NextRequest) {
           ...(() => {
             const isError = (r: any) => typeof r === "string" && r.startsWith("error");
             const failedN = skipped.filter((s: any) => isError(s?.reason)).length;
-            const unavailableN = skipped.filter((s: any) => s?.reason === "quote_stale").length;
+            // A stale last-trade quote on a quiet India name (< INR 5 crore average turnover) is the stock not trading in the last
+            // 30 minutes, not a data outage: the gate refused correctly, so it is an expected skip. Other stale quotes stay "unavailable".
+            const isQuietStale = (s: any) => s?.reason === "quote_stale" && isQuietNameStaleQuote(advByIndiaSymbol.get(String(s?.symbol ?? "").toUpperCase()));
+            const unavailableN = skipped.filter((s: any) => s?.reason === "quote_stale" && !isQuietStale(s)).length;
             const gateSkips = skipped.length - failedN - unavailableN;
             return runAccountingEnvelope({
               job: `paper-trade:${marketScope ?? "us"}`,

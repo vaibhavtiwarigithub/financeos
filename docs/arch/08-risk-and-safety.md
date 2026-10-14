@@ -666,6 +666,10 @@ Current per-order limits live in `strategy_config.max_order_notional_usd` / `max
 
 Final BUY size is the minimum of opportunity size, per-order cap, remaining atomic daily budget, buying power, and name/sector/gross/correlation/volatility limits. Quantity rounds down; zero means abstain. SELL that reduces a verified holding is exempt from BUY notional/daily budgets.
 
+### India paper liquidity floor (2026-10-13)
+
+Paper only. New India entries and top-ups need a 20-session average turnover (close x volume) of at least INR 1 crore (`liquidity_floor`; unknown or under 10 sessions fails closed as `liquidity_unknown`), and an order may not exceed 5% of that average (`adv_participation`). Checked after the signal claim and before pricing, so thin names never reach the stale-quote gate. Exits and existing holdings are never blocked. A stale quote on a quiet India name (< INR 5 crore) counts as an expected skip in run accounting. Rationale and evidence: `features/india-paper-liquidity-floor/FEATURE_ARCHITECTURE.md`; code `lib/trading/liquidity-floor.ts`.
+
 ### 8 — Quote and drift
 
 A fresh executable quote is obtained immediately before reservation. Validate positive finite price, retrieval age, spread/liquidity, and drift from proposal/approval. Use a marketable limit collar when the broker schema supports it; never guess tool parameters.
