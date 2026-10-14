@@ -25,7 +25,14 @@ type ApiResponse = {
     state: string; status?: string; started_at?: string; finished_at?: string | null;
     expected_session?: string | null; observed_session?: string | null; trigger_source?: string;
     blockers?: string[]; code_version?: string | null; note?: string;
-    details?: { evidenceType?: string; resultCount?: number; resultStates?: Record<string, number>; persisted?: boolean; asOfDate?: string | null; performanceAttribution?: string };
+    details?: {
+      evidenceType?: string; resultCount?: number; resultStates?: Record<string, number>; persisted?: boolean;
+      asOfDate?: string | null; performanceAttribution?: string; collectionState?: string;
+      market?: "us" | "india"; accountConfigured?: boolean; marketOpen?: boolean | null;
+      fillRowsRead?: number; accountMatchedFillRows?: number; accountMatchedBuyFills?: number;
+      accountMatchedSellFills?: number; reconstructedPositions?: number; positionsChecked?: number;
+      quotesUnavailable?: number; shadowRowsWritten?: number; stateWriteFailures?: number; shadowWriteFailures?: number;
+    };
   } }>;
   collection?: Array<{
     id: string;
@@ -226,7 +233,7 @@ function ProgramPanel({ program, mobile, market, collection }: {
             {detail}
           </div>)}
         </div>}
-        {program.attribution.comparisonType !== "operational_only" && <div style={{ marginTop: "12px", padding: "10px 12px", border: `1px solid ${T.border}`, borderRadius: "6px", background: T.surface }}>
+        <div style={{ marginTop: "12px", padding: "10px 12px", border: `1px solid ${T.border}`, borderRadius: "6px", background: T.surface }}>
           <SectionLabel icon={<Activity size={14} />} text="Producer liveness · not performance evidence" />
           {program.producerRun && ["running", "collected", "blocked", "error", "stale"].includes(program.producerRun.state) ? <>
             <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5 }}>
@@ -239,12 +246,20 @@ function ProgramPanel({ program, mobile, market, collection }: {
               {program.producerRun.details.resultStates && Object.keys(program.producerRun.details.resultStates).length > 0
                 ? ` · ${Object.entries(program.producerRun.details.resultStates).map(([state, count]) => `${count} ${state}`).join(", ")}` : ""}
             </div>}
+            {program.producerRun.details?.collectionState && <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5, marginTop: "5px" }}>
+              Collection state: {program.producerRun.details.collectionState.replace(/_/g, " ")}
+              {program.producerRun.details.reconstructedPositions != null ? ` · positions ${program.producerRun.details.reconstructedPositions}` : ""}
+              {program.producerRun.details.positionsChecked != null ? ` · checked ${program.producerRun.details.positionsChecked}` : ""}
+              {program.producerRun.details.quotesUnavailable != null ? ` · quotes unavailable ${program.producerRun.details.quotesUnavailable}` : ""}
+              {program.producerRun.details.shadowRowsWritten != null ? ` · shadow rows ${program.producerRun.details.shadowRowsWritten}` : ""}
+              {program.producerRun.details.accountMatchedBuyFills != null ? ` · matched buys ${program.producerRun.details.accountMatchedBuyFills}` : ""}
+            </div>}
             {Array.isArray(program.producerRun.blockers) && program.producerRun.blockers.map((blocker: string, index: number) => <div key={`${index}-${blocker}`} style={{ color: T.yellow, fontSize: "11px", lineHeight: 1.5, marginTop: "5px" }}>• {blocker}</div>)}
           </> : <div style={{ color: program.producerRun?.state === "unavailable" ? T.red : T.muted, fontSize: "12px", lineHeight: 1.5 }}>
             {program.producerRun?.note ?? "No producer invocation has been recorded for this program and market."}
           </div>}
           {program.producerRun?.code_version && <div style={{ color: T.muted, fontSize: "10px", marginTop: "5px" }}>Code {String(program.producerRun.code_version).slice(0, 12)}</div>}
-        </div>}
+        </div>
         <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "7px" }}>
             <div style={{ color: T.muted, fontSize: "11px", fontWeight: 750, textTransform: "uppercase" }}>Causal attribution</div>
