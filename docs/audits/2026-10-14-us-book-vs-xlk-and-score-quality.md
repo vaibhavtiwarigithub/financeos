@@ -71,3 +71,18 @@ Only fundamental is positive in both halves. Technical and sentiment flip with t
 - The defensible next step is a pre-registered FORWARD shadow of three fixed variants (fundamental only; fundamental + sentiment; current minus insider) scored on every new observation and judged only on data that did not exist when they were declared. No live weight changes until a forward window shows a positive spread and top-fifth excess with adequate effective sample.
 - Separately: the insider scorer treating routine selling as bearish deserves its own fix proposal (e.g. score only open-market buys, or net discretionary flow), also shadow-first.
 - Not yet analysed: the 40% average cash (deployment constraints vs name caps vs lack of qualifying entries) and India (this audit is US only).
+
+## 6. Cash drag, and what the XLK comparison really measures (follow-up, same day)
+Average cash share by week (US, EOD rows only): week of 07-06 79%, 07-13 58%, 07-20 44%, then 26-39% through September, 55% in the week of 09-28 (owner consolidation from 15 to 8 names closed positions; max 92%), 17% in the week of 10-05 and 10% in the week of 10-12. The book STARTED 2026-07-06 at 100% cash and took about three weeks to build, so the 39.8% full-window average is front-loaded. Three whole weeks (07-27, 08-03, 08-10) have no EOD rows at all, so any average over the available rows is biased; only 51 of 71 trading days exist.
+
+Fair comparison once the book was built (2026-08-20 to 2026-10-13, 36 aligned date pairs, 67% invested on average):
+| | Return |
+|---|---|
+| US paper book | +1.09% |
+| SPY | +1.41% |
+| SPY scaled to the invested share | +0.95% |
+| Invested sleeve alone | -0.33% |
+| XLK | +7.01% |
+
+Reading: after the build-out the book is roughly in line with SPY once cash is accounted for (+1.09% vs +0.95% scaled), and the invested sleeve lagged SPY by about 1.7 points over 36 sessions (not significant). XLK beat SPY by about 5.6 points in the same window, so the 'XLK has beaten us' gap is mostly the tech sector's own outperformance, not evidence of a broken strategy. The honest benchmark for a diversified book is SPY (or an equal-weight index), not a single-sector ETF.
+
