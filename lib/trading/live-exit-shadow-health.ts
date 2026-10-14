@@ -25,6 +25,22 @@ export interface LiveExitProducerOutcome {
   blockers: string[];
 }
 
+/** Keep persisted producer-run timestamps chronological, including wall-clock jitter. */
+export function liveExitProducerRunTimestamps(startedAt: Date, finishedAt: Date): {
+  started_at: string;
+  finished_at: string;
+} {
+  const startedAtMs = startedAt.getTime();
+  const finishedAtMs = finishedAt.getTime();
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(finishedAtMs)) {
+    throw new Error("Producer run timestamps must be valid dates.");
+  }
+  return {
+    started_at: new Date(startedAtMs).toISOString(),
+    finished_at: new Date(Math.max(startedAtMs, finishedAtMs)).toISOString(),
+  };
+}
+
 /**
  * Collection health is deliberately distinct from shadow decisions and P&L.
  * No live account identifiers, symbols, or provider error text are persisted.

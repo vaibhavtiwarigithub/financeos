@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyLiveExitCollection, type LiveExitMarketDiagnostics } from "@/lib/trading/live-exit-shadow-health";
+import { classifyLiveExitCollection, liveExitProducerRunTimestamps, type LiveExitMarketDiagnostics } from "@/lib/trading/live-exit-shadow-health";
 
 const base: LiveExitMarketDiagnostics = {
   market: "us",
@@ -20,6 +20,13 @@ const base: LiveExitMarketDiagnostics = {
 };
 
 describe("live exit Upgrade Path collection health", () => {
+  it("persists explicit chronological start and finish timestamps", () => {
+    const startedAt = new Date("2026-10-14T03:00:01.843Z");
+    const timestamps = liveExitProducerRunTimestamps(startedAt, new Date("2026-10-14T03:00:01.708Z"));
+    expect(timestamps.started_at).toBe("2026-10-14T03:00:01.843Z");
+    expect(Date.parse(timestamps.finished_at)).toBeGreaterThanOrEqual(Date.parse(timestamps.started_at));
+  });
+
   it("distinguishes a successful no-position wait from missing collection", () => {
     const outcome = classifyLiveExitCollection({
       ...base,
