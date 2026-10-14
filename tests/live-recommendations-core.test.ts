@@ -21,6 +21,7 @@ describe("classifyResponse", () => {
   it("filled proposal is taken", () => expect(classifyResponse({ ...base, proposalStatus: "filled" }).status).toBe("taken"));
   it("holdings increase is taken", () => expect(classifyResponse({ ...base, proposalStatus: "pending_review", approvalExpired: true, snaps: [snap("2026-10-01", 0), snap("2026-10-04", 2)] }).status).toBe("taken"));
   it("a tiny share-count rise worth under $10 is drift, not a purchase", () => expect(classifyResponse({ ...base, referencePrice: 100, proposalStatus: "pending_review", approvalExpired: true, snaps: [snap("2026-10-01", 3), snap("2026-10-04", 3.05)] }).status).toBe("expired_unanswered"));
+  it("a proposal swept to expired status also reads as no decision", () => expect(classifyResponse({ ...base, proposalStatus: "expired" }).status).toBe("expired_unanswered"));
   it("expired proposal with no purchase is expired_unanswered", () => expect(classifyResponse({ ...base, proposalStatus: "pending_review", approvalExpired: true }).status).toBe("expired_unanswered"));
   it("stop reached and position cut is followed, not cut is ignored", () => {
     const k = { ...base, kind: "guardian_stop" as const, levelTouched: true };

@@ -67,7 +67,7 @@ export function classifyResponse(i: ResponseInput): ResponseResult {
     if (i.proposalStatus === "filled") return { status: "taken", account: null, detail: "Approved and filled through the proposal flow." };
     if (change && change.delta > QTY_EPSILON && (i.referencePrice == null || change.delta * i.referencePrice >= MIN_TAKEN_VALUE)) return { status: "taken", account: change.account, detail: `Holdings rose by ${round(change.delta)} shares after the idea (inferred from daily snapshots).` };
     if (i.proposalStatus === "rejected") return { status: "not_taken", account: null, detail: "Rejected." };
-    if (i.proposalStatus === "pending_review" && i.approvalExpired) return { status: "expired_unanswered", account: null, detail: "The approval window closed with no decision, and no matching purchase appeared in holdings." };
+    if ((i.proposalStatus === "expired" || (i.proposalStatus === "pending_review" && i.approvalExpired))) return { status: "expired_unanswered", account: null, detail: "The approval window closed with no decision, and no matching purchase appeared in holdings." };
     return inWindow
       ? { status: "pending", account: null, detail: "Approval window still open." }
       : { status: "not_taken", account: null, detail: "No matching purchase appeared in holdings within the horizon." };
