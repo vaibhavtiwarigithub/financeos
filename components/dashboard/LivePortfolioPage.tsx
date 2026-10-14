@@ -6,6 +6,7 @@ import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
 import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
 import GuardianProtectionPanel from "@/components/dashboard/GuardianProtectionPanel";
+import RecommendationsPanel from "@/components/dashboard/RecommendationsPanel";
 import { brokerAccountDisplayLabel } from "@/lib/brokers/account-label";
 
 const T = {
@@ -229,6 +230,7 @@ export default function LivePortfolioPage({
     >
 
       <GuardianProtectionPanel />
+      <RecommendationsPanel />
       <RhReconnectBanner />
 
       {/* Account selector chips */}

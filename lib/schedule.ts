@@ -286,6 +286,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "score_variants_evaluate",
   },
   {
+    name: "live-recommendations",
+    agent: "live-recommendations",
+    time: "4:00 AM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "Records every recommendation shown for the live book, infers from daily holdings whether it was acted on, marks it against the symbol and SPY, and shadow-tests alternative Guardian stop rules. Display only; no order or stop changes.",
+    handoff: "→ Live Portfolio (Recommendations & Guardian scorecard)",
+    agentRunsType: "live_recommendations",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",

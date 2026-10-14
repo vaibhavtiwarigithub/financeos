@@ -1,5 +1,9 @@
 # Kairos — Agents
 
+## Live recommendation tracker and Guardian scorecard (2026-10-14)
+
+Display-only. Nightly `/api/agents/live-recommendations` (22:30 UTC) records every recommendation shown for the live Robinhood book, infers from daily holdings snapshots whether it was taken (quantity rose after a buy idea, fell after an exit signal or a touched stop), and marks it against the symbol and SPY. P/L is `actual` (from the account's average cost) only when the position is still held, otherwise `hypothetical` from the price at issue; the two are labelled and never blended. The same job evaluates alternative Guardian stop rules (none, 7% fixed which is the current mandate, 2.8 x ATR14, 12% fixed) as a paired shadow on matured buy ideas and writes a daily note; below 30 matured ideas it says insufficient evidence. The live Guardian stop rule is never changed by this job. Owner-only read route `/api/live-portfolio/recommendations` feeds the Recommendations & Guardian section on the Live Portfolio page. Limits: taken is inferred from daily snapshots; the 147 historical buy ideas all show as expired without a decision because their approval window is 30 minutes.
+
 ## Live-exit ladder collection health (2026-10-14)
 
 `/api/agents/live-exit-monitor/cron` writes one best-effort operational run

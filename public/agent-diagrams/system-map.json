@@ -2112,6 +2112,13 @@
       "nodeId": "SCOREVARIANTS",
       "label": "Pre-registered forward shadow of alternative score formulas",
       "reason": "The US composite did not rank stocks in the sampled 3-month window (IC +0.03, top fifth underperformed) while a fundamental-only ranking did, but the variants were chosen with hindsight. Three formulas are now declared in an immutable registry and judged nightly only on observations after declaration, paired against the live composite on the same rows. Measure-only: no score, gate, size or order changes; adoption would need the council-grade evidence gate, t >= 2.4 and owner approval."
+    },
+    {
+      "date": "2026-10-14",
+      "event": "add",
+      "nodeId": "LIVEREC",
+      "label": "Live recommendation tracker and Guardian scorecard",
+      "reason": "Owner asked to see every live recommendation, whether it was taken, and how it fared against the symbol and SPY, with the Guardian revised from the evidence. A nightly display-only job syncs buy ideas, Guardian stop suggestions and exit signals, infers the response from daily holdings snapshots, marks each against the symbol and SPY, and shadow-tests alternative Guardian stop rules. No order, stop or Guardian setting is read or written."
     }
   ]
 }
