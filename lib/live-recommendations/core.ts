@@ -10,6 +10,8 @@ export type RecKind = "buy_idea" | "guardian_stop" | "exit_signal";
 export type RecStatus = "pending" | "taken" | "expired_unanswered" | "not_taken" | "followed" | "ignored" | "watching";
 
 export const QTY_EPSILON = 1e-6;
+/** A rise smaller than this in value is dividend/rounding drift, not a purchase. */
+export const MIN_TAKEN_VALUE = 10;
 
 const day = (iso: string) => iso.slice(0, 10);
 const round = (n: number, d = 4) => Math.round(n * 10 ** d) / 10 ** d;
@@ -30,6 +32,7 @@ export type ResponseInput = {
   horizonSessions: number;
   sessionsSince: number;
   qtySuggested: number | null;
+  referencePrice?: number | null;
   /** buy_idea only: source proposal state */
   proposalStatus?: string | null;
   approvalExpired?: boolean;
@@ -62,7 +65,7 @@ export function classifyResponse(i: ResponseInput): ResponseResult {
   const inWindow = i.sessionsSince <= i.horizonSessions;
   if (i.kind === "buy_idea") {
     if (i.proposalStatus === "filled") return { status: "taken", account: null, detail: "Approved and filled through the proposal flow." };
-    if (change && change.delta > QTY_EPSILON) return { status: "taken", account: change.account, detail: `Holdings rose by ${round(change.delta)} shares after the idea (inferred from daily snapshots).` };
+    if (change && change.delta > QTY_EPSILON && (i.referencePrice == null || change.delta * i.referencePrice >= MIN_TAKEN_VALUE)) return { status: "taken", account: change.account, detail: `Holdings rose by ${round(change.delta)} shares after the idea (inferred from daily snapshots).` };
     if (i.proposalStatus === "rejected") return { status: "not_taken", account: null, detail: "Rejected." };
     if (i.proposalStatus === "pending_review" && i.approvalExpired) return { status: "expired_unanswered", account: null, detail: "The approval window closed with no decision, and no matching purchase appeared in holdings." };
     return inWindow

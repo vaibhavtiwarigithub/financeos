@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
     const m0 = markRecommendation(markArgs);
     const prop = kind === "buy_idea" ? propById.get(String(rec.source_id)) : null;
     const resp = classifyResponse({
-      kind, issuedDate, horizonSessions: rec.horizon_sessions, sessionsSince: m0.sessionsSince, qtySuggested: rec.qty_suggested == null ? null : Number(rec.qty_suggested),
+      kind, issuedDate, horizonSessions: rec.horizon_sessions, sessionsSince: m0.sessionsSince, qtySuggested: rec.qty_suggested == null ? null : Number(rec.qty_suggested), referencePrice: ref,
       proposalStatus: prop?.status ?? null, approvalExpired: prop?.approval_expires_at ? Date.parse(prop.approval_expires_at) < Date.now() : false, snaps, levelTouched: m0.levelTouched === true,
     });
     // Actual P/L only when the position is still held in the account that acted on it; otherwise the mark stays hypothetical.
