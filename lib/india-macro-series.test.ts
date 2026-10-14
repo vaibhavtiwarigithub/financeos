@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INDIA_MACRO_SERIES, fiiDiiToObservations, fredToObservations, nseDateToIso, parseYahooChart } from "@/lib/india-macro-series";
+import { INDIA_MACRO_SERIES, fiiDiiToObservations, fredToObservations, lastIntradayCloses, nseDateToIso, nullCloseDates, parseYahooChart } from "@/lib/india-macro-series";
 
 const spec = (id: string) => INDIA_MACRO_SERIES.find((s) => s.id === id)!;
 const day = (iso: string) => Math.floor(Date.parse(`${iso}T03:45:00Z`) / 1000);
@@ -17,6 +17,16 @@ describe("india macro series", () => {
   it("returns nothing for a malformed Yahoo payload instead of throwing", () => {
     expect(parseYahooChart(spec("india_vix"), { chart: { result: null, error: { code: "x" } } }, "2026-10-13")).toEqual([]);
     expect(parseYahooChart(spec("india_vix"), null, "2026-10-13")).toEqual([]);
+  });
+  it("falls back to the last intraday close of a session whose daily close is null, never to the previous day", () => {
+    const daily = { chart: { result: [{ timestamp: [day("2026-10-12"), day("2026-10-13"), day("2026-10-14")], indicators: { quote: [{ close: [254.66, null, 257.78] }] } }] } };
+    expect(nullCloseDates(daily)).toEqual(["2026-10-13"]);
+    const at = (iso: string, h: number) => Math.floor(Date.parse(`${iso}T${String(h).padStart(2, "0")}:45:00Z`) / 1000);
+    const hourly = { chart: { result: [{ timestamp: [at("2026-10-13", 7), at("2026-10-13", 9), at("2026-10-14", 9)], indicators: { quote: [{ close: [257.71, 259.2, 257.5] }] } }] } };
+    expect(lastIntradayCloses(spec("niftybees_close"), hourly, ["2026-10-13"])).toEqual([{ series_id: "niftybees_close", source: "yahoo", obs_date: "2026-10-13", value: 259.2 }]);
+    expect(lastIntradayCloses(spec("niftybees_close"), hourly, ["2026-10-09"])).toEqual([]); // no bars -> absent, not invented
+    expect(spec("niftybees_close").intradayFallback).toBe(true);
+    expect(spec("india_vix").intradayFallback).toBeUndefined();
   });
   it("keeps only well-formed FRED rows", () => {
     expect(fredToObservations(spec("brent_fred"), [{ date: "2026-10-06", value: 125.44 }, { date: "bad", value: 1 }, { date: "2026-10-05", value: NaN }]))

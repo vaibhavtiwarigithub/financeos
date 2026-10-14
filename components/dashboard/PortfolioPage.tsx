@@ -2,6 +2,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { currentPaperTradePnl } from "@/lib/paper-current-pnl";
+import { TRADE_COLUMNS, filterByStatus, nextSort, projectTrade, recentlySold, sortTrades, type SortDir, type TradeSortKey, type TradeStatusFilter } from "@/lib/paper-trades-table";
 import { SymbolLink } from "@/components/ui/SymbolLink";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
@@ -608,6 +609,9 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   const [positionHistory, setPositionHistory] = useState<Record<string, PositionHistorySeries>>({});
   const [positionActivity, setPositionActivity] = useState<Record<string, PositionActivitySeries>>({});
   const [positionHistoryLoading, setPositionHistoryLoading] = useState(false);
+  // Trades tab: every column sortable; default "latest activity" (newest entry OR sale) so what was sold recently is not buried under older open lots.
+  const [tradeSort, setTradeSort] = useState<{ key: TradeSortKey; dir: SortDir }>({ key: "activity", dir: "desc" });
+  const [tradeStatus, setTradeStatus] = useState<TradeStatusFilter>("all");
 
   // Phase 4: market-scoped pools. Each pool holds funds in its own currency
   // (US=USD, India=INR) — NEVER blend a $ value with a ₹ value. Pre-057 rows
@@ -689,6 +693,13 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   // gauge reads tradeRecord instead — a whole-book count from the server, so the
   // headline stat can't drift as the display cap truncates older trades.
   const closedTrades = trades.filter(t => t.closed_at);
+  const openLotCount = trades.length - closedTrades.length;
+  const projectForSort = (t: any) => {
+    const cur = currentPaperTradePnl(t, positions, activeMarket);
+    return projectTrade(t, { currentAmount: cur?.amount ?? null, currentPrice: cur?.currentPrice ?? null, plan: paperExitPlanForTrade(t, exitPlans ?? {})?.state ?? null });
+  };
+  const visibleTrades = sortTrades(filterByStatus(trades, tradeStatus), projectForSort, tradeSort.key, tradeSort.dir);
+  const recentSales = recentlySold(trades, Date.now());
   const wins = tradeRecord.wins;
   const winRate = tradeRecord.closed ? Math.round((wins / tradeRecord.closed) * 100) : null;
 
@@ -812,18 +823,55 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
             <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "24px 0" }}>No paper trades yet.</div>
           ) : (
             <>
+            {recentSales.length > 0 && (
+              <div data-testid="paper-recent-sales" style={{ marginBottom: "14px" }}>
+                <div style={{ fontSize: "11px", color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>Recently sold (last 14 days)</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {recentSales.map((sale) => (
+                    <div key={`${sale.symbol}|${sale.soldOn}`} title={sale.reasons.join(", ").replace(/_/g, " ")}
+                      style={{ border: `1px solid ${T.border}`, borderRadius: "8px", padding: "6px 10px", fontSize: "12px", display: "flex", gap: "8px", alignItems: "baseline" }}>
+                      <span style={{ fontWeight: 700 }}>{sale.symbol}</span>
+                      <span style={{ color: T.muted }}>{sale.soldOn}{sale.lots > 1 ? ` · ${sale.lots} lots` : ""}</span>
+                      <span style={{ color: pnlColor(sale.realizedPnl), fontWeight: 600 }}>{fmt(sale.realizedPnl, cur)}</span>
+                      {sale.reasons[0] && <span style={{ color: T.muted, fontSize: "11px" }}>{sale.reasons[0].replace(/_/g, " ")}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center", marginBottom: "10px" }}>
+              {([["all", `All (${trades.length})`], ["open", `Open (${openLotCount})`], ["sold", `Sold (${closedTrades.length})`]] as const).map(([value, label]) => (
+                <button key={value} type="button" onClick={() => setTradeStatus(value)} aria-pressed={tradeStatus === value}
+                  style={{ background: tradeStatus === value ? T.accent : "transparent", color: tradeStatus === value ? "#fff" : T.muted, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "4px 10px", fontSize: "12px", cursor: "pointer" }}>{label}</button>
+              ))}
+              <span style={{ color: T.muted, fontSize: "11px", marginLeft: "4px" }}>
+                {tradeSort.key === "activity" ? "Sorted by latest activity (newest entry or sale first)" : "Click a column header to sort; click again to reverse"}
+                {tradeSort.key !== "activity" && (
+                  <button type="button" onClick={() => setTradeSort({ key: "activity", dir: "desc" })} style={{ marginLeft: "8px", background: "none", border: "none", color: T.accent, cursor: "pointer", fontSize: "11px", padding: 0 }}>reset</button>
+                )}
+              </span>
+            </div>
             <div style={{ color: T.muted, fontSize: "10px", marginBottom: "8px", textAlign: "right" }}>Swipe or scroll for more →</div>
             <div data-testid="paper-trades-scroll" style={{ width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "auto", overscrollBehaviorX: "contain", WebkitOverflowScrolling: "touch" }}>
-            <table style={{ display: "table", width: "100%", minWidth: "1100px", maxWidth: "none", overflow: "visible", borderCollapse: "collapse", fontSize: "13px", whiteSpace: "nowrap" }}>
+            <table style={{ display: "table", width: "100%", minWidth: "1400px", maxWidth: "none", overflow: "visible", borderCollapse: "collapse", fontSize: "13px", whiteSpace: "nowrap" }}>
               <thead>
                 <tr style={{ color: T.muted }}>
-                  {["Symbol", "Side", "Qty", "Fill Price", "Exit / Mkt", "Total", "Score", "Exit Plan", "Realized P&L", "Current P&L", "Outcome", "Date"].map((h, index) => (
-                    <th key={h} style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", ...(index === 0 ? { position: "sticky", left: 0, zIndex: 2, background: T.card } : {}) }}>{h}</th>
-                  ))}
+                  {TRADE_COLUMNS.map((c, index) => {
+                    const active = tradeSort.key === c.key;
+                    return (
+                      <th key={c.key} aria-sort={active ? (tradeSort.dir === "asc" ? "ascending" : "descending") : "none"}
+                        style={{ padding: "5px 12px 10px 0", fontWeight: 500, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "left", ...(index === 0 ? { position: "sticky", left: 0, zIndex: 2, background: T.card } : {}) }}>
+                        <button type="button" onClick={() => setTradeSort(nextSort(tradeSort, c.key))} title={`Sort by ${c.label}`}
+                          style={{ background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer", font: "inherit", color: active ? T.text : "inherit", textTransform: "inherit", letterSpacing: "inherit", whiteSpace: "nowrap" }}>
+                          {c.label}{active ? (tradeSort.dir === "asc" ? " ▲" : " ▼") : <span style={{ opacity: 0.35 }}> ↕</span>}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {trades.map((t: any) => {
+                {visibleTrades.map((t: any) => {
                   const currentPnl = currentPaperTradePnl(t, positions, activeMarket);
                   const tradeExitPlan = paperExitPlanForTrade(t, exitPlans ?? {});
                   return <tr key={t.id} style={{ borderTop: `1px solid ${T.border}` }}>
@@ -868,7 +916,9 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
                         </span>
                       ) : <span style={{ color: T.amber, fontSize: "11px" }}>open</span>}
                     </td>
-                    <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{new Date(t.executed_at).toLocaleDateString()}</td>
+                    <td style={{ padding: "10px 12px 10px 0", color: T.muted, fontSize: "11px" }}>{new Date(t.executed_at).toLocaleDateString()}</td>
+                    <td title={t.closed_at ? new Date(t.closed_at).toLocaleString() : undefined} style={{ padding: "10px 12px 10px 0", color: t.closed_at ? T.text : T.muted, fontSize: "11px", fontWeight: t.closed_at ? 600 : 400 }}>{t.closed_at ? new Date(t.closed_at).toLocaleDateString() : "—"}</td>
+                    <td style={{ padding: "10px 0", color: T.muted, fontSize: "11px" }}>{t.exit_reason ? String(t.exit_reason).replace(/_/g, " ") : "—"}</td>
                   </tr>;
                 })}
               </tbody>

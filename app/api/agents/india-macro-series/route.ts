@@ -6,7 +6,7 @@ import { fredSeriesDated } from "@/lib/data/fred-macro";
 import { fetchFiiDiiFlows } from "@/lib/india-macro";
 import { YAHOO_ALLOWED_HOSTS } from "@/lib/india-markets/adapter";
 import {
-  INDIA_MACRO_SERIES, fiiDiiToObservations, fredToObservations, parseYahooChart,
+  INDIA_MACRO_SERIES, fiiDiiToObservations, fredToObservations, lastIntradayCloses, nullCloseDates, parseYahooChart,
   type MacroObservation, type MacroSeriesSpec,
 } from "@/lib/india-macro-series";
 
@@ -16,12 +16,21 @@ export const maxDuration = 60;
 // Measure-only India macro series collector. Writes india_macro_observations (append-only, first-seen wins);
 // no score, signal, trade or learner path reads it. ?backfill=1 pulls ~2y of history once (insert-ignore makes it idempotent).
 
-async function fetchYahoo(spec: MacroSeriesSpec, range: string, todayUtc: string): Promise<MacroObservation[]> {
+async function fetchYahoo(spec: MacroSeriesSpec, range: string, todayUtc: string, backfill = false): Promise<MacroObservation[]> {
   const host = YAHOO_ALLOWED_HOSTS[0];
   const url = `https://${host}/v8/finance/chart/${encodeURIComponent(spec.provider)}?range=${range}&interval=1d`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; KairosMacro/1.0)" }, signal: AbortSignal.timeout(10_000), cache: "no-store" });
   if (!res.ok) throw new Error(`yahoo_http_${res.status}`);
-  return parseYahooChart(spec, await res.json(), todayUtc);
+  const json = await res.json();
+  const obs = parseYahooChart(spec, json, todayUtc);
+  if (!spec.intradayFallback) return obs;
+  // Yahoo can leave a completed session's daily close null for an ETF. Use that session's last hourly close, never a bridge from the
+  // previous day, so an append-only consumer never records a zero return for a real trading day.
+  const gaps = nullCloseDates(json).filter((d) => d < todayUtc);
+  if (!gaps.length) return obs;
+  const hourly = await fetch(`https://${host}/v8/finance/chart/${encodeURIComponent(spec.provider)}?range=${backfill ? "2y" : "1mo"}&interval=1h`, { headers: { "User-Agent": "Mozilla/5.0 (compatible; KairosMacro/1.0)" }, signal: AbortSignal.timeout(10_000), cache: "no-store" });
+  if (!hourly.ok) return obs;
+  return [...obs, ...lastIntradayCloses(spec, await hourly.json(), gaps)];
 }
 
 export async function GET(req: NextRequest) {
@@ -42,7 +51,7 @@ export async function GET(req: NextRequest) {
     try {
       const obs = spec.source === "fred"
         ? fredToObservations(spec, await fredSeriesDated(spec.provider, backfill ? 800 : 15))
-        : await fetchYahoo(spec, backfill ? "2y" : "10d", todayUtc);
+        : await fetchYahoo(spec, backfill ? "2y" : "10d", todayUtc, backfill);
       rows.push(...obs);
       perSeries[spec.id] = { fetched: obs.length, ...(obs.length ? {} : { error: "empty" }) };
     } catch (e: any) {

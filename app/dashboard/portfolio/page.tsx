@@ -31,7 +31,8 @@ export default async function Page() {
   const [
     { data: pools },
     { data: positions },
-    { data: trades },
+    { data: tradesByEntry },
+    { data: tradesBySale },
     { data: perf },
     { data: signals },
     { data: pendingSignals },
@@ -47,7 +48,10 @@ export default async function Page() {
     // Pre-057 (no market column) this returns the single US row unchanged.
     supabase.from("paper_portfolio").select("*"),
     supabase.from("paper_positions").select("*").eq("market", market).order("opened_at", { ascending: false }),
-    supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(50),
+    supabase.from("paper_trades").select("*").eq("market", market).order("executed_at", { ascending: false }).limit(100),
+    // The newest SALES too: a lot bought weeks ago and sold today ranks far down a newest-ENTRY list (or falls off it entirely once more
+    // than 100 newer lots exist), which made sold positions vanish from the Trades tab when the book went from 8 names to 6.
+    supabase.from("paper_trades").select("*").eq("market", market).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(100),
     supabase.from("paper_performance").select("*").eq("market", market).order("date", { ascending: true }).limit(60),
     supabase.from("agent_signals").select("*").eq("market", market).order("created_at", { ascending: false }).limit(20),
     supabase.from("agent_signals").select("*, research_packets(*)").eq("market", market).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
@@ -66,6 +70,11 @@ export default async function Page() {
     // or receive rotation candidates, scores, proposed trades, or gate details.
     role === "owner" ? loadRotationStatus(supabase, market, true) : Promise.resolve(null),
   ]);
+
+  // Union of the newest entries and the newest sales, de-duplicated by id, newest entry first (the table re-sorts client-side).
+  const tradeById = new Map<string, any>();
+  for (const row of [...(tradesByEntry ?? []), ...(tradesBySale ?? [])]) tradeById.set(String(row.id), row);
+  const trades = [...tradeById.values()].sort((x, y) => String(y.executed_at ?? "").localeCompare(String(x.executed_at ?? "")));
 
   // Company names for the symbols actually on screen. `paper_positions` and
   // `paper_trades` carry no name column, so `symbol_profiles` is the only

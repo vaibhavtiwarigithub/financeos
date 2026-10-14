@@ -13,6 +13,8 @@ export interface MacroSeriesSpec {
   unit: string;
   /** Drop the still-forming bar for instruments that trade through the collection time. */
   dropToday?: boolean;
+  /** When Yahoo's daily bar for a completed session has a null close, use the last intraday (hourly) close of that session instead. */
+  intradayFallback?: boolean;
   /** Approximate publication lag, for readers; observations are stored by their own obs_date. */
   note: string;
 }
@@ -23,7 +25,7 @@ export const INDIA_MACRO_SERIES: readonly MacroSeriesSpec[] = [
   { id: "brent_fred", source: "fred", provider: "DCOILBRENTEU", label: "Brent crude spot (EIA via FRED)", unit: "usd_per_bbl", note: "daily; about 1 week lag" },
   { id: "india_vix", source: "yahoo", provider: "^INDIAVIX", label: "India VIX", unit: "index_points", note: "near real time" },
   { id: "nifty50_close", source: "yahoo", provider: "^NSEI", label: "NIFTY 50 close", unit: "index_points", note: "near real time" },
-  { id: "niftybees_close", source: "yahoo", provider: "NIFTYBEES.NS", label: "NIFTYBEES ETF close (index-sleeve shadow instrument)", unit: "inr", note: "near real time; INR 200+ crore/day turnover" },
+  { id: "niftybees_close", source: "yahoo", provider: "NIFTYBEES.NS", label: "NIFTYBEES ETF close (index-sleeve shadow instrument)", unit: "inr", intradayFallback: true, note: "near real time; INR 200+ crore/day turnover" },
   { id: "usdinr_spot", source: "yahoo", provider: "INR=X", label: "USD/INR spot", unit: "inr_per_usd", dropToday: true, note: "near real time; 24h instrument" },
   { id: "brent_front", source: "yahoo", provider: "BZ=F", label: "Brent front-month future", unit: "usd_per_bbl", dropToday: true, note: "near real time; 24h instrument" },
   { id: "fii_net_cr", source: "nse", provider: "fiidiiTradeReact", label: "FII/FPI net cash-market flow", unit: "inr_crore", note: "daily provisional, NSE" },
@@ -54,6 +56,36 @@ export function parseYahooChart(spec: MacroSeriesSpec, json: any, todayUtc: stri
     out.push({ series_id: spec.id, source: spec.source, obs_date: date, value });
   }
   return out;
+}
+
+/** UTC dates whose daily bar exists (timestamp present) but carries a null/non-finite close. */
+export function nullCloseDates(json: any): string[] {
+  const result = json?.chart?.result?.[0];
+  const ts: unknown[] = result?.timestamp ?? [];
+  const closes: unknown[] = result?.indicators?.quote?.[0]?.close ?? [];
+  const out: string[] = [];
+  for (let i = 0; i < ts.length; i++) {
+    const t = Number(ts[i]);
+    if (!Number.isFinite(t)) continue;
+    if (closes[i] == null || !Number.isFinite(Number(closes[i]))) out.push(new Date(t * 1000).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** Last non-null intraday close per requested UTC date (bars are in time order). Dates with no intraday bars are simply absent. */
+export function lastIntradayCloses(spec: MacroSeriesSpec, hourlyJson: any, dates: readonly string[]): MacroObservation[] {
+  const result = hourlyJson?.chart?.result?.[0];
+  const ts: unknown[] = result?.timestamp ?? [];
+  const closes: unknown[] = result?.indicators?.quote?.[0]?.close ?? [];
+  const want = new Set(dates);
+  const last = new Map<string, number>();
+  for (let i = 0; i < ts.length; i++) {
+    const t = Number(ts[i]);
+    if (!Number.isFinite(t) || closes[i] == null || !Number.isFinite(Number(closes[i]))) continue;
+    const date = new Date(t * 1000).toISOString().slice(0, 10);
+    if (want.has(date)) last.set(date, Number(closes[i]));
+  }
+  return [...last].map(([obs_date, value]) => ({ series_id: spec.id, source: spec.source, obs_date, value }));
 }
 
 /** FRED observations (already numeric and dated) -> rows; malformed dates dropped. */
