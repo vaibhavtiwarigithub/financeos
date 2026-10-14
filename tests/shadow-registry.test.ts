@@ -79,6 +79,11 @@ describe("shadow registry governance contract", () => {
     expect(upgradePage).toContain("Forward shadow-book P&L · descriptive, not promotion proof");
     expect(bookLedger).toContain("Daily P&L is descriptive only");
     expect(upgradePage).toContain("Causal attribution");
+    expect(upgradePage).toContain("Collection state:");
+    expect(upgradePage).toContain("program.producerRun.details.reconstructedPositions");
+    const producerPanel = upgradePage.indexOf('text="Producer liveness · not performance evidence"');
+    expect(producerPanel).toBeGreaterThan(0);
+    expect(upgradePage.slice(producerPanel - 80, producerPanel)).not.toContain("operational_only");
   });
 
   it("registers the outstanding feature-pack gates rather than hiding them in docs", () => {

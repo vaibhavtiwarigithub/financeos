@@ -20,6 +20,7 @@ import { decideExitLadder } from "@/lib/trading/exit-ladder";
 import { isHoldingExitSignal, isPaperScoreFresh, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { decideDirectionFlip, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
 import { reportIssue } from "@/lib/system-health";
+import { type LiveExitMarketDiagnostics } from "@/lib/trading/live-exit-shadow-health";
 
 /** Supabase numerics arrive as string|number|null; a bad value must not become 0. */
 function numberOrNull(value: unknown): number | null {
@@ -49,6 +50,7 @@ export interface LiveExitResult {
   early_exit?: string;
   positions_checked: number;
   exits_submitted: number;
+  market_runs: LiveExitMarketDiagnostics[];
   results: Array<{ market: string; symbol: string; qty: number; reason: string; status: string; error?: string }>;
 }
 
@@ -65,14 +67,37 @@ async function priceFor(market: string, symbol: string, svc: SupabaseClient): Pr
 }
 
 export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Promise<LiveExitResult> {
-  const base = { run_id: runId, positions_checked: 0, exits_submitted: 0, results: [] as LiveExitResult["results"] };
+  const marketRuns: LiveExitMarketDiagnostics[] = (["us", "india"] as const).map((market) => ({
+    market,
+    accountConfigured: false,
+    marketOpen: null,
+    blockedReason: null,
+    shadowMode: null,
+    fillRowsRead: 0,
+    accountMatchedFillRows: 0,
+    accountMatchedBuyFills: 0,
+    accountMatchedSellFills: 0,
+    reconstructedPositions: 0,
+    positionsChecked: 0,
+    quotesUnavailable: 0,
+    shadowRowsWritten: 0,
+    stateWriteFailures: 0,
+    shadowWriteFailures: 0,
+  }));
+  const base = { run_id: runId, positions_checked: 0, exits_submitted: 0, market_runs: marketRuns, results: [] as LiveExitResult["results"] };
   const early = (early_exit: string): LiveExitResult => ({ ...base, early_exit });
 
   const { data: cfg, error: cfgError } = await svc.from("strategy_config")
     .select("live_auto_enabled, app_paused, security_locked, active_account_us, active_account_india").limit(1).maybeSingle();
   if (cfgError) throw new Error(`live-exit config read failed: ${cfgError.message}`);
-  if (!cfg) return early("no_config");
-  if ((cfg as any).app_paused || (cfg as any).security_locked) return early("paused_or_locked");
+  if (!cfg) {
+    marketRuns.forEach((run) => { run.blockedReason = "no_config"; });
+    return early("no_config");
+  }
+  if ((cfg as any).app_paused || (cfg as any).security_locked) {
+    marketRuns.forEach((run) => { run.blockedReason = "paused_or_locked"; });
+    return early("paused_or_locked");
+  }
 
   // SHADOW MODE (features/live-exit-ladder-parity, owner-approved 2026-09-09).
   //
@@ -88,16 +113,20 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
   // shadow collection running when it is false, but require BOTH the deployment
   // and owner switches before the monitor may enter its executable branch.
   const shadowMode = liveExitShadowMode(AUTONOMOUS_LIVE_ENABLED, (cfg as any).live_auto_enabled === true);
+  marketRuns.forEach((run) => { run.shadowMode = shadowMode; });
 
   const results: LiveExitResult["results"] = [];
   let exitsSubmitted = 0;
   let checked = 0;
 
   for (const market of ["us", "india"] as const) {
+    const marketRun = marketRuns.find((run) => run.market === market)!;
     const mc = MARKET_CFG[market];
     const account = (cfg as any)[mc.accountCol] as string | null;
     if (!account) continue;                               // market not set up
+    marketRun.accountConfigured = true;
     const live = await isMarketOpenLive(market);
+    marketRun.marketOpen = live.open;
     if (!live.open) continue;                             // out of session for this market
     const mandate = await loadTradingMandateStrict(svc, market);
 
@@ -106,6 +135,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       .eq("broker_env", "live").eq("market", market).in("status", ["filled", "partially_filled"])
       .in("broker", mc.brokers);
     if (fillsError) throw new Error(`live-exit ${market} fill read failed: ${fillsError.message}`);
+    marketRun.fillRowsRead = (fills ?? []).length;
     const proposalIds = [...new Set((fills ?? []).map((row: any) => row.proposal_id).filter((id: any) => id != null))];
     let proposals: any[] = [];
     if (proposalIds.length) {
@@ -127,7 +157,14 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       },
     });
     const proposalById = new Map(proposals.map((proposal: any) => [String(proposal.id), proposal]));
-
+    const accountMatchedFills = (fills ?? []).filter((order: any) => {
+      const proposal = order.proposal_id == null ? null : proposalById.get(String(order.proposal_id));
+      return proposal?.account_number === account;
+    });
+    marketRun.accountMatchedFillRows = accountMatchedFills.length;
+    marketRun.accountMatchedBuyFills = accountMatchedFills.filter((order: any) => order.side === "buy").length;
+    marketRun.accountMatchedSellFills = accountMatchedFills.filter((order: any) => order.side === "sell").length;
+    marketRun.reconstructedPositions = positions.length;
     // Same deterministic, session-validated signal contract as paper. A stale
     // or missing signal cannot sell; price protection remains independent.
     const latestScores = new Map<string, { score: number | null; direction: string | null; createdAt: string | null; isHolding: boolean }>();
@@ -165,9 +202,13 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       // silently abandon a fractional holding just because it is below one.
       if (!(p.qty > 0)) continue;
       checked++;
+      marketRun.positionsChecked++;
 
       const pr = await priceFor(market, symbol, svc);
-      if (!pr.ok) continue;
+      if (!pr.ok) {
+        marketRun.quotesUnavailable++;
+        continue;
+      }
       const price = pr.price;
 
       // Shared ladder core — the SAME function the paper monitor calls, so
@@ -254,6 +295,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         partial_qty: nextPartialQty,
       }, { onConflict: "account_id,symbol" });
       if (stateWriteError) {
+        marketRun.stateWriteFailures++;
         await reportIssue({
           issueKey: `live-exit-state-write:${market}:${account}:${symbol}`,
           severity: "critical", category: "risk",
@@ -283,6 +325,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
           shadow_mode: true,
         });
         if (shadowWriteError) {
+          marketRun.shadowWriteFailures++;
           await reportIssue({
             issueKey: `live-exit-shadow-write:${market}:${account}:${symbol}`,
             severity: "critical", category: "risk",
@@ -292,6 +335,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
           results.push({ market, symbol, qty: 0, reason: "shadow_write_failed", status: "blocked", error: shadowWriteError.message });
           continue;
         }
+        marketRun.shadowRowsWritten++;
         if (action !== "none") {
           results.push({ market, symbol, qty: actionQty ?? 0, reason: actionReason ?? action, status: "shadow_logged" });
         }
@@ -394,5 +438,5 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
     summary: `Live exit monitor ${runId}: ${checked} live position(s), ${exitsSubmitted} protective SELL(s) submitted.`,
   } as any).then(() => {}, () => {});
 
-  return { run_id: runId, positions_checked: checked, exits_submitted: exitsSubmitted, results };
+  return { run_id: runId, positions_checked: checked, exits_submitted: exitsSubmitted, market_runs: marketRuns, results };
 }
