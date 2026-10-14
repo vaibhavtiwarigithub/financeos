@@ -9,6 +9,7 @@ import DimensionIcPanel from "@/components/dashboard/DimensionIcPanel";
 import IcRegressionPanel from "@/components/dashboard/IcRegressionPanel";
 import CouncilIcPanel from "@/components/dashboard/CouncilIcPanel";
 import EventIcPanel from "@/components/dashboard/EventIcPanel";
+import IndexSleevePanel from "@/components/dashboard/IndexSleevePanel";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
 import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 const LineChart = lazy(() => import("recharts").then(m => ({ default: m.LineChart })));
@@ -148,6 +149,7 @@ export default function LearningPage({
       <IcRegressionPanel />
       <CouncilIcPanel />
       <EventIcPanel />
+      <IndexSleevePanel />
 
       {/* Agent Pipeline Diagram */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px", marginBottom: "24px" }}>

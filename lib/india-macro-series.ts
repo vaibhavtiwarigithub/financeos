@@ -23,6 +23,7 @@ export const INDIA_MACRO_SERIES: readonly MacroSeriesSpec[] = [
   { id: "brent_fred", source: "fred", provider: "DCOILBRENTEU", label: "Brent crude spot (EIA via FRED)", unit: "usd_per_bbl", note: "daily; about 1 week lag" },
   { id: "india_vix", source: "yahoo", provider: "^INDIAVIX", label: "India VIX", unit: "index_points", note: "near real time" },
   { id: "nifty50_close", source: "yahoo", provider: "^NSEI", label: "NIFTY 50 close", unit: "index_points", note: "near real time" },
+  { id: "niftybees_close", source: "yahoo", provider: "NIFTYBEES.NS", label: "NIFTYBEES ETF close (index-sleeve shadow instrument)", unit: "inr", note: "near real time; INR 200+ crore/day turnover" },
   { id: "usdinr_spot", source: "yahoo", provider: "INR=X", label: "USD/INR spot", unit: "inr_per_usd", dropToday: true, note: "near real time; 24h instrument" },
   { id: "brent_front", source: "yahoo", provider: "BZ=F", label: "Brent front-month future", unit: "usd_per_bbl", dropToday: true, note: "near real time; 24h instrument" },
   { id: "fii_net_cr", source: "nse", provider: "fiidiiTradeReact", label: "FII/FPI net cash-market flow", unit: "inr_crore", note: "daily provisional, NSE" },

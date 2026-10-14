@@ -96,6 +96,8 @@ export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   { prefix: "/api/learning/council-ic", methods: ["GET"], exact: true },
   // India LLM event extraction (shadow) evaluation cells and coverage: stored rows only, no model or provider call.
   { prefix: "/api/learning/llm-events-ic", methods: ["GET"], exact: true },
+  // India index-ETF sleeve SHADOW (what-if NAV vs the real book): stored rows only, no capital moved.
+  { prefix: "/api/learning/index-sleeve", methods: ["GET"], exact: true },
   { prefix: "/api/research/trades", methods: ["GET"] },
   { prefix: "/api/research/fundamentals/cached", methods: ["GET"], exact: true },
   // Earnings Calendar (US). The parent route refreshes from Alpha Vantage.

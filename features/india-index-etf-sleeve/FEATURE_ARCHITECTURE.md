@@ -1,7 +1,7 @@
 # Feature Architecture: India Index-ETF Sleeve
 
 ## Status
-**DRAFT. Not implemented.** Owner said "Approved, implement the index-ETF sleeve proposal" on 2026-10-13, but no concrete proposal existed (it had only been offered). This document is that proposal. Three options are laid out; the one to build needs an explicit choice because it changes how real paper capital is allocated.
+**Option C (shadow) implemented 2026-10-14 after the owner chose it; options A and B are NOT built.** Built: `lib/india-index-sleeve.ts`, `/api/agents/india-index-sleeve-shadow`, `/api/learning/index-sleeve`, `IndexSleevePanel`, table `india_sleeve_shadow_nav`. Original status: **DRAFT. Not implemented.** Owner said "Approved, implement the index-ETF sleeve proposal" on 2026-10-13, but no concrete proposal existed (it had only been offered). This document is that proposal. Three options are laid out; the one to build needs an explicit choice because it changes how real paper capital is allocated.
 
 ## Why it was asked
 On 2026-10-13 NIFTY rose 1.60% while the India paper book rose 0.74%. An index-ETF sleeve (NIFTYBEES.NS) would make the book track the index more closely.

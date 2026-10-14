@@ -264,6 +264,17 @@ export const SCHEDULED_JOBS: readonly ScheduledJob[] = [
     agentRunsType: "llm_events_evaluate",
   },
   {
+    name: "india-index-sleeve-shadow",
+    agent: "india-index-sleeve-shadow",
+    time: "6:50 PM IST",
+    days: "Daily",
+    runner: "Supabase pg_cron → Vercel",
+    editable: false,
+    description: "India index-ETF sleeve shadow: appends the what-if NAV with 10/20/30% in NIFTYBEES alongside the real book. No orders, no capital moved.",
+    handoff: "→ Upgrade Path evidence review",
+    agentRunsType: "india_index_sleeve_shadow",
+  },
+  {
     name: "trader",
     agent: "trader",
     time: "9:45 AM ET",
