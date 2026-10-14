@@ -3,7 +3,7 @@
 ## Status
 **IMPLEMENTED 2026-10-14** (owner: "go with recommendations", i.e. the recommended defaults below). Measure-only and display-only: it never places, arms or cancels an order, never changes a stop, and never activates the Guardian.
 
-Decisions taken: (1) all six Robinhood accounts, read-only; (2) the buy ideas count as recommendations; (3) history backfilled; (4) daily revision is a written note plus shadow stop arms, no auto-change; (5) closing stuck `pending_review` proposals in `trade_proposals` was NOT done (needs its own approval).
+Decisions taken: (1) all six Robinhood accounts, read-only; (2) the buy ideas count as recommendations; (3) history backfilled; (4) daily revision is a written note plus shadow stop arms, no auto-change; (5) stuck `pending_review` proposals were closed out on 2026-10-14 by a 5-minute sweeper (migration 20261014171102) after the owner asked; the tracker reads `expired` as no decision.
 Deviations from the draft: response state lives on the daily mark row (2 recommendation tables instead of 3, plus `live_guardian_revisions`); `risk_review` recommendations are not recorded (224 distinct account/symbol/reason keys in the snapshots, noise rather than advice); the stop-rule shadow runs on matured buy ideas at their proposal price because only one Guardian stop has ever been suggested.
 Files: migration 20261014162931, `lib/live-recommendations/core.ts`, `app/api/agents/live-recommendations/route.ts`, `app/api/live-portfolio/recommendations/route.ts`, `components/dashboard/RecommendationsPanel.tsx`, tests `live-recommendations-core` and `live-recommendations-wiring`.
 

@@ -2119,6 +2119,13 @@
       "nodeId": "LIVEREC",
       "label": "Live recommendation tracker and Guardian scorecard",
       "reason": "Owner asked to see every live recommendation, whether it was taken, and how it fared against the symbol and SPY, with the Guardian revised from the evidence. A nightly display-only job syncs buy ideas, Guardian stop suggestions and exit signals, infers the response from daily holdings snapshots, marks each against the symbol and SPY, and shadow-tests alternative Guardian stop rules. No order, stop or Guardian setting is read or written."
+    },
+    {
+      "date": "2026-10-14",
+      "event": "change",
+      "nodeId": "TRADER",
+      "label": "Proposal lifecycle: unanswered proposals now expire",
+      "reason": "Proposals whose 30-minute approval window passed stayed pending_review forever (147 over 3 months), inflating the portfolio proposal-impact panel. A 5-minute sweeper now moves them to the existing expired status; nothing about proposal generation, approval or order placement changed."
     }
   ]
 }

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // The sweeper must only close proposals whose approval window has passed, change nothing but status/updated_at, and stay off client roles.
-const sql = readFileSync("supabase/migrations/20261014190000_expire_stale_trade_proposals.sql", "utf8");
+const sql = readFileSync("supabase/migrations/20261014171102_expire_stale_trade_proposals.sql", "utf8");
 
 describe("expire stale trade proposals sweeper", () => {
   it("only expires pending proposals past their approval window", () => {
