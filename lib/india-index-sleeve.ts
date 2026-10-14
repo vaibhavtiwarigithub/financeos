@@ -5,58 +5,53 @@
 export const SLEEVE_WEIGHTS = [0.1, 0.2, 0.3] as const;
 export const SLEEVE_METHOD = "daily_rebalanced_v1";
 export const MIN_SESSIONS_FOR_VERDICT = 60;
-const MAX_ETF_STALENESS_DAYS = 4;
 
 export interface BookNav { date: string; nav: number }
 export interface SleeveRow { as_of_date: string; weight: number; blended_nav: number; book_nav: number; etf_close: number }
 
-const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86_400_000);
-
-/** Latest ETF close on or before `date` (past data only, bounded staleness); null when none. */
-function etfAsOf(sorted: ReadonlyArray<readonly [number, number]>, date: string): number | null {
-  const target = dayNumber(date);
-  let lo = 0, hi = sorted.length - 1, best = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid][0] <= target) { best = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  return best >= 0 && target - sorted[best][0] <= MAX_ETF_STALENESS_DAYS ? sorted[best][1] : null;
-}
-
 /**
  * Extend a blended NAV path forward. `prior` is the last stored row for this weight (or null to seed at the first book date with
  * blended NAV = book NAV). Each later session compounds w * ETF return + (1 - w) * book return between consecutive BOOK sessions.
- * Stops at the first session without a usable ETF level instead of guessing, so the chain never contains an invented return.
+ *
+ * ETF closes must match the book session date EXACTLY. Bridging a missing day with the previous close would record a zero ETF return,
+ * and the table is append-only, so a premature bridge would be permanent (Yahoo's latest daily bar for an ETF can carry a null close
+ * until the next day). The chain therefore stops at the first session without an exact ETF close and resumes on a later run.
  */
 export function extendBlend(
   book: readonly BookNav[], etfCloses: ReadonlyMap<string, number>, weight: number, prior: SleeveRow | null,
 ): SleeveRow[] {
-  const sorted = [...etfCloses].filter(([, v]) => Number.isFinite(v) && v > 0).map(([d, v]) => [dayNumber(d), v] as const).sort((a, b) => a[0] - b[0]);
+  const etf = (date: string): number | null => {
+    const v = etfCloses.get(date);
+    return v != null && Number.isFinite(v) && v > 0 ? v : null;
+  };
   const days = [...book].filter((b) => Number.isFinite(b.nav) && b.nav > 0).sort((a, b) => a.date.localeCompare(b.date));
   const out: SleeveRow[] = [];
   let prevIdx: number;
   let blended: number;
+  let prevEtf: number;
   if (prior) {
     prevIdx = days.findIndex((d) => d.date === prior.as_of_date);
     if (prevIdx < 0) return out;
     blended = prior.blended_nav;
+    prevEtf = prior.etf_close;
   } else {
     if (!days.length) return out;
     const first = days[0];
-    const etf0 = etfAsOf(sorted, first.date);
+    const etf0 = etf(first.date);
     if (etf0 == null) return out;
     out.push({ as_of_date: first.date, weight, blended_nav: first.nav, book_nav: first.nav, etf_close: etf0 });
     prevIdx = 0;
     blended = first.nav;
+    prevEtf = etf0;
   }
   for (let i = prevIdx + 1; i < days.length; i++) {
-    const prevEtf = etfAsOf(sorted, days[i - 1].date);
-    const curEtf = etfAsOf(sorted, days[i].date);
-    if (prevEtf == null || curEtf == null) break;
+    const curEtf = etf(days[i].date);
+    if (curEtf == null) break;
     const rBook = days[i].nav / days[i - 1].nav - 1;
     const rEtf = curEtf / prevEtf - 1;
     blended *= 1 + weight * rEtf + (1 - weight) * rBook;
     out.push({ as_of_date: days[i].date, weight, blended_nav: blended, book_nav: days[i].nav, etf_close: curEtf });
+    prevEtf = curEtf;
   }
   return out;
 }

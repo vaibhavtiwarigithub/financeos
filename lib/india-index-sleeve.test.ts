@@ -28,15 +28,14 @@ describe("india index sleeve shadow", () => {
     expect(resumed.map((r) => r.as_of_date)).toEqual([d(2), d(3)]);
     expect(resumed[1].blended_nav).toBeCloseTo(all[3].blended_nav, 9);
   });
-  it("bridges a short ETF gap as-of but never invents a return across a long one", () => {
-    const b = book([1000, 1010, 1020]);
-    const bridged = extendBlend(b, new Map([[d(0), 100], [d(1), 101]]), 0.2, null);
-    expect(bridged).toHaveLength(3); // d(2) uses the d(1) level (within 4 days): ETF return 0 for that step
-    expect(bridged[2].etf_close).toBe(101);
+  it("never bridges a missing ETF close: the chain stops and resumes later, so no zero return is recorded", () => {
+    const b = book([1000, 1010, 1020, 1030]);
+    const partial = extendBlend(b, new Map([[d(0), 100], [d(1), 101], [d(3), 103]]), 0.2, null);
+    expect(partial.map((r) => r.as_of_date)).toEqual([d(0), d(1)]); // d(2) has no ETF close -> stop, even though d(3) exists
+    const resumed = extendBlend(b, etf([100, 101, 102, 103]), 0.2, partial[1]);
+    expect(resumed.map((r) => r.as_of_date)).toEqual([d(2), d(3)]);
+    expect(resumed[0].blended_nav).toBeCloseTo(partial[1].blended_nav * (1 + 0.2 * (102 / 101 - 1) + 0.8 * (1020 / 1010 - 1)), 9);
     expect(extendBlend(book([1000, 1010]), new Map([["2020-01-01", 100]]), 0.2, null)).toEqual([]);
-    const gap = new Map([[d(0), 100], [d(1), 101]]);
-    const long = extendBlend(book([1000, 1010, 1020, 1030, 1040, 1050, 1060, 1070]), gap, 0.2, null);
-    expect(long.length).toBeLessThan(8); // stops once the last known level is more than 4 days old
   });
   it("computes drawdown, volatility and return per drawdown", () => {
     const m = pathMetrics([100, 110, 99, 105])!;
