@@ -186,6 +186,11 @@ account identifier, symbol, or raw provider error. The write is best-effort and
 occurs after the exit monitor, so a health-ledger outage cannot prevent, repeat,
 or change an exit action.
 
+Each row explicitly persists the invocation's start time and a finish time no
+earlier than that start time; the database default is not used for `started_at`.
+This keeps producer-run duration and ordering trustworthy even if wall-clock
+timestamps have sub-second jitter.
+
 `collected` with `waiting_for_managed_position` or `outside_market_session` is
 a valid no-event result. `blocked` identifies a known collection gap, including
 a filled buy that fails reconstruction, an unusable quote, or failed state or
