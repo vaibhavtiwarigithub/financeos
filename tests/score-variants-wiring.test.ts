@@ -9,6 +9,7 @@ const migration = readFileSync("supabase/migrations/20261014150619_score_variant
 const pairedMigration = readFileSync("supabase/migrations/20261015164628_score_variant_paired_spread.sql", "utf8");
 const reader = readFileSync("app/api/learning/score-variants/route.ts", "utf8");
 const formulaLabReader = readFileSync("app/api/learning/score-formula-lab/route.ts", "utf8");
+const formulaLabPanel = readFileSync("components/dashboard/ScoreFormulaMiningPanel.tsx", "utf8");
 
 describe("score variant forward shadow wiring", () => {
   it("splits forward from hindsight on the registered declaration time", () => {
@@ -35,5 +36,11 @@ describe("score variant forward shadow wiring", () => {
     expect(reader).toContain("paired_spread_delta,paired_spread_delta_t");
     expect(formulaLabReader).toContain("paired_spread_delta,paired_spread_delta_t");
     expect(panel).toContain("Spread lift vs baseline / HAC t");
+  });
+  it("distinguishes a globally frozen mining run from an empty market/horizon slice", () => {
+    expect(formulaLabReader).toContain("frozenVariantSet, miningFrozen: Boolean(frozenVariantSet)");
+    expect(formulaLabPanel).toContain("payload?.miningFrozen ?? Boolean(payload?.variantSet)");
+    expect(formulaLabPanel).toContain("frozen globally");
+    expect(formulaLabPanel).toContain("do not rerun the search to fill this slice");
   });
 });

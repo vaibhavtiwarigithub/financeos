@@ -7,7 +7,7 @@ import { useMarket } from "@/lib/market-context";
 type Fit = { sessions?: number; independentWindows?: number; coverageRows?: number; meanIc?: number | null; meanIcT?: number | null; spread?: number | null; spreadT?: number | null; pairedSpreadDelta?: number | null; pairedSpreadDeltaT?: number | null; baselineMeanIc?: number | null; baselineSpread?: number | null };
 type Candidate = { variantId: string; label: string; weights: Record<string, number>; declaredAt: string; fit: Fit | null; fitCutoff: string | null; trialCount: number | null; totalRunTrials: number | null; caveat: string };
 type Cell = { variant_id: string; sample: "forward" | "hindsight"; sessions: number; independent_windows: number; variant_mean_ic: number | null; variant_ic_t: number | null; variant_spread: number | null; variant_spread_t: number | null; paired_spread_delta: number | null; paired_spread_delta_t: number | null; baseline_mean_ic: number | null; baseline_spread: number | null; classification: string; reason: string };
-type Payload = { error?: string; variantSet: string | null; evaluatedAt: string | null; candidates: Candidate[]; cells: Cell[] };
+type Payload = { error?: string; variantSet: string | null; frozenVariantSet?: string | null; miningFrozen?: boolean; evaluatedAt: string | null; candidates: Candidate[]; cells: Cell[] };
 
 const T = { card: "#1A1D27", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#6366F1", green: "#34D399", amber: "#FBBF24", red: "#F87171" };
 const n = (v: number | null | undefined, d = 3) => v == null || !Number.isFinite(v) ? "—" : v.toFixed(d);
@@ -47,6 +47,7 @@ export default function ScoreFormulaMiningPanel() {
   };
 
   const cells = payload?.cells ?? [];
+  const miningFrozen = payload?.miningFrozen ?? Boolean(payload?.variantSet);
   const table = (sample: "hindsight" | "forward") => {
     const rows = (payload?.candidates ?? []).map((candidate) => ({ candidate, cell: cells.find((c) => c.variant_id === candidate.variantId && c.sample === sample) }));
     return <div style={{ marginTop: 14, overflowX: "auto" }}>
@@ -78,12 +79,13 @@ export default function ScoreFormulaMiningPanel() {
     </div>
     <div style={{ color: T.muted, fontSize: 11, marginTop: 10 }}>*Rough window count = sessions ÷ horizon; this is not a measured effective sample size. HAC t-statistics use a Bartlett Newey–West correction for overlapping labels. Even a positive forward IC does not establish portfolio-level outperformance; no variant is automatically promoted.</div>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-      <div style={{ color: T.muted, fontSize: 11 }}>Market: {market.toUpperCase()} · labels: benchmark-neutral forward return · last shadow {date(payload?.evaluatedAt)} · candidate set {payload?.variantSet ?? "not mined"}</div>
-      <button onClick={() => void mine()} disabled={busy || Boolean(payload?.variantSet)} style={{ display: "inline-flex", gap: 6, alignItems: "center", background: busy || payload?.variantSet ? "#252836" : T.accent, color: "#fff", border: 0, borderRadius: 6, padding: "7px 10px", cursor: busy || payload?.variantSet ? "not-allowed" : "pointer", fontSize: 11 }}><Play size={13} />{busy ? "Mining…" : payload?.variantSet ? "Historical fit frozen" : "Mine once & freeze candidates"}</button>
+      <div style={{ color: T.muted, fontSize: 11 }}>Market: {market.toUpperCase()} · labels: benchmark-neutral forward return · last shadow {date(payload?.evaluatedAt)} · candidate set {payload?.variantSet ?? (miningFrozen ? `frozen globally (${payload?.frozenVariantSet}) · none for this slice` : "not mined")}</div>
+      <button onClick={() => void mine()} disabled={busy || miningFrozen} style={{ display: "inline-flex", gap: 6, alignItems: "center", background: busy || miningFrozen ? "#252836" : T.accent, color: "#fff", border: 0, borderRadius: 6, padding: "7px 10px", cursor: busy || miningFrozen ? "not-allowed" : "pointer", fontSize: 11 }}><Play size={13} />{busy ? "Mining…" : miningFrozen ? "Historical fit frozen" : "Mine once & freeze candidates"}</button>
     </div>
     {notice && <div style={{ color: T.green, fontSize: 12, marginTop: 10 }}>{notice}</div>}
     {error && <div style={{ color: T.red, fontSize: 12, marginTop: 10 }}>{error}</div>}
-    {!payload?.variantSet && <div style={{ color: T.amber, fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>Exploratory only: current dimensional history starts in July 2026, not 2010. The fit is entry-eligible long candidates with every available dimension present; incomplete rows are excluded equally for all formulas. A one-time fit can reveal candidate weights, but multiple testing guarantees optimistic hindsight. The candidate search is frozen after one run; forward evidence starts only after declaration and needs months of new matured labels. The service endpoint is owner-only.</div>}
+    {!payload?.variantSet && !miningFrozen && <div style={{ color: T.amber, fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>Exploratory only: current dimensional history starts in July 2026, not 2010. The fit is entry-eligible long candidates with every available dimension present; incomplete rows are excluded equally for all formulas. A one-time fit can reveal candidate weights, but multiple testing guarantees optimistic hindsight. The candidate search is frozen after one run; forward evidence starts only after declaration and needs months of new matured labels. The service endpoint is owner-only.</div>}
+    {miningFrozen && !payload?.variantSet && <div style={{ color: T.amber, fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>The one-time historical search is already frozen globally. No complete-case candidate was fitted for {market.toUpperCase()} h{horizon}; do not rerun the search to fill this slice. Existing candidates continue collecting only post-declaration forward labels.</div>}
     {payload?.variantSet && <>{table("hindsight")}{table("forward")}</>}
   </section>;
 }

@@ -18,11 +18,15 @@ export async function GET(req: NextRequest) {
     .select("variant_set,variant_id,label,weights,declared_at,rationale")
     .like("variant_set", "formula_mined_v1_%").order("declared_at", { ascending: false }).limit(100);
   if (registryError) return NextResponse.json({ error: "Formula mining registry unavailable" }, { status: 500 });
+  const frozenVariantSet = registry?.[0]?.variant_set ?? null;
   const scoped = (registry ?? []).filter((r: any) => {
     const meta = parseMiningRationale(r.rationale);
     return meta?.market === market && Number(meta?.horizonDays) === horizon;
   });
-  if (!scoped.length) return NextResponse.json({ market, horizon, variantSet: null, evaluatedAt: null, candidates: [] });
+  if (!scoped.length) return NextResponse.json({
+    market, horizon, variantSet: null, frozenVariantSet, miningFrozen: Boolean(frozenVariantSet),
+    evaluatedAt: null, candidates: [], cells: [], shadowOnly: true,
+  });
   const variantSet = String(scoped[0].variant_set);
   const candidates = scoped.filter((r: any) => r.variant_set === variantSet).map((r: any) => {
     const meta = parseMiningRationale(r.rationale) ?? {};
@@ -47,5 +51,5 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: "Formula evaluation cells unavailable" }, { status: 500 });
     cells = data ?? [];
   }
-  return NextResponse.json({ market, horizon, variantSet, evaluatedAt: latest?.[0]?.evaluated_at ?? null, candidates, cells, shadowOnly: true });
+  return NextResponse.json({ market, horizon, variantSet, frozenVariantSet, miningFrozen: Boolean(frozenVariantSet), evaluatedAt: latest?.[0]?.evaluated_at ?? null, candidates, cells, shadowOnly: true });
 }
