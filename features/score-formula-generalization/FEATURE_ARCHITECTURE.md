@@ -1,8 +1,18 @@
 # Score Formula Mining and Forward Generalization
 
-**Status: OWNER-APPROVED, measure-only implementation in progress (2026-10-15).**
+**Status: IMPLEMENTED, deployed, and collecting prospective labels (2026-10-15).**
 This supplements `features/score-variants-forward-shadow/FEATURE_ARCHITECTURE.md`;
 it does not replace the incumbent scorer or promote a candidate.
+
+**Production state:** the owner-only one-time fit froze immutable set
+`formula_mined_v1_aab358160c2e3787` (nine declarations). Complete-case candidates
+exist for India h2/h5/h10; no US candidate was fitted because no US slice met the
+complete-case entry-long requirement. The Learning page reports this as an empty
+slice under a globally frozen search and disables repeat mining. Nightly
+evaluation writes forward/hindsight rows, but the latest inspected forward
+cohort still has zero qualifying post-declaration sessions. All candidate
+verdicts therefore remain insufficient; no weight changes or trading consumers
+are enabled.
 
 ## Decision and objective
 
@@ -173,8 +183,10 @@ candidate.
    gate for the future nested diagnostic, not claimed complete now.
 2. Immutable candidate/fit provenance and complete trial accounting.
 3. Owner-only candidate generation; scheduled evaluation only after declaration.
-4. Learning page clearly separates overfit, historical validation, and forward
-   results; small sample means `insufficient_evidence`, never pass.
+4. Learning page separates overfit/hindsight from forward evidence and exposes
+   global frozen-set provenance even when a selected market/horizon has no fitted
+   candidate; the one-time fit action is disabled after the immutable set exists.
+   Small samples mean `insufficient_evidence`, never pass.
 5. Verified migration, route authorization, and no money-path imports/callers.
 6. Full relevant test suite, typecheck, production build, and deployment/migration
    verification before calling the app implementation live.
