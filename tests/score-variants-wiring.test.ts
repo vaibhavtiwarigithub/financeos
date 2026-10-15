@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 const evaluator = readFileSync("app/api/agents/score-variants/evaluate/route.ts", "utf8");
 const panel = readFileSync("components/dashboard/ScoreVariantsPanel.tsx", "utf8");
 const migration = readFileSync("supabase/migrations/20261014150619_score_variant_shadow.sql", "utf8");
+const pairedMigration = readFileSync("supabase/migrations/20261015125000_score_variant_paired_spread.sql", "utf8");
+const reader = readFileSync("app/api/learning/score-variants/route.ts", "utf8");
 
 describe("score variant forward shadow wiring", () => {
   it("splits forward from hindsight on the registered declaration time", () => {
@@ -24,5 +26,12 @@ describe("score variant forward shadow wiring", () => {
   it("keeps the client panel free of server-only imports", () => {
     const imports = [...panel.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
     expect(imports.every((i) => ["react", "lucide-react", "@/lib/market-context"].includes(i))).toBe(true);
+  });
+  it("persists and reads the per-session paired candidate-minus-baseline spread comparison", () => {
+    expect(pairedMigration).toContain("add column if not exists paired_spread_delta numeric");
+    expect(pairedMigration).toContain("add column if not exists paired_spread_delta_t numeric");
+    expect(evaluator).toContain("paired_spread_delta: ev.pairedSpreadDelta");
+    expect(reader).toContain("paired_spread_delta,paired_spread_delta_t");
+    expect(panel).toContain("Spread lift vs baseline / HAC t");
   });
 });

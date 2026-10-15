@@ -66,6 +66,7 @@ export async function GET(req: NextRequest) {
       evaluation_batch_id: batchId, variant_set: VARIANT_SET, variant_id: DEF.id, market: "us", sample: "forward", horizon_days: horizon,
       sessions: ev.sessions, avg_cross_section: Number(ev.avgCrossSection.toFixed(2)), independent_windows: Number(ev.independentWindows.toFixed(4)),
       variant_mean_ic: ev.variant.meanIc, variant_ic_t: ev.variant.icT, variant_top_fifth: ev.variant.topFifthExcess, variant_bottom_fifth: ev.variant.bottomFifthExcess, variant_spread: ev.variant.spread, variant_spread_t: ev.variant.spreadT,
+      paired_spread_delta: ev.pairedSpreadDelta, paired_spread_delta_t: ev.pairedSpreadDeltaT,
       baseline_mean_ic: ev.baseline.meanIc, baseline_ic_t: ev.baseline.icT, baseline_top_fifth: ev.baseline.topFifthExcess, baseline_bottom_fifth: ev.baseline.bottomFifthExcess, baseline_spread: ev.baseline.spread, baseline_spread_t: ev.baseline.spreadT,
       classification: ev.classification, meets_adoption_gate: ev.meetsAdoptionGate,
       reason: `Baseline here is insider v1 computed from the same filings (not the live composite). ${ev.reason}`,

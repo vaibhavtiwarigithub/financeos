@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BONFERRONI_T, VARIANTS, evaluateVariant, fifthMeans, variantScore, type ObsRow } from "@/lib/score-variants/core";
+import { hacMeanT, VARIANTS, evaluateVariant, fifthMeans, variantScore, type ObsRow } from "@/lib/score-variants/core";
 
 function rng(seed: number) { let s = seed; return () => ((s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296 - 0.5); }
 const day = (i: number) => new Date(Date.UTC(2026, 9, 1 + i, 14)).toISOString();
@@ -44,15 +44,18 @@ describe("score variant forward shadow", () => {
     expect(ev.sessions).toBe(60);
     expect(ev.variant.meanIc!).toBeGreaterThan(0.3);
     expect(ev.variant.spread!).toBeGreaterThan(ev.baseline.spread!);
+    expect(ev.pairedSpreadDelta!).toBeGreaterThan(0);
+    expect(ev.pairedSpreadDeltaT).not.toBeNull();
     expect(ev.variant.topFifthExcess!).toBeGreaterThan(0);
     expect(ev.classification).toBe("measured_descriptive");
-    expect(ev.meetsAdoptionGate).toBe(true);
+    expect(ev.meetsAdoptionGate).toBe(false); // descriptive score metrics are never a promotion gate
+    expect(ev.reason).toContain("Newey-West HAC");
   });
   it("does not declare success on pure noise", () => {
     const ev = evaluateVariant(fund, world(60, false), 5);
     expect(Math.abs(ev.variant.meanIc!)).toBeLessThan(0.1);
     expect(ev.meetsAdoptionGate).toBe(false);
-    expect((ev.variant.spreadT ?? 0)).toBeLessThan(BONFERRONI_T);
+    expect(ev.meetsAdoptionGate).toBe(false);
   });
   it("marks a short forward history as insufficient evidence and never passes the adoption gate", () => {
     const ev = evaluateVariant(fund, world(8, true), 10);
@@ -69,5 +72,21 @@ describe("score variant forward shadow", () => {
   it("freezes the declared set: exactly three variants with the declared weights", () => {
     expect(VARIANTS.map((v) => v.id)).toEqual(["fundamental_only", "fundamental_sentiment", "composite_ex_insider"]);
     expect(exIns.weights).toEqual({ fundamental: 0.30, technical: 0.25, sentiment: 0.20 });
+  });
+  it("uses HAC uncertainty that is more conservative for positively autocorrelated session statistics", () => {
+    const persistent = Array.from({ length: 80 }, (_, i) => 0.01 + (i % 8 < 4 ? 0.004 : -0.004));
+    const iidLike = Array.from({ length: 80 }, (_, i) => 0.01 + (i % 2 === 0 ? 0.004 : -0.004));
+    expect(hacMeanT(persistent, 9)).toBeLessThan(hacMeanT(iidLike, 9)!);
+  });
+  it("returns null when the HAC variance is undefined", () => {
+    expect(hacMeanT([1, 1, 1], 2)).toBeNull();
+    expect(hacMeanT([1], 2)).toBeNull();
+  });
+  it("is invariant to input row order because sessions are chronologically sorted", () => {
+    const rows = world(30, true);
+    const a = evaluateVariant(fund, rows, 5);
+    const b = evaluateVariant(fund, [...rows].reverse(), 5);
+    expect(b.variant.icT).toBeCloseTo(a.variant.icT!, 10);
+    expect(b.variant.spreadT).toBeCloseTo(a.variant.spreadT!, 10);
   });
 });
