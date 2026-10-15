@@ -6,8 +6,9 @@ import { describe, expect, it } from "vitest";
 const evaluator = readFileSync("app/api/agents/score-variants/evaluate/route.ts", "utf8");
 const panel = readFileSync("components/dashboard/ScoreVariantsPanel.tsx", "utf8");
 const migration = readFileSync("supabase/migrations/20261014150619_score_variant_shadow.sql", "utf8");
-const pairedMigration = readFileSync("supabase/migrations/20261015125000_score_variant_paired_spread.sql", "utf8");
+const pairedMigration = readFileSync("supabase/migrations/20261015164628_score_variant_paired_spread.sql", "utf8");
 const reader = readFileSync("app/api/learning/score-variants/route.ts", "utf8");
+const formulaLabReader = readFileSync("app/api/learning/score-formula-lab/route.ts", "utf8");
 
 describe("score variant forward shadow wiring", () => {
   it("splits forward from hindsight on the registered declaration time", () => {
@@ -32,6 +33,7 @@ describe("score variant forward shadow wiring", () => {
     expect(pairedMigration).toContain("add column if not exists paired_spread_delta_t numeric");
     expect(evaluator).toContain("paired_spread_delta: ev.pairedSpreadDelta");
     expect(reader).toContain("paired_spread_delta,paired_spread_delta_t");
+    expect(formulaLabReader).toContain("paired_spread_delta,paired_spread_delta_t");
     expect(panel).toContain("Spread lift vs baseline / HAC t");
   });
 });
