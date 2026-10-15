@@ -100,6 +100,8 @@ export const VIEWER_API_ROUTES: ReadonlyArray<ViewerRoute> = [
   { prefix: "/api/learning/index-sleeve", methods: ["GET"], exact: true },
   // Score-formula forward shadow (pre-registered variants vs the live composite): stored rows only, no score changed.
   { prefix: "/api/learning/score-variants", methods: ["GET"], exact: true },
+  // Historical score-formula mining results and their forward-only shadow; persisted data only.
+  { prefix: "/api/learning/score-formula-lab", methods: ["GET"], exact: true },
   { prefix: "/api/research/trades", methods: ["GET"] },
   { prefix: "/api/research/fundamentals/cached", methods: ["GET"], exact: true },
   // Earnings Calendar (US). The parent route refreshes from Alpha Vantage.

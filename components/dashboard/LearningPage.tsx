@@ -11,6 +11,7 @@ import CouncilIcPanel from "@/components/dashboard/CouncilIcPanel";
 import EventIcPanel from "@/components/dashboard/EventIcPanel";
 import IndexSleevePanel from "@/components/dashboard/IndexSleevePanel";
 import ScoreVariantsPanel from "@/components/dashboard/ScoreVariantsPanel";
+import ScoreFormulaMiningPanel from "@/components/dashboard/ScoreFormulaMiningPanel";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
 import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 const LineChart = lazy(() => import("recharts").then(m => ({ default: m.LineChart })));
@@ -152,6 +153,7 @@ export default function LearningPage({
       <EventIcPanel />
       <IndexSleevePanel />
       <ScoreVariantsPanel />
+      <ScoreFormulaMiningPanel />
       {market === "us" && <ScoreVariantsPanel set="insider_v2" />}
 
       {/* Agent Pipeline Diagram */}
