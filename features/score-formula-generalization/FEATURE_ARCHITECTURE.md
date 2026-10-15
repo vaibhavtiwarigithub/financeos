@@ -131,6 +131,20 @@ Report, per market and horizon:
 - where a realistic replay contract is available, net benchmark-relative
   portfolio return, drawdown, turnover, costs, cash and fill/capacity effects.
 
+For the pre-existing fixed-weight shadow, distinguish its population from the
+miner: `variant_set_v1` is an all-scored association diagnostic and includes
+daily re-scores of existing holdings, so it is not evidence about new-entry
+selection. The mined formulas use the declared entry-candidate-long cohort.
+Both use the same rows for candidate and baseline within a cell. Session-level
+t-statistics use Bartlett-kernel Newey–West standard errors (lag bounded by
+`horizon - 1`) because forward labels overlap. The candidate-minus-baseline
+top-minus-bottom spread is also computed as a per-session paired delta and
+persisted with its HAC t-stat; the migration is additive and historical rows
+remain NULL. `sessions / horizon` is shown only as a rough non-overlap count,
+not a measured effective sample size. The score-variant screen never emits an
+adoption verdict. A forward score association, even with a large t-stat, is not
+a paired portfolio return result.
+
 Rank IC measures association among the tested research cohort; it does not prove
 the constrained portfolio earns alpha. Formula-level promotion remains blocked
 until prospective results pass predeclared evidence and multiplicity controls,

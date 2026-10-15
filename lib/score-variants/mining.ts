@@ -16,6 +16,8 @@ export interface MinedCandidate {
   bottomFifthExcess: number | null;
   spread: number | null;
   spreadT: number | null;
+  pairedSpreadDelta: number | null;
+  pairedSpreadDeltaT: number | null;
   baselineMeanIc: number | null;
   baselineSpread: number | null;
   coverageRows: number;
@@ -72,7 +74,8 @@ function scoreCandidate(
     role, label: role === "full_sample_fit" ? "Full-sample overfit fit" : `Best fit without ${role.slice("without_".length)}`,
     weights, sessions: ev.sessions, independentWindows: ev.independentWindows,
     meanIc: ev.variant.meanIc, meanIcT: ev.variant.icT, topFifthExcess: ev.variant.topFifthExcess, bottomFifthExcess: ev.variant.bottomFifthExcess,
-    spread: ev.variant.spread, spreadT: ev.variant.spreadT, baselineMeanIc: ev.baseline.meanIc, baselineSpread: ev.baseline.spread,
+    spread: ev.variant.spread, spreadT: ev.variant.spreadT, pairedSpreadDelta: ev.pairedSpreadDelta,
+    pairedSpreadDeltaT: ev.pairedSpreadDeltaT, baselineMeanIc: ev.baseline.meanIc, baselineSpread: ev.baseline.spread,
     coverageRows, reason: ev.sessions ? "Selected by maximizing mean per-session rank IC on the same historical rows. This is intentionally in-sample and is not evidence of predictive skill." : "No qualifying complete-case cross-sections for this formula.",
   };
 }
@@ -128,7 +131,9 @@ export function miningRationale(input: {
       coverageRows: input.candidate.coverageRows, meanIc: input.candidate.meanIc,
       meanIcT: input.candidate.meanIcT,
       topFifthExcess: input.candidate.topFifthExcess, bottomFifthExcess: input.candidate.bottomFifthExcess,
-      spread: input.candidate.spread, spreadT: input.candidate.spreadT, baselineMeanIc: input.candidate.baselineMeanIc,
+      spread: input.candidate.spread, spreadT: input.candidate.spreadT,
+      pairedSpreadDelta: input.candidate.pairedSpreadDelta, pairedSpreadDeltaT: input.candidate.pairedSpreadDeltaT,
+      baselineMeanIc: input.candidate.baselineMeanIc,
       baselineSpread: input.candidate.baselineSpread,
     },
     caveat: "INTENTIONALLY SELECTED ON THESE SAME HISTORICAL LABELS. HINDSIGHT ONLY; NOT VALIDATION OR ADOPTION EVIDENCE.",

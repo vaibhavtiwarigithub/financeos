@@ -13,7 +13,6 @@ export const VARIANT_SET = "variant_set_v1";
 export const MIN_CROSS_SECTION = 15;
 export const MIN_SESSIONS = 20;
 export const MIN_INDEPENDENT_WINDOWS = 12; // same evidence gate as the LLM council: sessions / horizon
-export const BONFERRONI_T = 2.4; // 3 variants tested -> about p < 0.05 / 3 two-sided
 export const HORIZONS = [5, 10] as const;
 
 export interface VariantDef { id: string; label: string; weights: Partial<Record<Dim, number>> }
@@ -48,7 +47,23 @@ export function variantScore(def: VariantDef, row: ObsRow): number | null {
 }
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-const sd = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1)); };
+/** Bartlett-kernel Newey-West t for a mean of ordered session statistics. */
+export function hacMeanT(xs: readonly number[], maxLag: number): number | null {
+  const n = xs.length;
+  if (n < 2 || !xs.every(Number.isFinite)) return null;
+  const m = mean([...xs]);
+  const lag = Math.max(0, Math.min(Math.floor(maxLag), n - 1));
+  let longRunVariance = xs.reduce((sum, x) => sum + (x - m) ** 2, 0) / n;
+  for (let k = 1; k <= lag; k++) {
+    let covariance = 0;
+    for (let t = k; t < n; t++) covariance += (xs[t] - m) * (xs[t - k] - m);
+    covariance /= n;
+    const bartlett = 1 - k / (lag + 1);
+    longRunVariance += 2 * bartlett * covariance;
+  }
+  if (!(longRunVariance > 0) || !Number.isFinite(longRunVariance)) return null;
+  return m / Math.sqrt(longRunVariance / n);
+}
 
 /** Mean outcome of the top and bottom fifth by score (ties broken by symbol so results are reproducible). */
 export function fifthMeans(items: ReadonlyArray<{ symbol: string; score: number; y: number }>): { top: number; bottom: number } | null {
@@ -74,21 +89,22 @@ export interface VariantEval {
   independentWindows: number;
   variant: ScoreStats;
   baseline: ScoreStats; // the live composite on the SAME rows, so the comparison is paired
+  pairedSpreadDelta: number | null;
+  pairedSpreadDeltaT: number | null;
   classification: "insufficient_evidence" | "measured_descriptive";
   meetsAdoptionGate: boolean;
   reason: string;
 }
 
-function aggregate(perSession: Array<{ ic: number; top: number; bottom: number }>, horizon: number): ScoreStats {
+function aggregate(perSession: Array<{ day: string; ic: number; top: number; bottom: number }>, horizon: number): ScoreStats {
   if (!perSession.length) return { meanIc: null, icT: null, topFifthExcess: null, bottomFifthExcess: null, spread: null, spreadT: null };
   const ics = perSession.map((s) => s.ic);
   const spreads = perSession.map((s) => s.top - s.bottom);
-  const eff = Math.sqrt(perSession.length / horizon);
-  const t = (xs: number[]) => (xs.length > 1 && sd(xs) > 0 ? (mean(xs) / sd(xs)) * eff : null);
+  const lag = Math.min(Math.max(0, horizon - 1), perSession.length - 1);
   return {
-    meanIc: mean(ics), icT: t(ics),
+    meanIc: mean(ics), icT: hacMeanT(ics, lag),
     topFifthExcess: mean(perSession.map((s) => s.top)), bottomFifthExcess: mean(perSession.map((s) => s.bottom)),
-    spread: mean(spreads), spreadT: t(spreads),
+    spread: mean(spreads), spreadT: hacMeanT(spreads, lag),
   };
 }
 
@@ -103,10 +119,10 @@ export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizo
     list.push({ symbol: r.symbol, v, a: Number(r.analyst), y: r.y });
     bySession.set(day, list);
   }
-  const vPer: Array<{ ic: number; top: number; bottom: number }> = [];
-  const bPer: Array<{ ic: number; top: number; bottom: number }> = [];
+  const vPer: Array<{ day: string; ic: number; top: number; bottom: number }> = [];
+  const bPer: Array<{ day: string; ic: number; top: number; bottom: number }> = [];
   let crossTotal = 0;
-  for (const items of bySession.values()) {
+  for (const [day, items] of [...bySession.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const unique = [...new Map(items.map((i) => [i.symbol, i])).values()];
     if (unique.length < MIN_CROSS_SECTION) continue;
     const vi = computeSpearmanIC(unique.map((i) => i.v), unique.map((i) => i.y));
@@ -114,22 +130,27 @@ export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizo
     const vf = fifthMeans(unique.map((i) => ({ symbol: i.symbol, score: i.v, y: i.y })));
     const bf = fifthMeans(unique.map((i) => ({ symbol: i.symbol, score: i.a, y: i.y })));
     if (!vi || !bi || !vf || !bf) continue;
-    vPer.push({ ic: vi.ic, ...vf });
-    bPer.push({ ic: bi.ic, ...bf });
+    vPer.push({ day, ic: vi.ic, ...vf });
+    bPer.push({ day, ic: bi.ic, ...bf });
     crossTotal += unique.length;
   }
   const sessions = vPer.length;
   const independentWindows = sessions / horizonDays;
   const variant = aggregate(vPer, horizonDays);
   const baseline = aggregate(bPer, horizonDays);
+  const pairedDeltas = vPer.map((s, i) => (s.top - s.bottom) - (bPer[i].top - bPer[i].bottom));
+  const pairedSpreadDelta = pairedDeltas.length ? mean(pairedDeltas) : null;
+  const pairedSpreadDeltaT = hacMeanT(pairedDeltas, Math.min(horizonDays - 1, Math.max(0, pairedDeltas.length - 1)));
   const enough = sessions >= MIN_SESSIONS && independentWindows >= MIN_INDEPENDENT_WINDOWS;
-  const meetsAdoptionGate = enough && variant.spread != null && baseline.spread != null && variant.spreadT != null
-    && variant.spreadT >= BONFERRONI_T && variant.spread > baseline.spread && (variant.topFifthExcess ?? -1) > 0;
+  // This evaluator is a univariate score diagnostic, not a paired portfolio
+  // replay. A t threshold here cannot authorize adoption or imply P&L lift.
+  const meetsAdoptionGate = false;
   return {
     variantId: def.id, horizonDays, sessions, avgCrossSection: sessions ? crossTotal / sessions : 0, independentWindows, variant, baseline,
+    pairedSpreadDelta, pairedSpreadDeltaT,
     classification: enough ? "measured_descriptive" : "insufficient_evidence", meetsAdoptionGate,
     reason: enough
-      ? `Descriptive per-session comparison; t-stats use sessions/horizon effective windows. Adoption additionally needs spread t >= ${BONFERRONI_T}, spread above the live composite, and a positive top-fifth excess.`
-      : `${sessions} qualifying sessions yield ${independentWindows.toFixed(2)} independent windows; need at least ${MIN_SESSIONS} sessions and ${MIN_INDEPENDENT_WINDOWS} effective windows.`,
+      ? `Descriptive per-session rank/spread statistics only. Candidate-minus-baseline spread is paired by session; its t-stat uses Bartlett Newey-West HAC standard error with lag ${Math.min(horizonDays - 1, Math.max(0, sessions - 1))}. sessions/horizon (${independentWindows.toFixed(2)}) is only a rough non-overlap count, not measured effective sample size. Not a promotion gate; paired portfolio-level OOS replay with costs is required.`
+      : `${sessions} qualifying sessions yield a rough ${independentWindows.toFixed(2)} non-overlap windows (sessions ÷ horizon), not measured effective sample size; need at least ${MIN_SESSIONS} sessions and ${MIN_INDEPENDENT_WINDOWS} rough windows for descriptive classification.`,
   };
 }

@@ -12,6 +12,7 @@ type Cell = {
   variant_id: string; sample: "forward" | "hindsight"; horizon_days: number; sessions: number; avg_cross_section: number; independent_windows: number;
   variant_mean_ic: number | null; variant_ic_t: number | null; variant_top_fifth: number | null; variant_bottom_fifth: number | null; variant_spread: number | null; variant_spread_t: number | null;
   baseline_mean_ic: number | null; baseline_top_fifth: number | null; baseline_bottom_fifth: number | null; baseline_spread: number | null;
+  paired_spread_delta: number | null; paired_spread_delta_t: number | null;
   classification: string; meets_adoption_gate: boolean; reason: string;
 };
 type Registry = { variant_id: string; label: string; weights: Record<string, number>; declared_at: string; rationale: string };
@@ -54,14 +55,14 @@ export default function ScoreVariantsPanel({ set = "variant_set_v1" }: { set?: "
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ color: T.muted, textAlign: "left" }}>{["Score", "Sessions", "Rank IC", "Top fifth", "Bottom fifth", "Spread", "Spread t", "State"].map((h) => <th key={h} style={{ padding: "4px 10px 4px 0", fontWeight: 400 }}>{h}</th>)}</tr></thead>
+            <thead><tr style={{ color: T.muted, textAlign: "left" }}>{["Score", "Sessions", "Rank IC", "Top fifth", "Bottom fifth", "Spread", "Spread t", "Spread lift vs baseline / HAC t", "State"].map((h) => <th key={h} style={{ padding: "4px 10px 4px 0", fontWeight: 400 }}>{h}</th>)}</tr></thead>
             <tbody>
               {baselineRow(cells) && (
                 <tr style={{ borderTop: `1px solid ${T.border}`, color: T.sub }}>
                   <td style={{ padding: "5px 10px 5px 0" }}>{isInsider ? "Insider v1 (same filings)" : "Live composite (same rows)"}</td><td style={{ padding: "5px 10px 5px 0" }}>{baselineRow(cells).sessions}</td>
                   <td style={{ padding: "5px 10px 5px 0" }}>{num(baselineRow(cells).baseline_mean_ic, 3)}</td>
                   <td style={{ padding: "5px 10px 5px 0" }}>{pct(baselineRow(cells).baseline_top_fifth)}</td><td style={{ padding: "5px 10px 5px 0" }}>{pct(baselineRow(cells).baseline_bottom_fifth)}</td>
-                  <td style={{ padding: "5px 10px 5px 0", color: (baselineRow(cells).baseline_spread ?? 0) >= 0 ? T.green : T.red }}>{pct(baselineRow(cells).baseline_spread)}</td><td style={{ padding: "5px 10px 5px 0" }}>—</td><td style={{ padding: "5px 10px 5px 0" }}>baseline</td>
+                  <td style={{ padding: "5px 10px 5px 0", color: (baselineRow(cells).baseline_spread ?? 0) >= 0 ? T.green : T.red }}>{pct(baselineRow(cells).baseline_spread)}</td><td style={{ padding: "5px 10px 5px 0" }}>—</td><td style={{ padding: "5px 10px 5px 0" }}>—</td><td style={{ padding: "5px 10px 5px 0" }}>baseline</td>
                 </tr>
               )}
               {cells.map((c) => (
@@ -71,8 +72,9 @@ export default function ScoreVariantsPanel({ set = "variant_set_v1" }: { set?: "
                   <td style={{ padding: "5px 10px 5px 0" }}>{pct(c.variant_top_fifth)}</td><td style={{ padding: "5px 10px 5px 0" }}>{pct(c.variant_bottom_fifth)}</td>
                   <td style={{ padding: "5px 10px 5px 0", color: (c.variant_spread ?? 0) >= 0 ? T.green : T.red }}>{pct(c.variant_spread)}</td>
                   <td style={{ padding: "5px 10px 5px 0" }}>{num(c.variant_spread_t, 2)}</td>
-                  <td style={{ padding: "5px 10px 5px 0", color: c.meets_adoption_gate ? T.green : c.classification === "insufficient_evidence" ? T.amber : T.sub }}>
-                    {c.meets_adoption_gate ? "clears adoption gate" : c.classification === "insufficient_evidence" ? "insufficient evidence" : "measured, gate not met"}
+                  <td style={{ padding: "5px 10px 5px 0" }}>{pct(c.paired_spread_delta)} / {num(c.paired_spread_delta_t, 2)}</td>
+                  <td style={{ padding: "5px 10px 5px 0", color: c.classification === "insufficient_evidence" ? T.amber : T.sub }}>
+                    {c.classification === "insufficient_evidence" ? "insufficient evidence" : "descriptive only · no adoption verdict"}
                   </td>
                 </tr>
               ))}
@@ -90,10 +92,10 @@ export default function ScoreVariantsPanel({ set = "variant_set_v1" }: { set?: "
           <div style={{ display: "flex", alignItems: "center", gap: 7, color: T.text, fontSize: 15, fontWeight: 700 }}><FlaskConical size={16} color={T.accent} /> {isInsider ? "Insider score v2 · forward shadow" : "Score formulas · forward shadow"}</div>
           <div style={{ color: T.sub, fontSize: 12, lineHeight: 1.55, marginTop: 6, maxWidth: 820 }}>
             {isInsider
-              ? "Does ignoring pre-planned (Rule 10b5-1) insider sales rank US stocks better than the current insider logic? Both are computed from the same SEC Form 4 filings and judged only on observations after the test was declared. Measurement only: no score, gate or trade uses this."
+              ? "Does ignoring pre-planned (Rule 10b5-1) insider sales rank US stocks better than the current insider logic? Both are computed from the same SEC Form 4 filings and judged only on observations after the test was declared. This is the labeled US research cohort with an available insider shadow, not only entry candidates. Measurement only: no score, gate or trade uses this."
               : <>Does a simpler score rank {market === "india" ? "India" : "US"} stocks better than the live composite? Three formulas were declared in advance
             {data?.declaredAt ? ` (${new Date(data.declaredAt).toISOString().slice(0, 16).replace("T", " ")} UTC)` : ""} and are judged only on observations after that moment, so they cannot be tuned in hindsight.
-            Spread = average 10-day (or 5-day) excess return of the top fifth of names by the score minus the bottom fifth. Measurement only: no score, gate or trade uses these.</>}
+            Spread = average {horizon}-session benchmark-neutral return of the top fifth minus the bottom fifth. {!isInsider && <>This legacy set uses all scored observations, including held-name re-scores; it diagnoses score association, not entry selection. The separate mined-formula panel uses entry-candidate longs. </>}Measurement only: no score, gate or trade uses these.</>}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
@@ -108,7 +110,7 @@ export default function ScoreVariantsPanel({ set = "variant_set_v1" }: { set?: "
         <>
           <div style={{ color: T.muted, fontSize: 11, marginTop: 10 }}>
             {data.evaluatedAt ? `Last evaluation ${new Date(data.evaluatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC` : "No evaluation yet"} ·
-            Verdict needs 20+ sessions and 12 effective windows (sessions ÷ horizon): about 3 months at h5 and 6 months at h10 of forward data. Adoption also needs spread t ≥ 2.4 (3 variants tested).
+            Descriptive classification requires 20+ sessions and 12 rough non-overlap windows (sessions ÷ horizon); this is not measured effective sample size. t-stat uses a Newey–West correction for overlapping horizons. These cells are not promotion verdicts: a candidate still needs a predeclared, paired, cost-aware portfolio replay and independent evidence.
           </div>
           {table(bySample.forward, "FORWARD (counts as evidence): observations after the formulas were declared", T.green)}
           {!isInsider && table(bySample.hindsight, "HINDSIGHT (reference only): observations before declaration, which the formulas were chosen from", T.amber)}

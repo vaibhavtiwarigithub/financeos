@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   let cells: any[] = [];
   if (batchId) {
     const { data, error } = await svc.from("score_variant_eval_runs")
-      .select("variant_id,sample,horizon_days,sessions,avg_cross_section,independent_windows,variant_mean_ic,variant_ic_t,variant_top_fifth,variant_bottom_fifth,variant_spread,variant_spread_t,baseline_mean_ic,baseline_top_fifth,baseline_bottom_fifth,baseline_spread,classification,meets_adoption_gate,reason")
+      .select("variant_id,sample,horizon_days,sessions,avg_cross_section,independent_windows,variant_mean_ic,variant_ic_t,variant_top_fifth,variant_bottom_fifth,variant_spread,variant_spread_t,paired_spread_delta,paired_spread_delta_t,baseline_mean_ic,baseline_top_fifth,baseline_bottom_fifth,baseline_spread,classification,meets_adoption_gate,reason")
       .eq("evaluation_batch_id", batchId).eq("market", market).limit(200);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     cells = data ?? [];
