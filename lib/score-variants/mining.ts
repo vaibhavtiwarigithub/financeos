@@ -159,4 +159,3 @@ export function asMinedVariant(row: { variant_id: string; label: string; weights
   if (Math.abs(total - 1) > 1e-6) return null;
   return { id: row.variant_id, label: row.label, weights: weights as Partial<Record<Dim, number>> };
 }
-
