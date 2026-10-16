@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderUniverseForRefresh } from "@/lib/india-universe";
+import { buildIndiaCandidateOrder, buildIndiaRefreshSlice, orderUniverseForRefresh } from "@/lib/india-universe";
 
 // An alphabetical universe like NSE's EQUITY_L.csv: 26 letters x 100 names.
 const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -45,5 +45,56 @@ describe("orderUniverseForRefresh", () => {
     const copy = [...universe];
     orderUniverseForRefresh(universe, new Map(), "x");
     expect(universe).toEqual(copy);
+  });
+
+  it("refreshes configured benchmark constituents before the broad-universe rotation", () => {
+    const priority = ["Z099.NS", "A001.NS"];
+    const scored = new Map([["Z099.NS", "2026-10-01T10:00:00Z"], ["A001.NS", "2026-09-01T10:00:00Z"]]);
+    const ordered = orderUniverseForRefresh(universe, scored, "2026-10-16", priority);
+    // Priority members still use least-recently-scored ordering.
+    expect(ordered.slice(0, 2)).toEqual(["A001.NS", "Z099.NS"]);
+    expect(ordered.slice(2)).toEqual(orderUniverseForRefresh(universe.filter(s => !priority.includes(s)), scored, "2026-10-16"));
+  });
+});
+
+describe("buildIndiaCandidateOrder", () => {
+  it("keeps manual names first, reserves a rotating index cohort, and deduplicates", () => {
+    const ordered = buildIndiaCandidateOrder({
+      manual: ["TCS"],
+      indexRotation: ["TCS", "RELIANCE", "ICICIBANK.NS", "TECHM"],
+      deferred: ["RELIANCE.NS", "DEFERRED"],
+      watchlist: ["WATCH"],
+      screened: ["SCREENED", "TECHM.NS"],
+      indexReserve: 2,
+    });
+    expect(ordered).toEqual([
+      "TCS.NS", "RELIANCE.NS", "ICICIBANK.NS", "DEFERRED.NS", "WATCH.NS", "SCREENED.NS", "TECHM.NS",
+    ]);
+  });
+
+  it("does not let reserve size exceed the available index rotation", () => {
+    expect(buildIndiaCandidateOrder({
+      manual: [], indexRotation: ["TCS"], deferred: [], watchlist: [], screened: ["INFY"], indexReserve: 8,
+    })).toEqual(["TCS.NS", "INFY.NS"]);
+  });
+});
+
+describe("buildIndiaRefreshSlice", () => {
+  it("keeps index reserve names even if the broad prefilter excludes them", () => {
+    expect(buildIndiaRefreshSlice({
+      orderedUniverse: ["TCS.NS", "INFY.NS", "SMALLCAP.NS"],
+      prioritySymbols: ["TCS.NS", "INFY.NS"],
+      preferredUniverse: ["SMALLCAP.NS"],
+      limit: 2,
+    })).toEqual(["TCS.NS", "INFY.NS"]);
+  });
+
+  it("fills the remaining budget from the prefiltered broad universe without duplicates", () => {
+    expect(buildIndiaRefreshSlice({
+      orderedUniverse: ["TCS.NS", "INFY.NS", "SMALLCAP.NS", "MIDCAP.NS"],
+      prioritySymbols: ["TCS.NS"],
+      preferredUniverse: ["TCS.NS", "MIDCAP.NS", "MIDCAP.NS"],
+      limit: 3,
+    })).toEqual(["TCS.NS", "MIDCAP.NS", "INFY.NS"]);
   });
 });

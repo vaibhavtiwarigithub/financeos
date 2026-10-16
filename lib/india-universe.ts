@@ -1,8 +1,6 @@
-// Static NIFTY-50 constituent list (NSE `.NS` tickers) — the free stand-in for
-// a paid India screener. The research pipeline draws India candidates from here
-// (plus the user's real Kite holdings) instead of a live screen. A static index
-// list is fine for a ~10-symbol/run pipeline and costs nothing.
-// Update this list if index composition changes materially.
+// Static NIFTY-50 fallback snapshot (NSE `.NS` tickers). Current research and
+// refresh paths prefer the official NSE Indices constituent CSV; this list is
+// retained for source outages and historical helpers, not treated as current.
 export const NIFTY_50: string[] = [
   "RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "TCS.NS",
   "ITC.NS", "LT.NS", "AXISBANK.NS", "SBIN.NS", "BHARTIARTL.NS",
@@ -52,9 +50,19 @@ function fnv1a(text: string): number {
  * SDBL and most of R-Z were never screened, never researched. The seed changes
  * daily so the slice walks a different part of the list each night.
  */
-export function orderUniverseForRefresh(universe: string[], scoredAt: Map<string, string>, seed: string): string[] {
+export function orderUniverseForRefresh(
+  universe: string[],
+  scoredAt: Map<string, string>,
+  seed: string,
+  prioritySymbols: string[] = [],
+): string[] {
   const tie = (symbol: string) => fnv1a(`${seed}|${symbol}`);
+  const known = new Set(universe.map((symbol) => symbol.toUpperCase()));
+  const prioritySet = new Set(prioritySymbols.map((symbol) => symbol.toUpperCase()).filter((symbol) => known.has(symbol)));
   return [...universe].sort((a, b) => {
+    const ap = prioritySet.has(a.toUpperCase());
+    const bp = prioritySet.has(b.toUpperCase());
+    if (ap !== bp) return ap ? -1 : 1;
     const ta = scoredAt.get(a);
     const tb = scoredAt.get(b);
     if (ta == null && tb != null) return -1;
@@ -62,6 +70,61 @@ export function orderUniverseForRefresh(universe: string[], scoredAt: Map<string
     if (ta != null && tb != null && ta !== tb) return ta.localeCompare(tb);
     return tie(a) - tie(b) || a.localeCompare(b);
   });
+}
+
+/**
+ * Keep the core index refresh reserve even when the broad-universe liquidity
+ * prefilter excludes a member. The prefilter still orders the rest of the
+ * 600-name budget; this function only guarantees that prioritized names present
+ * in the NSE directory are attempted first.
+ */
+export function buildIndiaRefreshSlice(input: {
+  orderedUniverse: string[];
+  prioritySymbols: string[];
+  preferredUniverse: string[];
+  limit: number;
+}): string[] {
+  const limit = Math.max(0, Math.floor(input.limit));
+  const prioritySet = new Set(input.prioritySymbols.map((symbol) => symbol.toUpperCase()));
+  const prioritized = input.orderedUniverse.filter((symbol) => prioritySet.has(symbol.toUpperCase()));
+  const preferred = input.preferredUniverse.filter((symbol) => !prioritySet.has(symbol.toUpperCase()));
+  const remainder = input.orderedUniverse.filter((symbol) => !prioritySet.has(symbol.toUpperCase()));
+  return [...new Set([...prioritized, ...preferred, ...remainder])].slice(0, limit);
+}
+
+/**
+ * Candidate research order for India. Four of the default eight candidate
+ * slots are reserved for a rotating NIFTY-50 coverage lane (after explicit
+ * manual watchlist names); the remaining slots continue to use deferred,
+ * curated and broad-screen candidates. The index lane is coverage, not a buy
+ * endorsement: ResearchAgent rescoring and every downstream entry/risk gate
+ * remain unchanged.
+ */
+export function buildIndiaCandidateOrder(input: {
+  manual: string[];
+  indexRotation: string[];
+  deferred: string[];
+  watchlist: string[];
+  screened: string[];
+  indexReserve?: number;
+}): string[] {
+  const reserve = Math.max(0, Math.floor(input.indexReserve ?? 4));
+  const normalized = (symbols: string[]) => symbols.map((symbol) => {
+    const upper = String(symbol).trim().toUpperCase();
+    return upper && !upper.endsWith(".NS") && !upper.endsWith(".BO") ? `${upper}.NS` : upper;
+  }).filter(Boolean);
+  const manual = normalized(input.manual);
+  const manualSet = new Set(manual);
+  const index = normalized(input.indexRotation).filter((symbol) => !manualSet.has(symbol));
+  const ordered = [
+    ...manual,
+    ...index.slice(0, reserve),
+    ...normalized(input.deferred),
+    ...normalized(input.watchlist),
+    ...normalized(input.screened),
+    ...index.slice(reserve),
+  ];
+  return [...new Set(ordered)];
 }
 
 // ~NIFTY-100 union — the India Scanner's screen universe.

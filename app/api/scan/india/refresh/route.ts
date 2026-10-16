@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchNseEquityList } from "@/lib/nse-data";
-import { indiaScreenUniverse, orderUniverseForRefresh } from "@/lib/india-universe";
+import { fetchNifty50Constituents } from "@/lib/nifty50-constituents";
+import { buildIndiaRefreshSlice, indiaScreenUniverse, NIFTY_50, orderUniverseForRefresh } from "@/lib/india-universe";
 import { fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { fetchUpstoxBulkQuotes, applyPrefilter } from "@/lib/data/upstox-bulk";
 import { computeTechnicals } from "@/lib/data/technicals";
@@ -40,6 +41,23 @@ export async function POST(req: NextRequest) {
   try {
     const sb = createServiceClient();
 
+    // Use the official current NIFTY-50 constituents for live refresh priority.
+    // If the source is unavailable, retain coverage using the repository's
+    // static snapshot, but make that degraded mode visible in System Health.
+    const liveNifty50 = await fetchNifty50Constituents();
+    const prioritySymbols = liveNifty50 ?? NIFTY_50;
+    if (liveNifty50) {
+      await resolveIssue("india-index-constituents:source-fallback", sb);
+    } else {
+      await reportIssue({
+        issueKey: "india-index-constituents:source-fallback",
+        severity: "warn",
+        category: "data",
+        title: "NIFTY-50 membership source unavailable — using static snapshot",
+        detail: "The official NSE Indices constituent CSV could not be verified. The refresh is prioritizing the repository's static NIFTY-50 snapshot; current index additions/removals may be missed until the official source recovers.",
+      }, sb);
+    }
+
     // Full NSE list (~2000 .NS), fail visibly to ~NIFTY-100 if the NSE feed is
     // blocked or fails its schema/coverage checks. Discovery must not look healthy
     // while operating on only the static index fallback.
@@ -68,7 +86,15 @@ export async function POST(req: NextRequest) {
     const scoredAt = new Map<string, string>();
     for (const r of cachedRows ?? []) scoredAt.set(r.symbol, r.scored_at);
 
-    const ordered = orderUniverseForRefresh(universe, scoredAt, new Date().toISOString().slice(0, 10));
+    // Keep attempting the core benchmark constituents every run. The
+    // prefilter's cash/liquidity view controls the broad-universe remainder but
+    // cannot starve an index member from this small, explicit research reserve.
+    const ordered = orderUniverseForRefresh(
+      universe,
+      scoredAt,
+      new Date().toISOString().slice(0, 10),
+      prioritySymbols,
+    );
 
     // ── Upstox eligibility prefilter (additive tier) ────────────────────────
     // This run can afford ~MAX_PER_RUN Yahoo symbol-fetches against a ~2,376-name
@@ -104,7 +130,12 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* fail-open: keep staleness-ordered full universe */ }
 
-    const slice = orderedForRun.slice(0, MAX_PER_RUN);
+    const slice = buildIndiaRefreshSlice({
+      orderedUniverse: ordered,
+      prioritySymbols,
+      preferredUniverse: orderedForRun,
+      limit: MAX_PER_RUN,
+    });
 
     let scored = 0;
     let skipped = 0;

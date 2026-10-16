@@ -9,7 +9,8 @@ import type { Candle } from "@/lib/data/technicals";
 import { completedSessionCandles } from "@/lib/data/completed-candles";
 import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
-import { niftyCandidates } from "@/lib/india-universe";
+import { buildIndiaCandidateOrder, NIFTY_50, niftyCandidates } from "@/lib/india-universe";
+import { fetchNifty50Constituents } from "@/lib/nifty50-constituents";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
@@ -377,15 +378,15 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
 async function orderHoldingsByLastScored(supabase: any, symbols: string[], market: Market): Promise<string[]> {
   if (symbols.length === 0) return symbols;
   try {
-    const { data, error } = await supabase
+    const rows = await fetchAllRows<any>((from, to) => supabase
       .from("agent_signals")
       .select("symbol, created_at")
       .eq("market", market)
       .in("symbol", symbols)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message ?? String(error));
+      .order("created_at", { ascending: false })
+      .range(from, to), `last scored research symbols (${market})`);
     const lastScoredAt = new Map<string, string>();
-    for (const row of (data ?? []) as Array<{ symbol?: string; created_at?: string }>) {
+    for (const row of rows as Array<{ symbol?: string; created_at?: string }>) {
       const sym = String(row?.symbol ?? "").toUpperCase();
       // Rows arrive newest-first, so the first hit per symbol is its latest score.
       if (sym && !lastScoredAt.has(sym)) lastScoredAt.set(sym, String(row?.created_at ?? ""));
@@ -1000,23 +1001,54 @@ export async function gatherSymbols(
     // Holdings-first (parity with US): real Kite holdings enter the batch as
     // isHeld:true so SELL/exit signals are possible on owned India positions —
     // long-only enforcement applies only to NEW positions, not exits.
-    // Candidates from the rotating fresh india_screen_cache slice (dual-bucket:
-    // momentum + value), not the static first-8 NIFTY names. Falls back to the
-    // static list only when the cache is empty. Carry-forward first (migration
-    // 172), then fresh screener names; overflow beyond the cap rotates next run.
+    // Candidates combine a bounded, staleness-rotated NIFTY-50 coverage lane
+    // with the fresh broad-screen lane. This prevents cache freshness or a
+    // narrow RSI/P-E screen from making benchmark leaders invisible for weeks.
+    // The index lane only causes research; every entry/risk/rotation gate stays
+    // downstream and unchanged.
     const indiaCap = parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8");
     const deferredIndia = await readDeferredCandidates(supabase, "india");
     const cacheCandidates = await fetchIndiaScreenCandidates(supabase, Math.max(20, indiaCap * 2));
     const rawList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(indiaCap);
-    const orderedIndia: string[] = [];
-    const seenInd = new Set<string>();
-    for (const sym of [...watchlist.indiaManual, ...deferredIndia.map(q => q.symbol), ...watchlist.indiaOther, ...rawList]) {
-      const u = String(sym).toUpperCase();
-      if (seenAll.has(u) || seenInd.has(u)) continue;
-      seenInd.add(u);
-      orderedIndia.push(u);
+    const liveNifty50 = await fetchNifty50Constituents();
+    const indexUniverse = liveNifty50 ?? NIFTY_50;
+    if (liveNifty50) {
+      await resolveIssue("india-index-constituents:source-fallback", supabase).catch(() => {});
+    } else {
+      await reportIssue({
+        issueKey: "india-index-constituents:source-fallback",
+        severity: "warn",
+        category: "data",
+        title: "NIFTY-50 membership source unavailable — using static snapshot",
+        detail: "The official NSE Indices constituent CSV could not be verified. Research is rotating through the repository's static NIFTY-50 snapshot; current index additions/removals may be missed until the official source recovers.",
+      }, supabase).catch(() => {});
     }
-    const indiaBatch = await applyCandidateCarryForward(supabase, "india", orderedIndia, indiaCap);
+    const indexRotation = await orderHoldingsByLastScored(supabase, indexUniverse, "india");
+    const orderedIndia = buildIndiaCandidateOrder({
+      manual: watchlist.indiaManual,
+      // Reserve up to half of the candidate budget for core benchmark coverage;
+      // manual names still retain explicit priority.
+      indexRotation,
+      indexReserve: Math.min(4, Math.max(0, Math.floor(indiaCap / 2))),
+      deferred: deferredIndia.map(q => q.symbol),
+      watchlist: watchlist.indiaOther,
+      screened: rawList,
+    }).filter((symbol) => !seenAll.has(symbol));
+    const indiaSourceOf = new Map<string, string | null | undefined>();
+    const rememberIndiaSource = (raw: string, source: string | null | undefined) => {
+      const upper = String(raw).trim().toUpperCase();
+      const normalized = upper && !upper.endsWith(".NS") && !upper.endsWith(".BO") ? `${upper}.NS` : upper;
+      // Candidate order is precedence order: a manually requested name must
+      // keep its source even if it also appears in the index/screener lanes.
+      if (upper && !indiaSourceOf.has(upper)) indiaSourceOf.set(upper, source);
+      if (normalized && !indiaSourceOf.has(normalized)) indiaSourceOf.set(normalized, source);
+    };
+    for (const symbol of watchlist.indiaManual) rememberIndiaSource(symbol, "watchlist");
+    for (const symbol of indexRotation) rememberIndiaSource(symbol, "india_screener");
+    for (const queued of deferredIndia) rememberIndiaSource(queued.symbol, queued.source ?? "india_screener");
+    for (const symbol of watchlist.indiaOther) rememberIndiaSource(symbol, "watchlist");
+    for (const symbol of rawList) rememberIndiaSource(symbol, "india_screener");
+    const indiaBatch = await applyCandidateCarryForward(supabase, "india", orderedIndia, indiaCap, indiaSourceOf);
     for (const sym of indiaBatch) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
@@ -1113,7 +1145,17 @@ async function fetchIndiaScreenCandidates(svc: any, limit: number): Promise<stri
       .gte("scored_at", freshCutoff)
       .order("symbol", { ascending: true })
       .range(from, to), "india screen cache candidates");
-    if (!rows.length) return [];
+    if (!rows.length) {
+      await reportIssue({
+        issueKey: "india-screen-cache:no-fresh-candidates",
+        severity: "warn",
+        category: "data",
+        title: "India broad screener has no fresh rows — index coverage continues",
+        detail: `No india_screen_cache rows were refreshed in the last ${INDIA_FRESHNESS_HOURS} hours. Broad screener candidates are unavailable for this run; the separately rotated NIFTY-50 coverage lane still runs and all trade gates remain unchanged. Check the nightly India screen refresh producer.`,
+      }, svc).catch(() => {});
+      return [];
+    }
+    await resolveIssue("india-screen-cache:no-fresh-candidates", svc).catch(() => {});
     const momentum = rows
       .filter(r => Number(r.rsi) > 60 && r.above_ma50 === true)
       .sort((a, b) => Number(b.rsi) - Number(a.rsi));
@@ -1134,7 +1176,17 @@ async function fetchIndiaScreenCandidates(svc: any, limit: number): Promise<stri
       }
     }
     return out;
-  } catch { return []; }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await reportIssue({
+      issueKey: "india-screen-cache:no-fresh-candidates",
+      severity: "warn",
+      category: "data",
+      title: "India broad screener read failed — index coverage continues",
+      detail: `india_screen_cache candidate read failed: ${detail}. Broad screener candidates are unavailable for this run; the separately rotated NIFTY-50 coverage lane still runs and all trade gates remain unchanged.`,
+    }, svc).catch(() => {});
+    return [];
+  }
 }
 
 const DOCTRINE_PREAMBLE = `## Reasoning doctrine (non-negotiable)
