@@ -1,5 +1,16 @@
 # Kairos — Crons & Scheduling
 
+## Leveraged ETF pre-entry research (2026-10-16)
+
+`kairos-research-leveraged-us` calls
+`POST /api/agents/research/cron?market=us&scope=leveraged&local_slot=10%3A30`
+at 10:30 ET on market weekdays. Migration `20261017003000` installs both UTC
+hours; the market-local slot admits one across daylight-saving changes. The
+pass researches only SOXL, SOXS, TQQQ and SQQQ ahead of their later paper
+doors, with its own `research_leveraged` run identity. It is research only:
+no live flag, order, stop or leveraged formula is changed. A missing run or
+stale signal must remain visible; the paper doors do not infer approval.
+
 ## LLM council schedule (2026-10-13)
 
 One pg_cron job per decision slot calls `/api/agents/llm-council/cron?market=` every 5 minutes (UTC, Mon-Fri); a call scores the new unscored observations and returns at once when none remain. `kairos-council-india-am` `*/5 4-5` (after research 04:00/05:00, trader 04:10), `kairos-council-india-mid` `*/5 7-8` (research 07:00, trader 07:45), `kairos-council-india` `*/5 11-12` (catch-up); `kairos-council-us-am` `*/5 13-16` (research 09:00 ET, trader 11:15 ET), `kairos-council-us-pm` `*/5 18-20` (research 14:00 ET, trader 15:15 ET), `kairos-council-us` `*/5 22-23` (catch-up). US windows cover both DST offsets. Migrations `20261012210000` and `20261013030000`. `/api/agents/llm-council/evaluate` stays in `vercel.json` (23:30 UTC).

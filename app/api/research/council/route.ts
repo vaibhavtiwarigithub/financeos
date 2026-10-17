@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { councilMemberOf } from "@/lib/research/score-history";
+import { buildCouncilMemberState } from "@/lib/research/council-member-state";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   const { data: runs, error } = await svc
     .from("llm_council_runs")
-    .select("id,decision_ts,status,consensus_score,completed_at,failure_code,det:input_snapshot->deterministic_score->>composite,threshold:input_snapshot->deterministic_score->>threshold,direction:input_snapshot->deterministic_score->>direction,cohort:config_snapshot->>cohort_key")
+    .select("id,decision_ts,status,consensus_score,completed_at,failure_code,config_snapshot,det:input_snapshot->deterministic_score->>composite,threshold:input_snapshot->deterministic_score->>threshold,direction:input_snapshot->deterministic_score->>direction,cohort:config_snapshot->>cohort_key")
     .eq("symbol", symbol).eq("market", market)
     .order("decision_ts", { ascending: false }).limit(limit);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -44,6 +45,14 @@ export async function GET(req: NextRequest) {
   }
   const byRun = new Map<string, any[]>();
   for (const f of forecasts) { const l = byRun.get(f.run_id) ?? []; l.push(f); byRun.set(f.run_id, l); }
+  const workerIds = [...new Set(runRows.flatMap((r) => Array.isArray(r.config_snapshot?.subscription_worker_ids) ? r.config_snapshot.subscription_worker_ids : []))];
+  const [workerResult, batchResult] = await Promise.all([
+    workerIds.length ? svc.from("llm_council_workers").select("id,family,expected_model").in("id", workerIds) : Promise.resolve({ data: [], error: null }),
+    runRows.length ? svc.from("llm_council_batches").select("run_id,llm_council_jobs(worker_id,round,status,failure_code)").in("run_id", runRows.map((r) => r.id)) : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (workerResult.error || batchResult.error) return NextResponse.json({ error: "Council member status unavailable" }, { status: 503 });
+  const jobsByRun = new Map<string, any[]>();
+  for (const batch of batchResult.data ?? []) jobsByRun.set(batch.run_id, [...(jobsByRun.get(batch.run_id) ?? []), ...(batch.llm_council_jobs ?? [])]);
 
   return NextResponse.json({
     symbol, market, shadowOnly: true,
@@ -68,6 +77,7 @@ export async function GET(req: NextRequest) {
         bear: typeof f.bear_case === "string" ? f.bear_case.slice(0, 300) : null,
         availableAt: f.available_at,
       })),
+      memberStates: buildCouncilMemberState(r.config_snapshot, byRun.get(r.id) ?? [], workerResult.data ?? [], jobsByRun.get(r.id) ?? []),
     })),
   });
 }

@@ -11,6 +11,37 @@ export interface LeveragedShadowFeatures {
   dollarVolume: number | null;      // latest close * latest volume
 }
 
+/** SOXX/QQQ are observable proxies, not the funds' exact licensed target indices. */
+export function computeLeveragedPathFeatures(
+  etfCandles: Candle[], underlyingCandles: Candle[], direction: "long" | "inverse",
+): { proxyTrackingRms20dPct: number | null; maxAbsOvernightGap20dPct: number | null } {
+  const underlying = new Map(underlyingCandles.filter(c => Number.isFinite(c.close) && c.close > 0).map(c => [c.date, c]));
+  const etfValid = etfCandles.filter(c => Number.isFinite(c.close) && c.close > 0);
+  const aligned = etfValid.slice(-21);
+  let proxyTrackingRms20dPct: number | null = null;
+  // Require all 21 of the ETF's latest sessions to have a matching proxy bar.
+  // Dropping an unmatched day would compare a multi-day ETF move to 3x a
+  // multi-day proxy move, which is not the fund's daily-reset objective.
+  if (aligned.length === 21 && aligned.every(c => underlying.has(c.date))) {
+    const sign = direction === "inverse" ? -1 : 1;
+    const errors: number[] = [];
+    for (let i = 1; i < aligned.length; i++) {
+      const prevEtf = aligned[i - 1], curEtf = aligned[i];
+      const prevUnderlying = underlying.get(prevEtf.date)!, curUnderlying = underlying.get(curEtf.date)!;
+      const etfReturn = curEtf.close / prevEtf.close - 1;
+      const proxyReturn = sign * 3 * (curUnderlying.close / prevUnderlying.close - 1);
+      errors.push((etfReturn - proxyReturn) * 100);
+    }
+    proxyTrackingRms20dPct = Math.sqrt(errors.reduce((sum, value) => sum + value * value, 0) / errors.length);
+  }
+  const etf = etfCandles.filter(c => Number.isFinite(c.close) && c.close > 0).slice(-21);
+  let maxAbsOvernightGap20dPct: number | null = null;
+  if (etf.length === 21 && etf.slice(1).every(c => Number.isFinite(c.open) && c.open > 0)) {
+    maxAbsOvernightGap20dPct = Math.max(...etf.slice(1).map((c, i) => Math.abs(c.open / etf[i].close - 1) * 100));
+  }
+  return { proxyTrackingRms20dPct, maxAbsOvernightGap20dPct };
+}
+
 /** Wilder ATR(14) in price units. Mirrors lib/data/technicals.ts's atr14 so the
  * two never silently diverge on the same math; kept local because that module
  * returns it bundled with scoring-only fields this caller doesn't want. */

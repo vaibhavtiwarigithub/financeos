@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
+import { computeLeveragedPathFeatures, computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
 import type { Candle } from "@/lib/data/technicals";
 
 function candle(date: string, close: number, opts: Partial<Candle> = {}): Candle {
@@ -52,5 +52,28 @@ describe("computeLeveragedShadowFeatures", () => {
     const candles = [candle("a", 100, { volume: NaN })];
     const out = computeLeveragedShadowFeatures(candles);
     expect(out.dollarVolume).toBeNull();
+  });
+});
+
+describe("leveraged ETF path-risk proxy measurements", () => {
+  it("measures the inverse leg against -3x daily underlying returns, not stock fundamentals", () => {
+    const underlying = Array.from({ length: 21 }, (_, i) => candle(`d${i}`, 100 * 0.99 ** i));
+    const inverse = Array.from({ length: 21 }, (_, i) => candle(`d${i}`, 100 * 1.03 ** i));
+    const same = computeLeveragedPathFeatures(inverse, underlying, "inverse");
+    const wrongSide = computeLeveragedPathFeatures(inverse, underlying, "long");
+    expect(same.proxyTrackingRms20dPct).toBeCloseTo(0, 8);
+    expect(wrongSide.proxyTrackingRms20dPct).toBeGreaterThan(5);
+  });
+  it("does not fill missing aligned sessions or missing opens with a zero-risk value", () => {
+    const under = Array.from({ length: 21 }, (_, i) => candle(`d${i}`, 100));
+    const etf = under.slice(1).map(c => candle(c.date, 100, { open: Number.NaN }));
+    const result = computeLeveragedPathFeatures(etf, under, "long");
+    expect(result.proxyTrackingRms20dPct).toBeNull();
+    expect(result.maxAbsOvernightGap20dPct).toBeNull();
+  });
+  it("refuses proxy tracking when an interior proxy session is absent", () => {
+    const etf = Array.from({ length: 21 }, (_, i) => candle(`d${i}`, 100));
+    const proxy = etf.filter(c => c.date !== "d10");
+    expect(computeLeveragedPathFeatures(etf, proxy, "long").proxyTrackingRms20dPct).toBeNull();
   });
 });

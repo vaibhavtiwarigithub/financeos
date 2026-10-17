@@ -12,6 +12,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
+import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import {
   getClosedDayCatchupEligibility,
   getMarketDayStatus,
@@ -94,7 +95,11 @@ export async function POST(req: NextRequest) {
   const catchupMode = url.searchParams.get("mode");
   // Read with the other params: gatherSymbols needs it well before the entry filter.
   const discoveryOnly = url.searchParams.get("scope") === "discovery";
+  const leveragedOnly = url.searchParams.get("scope") === "leveraged";
   const closedDayCatchup = catchupMode === "closed_day_catchup" || catchupMode === "weekend_catchup";
+  if (leveragedOnly && (marketScope !== "us" || closedDayCatchup)) {
+    return NextResponse.json({ error: "Leveraged research requires market=us in a regular session" }, { status: 400 });
+  }
   if (closedDayCatchup && !marketScope) {
     return NextResponse.json({ error: "Closed-day catch-up requires market=us|india" }, { status: 400 });
   }
@@ -179,7 +184,7 @@ export async function POST(req: NextRequest) {
   // the India run, and vice-versa. Filter the persisted market explicitly so each
   // recent run's market from its symbols (any .NS/.BO → India) and only block when
   // a run for THIS market is in the window.
-  const runAgentType = closedDayCatchup ? "research_closed_day" : "research";
+  const runAgentType = leveragedOnly ? "research_leveraged" : closedDayCatchup ? "research_closed_day" : "research";
   const guardWindow = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: recentRuns } = await supabase
     .from("agent_runs")
@@ -203,7 +208,14 @@ export async function POST(req: NextRequest) {
 
   let queueDepthAtStart: number | null = null;
   let allEntries;
-  if (closedDayCatchup && marketScope) {
+  if (leveragedOnly) {
+    // The main run gives every worker to holdings first. On 2026-10-16 its
+    // budget ended before ANY candidate, including the four sleeve names,
+    // so the SOXS noon door read an old bearish signal despite a later long.
+    // This isolated pass updates research evidence only; the paper doors still
+    // own all entry, quote, risk and position checks.
+    allEntries = await gatherSymbols(supabase, [...LEVERAGED_SLEEVE_SYMBOLS], "us");
+  } else if (closedDayCatchup && marketScope) {
     const queuedRows = await readDeferredCandidates(supabase, marketScope);
     const queued = queuedRows.map((q) => q.symbol);
     queueDepthAtStart = queued.length;
@@ -245,7 +257,7 @@ export async function POST(req: NextRequest) {
   // exit/SELL path.
   // Alert keys are scoped by run type: the two runs cover different symbol sets,
   // so a shared key would let one resolve what the other had just raised.
-  const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : ""}`;
+  const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : leveragedOnly ? ":leveraged" : ""}`;
   const DISCOVERY_SOURCES = ["screener_momentum", "screener_value", "edge_relative_strength", "metals_basket", "region_etf", "india_screener", "new_listing_observation"];
   const entries = discoveryOnly
     ? marketEntries.filter(e => !e.isHeld && DISCOVERY_SOURCES.includes(String(e.discovery_source ?? "")))
@@ -662,7 +674,7 @@ export async function POST(req: NextRequest) {
     // W6 run-accounting envelope — reconciles every entry under exactly one bucket
     // so stale-check can verify the job accounted for its own work.
     const accounting = runAccountingEnvelope({
-      job: `research:${marketScope ?? "us"}${discoveryOnly ? ":discovery" : ""}`,
+      job: `research:${marketScope ?? "us"}${discoveryOnly ? ":discovery" : leveragedOnly ? ":leveraged" : ""}`,
       market: (marketScope ?? "us") as "us" | "india",
       eligible: entries.length,
       succeeded: ok,

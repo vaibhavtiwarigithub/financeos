@@ -1,5 +1,19 @@
 # Kairos — Agents
 
+## Leveraged ETF research and measurement correction (2026-10-16)
+
+The ordinary ETF composite is not a validated SOXL/SOXS/TQQQ/SQQQ trading
+formula: issuer fundamentals are inapplicable and daily reset, inverse exposure,
+gap risk, and underlying direction are not represented adequately. The four
+symbols now have a separate, bounded 10:30 ET US research pass, because the
+holdings-first main run can defer every new candidate past the paper doors.
+It updates deterministic evidence only; the dedicated doors still own the
+paper entry and exit checks. L1 shadow v2 records completed-session underlying
+trend/volatility, ETF gap magnitude, and deviation from an observable ±3x
+proxy. It refuses to call a cache fetch time a fresh market quote. No shadow
+field changes the live composite or authorizes a trade; active intraday exits
+still need a validated timestamped quote and protective execution contract.
+
 ## Insider score v2 shadow and sentiment availability fixes (2026-10-14)
 
 **Insider v2 (measure-only).** The live insider score treats every open-market sale as bearish, including pre-planned Rule 10b5-1 sales, and was negative in both halves of the audit window. `/api/agents/insider-v2-shadow` reads each researched US symbol's Form 4s once (SEC EDGAR; the live score's primary source is Massive, so this is its own fetch) and stores v1 (live logic) and v2 (sales in filings flagged `<aff10b5One>true` ignored; filings without the tag are unknown and excluded, never guessed) side by side. `/api/agents/insider-v2-shadow/evaluate` judges v2 against v1 on the same rows, forward-only, using the score-variant evaluator; results show on the Learning page. The live insider score and weights are unchanged.

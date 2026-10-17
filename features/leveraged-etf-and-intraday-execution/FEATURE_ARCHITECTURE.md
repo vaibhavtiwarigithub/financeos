@@ -1,5 +1,35 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## 2026-10-16 correction: research timing, leveraged measurements, and quote truth
+
+Production's regular US ResearchAgent pass is holdings-first and exhausted its
+105-second budget on held symbols on 2026-10-16; all new candidates, including
+SOXS, were deferred. Its noon paper door therefore read an older non-long signal,
+and SOXS did not receive a fresh long score until 14:01 ET, after that door's
+12:00–12:14 ET entry window. A dedicated 10:30 ET research pass for only the
+four approved sleeve symbols now has its own `research_leveraged` run identity
+and DST-checked local slot. It changes research availability, not trade authority.
+
+The ordinary ETF composite remains an unsuitable leveraged-product predictor:
+it assigns no issuer fundamentals and does not encode the fund's daily reset,
+inverse direction, gap risk, or the underlying index trend. Do not replace its
+weights with an invented leveraged score on the money path. The L1 shadow v2
+records, from completed sessions only, direction-signed underlying trend,
+underlying volatility, ETF overnight-gap magnitude, and the RMS deviation of
+ETF daily returns from ±3× an **observable proxy** (SOXX for SOXL/SOXS; QQQ
+for TQQQ/SQQQ). The proxy is not the funds' exact licensed index, and its
+deviation is not a precise tracking-error or tradable-edge claim.
+
+The L1 quote timestamp is now the provider's market-observation timestamp,
+not the HTTP fetch/cache time. A price-cache close or Alpha Vantage's day-cached
+quote cannot pass an intraday freshness test. Existing 2026-10-16 observations
+remain frozen; new v2 observations may be incomplete until a timestamped,
+reliable quote source is integrated and validated. No 15-minute *active* exit
+monitor is enabled on daily bars: without a trustworthy intraday mark, it would
+create false stop triggers and a false sense of protection. Long holds may be
+studied separately with gap/path-risk and broker-protection evidence; a longer
+hold is not automatically safer or more profitable for daily-reset funds.
+
 ## Paper doors activated and research-routed — 2026-09-28 (owner: "phase A and the routed design")
 
 Finding: all four paper doors were built but never ran (0 `agent_runs`, 0 paper trades). (1) Their schedules existed only in `vercel.json`. Those do fire, but Vercel Hobby runs a cron at an unspecified minute inside its hour, so the 11:00-12:14 ET entry windows were nearly always missed; every run also crashed in `recordRun` (`.insert().catch is not a function`) before writing its liveness row. pg_cron gives minute precision. (2) Even when fired, `planXEntry` needs a finite bid and ask and production quotes never carry them, so every entry returned `invalid_quote`.

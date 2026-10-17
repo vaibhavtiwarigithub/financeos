@@ -1,5 +1,22 @@
 # Multi-LLM Research Council and Scorecard
 
+## 2026-10-16 operational repair
+
+The hybrid council's Claude/Codex subscription scores were absent because the
+local supervisors were not running: both Startup entries pointed into a runtime
+folder missing its scripts, and the remaining Claude credential returned 401.
+The official-client runner files were restored outside the repository, the two
+existing worker credentials were rotated with account-only ACLs (tokens never
+printed), and both supervisors resumed. Historical expired jobs remain expired;
+they cannot be treated as forecasts. The symbol council API now reports every
+configured participant, including queued/leased/expired/failed members and any
+fixed failure code, rather than showing an unexplained dash. It supports the
+configured 1–5-member roster in that card. The generic Fundamentals overview
+still has its historical three family columns (DS/CL/CX); consult the symbol
+card or Settings worker evidence for exact model and per-job state. Subscription
+workers still require a signed-in, awake Windows session; this repair does not
+make personal subscriptions into a cloud API or promise uninterrupted service.
+
 **Status:** Owner-approved to build on 2026-09-30. Shadow-only until evidence and a later explicit decision permit a trading integration. This supersedes the deferred annotation-only proposal dated 2026-08-20.
 
 ## Purpose

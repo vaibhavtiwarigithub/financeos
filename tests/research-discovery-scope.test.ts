@@ -26,7 +26,7 @@ describe("research discovery-scope run", () => {
   });
 
   it("scopes alert keys by run type so the two runs cannot fight", () => {
-    expect(route).toContain('const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : ""}`');
+    expect(route).toContain('const runTag = `${marketScope ?? "mixed"}${discoveryOnly ? ":discovery" : leveragedOnly ? ":leveraged" : ""}`');
     for (const key of [
       "research-deferred-holdings:${runTag}",
       "research-deferred-screener:${runTag}",

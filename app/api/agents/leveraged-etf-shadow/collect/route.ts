@@ -24,8 +24,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
+import { completedSessionCandles } from "@/lib/data/completed-candles";
 import { getQuote } from "@/lib/data/quotes";
-import { computeLeveragedShadowFeatures, correlation20d } from "@/lib/trading/leveraged-etf-shadow-features";
+import { computeLeveragedPathFeatures, computeLeveragedShadowFeatures, correlation20d } from "@/lib/trading/leveraged-etf-shadow-features";
 import {
   buildLeveragedEtfShadowObservation,
   isLeveragedObservationWindow,
@@ -59,9 +60,12 @@ async function collectOne(symbol: LeveragedShadowSymbol, now: string, supabase: 
     getQuote(underlying, supabase),
     peer ? fetchUsCandles(peer, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })) : Promise.resolve(null),
   ]);
-  const etfFeatures = computeLeveragedShadowFeatures(etf.candles);
-  const undFeatures = computeLeveragedShadowFeatures(und.candles);
-  const correlationToPeer20d = peerEtf ? correlation20d(etf.candles, peerEtf.candles) : null;
+  const etfBars = completedSessionCandles(etf.candles, "us", new Date(now));
+  const underlyingBars = completedSessionCandles(und.candles, "us", new Date(now));
+  const etfFeatures = computeLeveragedShadowFeatures(etfBars);
+  const undFeatures = computeLeveragedShadowFeatures(underlyingBars);
+  const pathFeatures = computeLeveragedPathFeatures(etfBars, underlyingBars, LEVERAGED_SHADOW_UNIVERSE[symbol].direction);
+  const correlationToPeer20d = peerEtf ? correlation20d(etfBars, completedSessionCandles(peerEtf.candles, "us", new Date(now))) : null;
 
   const observation = buildLeveragedEtfShadowObservation({
     observedAt: now,
@@ -70,12 +74,18 @@ async function collectOne(symbol: LeveragedShadowSymbol, now: string, supabase: 
     underlyingPrice: underlyingQuote.source === "unavailable" ? null : underlyingQuote.price,
     bid: quote.bid,
     ask: quote.ask,
-    quoteAsOf: quote.source === "unavailable" ? null : quote.retrievedAt,
-    underlyingQuoteAsOf: underlyingQuote.source === "unavailable" ? null : underlyingQuote.retrievedAt,
+    // A fetch time is not a market observation time. EOD cache and day-cached AV
+    // cannot satisfy an intraday quote contract even when fetched just now.
+    quoteAsOf: quote.observedAt ?? null,
+    underlyingQuoteAsOf: underlyingQuote.observedAt ?? null,
     realizedVol20dPct: etfFeatures.realizedVol20dPct,
     atr14Pct: etfFeatures.atr14Pct,
     trend20dPct: etfFeatures.trend20dPct,
     underlyingTrend20dPct: undFeatures.trend20dPct,
+    directionalUnderlyingTrend20dPct: undFeatures.trend20dPct == null ? null : undFeatures.trend20dPct * (LEVERAGED_SHADOW_UNIVERSE[symbol].direction === "inverse" ? -1 : 1),
+    underlyingRealizedVol20dPct: undFeatures.realizedVol20dPct,
+    proxyTrackingRms20dPct: pathFeatures.proxyTrackingRms20dPct,
+    maxAbsOvernightGap20dPct: pathFeatures.maxAbsOvernightGap20dPct,
     dollarVolume: etfFeatures.dollarVolume,
     correlationToPeer20d,
   });
@@ -122,6 +132,19 @@ export async function GET(req: NextRequest) {
     }, supabase);
   } else {
     await resolveIssue("leveraged-etf-shadow-collect-failed", supabase);
+  }
+
+  const incomplete = results.filter(r => r.status === "recorded" && "measurementStatus" in r && r.measurementStatus !== "complete");
+  if (incomplete.length > 0) {
+    await reportIssue({
+      issueKey: "leveraged-etf-shadow-inputs-incomplete",
+      severity: "warn",
+      category: "data_collection",
+      title: "Leveraged-ETF intraday shadow lacks verified inputs",
+      detail: JSON.stringify(incomplete.map(r => ({ symbol: r.symbol, missing: "missing" in r ? r.missing : [] }))),
+    }, supabase);
+  } else if (results.length === Object.keys(LEVERAGED_SHADOW_UNIVERSE).length && results.every(r => r.status === "recorded" && "measurementStatus" in r && r.measurementStatus === "complete")) {
+    await resolveIssue("leveraged-etf-shadow-inputs-incomplete", supabase);
   }
 
   return NextResponse.json({ status: "ran", now, results });

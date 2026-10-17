@@ -4,7 +4,7 @@
 // stop, target, or score. It only records whether the minimum inputs for a
 // future, separately approved experiment were available at one ET session.
 
-export const LEVERAGED_ETF_SHADOW_POLICY_VERSION = "leveraged-etf-shadow-l1-v1";
+export const LEVERAGED_ETF_SHADOW_POLICY_VERSION = "leveraged-etf-shadow-l1-v2";
 
 export type LeveragedShadowSymbol = "TQQQ" | "SOXL" | "SQQQ" | "SOXS";
 
@@ -38,6 +38,10 @@ export type LeveragedEtfShadowInput = {
   atr14Pct?: number | null;
   trend20dPct?: number | null;
   underlyingTrend20dPct?: number | null;
+  directionalUnderlyingTrend20dPct?: number | null;
+  underlyingRealizedVol20dPct?: number | null;
+  proxyTrackingRms20dPct?: number | null;
+  maxAbsOvernightGap20dPct?: number | null;
   dollarVolume?: number | null;
   /** Pearson correlation of trailing-20-session daily returns vs. the OTHER
    * long-leveraged member of this pair (SOXL<->TQQQ). Informational only —
@@ -64,6 +68,15 @@ function finite(value: unknown): number | null {
   if (value == null || typeof value === "boolean" || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function quoteAgeReason(asOf: string | null | undefined, observedAt: string, prefix: string): string | null {
+  if (!asOf) return `${prefix}_as_of`;
+  const sourceTime = Date.parse(asOf);
+  const decisionTime = Date.parse(observedAt);
+  if (!Number.isFinite(sourceTime) || sourceTime > decisionTime || decisionTime - sourceTime > 15 * 60_000)
+    return `${prefix}_as_of_stale`;
+  return null;
 }
 
 function etParts(iso: string) {
@@ -95,9 +108,11 @@ export function buildLeveragedEtfShadowObservation(input: LeveragedEtfShadowInpu
   if (underlyingPrice == null || underlyingPrice <= 0) missing.push("underlying_price");
   if (bid == null || bid <= 0) missing.push("bid");
   if (ask == null || ask <= 0 || (bid != null && ask < bid)) missing.push("ask");
-  if (!input.quoteAsOf) missing.push("quote_as_of");
-  if (!input.underlyingQuoteAsOf) missing.push("underlying_quote_as_of");
-  for (const [key, value] of Object.entries({ realized_vol_20d_pct: input.realizedVol20dPct, atr14_pct: input.atr14Pct, trend20d_pct: input.trend20dPct, underlying_trend20d_pct: input.underlyingTrend20dPct, dollar_volume: input.dollarVolume })) {
+  const quoteAge = quoteAgeReason(input.quoteAsOf, input.observedAt, "quote");
+  const underlyingAge = quoteAgeReason(input.underlyingQuoteAsOf, input.observedAt, "underlying_quote");
+  if (quoteAge) missing.push(quoteAge);
+  if (underlyingAge) missing.push(underlyingAge);
+  for (const [key, value] of Object.entries({ realized_vol_20d_pct: input.realizedVol20dPct, atr14_pct: input.atr14Pct, trend20d_pct: input.trend20dPct, underlying_trend20d_pct: input.underlyingTrend20dPct, directional_underlying_trend20d_pct: input.directionalUnderlyingTrend20dPct, underlying_realized_vol20d_pct: input.underlyingRealizedVol20dPct, proxy_tracking_rms20d_pct: input.proxyTrackingRms20dPct, max_abs_overnight_gap20d_pct: input.maxAbsOvernightGap20dPct, dollar_volume: input.dollarVolume })) {
     if (finite(value) == null) missing.push(key);
   }
   const { session } = etParts(input.observedAt);
@@ -113,6 +128,10 @@ export function buildLeveragedEtfShadowObservation(input: LeveragedEtfShadowInpu
     features: {
       realized_vol_20d_pct: finite(input.realizedVol20dPct), atr14_pct: finite(input.atr14Pct), trend20d_pct: finite(input.trend20dPct),
       underlying_trend20d_pct: finite(input.underlyingTrend20dPct), dollar_volume: finite(input.dollarVolume), leverage: policy.leverage,
+      directional_underlying_trend20d_pct: finite(input.directionalUnderlyingTrend20dPct),
+      underlying_realized_vol20d_pct: finite(input.underlyingRealizedVol20dPct),
+      proxy_tracking_rms20d_pct: finite(input.proxyTrackingRms20dPct),
+      max_abs_overnight_gap20d_pct: finite(input.maxAbsOvernightGap20dPct),
       correlation_to_peer_20d: finite(input.correlationToPeer20d),
     },
     quote: {
