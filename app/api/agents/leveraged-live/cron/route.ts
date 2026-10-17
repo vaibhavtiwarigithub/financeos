@@ -15,11 +15,11 @@
 // from Settings → Leveraged Sleeve — Live Trading (app/api/settings/
 // leveraged-live/route.ts, components/dashboard/LeveragedLiveSettings.tsx).
 //
-// IMPORTANT: keep the code-level placement flag false. The current worker
-// records an order ID as active without a verified resting-stop readback, and
-// cancellation/fill races remain unresolved. A cron exit is not continuous
-// intraday or overnight protection. Do not enable this route until the broker
-// protective-order lifecycle is contract-tested end to end.
+// IMPORTANT: keep the code-level placement flag false. The worker now requires
+// exact resting-stop and final-cancel readback, and this monitor requires
+// confirmed fills, but those contracts have not been proved against a real
+// resting broker stop/fill. A cron exit is not continuous intraday or overnight
+// protection. Do not enable until broker lifecycle is contract-tested end to end.
 import { NextRequest, NextResponse } from "next/server";
 import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -42,8 +42,8 @@ import { tqqqEntryWindow, tqqqQuoteTime } from "@/lib/trading/tqqq-evidence";
 import { sqqqEntryWindow, sqqqQuoteTime } from "@/lib/trading/sqqq-evidence";
 import { soxsEntryWindow, soxsQuoteTime } from "@/lib/trading/soxs-evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
-import { queryRobinhoodOrder } from "@/lib/robinhood-mcp";
-import { verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
+import { queryRobinhoodOrder, robinhoodHeldQty } from "@/lib/robinhood-mcp";
+import { confirmedRobinhoodStopExit, verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 90;
@@ -128,6 +128,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 async function flattenAndAlert(symbol: string, qty: number, reason: string, brokerAccountId: string, supabase: ReturnType<typeof createServiceClient>) {
   const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty, type: "market", env: "live" });
   let confirmedFill = false;
+  let ledgerClosed = false;
   if (sell.ok && sell.brokerOrderId) {
     for (let i = 0; i < FILL_POLL_ATTEMPTS; i++) {
       await sleep(FILL_POLL_DELAY_MS);
@@ -138,22 +139,21 @@ async function flattenAndAlert(symbol: string, qty: number, reason: string, brok
         const { data: held, error: heldErr } = await supabase.from("leveraged_live_positions")
           .select("id, avg_cost").eq("symbol", symbol).is("closed_at", null).maybeSingle();
         if (heldErr || !held) {
-          confirmedFill = false;
           break;
         }
         const { error } = await supabase.from("leveraged_live_positions").update({
           closed_at: new Date().toISOString(), close_reason: "protective_placement_failed",
           realized_pnl: (state.avgFillPrice - Number(held.avg_cost)) * qty,
         }).eq("id", held.id);
-        if (error) confirmedFill = false;
+        ledgerClosed = !error;
         break;
       }
     }
   }
   await reportIssue({
     issueKey: `leveraged-live-naked-entry:${symbol}`, severity: "critical", category: "risk",
-    title: `LIVE ${symbol} protective stop failed — ${confirmedFill ? "flatten confirmed" : "flatten NOT confirmed"}`,
-    detail: `reason=${reason}; flatten sell ${sell.ok ? `brokerOrderId=${sell.brokerOrderId}, confirmed=${confirmedFill}` : `FAILED: ${sell.error}`}`,
+    title: `LIVE ${symbol} protective stop failed — ${confirmedFill ? (ledgerClosed ? "flatten confirmed" : "broker fill confirmed, ledger unresolved") : "flatten NOT confirmed"}`,
+    detail: `reason=${reason}; flatten sell ${sell.ok ? `brokerOrderId=${sell.brokerOrderId}, confirmed=${confirmedFill}, ledgerClosed=${ledgerClosed}` : `FAILED: ${sell.error}`}`,
   }, supabase);
 }
 
@@ -208,6 +208,29 @@ async function runSymbol(
       return { status: "monitor_failed", reason: "protective_qty_does_not_match_holding" };
     }
     const resting = await queryRobinhoodOrder(protection.broker_order_id, existing.broker_account_id);
+    if (resting.ok && resting.status === "filled") {
+      const held = await robinhoodHeldQty(symbol, existing.broker_account_id);
+      const fillPrice = confirmedRobinhoodStopExit({ status: resting.status, filledQty: resting.filledQty,
+        avgFillPrice: resting.avgFillPrice, heldReadOk: held.ok, heldQty: held.qty, expectedQty: Number(existing.qty) });
+      if (fillPrice == null) {
+        await reportIssue({ issueKey: `leveraged-live-stop-fill-unresolved:${symbol}`, severity: "critical", category: "risk",
+          title: `LIVE ${symbol} broker stop fill requires reconciliation`,
+          detail: `stopOrderId=${protection.broker_order_id}; broker held=${held.qty ?? "unreadable"}; filled=${resting.filledQty ?? "unreadable"}; no duplicate sell submitted`,
+        }, supabase);
+        return { status: "monitor_failed", reason: "protective_stop_fill_unresolved" };
+      }
+      const { error: closeErr } = await supabase.from("leveraged_live_positions").update({
+        closed_at: new Date().toISOString(), close_reason: "protective_disaster_floor",
+        realized_pnl: (fillPrice - Number(existing.avg_cost)) * Number(existing.qty),
+      }).eq("id", existing.id).is("closed_at", null);
+      if (closeErr) return { status: "monitor_failed", reason: `protective_fill_ledger_failed: ${closeErr.message}` };
+      await supabase.from("protective_orders").update({ status: "filled", last_reconciled_at: new Date().toISOString() })
+        .eq("id", existing.protective_order_id);
+      await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId: existing.broker_account_id,
+        brokerOrderId: protection.broker_order_id, qty: Number(existing.qty), avgFillPrice: fillPrice });
+      return { status: "exited", action: "protective_disaster_floor", qty: Number(existing.qty),
+        brokerOrderId: protection.broker_order_id, fillPrice };
+    }
     if (!resting.ok || resting.status !== "submitted" || !verifyRobinhoodRestingStop(resting.raw, {
       symbol, account: existing.broker_account_id, qty: Number(existing.qty), stopPrice: Number(protection.trigger_price),
     })) {

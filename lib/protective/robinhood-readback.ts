@@ -21,3 +21,14 @@ export function verifyRobinhoodRestingStop(raw: unknown, expected: {
 export function robinhoodCancelIsFinal(status: string | undefined, filledQty: number | undefined): boolean {
   return status === "canceled" && filledQty != null && Number.isFinite(filledQty) && filledQty === 0;
 }
+
+export function confirmedRobinhoodStopExit(input: {
+  status?: string; filledQty?: number; avgFillPrice?: number;
+  heldReadOk: boolean; heldQty?: number; expectedQty: number;
+}): number | null {
+  return input.status === "filled" && input.heldReadOk && input.heldQty === 0
+    && Number.isFinite(input.expectedQty) && input.expectedQty > 0
+    && input.filledQty === input.expectedQty
+    && input.avgFillPrice != null && Number.isFinite(input.avgFillPrice) && input.avgFillPrice > 0
+    ? input.avgFillPrice : null;
+}

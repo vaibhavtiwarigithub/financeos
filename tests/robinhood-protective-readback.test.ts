@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { robinhoodCancelIsFinal, verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
+import { confirmedRobinhoodStopExit, robinhoodCancelIsFinal, verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
 
 const expected = { symbol: "SOXL", account: "trading-account", qty: 2, stopPrice: 43.25 };
 const order = { type: "stop", side: "sell", symbol: "SOXL", account_number: "trading-account", quantity: "2", stop_price: "43.25", time_in_force: "gtc" };
@@ -21,5 +21,14 @@ describe("Robinhood protective readback", () => {
     expect(robinhoodCancelIsFinal("submitted", 0)).toBe(false);
     expect(robinhoodCancelIsFinal("canceled", 1)).toBe(false);
     expect(robinhoodCancelIsFinal("canceled", undefined)).toBe(false);
+  });
+
+  it("only closes an externally filled stop on exact fill and zero broker holding", () => {
+    const state = { status: "filled", filledQty: 2, avgFillPrice: 42, heldReadOk: true, heldQty: 0, expectedQty: 2 };
+    expect(confirmedRobinhoodStopExit(state)).toBe(42);
+    expect(confirmedRobinhoodStopExit({ ...state, heldQty: 2 })).toBeNull();
+    expect(confirmedRobinhoodStopExit({ ...state, filledQty: 1 })).toBeNull();
+    expect(confirmedRobinhoodStopExit({ ...state, heldReadOk: false })).toBeNull();
+    expect(confirmedRobinhoodStopExit({ ...state, avgFillPrice: undefined })).toBeNull();
   });
 });

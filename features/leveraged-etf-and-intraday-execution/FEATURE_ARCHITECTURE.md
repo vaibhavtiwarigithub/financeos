@@ -23,11 +23,14 @@ execution difference is a safety limitation, not demonstrated parity.
 This is **not** production proof. Broker order `type` is not enum-specified by
 the observed MCP schema, no protective order was placed, and Robinhood order
 readback shape and cancellation race have not been validated on an actual
-resting order. In-session bid/ask age and venue spread also await the next US
+resting order. The monitor now recognizes an out-of-band fully filled stop only
+when the broker reports the exact fill quantity and price and a fresh account-
+scoped holding read reports zero; partial or inconsistent states alert and do
+not trigger a second sell. This code path has not been verified with a real
+broker fill. In-session bid/ask age and venue spread also await the next US
 market session. `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` and live toggles remain
 false; L4 cannot be described as 100% live-ready or enabled. A broker-confirmed
-stop/cancel/fill lifecycle and explicit handling of out-of-band protective
-fills are required before those gates may open. Stop orders only execute in
+stop/cancel/fill lifecycle is required before those gates may open. Stop orders only execute in
 regular market hours and do not guarantee a stop-price fill.
 
 ## 2026-10-16 intraday paper-quote repair
