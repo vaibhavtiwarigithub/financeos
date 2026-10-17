@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLeveragedIntradayQuote, parseLeveragedIntradayQuote } from "@/lib/data/leveraged-intraday-quotes";
+import { getLeveragedIntradayQuote, parseLeveragedIntradayQuote, parseRobinhoodLeveragedQuote } from "@/lib/data/leveraged-intraday-quotes";
 
 vi.mock("@/lib/data/provider-fetch", () => ({ providerCachedFetch: vi.fn() }));
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
@@ -58,5 +58,33 @@ describe("leveraged quote source", () => {
     delete process.env.TWELVEDATA_API_KEY;
     expect((await getLeveragedIntradayQuote("SOXL")).source).toBe("unavailable");
     expect(providerCachedFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Robinhood executable leveraged quotes", () => {
+  const brokerRow = {
+    symbol: "SOXL", bid_price: "93.60", ask_price: "93.70",
+    venue_bid_time: "2026-10-16T15:04:30.217303268Z",
+    venue_ask_time: "2026-10-16T15:04:31.217303268Z",
+    last_trade_price: "93.67", venue_last_trade_time: "2026-10-16T14:59:00Z",
+  };
+
+  it("uses the older venue side time and the actual spread, not the last-trade timestamp", () => {
+    expect(parseRobinhoodLeveragedQuote("SOXL", brokerRow, now)).toMatchObject({
+      price: 93.65, bid: 93.6, ask: 93.7, source: "robinhood_mcp",
+      observedAt: "2026-10-16T15:04:30.217Z", stale: false,
+    });
+  });
+
+  it("fails closed for stale, future, crossed, mismatched, or unsynchronized venue sides", () => {
+    const rejected = [
+      { ...brokerRow, venue_bid_time: "2026-10-16T14:49:59Z" },
+      { ...brokerRow, venue_ask_time: "2026-10-16T15:05:01Z" },
+      { ...brokerRow, ask_price: "93.50" },
+      { ...brokerRow, symbol: "SOXS" },
+      { ...brokerRow, venue_ask_time: "2026-10-16T15:02:00Z" },
+      { ...brokerRow, venue_bid_time: null },
+    ];
+    for (const payload of rejected) expect(parseRobinhoodLeveragedQuote("SOXL", payload, now)).toBeNull();
   });
 });

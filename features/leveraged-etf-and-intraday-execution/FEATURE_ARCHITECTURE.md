@@ -1017,3 +1017,22 @@ lineage is unreconciled. There is also no scheduled collector yet: the current
 quote contract has no verified executable bid/ask provider. A daily job must
 not be enabled until it can supply those inputs rather than substituting a
 daily OHLC cache. L2–L4 remain unimplemented and unapproved.
+
+## 12. Current verification note — 2026-10-16
+
+Section 11 is a historical record, not the present status. Paper doors and the
+L1 shadow now exist. The L1 collector now has a read-only Robinhood MCP
+`get_equity_quotes` path for `bid_price` and `ask_price`, qualified separately
+by `venue_bid_time` and `venue_ask_time` (15-minute age; at most 60-second side
+skew). The live entry planner refuses last-price-only quotes. After-market MCP
+contract inspection found these fields; a regular-session observation for all
+four funds is still needed before claiming complete L1 data. Twelve Data
+remains a last-price/price-history source, not synthetic bid/ask.
+
+This does **not** enable L4. `place_equity_order` advertises `stop_price` and
+`time_in_force` fields, but its schema does not enumerate supported order
+types. More importantly, the current protective worker marks an order active
+on receipt of an ID without broker readback confirming a resting stop at the
+intended trigger and quantity. Partial exits, canceled-stop/fill races,
+unconfirmed fills, and overnight gaps remain unsafe. Live-enable flags stay
+off until the broker-native protective lifecycle is implemented and verified.

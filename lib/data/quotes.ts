@@ -9,7 +9,7 @@ import { avCachedFetch } from "@/lib/av-cache";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
 import { fetchYahooQuotes } from "@/lib/india-data";
 
-export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "yahoo" | "twelvedata" | "unavailable";
+export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "yahoo" | "twelvedata" | "robinhood_mcp" | "unavailable";
 
 export interface DeterministicQuote {
   symbol: string;

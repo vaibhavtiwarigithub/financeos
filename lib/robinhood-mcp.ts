@@ -435,6 +435,9 @@ export type RobinhoodMcpCapabilitySnapshot = {
    * recognize). See features/leveraged-etf-and-intraday-execution/
    * FEATURE_ARCHITECTURE.md L4 part 8 -- this answers that open question. */
   placeCryptoOrderAdvertisedTypes: string[] | null;
+  /** Read-only contract evidence for protective equity stop support. */
+  placeEquityOrderAdvertisedTypes: string[] | null;
+  placeEquityOrderPropertyKeys: string[] | null;
   /** Property KEY NAMES only (never values/descriptions/enums beyond what
    * extractOrderTypeEnum already surfaces) of place_crypto_order's top-
    * level inputSchema.properties. Lets a human rule out "the field exists
@@ -496,11 +499,14 @@ export function fingerprintRobinhoodMcpTools(tools: unknown[]): RobinhoodMcpCapa
   normalized.sort((a, b) => a.name.localeCompare(b.name));
   const stable = JSON.stringify(normalized);
   const placeCryptoOrder = normalized.find((t) => t.name === "place_crypto_order");
+  const placeEquityOrder = normalized.find((t) => t.name === "place_equity_order");
   return {
     toolCount: normalized.length,
     toolNames: normalized.map((tool) => tool.name),
     schemaFingerprint: createHash("sha256").update(stable).digest("hex"),
     placeCryptoOrderAdvertisedTypes: placeCryptoOrder ? extractOrderTypeEnum(placeCryptoOrder.inputSchema) : null,
+    placeEquityOrderAdvertisedTypes: placeEquityOrder ? extractOrderTypeEnum(placeEquityOrder.inputSchema) : null,
+    placeEquityOrderPropertyKeys: placeEquityOrder ? extractPropertyKeys(placeEquityOrder.inputSchema) : null,
     placeCryptoOrderPropertyKeys: placeCryptoOrder ? extractPropertyKeys(placeCryptoOrder.inputSchema) : null,
   };
 }
@@ -520,6 +526,37 @@ export async function inspectRobinhoodMcpCapabilities(): Promise<
   } catch {
     return { ok: false, errorCode: "transport_failed" };
   }
+}
+
+/** Read-only quote transport; validation of prices and venue times belongs to the caller. */
+export async function readRobinhoodLeveragedQuoteRows(symbols: string[]): Promise<Record<string, unknown>[]> {
+  const allowed = new Set(["SOXL", "SOXS", "TQQQ", "SQQQ", "SOXX", "QQQ"]);
+  const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  if (!unique.length || unique.some((s) => !allowed.has(s))) throw new Error("symbol outside leveraged quote allowlist");
+  const svc = createServiceClient();
+  const token = await getValidAccessToken(svc);
+  if (!token.ok || !token.token) throw new Error("Robinhood MCP not connected");
+  const session = await openSession(token.token);
+  if (!session.ok) throw new Error("Robinhood MCP session unavailable");
+  const listed = await listTools(token.token, session.sessionId);
+  const tool = listed.tools?.find((candidate) => candidate.name === "get_equity_quotes");
+  if (!listed.ok || !tool) throw new Error("Robinhood MCP equity quotes unavailable");
+  const props = tool.inputSchema?.properties ?? {};
+  const symbolKey = ["symbols", "symbol", "tickers"].find((key) => key in props);
+  if (!symbolKey) throw new Error("Robinhood MCP equity quote schema unrecognized");
+  const rawType = props[symbolKey]?.type;
+  const declaredType = Array.isArray(rawType) ? rawType.find((t: string) => t !== "null") : rawType;
+  const value = declaredType === "string" ? unique.join(",") : unique;
+  const response = await mcpRpc(token.token, "tools/call", {
+    name: "get_equity_quotes", arguments: { [symbolKey]: value },
+  }, session.sessionId);
+  if (!response.ok) throw new Error("Robinhood MCP equity quote read failed");
+  const payload = mcpToolJson(response.result?.content ?? response.result);
+  const data = payload?.data ?? payload;
+  const quotes = Array.isArray(data?.quotes) ? data.quotes
+    : Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
+  if (!quotes.length) throw new Error("Robinhood MCP equity quote payload unrecognized");
+  return quotes.map((item: any) => item?.quote ?? item).filter((item: any) => item && typeof item === "object");
 }
 
 export type RobinhoodCryptoQuote = {

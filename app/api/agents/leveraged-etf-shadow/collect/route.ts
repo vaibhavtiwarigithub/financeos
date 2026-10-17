@@ -25,7 +25,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { completedSessionCandles } from "@/lib/data/completed-candles";
-import { getLeveragedIntradayQuote, type LeveragedQuoteSymbol } from "@/lib/data/leveraged-intraday-quotes";
+import { getLeveragedExecutableQuotes, getLeveragedIntradayQuote, type LeveragedQuoteSymbol } from "@/lib/data/leveraged-intraday-quotes";
 import type { DeterministicQuote } from "@/lib/data/quotes";
 import { computeLeveragedPathFeatures, computeLeveragedShadowFeatures, correlation20d } from "@/lib/trading/leveraged-etf-shadow-features";
 import {
@@ -54,6 +54,7 @@ const PEER: Partial<Record<LeveragedShadowSymbol, LeveragedShadowSymbol>> = { SO
 async function collectOne(
   symbol: LeveragedShadowSymbol, now: string, supabase: ReturnType<typeof createServiceClient>,
   readQuote: (symbol: LeveragedQuoteSymbol) => Promise<DeterministicQuote>,
+  brokerQuotes: Map<LeveragedQuoteSymbol, DeterministicQuote>,
 ) {
   const underlying = LEVERAGED_SHADOW_UNIVERSE[symbol].underlyingSymbol;
   const peer = PEER[symbol];
@@ -64,6 +65,11 @@ async function collectOne(
     readQuote(underlying),
     peer ? fetchUsCandles(peer, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })) : Promise.resolve(null),
   ]);
+  const brokerQuote = brokerQuotes.get(symbol);
+  // The decision timestamp follows every source read. Capturing it at route
+  // start would make a legitimate venue event appear to come from the future.
+  const observedAt = new Date().toISOString();
+  if (!isLeveragedObservationWindow(observedAt)) throw new Error("observation_window_elapsed_during_collection");
   const etfBars = completedSessionCandles(etf.candles, "us", new Date(now));
   const underlyingBars = completedSessionCandles(und.candles, "us", new Date(now));
   const etfFeatures = computeLeveragedShadowFeatures(etfBars);
@@ -72,15 +78,15 @@ async function collectOne(
   const correlationToPeer20d = peerEtf ? correlation20d(etfBars, completedSessionCandles(peerEtf.candles, "us", new Date(now))) : null;
 
   const observation = buildLeveragedEtfShadowObservation({
-    observedAt: now,
+    observedAt,
     symbol,
-    etfPrice: quote.source === "unavailable" ? null : quote.price,
+    etfPrice: brokerQuote?.price ?? (quote.source === "unavailable" ? null : quote.price),
     underlyingPrice: underlyingQuote.source === "unavailable" ? null : underlyingQuote.price,
-    bid: quote.bid,
-    ask: quote.ask,
+    bid: brokerQuote?.bid ?? null,
+    ask: brokerQuote?.ask ?? null,
     // A fetch time is not a market observation time. EOD cache and day-cached AV
     // cannot satisfy an intraday quote contract even when fetched just now.
-    quoteAsOf: quote.observedAt ?? null,
+    quoteAsOf: brokerQuote?.observedAt ?? quote.observedAt ?? null,
     underlyingQuoteAsOf: underlyingQuote.observedAt ?? null,
     realizedVol20dPct: etfFeatures.realizedVol20dPct,
     atr14Pct: etfFeatures.atr14Pct,
@@ -98,7 +104,10 @@ async function collectOne(
     market: "us", market_session: observation.marketSession, observed_at: observation.observedAt,
     symbol: observation.symbol, underlying_symbol: observation.underlyingSymbol, policy_version: observation.policyVersion,
     observation_window: observation.window, measurement_status: observation.measurementStatus, missing: observation.missing,
-    features: observation.features, quote: observation.quote, decision: observation.decision,
+    features: observation.features,
+    quote: { ...observation.quote, etf_source: brokerQuote?.source ?? quote.source,
+      bid_ask_source: brokerQuote ? "robinhood_mcp" : null, underlying_source: underlyingQuote.source },
+    decision: observation.decision,
   });
   if (error?.code === "23505") return { symbol, status: "already_recorded" as const };
   if (error) throw new Error(`${symbol}: ${error.message}`);
@@ -125,10 +134,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: "outside_window", now, note: "cron fired outside the 11:00-11:14 ET window (DST drift or off-schedule trigger); no observation recorded" });
   }
 
+  const brokerQuotes = await getLeveragedExecutableQuotes(Object.keys(LEVERAGED_SHADOW_UNIVERSE) as LeveragedQuoteSymbol[]);
+
   const results: Array<{ symbol: string; status: string; error?: string }> = [];
   for (const symbol of Object.keys(LEVERAGED_SHADOW_UNIVERSE) as LeveragedShadowSymbol[]) {
     try {
-      results.push(await collectOne(symbol, now, supabase, readQuote));
+      results.push(await collectOne(symbol, now, supabase, readQuote, brokerQuotes));
     } catch (err: any) {
       const message = err?.message ?? String(err);
       console.error(`[leveraged-etf-shadow-collect] ${symbol}: ${message}`);

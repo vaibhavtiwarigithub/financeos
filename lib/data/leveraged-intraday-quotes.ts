@@ -2,6 +2,7 @@
 // No EOD/cache fetch time is ever promoted to an intraday observation time.
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import type { DeterministicQuote } from "@/lib/data/quotes";
+import { readRobinhoodLeveragedQuoteRows } from "@/lib/robinhood-mcp";
 
 export type LeveragedQuoteSymbol = "SOXL" | "SOXS" | "TQQQ" | "SQQQ" | "SOXX" | "QQQ";
 const SYMBOLS = new Set<LeveragedQuoteSymbol>(["SOXL", "SOXS", "TQQQ", "SQQQ", "SOXX", "QQQ"]);
@@ -19,6 +20,55 @@ function observationTime(value: unknown): number | null {
   if (typeof value !== "string" || !/\d{4}-\d{2}-\d{2}T/.test(value)) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Broker bid and ask each have their own venue event time. Fetch time never substitutes. */
+export function parseRobinhoodLeveragedQuote(
+  symbol: LeveragedQuoteSymbol, payload: unknown, now: Date = new Date(),
+): DeterministicQuote | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as Record<string, unknown>;
+  if (String(row.symbol ?? "").toUpperCase() !== symbol) return null;
+  const bid = positive(row.bid_price);
+  const ask = positive(row.ask_price);
+  const bidTime = observationTime(row.venue_bid_time);
+  const askTime = observationTime(row.venue_ask_time);
+  if (bid == null || ask == null || ask < bid || bidTime == null || askTime == null) return null;
+  const nowMs = now.getTime();
+  if ([bidTime, askTime].some((time) => time > nowMs || nowMs - time > MAX_AGE_MS)) return null;
+  // A crossed-time spread can be fictional even when each side is individually fresh.
+  if (Math.abs(bidTime - askTime) > 60_000) return null;
+  const mid = (bid + ask) / 2;
+  const previousClose = positive(row.adjusted_previous_close ?? row.previous_close);
+  return {
+    symbol, price: mid, bid, ask,
+    change: previousClose == null ? null : mid - previousClose,
+    changePct: previousClose == null ? null : ((mid - previousClose) / previousClose) * 100,
+    source: "robinhood_mcp", retrievedAt: now.toISOString(),
+    observedAt: new Date(Math.min(bidTime, askTime)).toISOString(), stale: false,
+    dayLow: null, dayHigh: null,
+  };
+}
+
+/** Only a validated broker bid/ask may satisfy the leveraged live/shadow spread contract. */
+export async function getLeveragedExecutableQuote(symbol: LeveragedQuoteSymbol): Promise<DeterministicQuote | null> {
+  return (await getLeveragedExecutableQuotes([symbol])).get(symbol) ?? null;
+}
+
+export async function getLeveragedExecutableQuotes(symbols: LeveragedQuoteSymbol[]): Promise<Map<LeveragedQuoteSymbol, DeterministicQuote>> {
+  if (!symbols.length || symbols.some((symbol) => !SYMBOLS.has(symbol))) throw new Error("symbol outside leveraged quote allowlist");
+  const parsed = new Map<LeveragedQuoteSymbol, DeterministicQuote>();
+  try {
+    const rows = await readRobinhoodLeveragedQuoteRows(symbols);
+    const now = new Date();
+    for (const symbol of symbols) {
+      const quote = parseRobinhoodLeveragedQuote(symbol, rows.find((row) => String(row.symbol ?? "").toUpperCase() === symbol), now);
+      if (quote) parsed.set(symbol, quote);
+    }
+  } catch {
+    // Broker disconnected or quote tool unavailable: never infer bid/ask from a last price.
+  }
+  return parsed;
 }
 
 /** Only a provider-supplied last-quote time qualifies; candle-open timestamps do not. */

@@ -15,12 +15,11 @@
 // from Settings → Leveraged Sleeve — Live Trading (app/api/settings/
 // leveraged-live/route.ts, components/dashboard/LeveragedLiveSettings.tsx).
 //
-// No live order is ever submitted without a CONFIRMED, broker-resting
-// protective stop (lib/protective/placement-worker.ts's placeProtectiveStop,
-// already built for equities — see features/hybrid-stop/FEATURE_ARCHITECTURE.md).
-// A failed stop placement always flattens the just-opened position rather
-// than leaving it naked — see features/leveraged-etf-and-intraday-execution/
-// FEATURE_ARCHITECTURE.md's L4 section, part 3.
+// IMPORTANT: keep the code-level placement flag false. The current worker
+// records an order ID as active without a verified resting-stop readback, and
+// cancellation/fill races remain unresolved. A cron exit is not continuous
+// intraday or overnight protection. Do not enable this route until the broker
+// protective-order lifecycle is contract-tested end to end.
 import { NextRequest, NextResponse } from "next/server";
 import { bestEffort } from "@/lib/supabase/best-effort";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -31,7 +30,7 @@ import { placeProtectiveStop, cancelProtectiveStop } from "@/lib/protective/plac
 import { managedLivePositionId } from "@/lib/protective/coverage";
 import { robinhoodAdapter } from "@/lib/brokers/adapters/robinhood";
 import { fetchUsCandles } from "@/lib/data/candles";
-import { getQuote } from "@/lib/data/quotes";
+import { getLeveragedExecutableQuote } from "@/lib/data/leveraged-intraday-quotes";
 import { computeTechnicals, detectBreakdownVeto } from "@/lib/data/technicals";
 import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
@@ -172,20 +171,22 @@ async function runSymbol(
 
   // ── MONITOR branch ────────────────────────────────────────────────────
   if (existing) {
-    const monitorQuote = await getQuote(symbol, supabase);
-    if (monitorQuote.source === "unavailable" || monitorQuote.stale) {
-      return { status: "monitor_failed", reason: "quote_unavailable_or_stale" };
+    const monitorQuote = await getLeveragedExecutableQuote(symbol);
+    if (!monitorQuote || monitorQuote.stale || monitorQuote.bid == null) {
+      return { status: "monitor_failed", reason: "broker_bid_ask_unavailable_or_stale" };
     }
     const observedAt = cfg.quoteTime(monitorQuote, now);
     if (!Number.isFinite(observedAt) || now - observedAt > MONITOR_MAX_QUOTE_AGE_MS) {
       return { status: "monitor_failed", reason: "quote_too_old" };
     }
-    const stopCheckPrice = monitorQuote.dayLow != null && monitorQuote.dayLow > 0
-      ? Math.min(monitorQuote.price, monitorQuote.dayLow) : undefined;
-    const targetCheckPrice = monitorQuote.dayHigh != null && monitorQuote.dayHigh > 0 ? monitorQuote.dayHigh : undefined;
+    // A long liquidation can sell at the current bid, not an unrelated last
+    // trade. The broker-resident stop (once proven) must cover between polls.
+    const executableSellPrice = monitorQuote.bid;
+    const stopCheckPrice = executableSellPrice;
+    const targetCheckPrice = executableSellPrice;
     const decision = decideExitLadder({
       market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
-      price: monitorQuote.price, stopCheckPrice, targetCheckPrice,
+      price: executableSellPrice, stopCheckPrice, targetCheckPrice,
       priceTarget: existing.price_target == null ? null : Number(existing.price_target),
       initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
       currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),
@@ -195,7 +196,7 @@ async function runSymbol(
 
     if (decision.action === "none" || decision.action === "runner_hold") {
       await supabase.from("leveraged_live_positions").update({
-        current_price: monitorQuote.price, highest_price: decision.highestPrice,
+        current_price: executableSellPrice, highest_price: decision.highestPrice,
         stop_loss: parseFloat(decision.trailingStop.toFixed(2)), updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
       return { status: "held", action: decision.action, trailingStop: decision.trailingStop };
@@ -215,7 +216,7 @@ async function runSymbol(
       return { status: "error", reason: `protective_cancel_failed: ${cancel.reason}` };
     }
     const isStop = decision.action === "stop_full";
-    const fillPrice = isStop ? paperStopFillPrice(monitorQuote.price, decision.trailingStop) : monitorQuote.price;
+    const fillPrice = isStop ? paperStopFillPrice(executableSellPrice, decision.trailingStop) : executableSellPrice;
     const exitQty = decision.action === "partial_target" ? decision.exitQty! : Number(existing.qty);
     const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty: exitQty, type: "market", env: "live" });
     if (!sell.ok) {
@@ -277,14 +278,14 @@ async function runSymbol(
 
   const [candleResult, quote] = await Promise.all([
     fetchUsCandles(symbol, NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
-    getQuote(symbol, supabase),
+    getLeveragedExecutableQuote(symbol),
   ]);
   const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
   const expectedSession = expectedNewestSession("us", new Date(now));
   const signalSession = candles.candles.at(-1)?.date;
   if (signalSession !== expectedSession) return { status: "no_entry", reason: "stale_candle_evidence" };
   if (candles.candles.length < 60) return { status: "no_entry", reason: "insufficient_candle_history" };
-  if (quote.source === "unavailable" || quote.stale || !(quote.price > 0)) return { status: "no_entry", reason: "quote_unavailable_or_stale" };
+  if (!quote || quote.stale || quote.source !== "robinhood_mcp" || !(quote.price > 0)) return { status: "no_entry", reason: "broker_bid_ask_unavailable_or_stale" };
 
   const technicals = computeTechnicals(candles.candles);
   const veto = detectBreakdownVeto(technicals);
