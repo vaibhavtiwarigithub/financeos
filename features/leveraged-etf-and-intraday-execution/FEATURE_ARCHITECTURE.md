@@ -1,5 +1,22 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## 2026-10-16 intraday paper-quote repair
+
+The four dedicated **paper** doors and the L1 collector now read the allow-listed
+SOXL, SOXS, TQQQ, SQQQ, SOXX and QQQ quotes from Twelve Data `/quote` with a
+daily interval. The daily interval supplies session high/low; only its distinct
+`last_quote_at` is treated as the market observation time. Each request bypasses
+the day-granular app cache but remains inside the provider's reservation budget.
+Missing, future, or older-than-15-minute observations fail closed. The generic
+equity quote path, scoring, live leveraged path, and broker orders are unchanged.
+Twelve Data quotes supply no executable bid/ask; paper alone retains its
+explicitly labeled spread model, while the L1 shadow remains `incomplete` for
+bid/ask until an independently verified source exists. This feed samples only
+part of US market volume, so neither its quote nor session high/low is a
+consolidated execution-quality guarantee. Intraday collection after deployment
+must be checked during the next open market session; a closed-market API response
+only verifies schema and symbol coverage.
+
 ## 2026-10-16 correction: research timing, leveraged measurements, and quote truth
 
 Production's regular US ResearchAgent pass is holdings-first and exhausted its

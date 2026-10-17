@@ -25,7 +25,8 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { completedSessionCandles } from "@/lib/data/completed-candles";
-import { getQuote } from "@/lib/data/quotes";
+import { getLeveragedIntradayQuote, type LeveragedQuoteSymbol } from "@/lib/data/leveraged-intraday-quotes";
+import type { DeterministicQuote } from "@/lib/data/quotes";
 import { computeLeveragedPathFeatures, computeLeveragedShadowFeatures, correlation20d } from "@/lib/trading/leveraged-etf-shadow-features";
 import {
   buildLeveragedEtfShadowObservation,
@@ -50,14 +51,17 @@ const NO_AV_FALLBACK = async () => [];
 // entries with no peer computed.
 const PEER: Partial<Record<LeveragedShadowSymbol, LeveragedShadowSymbol>> = { SOXL: "TQQQ", TQQQ: "SOXL" };
 
-async function collectOne(symbol: LeveragedShadowSymbol, now: string, supabase: ReturnType<typeof createServiceClient>) {
+async function collectOne(
+  symbol: LeveragedShadowSymbol, now: string, supabase: ReturnType<typeof createServiceClient>,
+  readQuote: (symbol: LeveragedQuoteSymbol) => Promise<DeterministicQuote>,
+) {
   const underlying = LEVERAGED_SHADOW_UNIVERSE[symbol].underlyingSymbol;
   const peer = PEER[symbol];
   const [etf, und, quote, underlyingQuote, peerEtf] = await Promise.all([
     fetchUsCandles(symbol, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
     fetchUsCandles(underlying, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })),
-    getQuote(symbol, supabase),
-    getQuote(underlying, supabase),
+    readQuote(symbol),
+    readQuote(underlying),
     peer ? fetchUsCandles(peer, NO_AV_FALLBACK).catch(() => ({ candles: [] as Candle[], source: "unavailable" })) : Promise.resolve(null),
   ]);
   const etfBars = completedSessionCandles(etf.candles, "us", new Date(now));
@@ -105,6 +109,17 @@ export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const now = new Date().toISOString();
   const supabase = createServiceClient();
+  // The four funds share two underlyings. Reuse each provider response within
+  // this run so the shadow spends six quote credits, not eight.
+  const quotes = new Map<LeveragedQuoteSymbol, Promise<DeterministicQuote>>();
+  const readQuote = (symbol: LeveragedQuoteSymbol) => {
+    let quote = quotes.get(symbol);
+    if (!quote) {
+      quote = getLeveragedIntradayQuote(symbol);
+      quotes.set(symbol, quote);
+    }
+    return quote;
+  };
 
   if (!isLeveragedObservationWindow(now)) {
     return NextResponse.json({ status: "outside_window", now, note: "cron fired outside the 11:00-11:14 ET window (DST drift or off-schedule trigger); no observation recorded" });
@@ -113,7 +128,7 @@ export async function GET(req: NextRequest) {
   const results: Array<{ symbol: string; status: string; error?: string }> = [];
   for (const symbol of Object.keys(LEVERAGED_SHADOW_UNIVERSE) as LeveragedShadowSymbol[]) {
     try {
-      results.push(await collectOne(symbol, now, supabase));
+      results.push(await collectOne(symbol, now, supabase, readQuote));
     } catch (err: any) {
       const message = err?.message ?? String(err);
       console.error(`[leveraged-etf-shadow-collect] ${symbol}: ${message}`);

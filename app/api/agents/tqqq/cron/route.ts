@@ -18,7 +18,7 @@ import { evaluateLeveragedResearchGate, loadLatestResearchSignal } from "@/lib/t
 import { loadTradingMandate } from "@/lib/trading-mandate";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
-import { getQuote } from "@/lib/data/quotes";
+import { getLeveragedIntradayQuote } from "@/lib/data/leveraged-intraday-quotes";
 import { computeTechnicals, detectBreakdownVeto } from "@/lib/data/technicals";
 import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
 import { planTqqqEntry, monitorTqqq, type TqqqPolicy } from "@/lib/trading/tqqq-lifecycle";
@@ -115,7 +115,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     .eq("symbol", "TQQQ").eq("market", "us").eq("position_role", "tqqq_paper").maybeSingle();
   if (existingErr) return fail({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` });
   if (existing) {
-    const monitorQuote = await getQuote("TQQQ", supabase);
+    const monitorQuote = await getLeveragedIntradayQuote("TQQQ");
     const decision = monitorTqqq({
       now,
       maxQuoteAgeMs: MONITOR_MAX_QUOTE_AGE_MS,
@@ -179,7 +179,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
   if (!tqqqEntryWindow(new Date(now))) return ok({ status: "no_entry", reason: "outside_entry_window" });
   const [candleResult, quote] = await Promise.all([
     fetchUsCandles("TQQQ", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
-    getQuote("TQQQ", supabase),
+    getLeveragedIntradayQuote("TQQQ"),
   ]);
   const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
   const expectedSession = expectedNewestSession("us", new Date(now));
@@ -266,7 +266,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
   const { data: rpcResult, error: rpcErr } = await supabase.rpc("execute_tqqq_paper_fill", {
     p_market: "us", p_currency: "USD", p_symbol: "TQQQ",
     p_qty: qty, p_fill_price: plan.entry, p_total_cost: qty * plan.entry,
-    p_price_source: quote.source, p_price_retrieved_at: quote.retrievedAt,
+    p_price_source: quote.source, p_price_retrieved_at: quote.observedAt ?? quote.retrievedAt,
     p_bid: quote.bid, p_ask: quote.ask, p_spread: quote.bid && quote.ask ? quote.ask - quote.bid : null,
     p_stop_loss: plan.stop, p_price_target: plan.target,
     p_policy_version: plan.version,
