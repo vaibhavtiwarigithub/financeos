@@ -19,6 +19,10 @@ the available MCP contract does not prove an atomic reduction/replacement of
 the resting full-quantity stop, so a partial sale could oversell or leave the
 runner unprotected. Paper behavior is unchanged. This deliberate live/paper
 execution difference is a safety limitation, not demonstrated parity.
+The analytical trail remains derived from the recorded high-water mark, but
+`stop_loss` continues to reflect the broker-resident floor until an actual
+broker cancel/replace and readback are confirmed. The UI must not label the
+analytical trail as a resting stop.
 
 This is **not** production proof. Broker order `type` is not enum-specified by
 the observed MCP schema, no protective order was placed, and Robinhood order

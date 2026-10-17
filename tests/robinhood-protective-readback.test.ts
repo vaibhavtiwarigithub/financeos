@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { confirmedRobinhoodStopExit, robinhoodCancelIsFinal, verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
 
 const expected = { symbol: "SOXL", account: "trading-account", qty: 2, stopPrice: 43.25 };
@@ -30,5 +31,11 @@ describe("Robinhood protective readback", () => {
     expect(confirmedRobinhoodStopExit({ ...state, filledQty: 1 })).toBeNull();
     expect(confirmedRobinhoodStopExit({ ...state, heldReadOk: false })).toBeNull();
     expect(confirmedRobinhoodStopExit({ ...state, avgFillPrice: undefined })).toBeNull();
+  });
+
+  it("does not persist an analytical trail as a broker stop without replacement", () => {
+    const route = readFileSync("app/api/agents/leveraged-live/cron/route.ts", "utf8");
+    expect(route).not.toContain("stop_loss: parseFloat(decision.trailingStop");
+    expect(route).toContain("analyticalTrailingStop: decision.trailingStop, brokerStop:");
   });
 });

@@ -266,9 +266,13 @@ async function runSymbol(
     if (decision.action === "none" || decision.action === "runner_hold") {
       await supabase.from("leveraged_live_positions").update({
         current_price: executableSellPrice, highest_price: decision.highestPrice,
-        stop_loss: parseFloat(decision.trailingStop.toFixed(2)), updated_at: new Date().toISOString(),
+        // stop_loss is the actual broker-resident floor. The analytical trail
+        // is recomputed from highest_price; never claim a tighter broker stop
+        // without a confirmed cancel/replace at Robinhood.
+        updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
-      return { status: "held", action: decision.action, trailingStop: decision.trailingStop };
+      return { status: "held", action: decision.action,
+        analyticalTrailingStop: decision.trailingStop, brokerStop: Number(protection.trigger_price) };
     }
 
     // The MCP surface has no proved atomic stop-size replace. Selling half
