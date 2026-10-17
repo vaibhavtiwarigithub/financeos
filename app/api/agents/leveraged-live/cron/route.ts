@@ -35,7 +35,6 @@ import { computeTechnicals, detectBreakdownVeto } from "@/lib/data/technicals";
 import { computeLeveragedShadowFeatures } from "@/lib/trading/leveraged-etf-shadow-features";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 import { decideExitLadder } from "@/lib/trading/exit-ladder";
-import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import { evaluateLeveragedLiveEntry } from "@/lib/trading/leveraged-live-kernel";
 import { planLeveragedLiveEntry, type LeveragedLiveEntryPolicy } from "@/lib/trading/leveraged-live-entry";
 import { soxlEntryWindow, soxlQuoteTime } from "@/lib/trading/soxl-evidence";
@@ -43,6 +42,8 @@ import { tqqqEntryWindow, tqqqQuoteTime } from "@/lib/trading/tqqq-evidence";
 import { sqqqEntryWindow, sqqqQuoteTime } from "@/lib/trading/sqqq-evidence";
 import { soxsEntryWindow, soxsQuoteTime } from "@/lib/trading/soxs-evidence";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { queryRobinhoodOrder } from "@/lib/robinhood-mcp";
+import { verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 90;
@@ -126,13 +127,33 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
  * FEATURE_ARCHITECTURE.md L4 part 3, step 3. */
 async function flattenAndAlert(symbol: string, qty: number, reason: string, brokerAccountId: string, supabase: ReturnType<typeof createServiceClient>) {
   const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty, type: "market", env: "live" });
+  let confirmedFill = false;
   if (sell.ok && sell.brokerOrderId) {
-    await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId, brokerOrderId: sell.brokerOrderId, qty, avgFillPrice: null });
+    for (let i = 0; i < FILL_POLL_ATTEMPTS; i++) {
+      await sleep(FILL_POLL_DELAY_MS);
+      const state = await robinhoodAdapter().getOrder(sell.brokerOrderId, "live");
+      if (state.ok && state.status === "filled" && state.filledQty === qty && state.avgFillPrice && state.avgFillPrice > 0) {
+        confirmedFill = true;
+        await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId, brokerOrderId: sell.brokerOrderId, qty, avgFillPrice: state.avgFillPrice });
+        const { data: held, error: heldErr } = await supabase.from("leveraged_live_positions")
+          .select("id, avg_cost").eq("symbol", symbol).is("closed_at", null).maybeSingle();
+        if (heldErr || !held) {
+          confirmedFill = false;
+          break;
+        }
+        const { error } = await supabase.from("leveraged_live_positions").update({
+          closed_at: new Date().toISOString(), close_reason: "protective_placement_failed",
+          realized_pnl: (state.avgFillPrice - Number(held.avg_cost)) * qty,
+        }).eq("id", held.id);
+        if (error) confirmedFill = false;
+        break;
+      }
+    }
   }
   await reportIssue({
     issueKey: `leveraged-live-naked-entry:${symbol}`, severity: "critical", category: "risk",
-    title: `LIVE ${symbol} entry flattened — protective stop could not be confirmed`,
-    detail: `reason=${reason}; flatten sell ${sell.ok ? `submitted, brokerOrderId=${sell.brokerOrderId}` : `FAILED: ${sell.error}`}`,
+    title: `LIVE ${symbol} protective stop failed — ${confirmedFill ? "flatten confirmed" : "flatten NOT confirmed"}`,
+    detail: `reason=${reason}; flatten sell ${sell.ok ? `brokerOrderId=${sell.brokerOrderId}, confirmed=${confirmedFill}` : `FAILED: ${sell.error}`}`,
   }, supabase);
 }
 
@@ -171,6 +192,31 @@ async function runSymbol(
 
   // ── MONITOR branch ────────────────────────────────────────────────────
   if (existing) {
+    if (!existing.protective_order_id) {
+      await reportIssue({ issueKey: `leveraged-live-protection-missing:${symbol}`, severity: "critical", category: "risk",
+        title: `LIVE ${symbol} position has no confirmed protective stop`,
+        detail: `entry/position ledger requires manual broker reconciliation before any automated exit` }, supabase);
+      return { status: "monitor_failed", reason: "protective_stop_unconfirmed" };
+    }
+    const { data: protection, error: protectionErr } = await supabase.from("protective_orders")
+      .select("status, broker_order_id, protected_qty, trigger_price")
+      .eq("id", existing.protective_order_id).maybeSingle();
+    if (protectionErr || !protection || protection.status !== "active" || !protection.broker_order_id) {
+      return { status: "monitor_failed", reason: "protective_stop_not_active_or_unreadable" };
+    }
+    if (Number(protection.protected_qty) !== Number(existing.qty)) {
+      return { status: "monitor_failed", reason: "protective_qty_does_not_match_holding" };
+    }
+    const resting = await queryRobinhoodOrder(protection.broker_order_id, existing.broker_account_id);
+    if (!resting.ok || resting.status !== "submitted" || !verifyRobinhoodRestingStop(resting.raw, {
+      symbol, account: existing.broker_account_id, qty: Number(existing.qty), stopPrice: Number(protection.trigger_price),
+    })) {
+      await reportIssue({ issueKey: `leveraged-live-protection-unverified:${symbol}`, severity: "critical", category: "risk",
+        title: `LIVE ${symbol} broker stop is not proven resting`,
+        detail: `brokerOrderId=${protection.broker_order_id}; status=${resting.status ?? resting.error ?? "unreadable"}; manual reconciliation required`,
+      }, supabase);
+      return { status: "monitor_failed", reason: "broker_protection_unverified" };
+    }
     const monitorQuote = await getLeveragedExecutableQuote(symbol);
     if (!monitorQuote || monitorQuote.stale || monitorQuote.bid == null) {
       return { status: "monitor_failed", reason: "broker_bid_ask_unavailable_or_stale" };
@@ -202,6 +248,12 @@ async function runSymbol(
       return { status: "held", action: decision.action, trailingStop: decision.trailingStop };
     }
 
+    // The MCP surface has no proved atomic stop-size replace. Selling half
+    // would leave a full-size resting stop against the runner or a naked runner.
+    if (decision.action === "partial_target") {
+      return { status: "held", action: "partial_target_deferred", reason: "atomic_protective_resize_unavailable" };
+    }
+
     // stop_full / target_full / partial_target: cancel the resting broker
     // stop FIRST (avoid a double-sell race), then submit the real exit.
     const positionId = managedLivePositionId({ market: "us", broker: "robinhood", brokerAccountId: existing.broker_account_id, symbol, qty: Number(existing.qty) });
@@ -215,9 +267,7 @@ async function runSymbol(
       }, supabase);
       return { status: "error", reason: `protective_cancel_failed: ${cancel.reason}` };
     }
-    const isStop = decision.action === "stop_full";
-    const fillPrice = isStop ? paperStopFillPrice(executableSellPrice, decision.trailingStop) : executableSellPrice;
-    const exitQty = decision.action === "partial_target" ? decision.exitQty! : Number(existing.qty);
+    const exitQty = Number(existing.qty);
     const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty: exitQty, type: "market", env: "live" });
     if (!sell.ok) {
       await reportIssue({
@@ -226,18 +276,30 @@ async function runSymbol(
       }, supabase);
       return { status: "error", reason: `exit_submit_failed: ${sell.error}` };
     }
-    await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId: existing.broker_account_id, brokerOrderId: sell.brokerOrderId!, qty: exitQty, avgFillPrice: fillPrice });
-    if (decision.action === "partial_target") {
-      await supabase.from("leveraged_live_positions").update({
-        qty: Number(existing.qty) - exitQty, stop_loss: decision.runnerStop, updated_at: new Date().toISOString(),
-      }).eq("id", existing.id);
-    } else {
-      await supabase.from("leveraged_live_positions").update({
-        closed_at: new Date().toISOString(), close_reason: decision.action,
-        realized_pnl: (fillPrice - Number(existing.avg_cost)) * exitQty,
-      }).eq("id", existing.id);
+    let confirmedPrice: number | null = null;
+    for (let i = 0; i < FILL_POLL_ATTEMPTS; i++) {
+      await sleep(FILL_POLL_DELAY_MS);
+      const state = await robinhoodAdapter().getOrder(sell.brokerOrderId!, "live");
+      if (state.ok && state.status === "filled" && state.filledQty === exitQty && state.avgFillPrice && state.avgFillPrice > 0) {
+        confirmedPrice = state.avgFillPrice;
+        break;
+      }
+      if (state.ok && ["canceled", "rejected", "expired", "partially_filled"].includes(state.status ?? "")) break;
     }
-    return { status: "exited", action: decision.action, qty: exitQty, brokerOrderId: sell.brokerOrderId, fillPrice, estimated: true };
+    if (confirmedPrice == null) {
+      await reportIssue({ issueKey: `leveraged-live-exit-unconfirmed:${symbol}`, severity: "critical", category: "risk",
+        title: `LIVE ${symbol} exit is not confirmed after stop cancellation`,
+        detail: `brokerOrderId=${sell.brokerOrderId}; manual broker order/holding reconciliation required; no filled trade recorded`,
+      }, supabase);
+      return { status: "exit_needs_reconcile", brokerOrderId: sell.brokerOrderId };
+    }
+    await recordBrokerOrder(supabase, { symbol, side: "sell", brokerAccountId: existing.broker_account_id, brokerOrderId: sell.brokerOrderId!, qty: exitQty, avgFillPrice: confirmedPrice });
+    const { error: closeErr } = await supabase.from("leveraged_live_positions").update({
+      closed_at: new Date().toISOString(), close_reason: decision.action,
+      realized_pnl: (confirmedPrice - Number(existing.avg_cost)) * exitQty,
+    }).eq("id", existing.id);
+    if (closeErr) return { status: "exit_needs_reconcile", reason: `filled_but_ledger_update_failed: ${closeErr.message}` };
+    return { status: "exited", action: decision.action, qty: exitQty, brokerOrderId: sell.brokerOrderId, fillPrice: confirmedPrice };
   }
 
   // ── ENTRY branch ──────────────────────────────────────────────────────
@@ -347,32 +409,51 @@ async function runSymbol(
   }
   await recordBrokerOrder(supabase, { symbol, side: "buy", brokerAccountId, brokerOrderId: buy.brokerOrderId, qty: filledQty, avgFillPrice });
 
-  // ── Place broker-native protective stop — REQUIRED, fail-closed flatten ──
-  const stop = await placeProtectiveStop({
-    supabase, symbol, market: "us", broker: "robinhood", brokerAccountId,
-    qty: filledQty, entryPrice: avgFillPrice, proposalId: null, proposalBrokerOrderId: buy.brokerOrderId,
-  });
-  if (!stop.ok) {
-    await flattenAndAlert(symbol, filledQty, stop.reason, brokerAccountId, supabase);
-    return { status: "flattened_no_protective_stop", reason: stop.reason, entryBrokerOrderId: buy.brokerOrderId };
-  }
-
-  const { error: insertErr } = await supabase.from("leveraged_live_positions").insert({
+  // Record the confirmed holding before touching its stop. If placement or
+  // readback is ambiguous, the next run must see the open position rather than
+  // attempting a duplicate BUY.
+  const { data: opened, error: openedErr } = await supabase.from("leveraged_live_positions").insert({
     symbol, market: "us", broker: "robinhood", broker_account_id: brokerAccountId,
     qty: filledQty, avg_cost: avgFillPrice, current_price: avgFillPrice,
     stop_loss: plan.stop, initial_stop_loss: plan.stop, price_target: plan.target, highest_price: avgFillPrice,
-    entry_broker_order_id: buy.brokerOrderId, protective_order_id: stop.protectiveOrderId,
+    entry_broker_order_id: buy.brokerOrderId, protective_order_id: null,
     policy_version: plan.version,
     rationale: `LIVE ${symbol} entry: trend-qualified, ATR ${atr.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}`,
-  });
-  if (insertErr) {
-    // The fill and stop are both real at this point — a bookkeeping failure
-    // must not be silently swallowed even though the position is protected.
+  }).select("id").single();
+  if (openedErr) {
     await reportIssue({ issueKey: `leveraged-live-bookkeeping-failed:${symbol}`, severity: "critical", category: "risk",
-      title: `LIVE ${symbol} position filled and stopped but leveraged_live_positions insert FAILED`,
-      detail: `brokerOrderId=${buy.brokerOrderId}, protectiveOrderId=${stop.protectiveOrderId}: ${insertErr.message} — MANUAL RECONCILIATION REQUIRED` }, supabase);
-    return { status: "error", reason: `bookkeeping_insert_failed: ${insertErr.message}`, entryBrokerOrderId: buy.brokerOrderId };
+      title: `LIVE ${symbol} BUY filled but position ledger insert failed`,
+      detail: `brokerOrderId=${buy.brokerOrderId}; ${openedErr.message}; manual reconciliation required`,
+    }, supabase);
   }
+
+  // ── Place broker-native protective stop — REQUIRED ──
+  const stop = await placeProtectiveStop({
+    supabase, symbol, market: "us", broker: "robinhood", brokerAccountId,
+    qty: filledQty, entryPrice: avgFillPrice, stopPrice: plan.stop,
+    proposalId: null, proposalBrokerOrderId: buy.brokerOrderId,
+  });
+  if (!stop.ok && stop.needsReconcile) {
+    await reportIssue({ issueKey: `leveraged-live-protective-unresolved:${symbol}`, severity: "critical", category: "risk",
+      title: `LIVE ${symbol} protective order needs broker reconciliation`,
+      detail: `entryBrokerOrderId=${buy.brokerOrderId}; ${stop.reason}; no flatten submitted because a stop may already be resting`,
+    }, supabase);
+    return { status: "protective_needs_reconcile", reason: stop.reason, entryBrokerOrderId: buy.brokerOrderId };
+  }
+  if (!stop.ok) {
+    await flattenAndAlert(symbol, filledQty, stop.reason, brokerAccountId, supabase);
+    return { status: "flatten_attempted_no_protective_stop", reason: stop.reason, entryBrokerOrderId: buy.brokerOrderId };
+  }
+  if (openedErr || !opened?.id) {
+    await reportIssue({ issueKey: `leveraged-live-bookkeeping-failed:${symbol}`, severity: "critical", category: "risk",
+      title: `LIVE ${symbol} position filled and stopped but ledger is missing`,
+      detail: `brokerOrderId=${buy.brokerOrderId}, protectiveOrderId=${stop.protectiveOrderId}: manual reconciliation required` }, supabase);
+    return { status: "error", reason: "position_ledger_missing_manual_reconcile_required", entryBrokerOrderId: buy.brokerOrderId };
+  }
+  const { error: linkedErr } = await supabase.from("leveraged_live_positions")
+    .update({ protective_order_id: stop.protectiveOrderId, updated_at: new Date().toISOString() })
+    .eq("id", opened.id);
+  if (linkedErr) return { status: "error", reason: `protective_ledger_link_failed: ${linkedErr.message}` };
   await resolveIssue(`leveraged-live-entry-failed:${symbol}`, supabase);
   return { status: "entered", qty: filledQty, entry: avgFillPrice, stop: plan.stop, target: plan.target, brokerOrderId: buy.brokerOrderId, protectiveOrderId: stop.protectiveOrderId };
 }

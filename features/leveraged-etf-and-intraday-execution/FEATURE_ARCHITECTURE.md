@@ -1,5 +1,35 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## 2026-10-16 live-order safety correction (code hardened, NOT enabled)
+
+The earlier L4 assertion that an order ID proves an active broker-native stop
+was false. Robinhood's placement acknowledgement can precede broker rest, and
+cancel acknowledgement can precede final cancellation or race a fill. The
+worker now requires an account-, symbol-, side-, type-, GTC-, quantity-, and
+trigger-matching `get_equity_orders` readback before marking a US stop active.
+An ambiguous placement stays `needs_reconcile` and must **not** trigger a
+blind flatten SELL, because the stop may already be resting. A confirmed BUY
+is recorded in `leveraged_live_positions` before stop placement so that an
+ambiguous result cannot make the next run submit a duplicate BUY.
+
+The live monitor rereads the resting stop before deciding an exit, requires a
+final unfilled cancellation before an explicit SELL, and records a SELL/P&L
+only after a confirmed broker fill. Live partial-target exits are deferred:
+the available MCP contract does not prove an atomic reduction/replacement of
+the resting full-quantity stop, so a partial sale could oversell or leave the
+runner unprotected. Paper behavior is unchanged. This deliberate live/paper
+execution difference is a safety limitation, not demonstrated parity.
+
+This is **not** production proof. Broker order `type` is not enum-specified by
+the observed MCP schema, no protective order was placed, and Robinhood order
+readback shape and cancellation race have not been validated on an actual
+resting order. In-session bid/ask age and venue spread also await the next US
+market session. `PROTECTIVE_PLACEMENT_WORKER_AVAILABLE` and live toggles remain
+false; L4 cannot be described as 100% live-ready or enabled. A broker-confirmed
+stop/cancel/fill lifecycle and explicit handling of out-of-band protective
+fills are required before those gates may open. Stop orders only execute in
+regular market hours and do not guarantee a stop-price fill.
+
 ## 2026-10-16 intraday paper-quote repair
 
 The four dedicated **paper** doors and the L1 collector now read the allow-listed

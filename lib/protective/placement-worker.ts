@@ -17,7 +17,8 @@ import { managedLivePositionId } from "@/lib/protective/coverage";
 import { evaluateProtection, ProtectionRequest } from "@/lib/protective/capabilities";
 import { ROBINHOOD_PROTECTIVE_CAPABILITIES } from "@/lib/protective/robinhood-capabilities";
 import { KITE_PROTECTIVE_CAPABILITIES } from "@/lib/protective/kite-capabilities";
-import { placeRobinhoodGtcStop, cancelRobinhoodOrder } from "@/lib/robinhood-mcp";
+import { placeRobinhoodGtcStop, cancelRobinhoodOrder, queryRobinhoodOrder } from "@/lib/robinhood-mcp";
+import { robinhoodCancelIsFinal, verifyRobinhoodRestingStop } from "@/lib/protective/robinhood-readback";
 import { placeKiteProtectiveStop, cancelKiteProtectiveStop } from "@/lib/protective/kite-placement";
 import { loadTradingMandateStrict } from "@/lib/trading-mandate";
 
@@ -25,7 +26,7 @@ import { loadTradingMandateStrict } from "@/lib/trading-mandate";
 
 export type PlacementResult =
   | { ok: true;  protectiveOrderId: number; brokerOrderId: string; stopPrice: number }
-  | { ok: false; skipped?: boolean; reason: string };
+  | { ok: false; skipped?: boolean; needsReconcile?: boolean; reason: string };
 
 export type CancelResult =
   | { ok: true  }
@@ -43,10 +44,11 @@ export interface PlaceProtectiveStopInput {
   entryPrice: number;             // the BUY fill price (or best available quote)
   proposalId?: number | null;
   proposalBrokerOrderId?: string; // the BUY broker order id — used for correlation
+  stopPrice?: number;             // approved, symbol-specific analytical floor
 }
 
 export async function placeProtectiveStop(input: PlaceProtectiveStopInput): Promise<PlacementResult> {
-  const { supabase, symbol, market, broker, brokerAccountId, qty, entryPrice, proposalId } = input;
+  const { supabase, symbol, market, broker, brokerAccountId, qty, entryPrice, proposalId, proposalBrokerOrderId } = input;
 
   // Gate 1 — code-level flag (stays false until Part E).
   if (!PROTECTIVE_PLACEMENT_WORKER_AVAILABLE) {
@@ -63,8 +65,8 @@ export async function placeProtectiveStop(input: PlaceProtectiveStopInput): Prom
   // Derive stop price from mandate (stop_loss_pct).
   const mandate = await loadTradingMandateStrict(supabase, market);
   const stopPct = mandate.stop_loss_pct / 100;
-  const stopPrice = parseFloat((entryPrice * (1 - stopPct)).toFixed(2));
-  if (!Number.isFinite(stopPrice) || stopPrice <= 0) {
+  const stopPrice = input.stopPrice ?? parseFloat((entryPrice * (1 - stopPct)).toFixed(2));
+  if (!Number.isFinite(stopPrice) || stopPrice <= 0 || stopPrice >= entryPrice) {
     return { ok: false, reason: `invalid stop price derived from entry ${entryPrice} × (1-${mandate.stop_loss_pct}%)` };
   }
 
@@ -85,7 +87,15 @@ export async function placeProtectiveStop(input: PlaceProtectiveStopInput): Prom
 
   // Stable position identifier (matches coverage.ts).
   const positionId = managedLivePositionId({ market, broker: caps.broker, brokerAccountId, symbol, qty });
-  const correlationId = `prot:${positionId}:${Date.now()}`;
+  const correlationId = `prot:${positionId}:${proposalBrokerOrderId ?? Date.now()}`;
+  const { data: existingRows, error: existingErr } = await supabase.from("protective_orders")
+    .select("id, status").eq("position_id", positionId)
+    .in("status", ["placing", "active", "triggered", "canceling", "needs_reconcile"])
+    .limit(2);
+  if (existingErr) return { ok: false, needsReconcile: true, reason: `existing protective order lookup failed: ${existingErr.message}` };
+  if ((existingRows ?? []).length > 0) {
+    return { ok: false, needsReconcile: true, reason: "an unresolved protective order already exists for this position; refusing duplicate placement" };
+  }
 
   // Insert row with status='placing' first (idempotent via correlation_id unique index).
   const insertPayload = {
@@ -121,39 +131,60 @@ export async function placeProtectiveStop(input: PlaceProtectiveStopInput): Prom
   const protectiveOrderId: number = (row as any).id;
 
   // Place at broker.
-  let brokerResult: { ok: boolean; brokerOrderId?: string; error?: string };
+  let brokerResult: { ok: boolean; brokerOrderId?: string; needsReconcile?: boolean; error?: string };
   if (market === "us") {
     const r = await placeRobinhoodGtcStop({ account: brokerAccountId, symbol, qty, stopPrice });
-    brokerResult = r.ok ? { ok: true, brokerOrderId: r.brokerOrderId } : { ok: false, error: r.error };
+    brokerResult = r.ok ? { ok: true, brokerOrderId: r.brokerOrderId } : { ok: false, needsReconcile: r.needsReconcile, error: r.error };
   } else {
     const r = await placeKiteProtectiveStop({ tradingsymbol: symbol, qty, lastPrice: entryPrice, stopPrice });
     brokerResult = r.ok ? { ok: true, brokerOrderId: r.brokerOrderId } : { ok: false, error: r.error };
   }
 
   if (!brokerResult.ok || !brokerResult.brokerOrderId) {
-    // Mark failed — placement attempted but broker rejected or errored.
+    // A timeout or unparseable acknowledgement may mean the broker accepted
+    // the order. Never call this a rejection or send a second SELL blindly.
+    const status = brokerResult.needsReconcile ? "needs_reconcile" : "failed";
     await supabase.from("protective_orders").update({
-      status: "failed",
+      status,
       broker_version: brokerResult.error ?? "no broker order id",
     }).eq("id", protectiveOrderId);
     await supabase.from("protective_order_events").insert({
       protective_order_id: protectiveOrderId,
-      event_type:          "failed",
+      event_type:          status,
       status_before:       "placing",
-      status_after:        "failed",
+      status_after:        status,
       detail:              `Broker placement failed: ${brokerResult.error ?? "no broker order id"}`,
       broker_snapshot:     {},
     });
-    return { ok: false, reason: `broker placement failed: ${brokerResult.error}` };
+    return { ok: false, needsReconcile: brokerResult.needsReconcile, reason: `broker placement ${status}: ${brokerResult.error}` };
+  }
+
+  if (market === "us") {
+    const readback = await queryRobinhoodOrder(brokerResult.brokerOrderId, brokerAccountId);
+    const verified = readback.ok && readback.status === "submitted"
+      && verifyRobinhoodRestingStop(readback.raw, { symbol, account: brokerAccountId, qty, stopPrice });
+    if (!verified) {
+      await supabase.from("protective_orders").update({
+        status: "needs_reconcile", broker_order_id: brokerResult.brokerOrderId,
+      }).eq("id", protectiveOrderId);
+      await supabase.from("protective_order_events").insert({
+        protective_order_id: protectiveOrderId, event_type: "needs_reconcile",
+        status_before: "placing", status_after: "needs_reconcile",
+        detail: "Broker stop readback did not prove resting side/type/account/quantity/trigger/GTC",
+        broker_snapshot: { broker_order_id: brokerResult.brokerOrderId, status: readback.status ?? "unreadable" },
+      });
+      return { ok: false, needsReconcile: true, reason: "broker stop exists or may exist but resting contract is unverified" };
+    }
   }
 
   // Persist broker id and move to active.
   const brokerIdCol = market === "india" ? "kite_trigger_id" : "broker_order_id";
-  await supabase.from("protective_orders").update({
+  const { error: activeErr } = await supabase.from("protective_orders").update({
     status:              "active",
     [brokerIdCol]:       brokerResult.brokerOrderId,
     last_reconciled_at:  new Date().toISOString(),
   }).eq("id", protectiveOrderId);
+  if (activeErr) return { ok: false, needsReconcile: true, reason: `broker stop placed but ledger update failed: ${activeErr.message}` };
   await supabase.from("protective_order_events").insert({
     protective_order_id: protectiveOrderId,
     event_type:          "placed",
@@ -178,19 +209,18 @@ export async function cancelProtectiveStop(input: {
 }): Promise<CancelResult> {
   const { supabase, positionId, market, brokerAccountId } = input;
 
-  const { data: row, error } = await supabase.from("protective_orders")
+  const { data: rows, error } = await supabase.from("protective_orders")
     .select("id, broker_order_id, kite_trigger_id, status, broker, market")
     .eq("position_id", positionId)
     .in("status", ["placing", "active", "needs_reconcile"])
-    .limit(1).maybeSingle();
+    .limit(2);
   if (error) return { ok: false, reason: `protective_orders read failed: ${error.message}` };
-  if (!row) return { ok: true };   // no active stop — nothing to cancel
+  if ((rows ?? []).length !== 1) return { ok: false, reason: `expected one protective order, found ${(rows ?? []).length}; manual reconciliation required` };
+  const row = rows[0];
 
   const brokerId = market === "india" ? (row as any).kite_trigger_id : (row as any).broker_order_id;
   if (!brokerId) {
-    // Still in 'placing' — mark canceled; the placement will find no row to update.
-    await supabase.from("protective_orders").update({ status: "canceled" }).eq("id", (row as any).id);
-    return { ok: true };
+    return { ok: false, reason: "protective placement has no broker id; cancellation cannot be proven" };
   }
 
   // Mark as canceling first.
@@ -221,7 +251,16 @@ export async function cancelProtectiveStop(input: {
     return { ok: false, reason: `broker cancel failed: ${cancelErr}` };
   }
 
-  await supabase.from("protective_orders").update({ status: "canceled" }).eq("id", (row as any).id);
+  if (market === "us") {
+    const readback = await queryRobinhoodOrder(brokerId, brokerAccountId);
+    if (!readback.ok || !robinhoodCancelIsFinal(readback.status, readback.filledQty)) {
+      await supabase.from("protective_orders").update({ status: "needs_reconcile" }).eq("id", (row as any).id);
+      return { ok: false, reason: `cancel acknowledged but final unfilled cancellation unproven: ${readback.error ?? readback.status ?? "unreadable"}` };
+    }
+  }
+
+  const { error: canceledErr } = await supabase.from("protective_orders").update({ status: "canceled" }).eq("id", (row as any).id);
+  if (canceledErr) return { ok: false, reason: `broker canceled but ledger update failed: ${canceledErr.message}` };
   await supabase.from("protective_order_events").insert({
     protective_order_id: (row as any).id,
     event_type: "canceled",
