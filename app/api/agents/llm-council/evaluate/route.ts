@@ -256,3 +256,7 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v1", shadowOnly: true });
 }
+
+// Vercel Cron invokes configured routes with GET. Keep the same secret check
+// and evaluation body for manual/internal POST calls and scheduled GET calls.
+export const GET = POST;

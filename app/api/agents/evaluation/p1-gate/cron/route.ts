@@ -61,3 +61,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: true, threshold: P1_THRESHOLD, markets: results });
 }
+
+// Vercel Cron invokes this configured route with GET; retain POST for manual
+// internal callers without weakening the existing cron-secret check.
+export const GET = POST;
