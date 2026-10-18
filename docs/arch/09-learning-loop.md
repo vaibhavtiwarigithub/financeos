@@ -1221,3 +1221,29 @@ advance the gate. Twenty such sessions permits a review, not activation. A
 sealed market-local portfolio simulation with redeployment, costs, drawdown,
 turnover, multiple-trial correction, adverse-case review, and owner approval is
 still required before any time-stop policy change.
+
+## Macro context, historical analogs, and symbol sensitivity (2026-10-16)
+
+The Learning page includes `MacroContextPanel`, backed by the owner-only,
+read-only `GET /api/learning/macro-context?market=us|india` route. It surfaces
+the latest US MacroSentinel state and India factor observations, plus the latest
+India `india_macro_exposures` estimates (`asof4d_v2`: market, USD/INR, Brent,
+India VIX) with their window, sample count, beta, t-stat and R². The API reads
+persisted rows only; it makes no provider/LLM calls and writes nothing.
+
+**Interpretation boundary:** the India beta is historical co-movement, not a
+causal effect, regime-conditioned return forecast, or trade recommendation. The
+US MacroSentinel remains one market-wide state; it is not a per-stock ranking
+signal. The panel explicitly reports that a historical-episode matcher is not
+implemented and shows the market-local `market_regime_runs` count rather than
+implying analog evidence exists.
+
+Production audit on 2026-10-16 found 148 India exposure estimates with status
+`ok`, 9 insufficient, zero `market_regime_runs`, and 17 weekly US legacy regime
+snapshots since 2026-06-29. These observations do not establish enough
+independent macro episodes for a reliable analog forecast. The next research
+stage is specified in
+`features/macro-regime-analogs/FEATURE_ARCHITECTURE.md`: point-in-time inputs,
+market-local non-overlapping analog episodes, matured 5/10/20-session
+benchmark-excess outcomes, and an explicit insufficient state. Nothing in that
+design is currently connected to scoring or trading.

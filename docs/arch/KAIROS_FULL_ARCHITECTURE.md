@@ -43065,4 +43065,36 @@ evidence-gated future decision.
 
 **Architecture:** `features/catalyst-scout/FEATURE_ARCHITECTURE.md`.
 
+## Macro Context and Symbol Sensitivity — 2026-10-16
+
+The Learning page's Macro Context panel reads existing production evidence via
+`GET /api/learning/macro-context?market=us|india`. The owner-only route reads
+the latest US `macro_regime`, market-local `market_regime_runs`, and (for India)
+`india_macro_observations` plus latest `india_macro_exposures` rows for method
+`asof4d_v2`. It is stored-data-only, read-only, and has no score, sizing, order,
+exit, rotation, or broker consumer.
+
+The US macro scalar is a market-wide posture, not stock-level exposure. India's
+OLS estimates describe historical daily co-movement with market, USD/INR, Brent,
+and India VIX; they are not causal estimates or current forward forecasts.
+Production evidence on 2026-10-16: 148 India exposure rows were `ok`, 9 were
+insufficient, `market_regime_runs` had zero rows, and legacy US `macro_regime`
+had 17 weekly snapshots from 2026-06-29 through 2026-10-12.
+
+No historical macro-episode matcher is built. Its required design—point-in-time
+inputs, non-overlapping analog episodes, market-local mature benchmark-excess
+labels at h5/h10/h20, uncertainty, and an explicit insufficient state—is in
+`features/macro-regime-analogs/FEATURE_ARCHITECTURE.md`. This distinction is
+intentional: a handful of weekly regimes and historical betas do not establish
+that today's conditions predict a symbol's next move.
+
+As of this implementation, `/api/agents/macro-sentinel` also appends each
+validated US weekly state to `market_regime_runs` with formula version
+`macro-sentinel-state-v1` and a deterministic SHA-256 input fingerprint.
+Unavailable/unknown states remain unavailable; no global-spillover state is
+inferred. The write is idempotent and uses the table's existing unique key and
+append-only policy. It starts prospective history after deployment and does not
+bulk backfill the legacy `macro_regime` rows; a same-week retry can capture its
+existing row at its original creation time.
+
 

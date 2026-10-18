@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildUsMacroRegimeRun } from "@/lib/learning/macro-regime-run";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -234,14 +235,26 @@ export async function POST(req: NextRequest) {
   // Check if already ran this week with sufficient data
   const { data: existing } = await svc
     .from("macro_regime")
-    .select("id, regime, raw_indicators")
+    .select("id, week_of, regime, danger_score, raw_indicators, created_at")
     .eq("week_of", weekOf)
     .single();
   // A healthy GREEN week legitimately has zero triggered warnings. Completeness
   // is the number of real indicators, not whether any of them happened to fire.
   if (existing && (existing as any).regime !== "unknown"
       && assessMacroIndicators((existing as any).raw_indicators).usable) {
-    return NextResponse.json({ message: "Already ran this week", cached: true });
+    const regimeRun = buildUsMacroRegimeRun({
+      weekOf: String((existing as any).week_of),
+      regime: (existing as any).regime,
+      dangerScore: Number((existing as any).danger_score),
+      rawIndicators: (existing as any).raw_indicators,
+      computedAt: String((existing as any).created_at),
+    });
+    const { error: shadowError } = await svc.from("market_regime_runs").upsert(regimeRun, {
+      onConflict: "market,formula_version,input_fingerprint",
+      ignoreDuplicates: true,
+    });
+    if (shadowError) return NextResponse.json({ error: `regime shadow persistence failed: ${shadowError.message}` }, { status: 500 });
+    return NextResponse.json({ message: "Already ran this week", cached: true, regime_shadow_written: true });
   }
   // Delete bad/incomplete run so we can retry
   if (existing) {
@@ -318,8 +331,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Append-only, market-local capture for future regime diagnostics. This is
+  // not a new score input and does not summarize global spillovers.
+  const regimeRun = buildUsMacroRegimeRun({
+    weekOf,
+    regime,
+    dangerScore: danger_score,
+    rawIndicators: indicators,
+    computedAt: new Date().toISOString(),
+  });
+  const { error: shadowError } = await svc.from("market_regime_runs").upsert(regimeRun, {
+    onConflict: "market,formula_version,input_fingerprint",
+    ignoreDuplicates: true,
+  });
+  if (shadowError) {
+    return NextResponse.json({ error: `regime shadow persistence failed: ${shadowError.message}` }, { status: 500 });
+  }
+
   return NextResponse.json({
     danger_score, regime, signals_triggered, summary, indicators,
-    indicators_available, data_confidence, unavailable_reason,
+    indicators_available, data_confidence, unavailable_reason, regime_shadow_written: true,
   });
 }

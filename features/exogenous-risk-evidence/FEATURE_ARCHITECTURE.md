@@ -1,6 +1,6 @@
 # Exogenous Risk Evidence Layer
 
-> Status: **P0 FOUNDATION BUILT; LEGACY US INTEGRITY + EXPLAINABILITY REMEDIATED; P1-P3 INGESTION NOT YET ENABLED.**
+> Status (2026-10-16): **P0 LEDGERS BUILT; INDIA MACRO SERIES + SYMBOL EXPOSURE SHADOWS COLLECTING; REGIME ANALOGS AND US SYMBOL EXPOSURES NOT BUILT.**
 > Date: 2026-08-24
 > Owner approval: observation-first build approved 2026-08-01. No scoring, paper,
 > live, exit, sizing, or broker activation is approved.
@@ -26,9 +26,19 @@ market-and-sector-specific incremental value.
 **P0 implementation (2026-08-01):** migration `20260801150000_exogenous_risk_p0`
 adds the two append-only, owner-read/service-write-only ledgers described below and
 removes the obsolete India Macro Read cron, which had already refused its market
-before an LLM call or write. No ingestion adapter is enabled until an official source
-exposes a stable, timestamped machine-readable contract. Empty ledgers are intentional
-and are not treated as neutral macro evidence.
+before an LLM call or write. The P0 migration itself added no ingestion adapter;
+later, separate India macro-series collectors began retaining dated source observations.
+Missing or unvalidated evidence remains unavailable, not neutral macro evidence.
+
+**Implementation status correction (2026-10-16):** The separate India macro-series
+program now writes dated rows to `india_macro_observations` from FRED, Yahoo chart
+history, and NSE FII/DII; the separate India company-exposure shadow writes weekly
+`india_macro_exposures` OLS estimates for NIFTY 50, USD/INR, Brent, and India VIX.
+These are measure-only and are not RBI/MoSPI domestic-regime adapters. `market_regime_runs`
+still has zero production rows, no historical-episode matcher exists, and there is no
+US per-symbol macro-exposure producer. The Learning page's Macro Context panel exposes
+these facts without making an expected-return claim. See
+`features/macro-regime-analogs/FEATURE_ARCHITECTURE.md`.
 
 ## 2. Why This Is Needed
 
@@ -202,6 +212,11 @@ Acceptance: the UI and health surface distinguish `not built`, `unavailable`,
 `stale`, and `display-only`; no money-path import changes.
 
 ### P1 — India domestic macro shadow (5-7 engineering days)
+
+**Status:** Partial groundwork is collecting, but this acceptance gate is **not met**.
+The current collector's FRED/OECD, Yahoo and NSE feeds do not substitute for the
+source requirements below. India company betas are descriptive factor sensitivities,
+not a computed India domestic regime or regime-conditioned return estimate.
 
 1. Implement server-only official adapters for RBI DBIE and MoSPI. Start with
    repo rate, 10Y G-Sec, INR/USD, CPI Combined YoY, and IIP growth.
