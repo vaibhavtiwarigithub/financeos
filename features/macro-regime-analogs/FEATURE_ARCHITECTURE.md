@@ -8,7 +8,7 @@
 - **Why:** The owner wants Kairos to relate today's economic/market conditions to prior episodes and show how individual symbols may be affected.
 - **Who:** The Kairos owner reviewing US and India research and paper-portfolio decisions.
 - **ROI:** Make existing evidence understandable, then test whether regime-conditioned, symbol-specific context adds forward information beyond the deterministic scorer. No performance improvement is promised.
-- **shippedAt:** 2026-10-16 for P0 visibility only.
+- **shippedAt:** 2026-10-18 for P0 visibility only (`2c7e4a44`, production READY).
 
 ## What Kairos already does
 
