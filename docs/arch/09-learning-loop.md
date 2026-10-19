@@ -2,6 +2,23 @@
 > 2026-10-03: **US regime features are null on 5,721 observations (2026-08-17 .. 2026-10-03).** `features.regime.{trend, volTercile, realizedVol}` come from the US benchmark series, which was frozen at 2026-08-03 by an ascending+limit(260) read of `price_cache` (fixed 2026-10-03). `decision_observations` is immutable, so those rows stay null: any regime-conditioned analysis, archetype grading or calibration must exclude US rows from 2026-08-17 to the fix date (rows from the first post-fix research run onward are populated). No other feature group dropped >=30 points of coverage between July and the last week (checked across technical/fundamental/sentiment/macro/quality keys).
 >
 
+## Evidence Router score-component diagnostics (2026-10-19)
+
+The frozen Evidence Router dual-run evaluator now records a numeric score trace
+for both the legacy and candidate arms (`evidence-evaluation-v3`). Each trace
+captures the five dimension scores, availability mask, configured and effective
+weights, per-dimension weighted contributions, pre-rounding/rounded score, and
+ETF-cap adjustment. This makes aggregate score differences explainable without
+recomputing against mutable provider data or current weights. The trace is
+persisted in `evidence_evaluation_details.legacy_score_trace` and
+`candidate_score_trace`; historical rows remain empty because their exact
+components cannot be reconstructed safely.
+
+These traces are diagnostic evidence only. They do not change scoring, the
+active evidence policy, Router activation, paper portfolios, or live trading.
+The existing Router remains shadow-only and disabled; portfolio-level causal
+attribution is still a separate requirement before any performance claim.
+
 ## Shadow decision price provenance
 
 ResearchAgent copies the positive `decision_observations.price_at_decision` into the existing `shadow_decisions.entry_price` field for strategy challengers, archetype experts, and uncapped-score diagnostics. This is the observed research reference price—not a broker quote, fill, or executable price. Missing/invalid values remain null. A replay must still define its fill convention, costs, eligible population, capital/name constraints, exits, and matched baseline before it can claim portfolio P&L. Populating this field alone does not make an Upgrade Path performance-eligible or measured.
@@ -216,7 +233,7 @@ how many rows lack valid session provenance rather than silently grading them.
 > **2026-07-28 correction — PROMOTION REMAINS DORMANT, NOT PERMANENTLY CLOSED.** The h5 study measured pooled IC sigma ~0.27 and found no useful `mom_12_1` signal at h5 (mean IC 0.0089, t_HAC 0.32). It did **not** identify an effective breadth of 17: observed IC variance mixes sampling noise, changing point-in-time membership/coverage, and genuine time variation in factor returns. Inverting it with `1/sqrt(n-3)` cannot separate those causes, and an h5 estimate cannot set h20 requirements. The n=400 and sector-neutral tests therefore remain legitimate measure-only experiments rather than rejected escape routes. `POST /api/agents/backtest/promote` still fails closed; no policy can consume these diagnostics.
 > **2026-07-28 US PIT step-4 hardening:** `us_pit_adv20_top400_v2` ranks membership on a complete 20-session trailing dollar-volume window, shares cached session reads across overlapping as-of dates, excludes partial-window names, and persists one top-400 superset so matched n=200/n=400 tests use the same ranking. Report schema v2 retains successful-date cross-section and complete universe provenance. `persist_edge_pit_snapshot()` atomically writes exact snapshots to append-only `edge_universe_members`; it is service-role-only and conflicts fail closed. India PIT membership remains unavailable. These changes improve measure-only evidence and do not enable promotion.
 > **PROMOTION IS DORMANT (2026-07-27).** `POST /api/agents/backtest/promote` fails closed with `promotion_evidence_not_oos` (503) before any write. Adversarial review found one P0 and three P1 issues that each independently disqualify the current path: promotion is non-atomic (supersede-then-insert can leave a segment with no active policy); the evidence is not out-of-sample (~98.4% window overlap AND a current-liquid universe replayed through past dates — survivorship bias that more weekly runs cannot fix); `dsr_z` was not a Deflated Sharpe Ratio and is renamed `t_margin_vs_trials`, with the `dsr` column now written NULL; and experiment lineage is optional and unbound to the edge/market/horizon/segment it justifies. Re-enable only after `features/walk-forward-ic-folds/FEATURE_ARCHITECTURE.md` is approved and shipped: frozen experiment lineage → PIT universe/inputs → purged market-session OOS folds → aggregate HAC IC → multiple-testing + cost-adjusted validation → atomic promotion RPC.
-> Last updated: 2026-09-02 (per-session IC series + t-stat + Learning-page panel; h60/h120 evaluation horizons — see "Evaluation
+> Last updated: 2026-10-19 (Evidence Router score-component traces, evaluation code v3); prior: 2026-09-02 (per-session IC series + t-stat + Learning-page panel; h60/h120 evaluation horizons — see "Evaluation
 > horizons are decoupled from holding period"; 2026-08-16 label-maturation
 > coverage + starvation W7/W8 — see
 > "Label maturation: coverage, budgets and skip accounting"). Prior note

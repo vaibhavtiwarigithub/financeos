@@ -19,6 +19,7 @@ import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/tr
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 import { benefitVerdictFromPairedAttribution, defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
 import { TIME_REVIEW_POLICY_VERSION } from "@/lib/trading/time-review-exit";
+import { EVALUATION_CODE_VERSION } from "@/lib/evidence/evaluation/cohort";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -101,6 +102,7 @@ type QueryResult<T> = { data: T | null; count?: number | null; error: { message?
 export type ShadowMarket = "us" | "india";
 
 export interface RouterEvaluationRow {
+  id?: string;
   market: string;
   passed: boolean;
   safety_pass: boolean;
@@ -114,6 +116,48 @@ export interface RouterEvaluationRow {
   strategy_version: string | null;
   requires_owner_review?: unknown;
 }
+
+export function routerScoreTraceDetails(rows: any[]): string[] {
+  return rows
+    .filter((row) => Number.isFinite(Number(row.score_delta)) && Math.abs(Number(row.score_delta)) > 2)
+    .sort((a, b) => Math.abs(Number(b.score_delta)) - Math.abs(Number(a.score_delta)))
+    .slice(0, 5)
+    .map((row) => {
+      const legacyTrace = row.legacy_score_trace ?? {};
+      const candidateTrace = row.candidate_score_trace ?? {};
+      const legacy = legacyTrace.dimensions ?? {};
+      const candidate = candidateTrace.dimensions ?? {};
+      const dimensionDeltas = SCORE_TRACE_DIMENSIONS.map((dimension) => {
+        const before = Number(legacy[dimension]?.contribution ?? 0);
+        const after = Number(candidate[dimension]?.contribution ?? 0);
+        return { dimension, delta: after - before };
+      });
+      const parts = dimensionDeltas.filter((part) => Math.abs(part.delta) >= 0.5)
+        .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+        .slice(0, 3);
+      const omittedDimensionDelta = dimensionDeltas
+        .filter((part) => !parts.some((shown) => shown.dimension === part.dimension))
+        .reduce((sum, part) => sum + part.delta, 0);
+      const componentDelta = dimensionDeltas.reduce((sum, part) => sum + part.delta, 0);
+      const numberOr = (value: unknown, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+      const sumContributions = (dimensions: Record<string, { contribution?: unknown }>) =>
+        SCORE_TRACE_DIMENSIONS.reduce((sum, dimension) => sum + Number(dimensions[dimension]?.contribution ?? 0), 0);
+      const legacyRaw = numberOr(legacyTrace.weightedScore, sumContributions(legacy));
+      const candidateRaw = numberOr(candidateTrace.weightedScore, sumContributions(candidate));
+      const legacyRounded = numberOr(legacyTrace.roundedWeightedScore, legacyRaw);
+      const candidateRounded = numberOr(candidateTrace.roundedWeightedScore, candidateRaw);
+      const roundingDelta = (candidateRounded - candidateRaw) - (legacyRounded - legacyRaw);
+      const partsLabel = parts.map((part) => `${part.dimension} ${part.delta > 0 ? "+" : ""}${part.delta.toFixed(1)}`);
+      if (Math.abs(omittedDimensionDelta) >= 0.5) {
+        partsLabel.push(`other dimensions ${omittedDimensionDelta > 0 ? "+" : ""}${omittedDimensionDelta.toFixed(1)}`);
+      }
+      const capDelta = numberOr(candidateTrace.capAdjustment, 0) - numberOr(legacyTrace.capAdjustment, 0);
+      const fmt = (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
+      return `${row.symbol}: final ${fmt(Number(row.score_delta))}; dimension contributions ${fmt(componentDelta)}${partsLabel.length ? ` (${partsLabel.join(", ")})` : ""}; rounding ${fmt(roundingDelta)}; ETF cap ${fmt(capDelta)}`;
+    });
+}
+
+const SCORE_TRACE_DIMENSIONS = ["fundamental", "technical", "sentiment", "macro", "insider"] as const;
 
 function sameRouterTuple(a: RouterEvaluationRow, b: RouterEvaluationRow): boolean {
   return a.market === b.market
@@ -429,7 +473,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("active_evidence_policy").select("market,policy_version_id").eq("market", market),
     svc.from("evidence_policy_versions").select("id,market,version,router_enabled,change_note").eq("market", market),
     svc.from("evidence_policy_evaluations")
-      .select("market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date,candidate_version_id,baseline_version_id,evaluation_code_version,strategy_version")
+      .select("id,market,passed,safety_pass,quality_pass,eligibility_flips,requires_owner_review,created_at,expires_at,market_session_date,candidate_version_id,baseline_version_id,evaluation_code_version,strategy_version")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(300),
     svc.from("provider_call_ledger")
       .select("id", { count: "exact", head: true })
@@ -568,6 +612,30 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const activePolicies = activePolicyRes.data ?? [];
   const policyVersions = policyVersionsRes.data ?? [];
   const evaluations = evaluationRes.data ?? [];
+  const latestRouterEvaluationId = evaluations[0]?.id;
+  const routerTraceRes = latestRouterEvaluationId
+    ? await svc.from("evidence_evaluation_details")
+      .select("symbol,score_delta,legacy_score_trace,candidate_score_trace")
+      .eq("evaluation_id", latestRouterEvaluationId)
+      .order("symbol", { ascending: true })
+      .limit(1000)
+    : { data: [], error: null };
+  const traceRows = routerTraceRes.data ?? [];
+  const hasTrace = traceRows.some((row: any) =>
+    Object.keys(row.legacy_score_trace?.dimensions ?? {}).length > 0
+    && Object.keys(row.candidate_score_trace?.dimensions ?? {}).length > 0);
+  const scoreDriftDetails = hasTrace ? routerScoreTraceDetails(traceRows) : [];
+  const routerTraceDetails = routerTraceRes.error
+    ? ["Per-dimension score trace is unavailable (the score-trace migration may not yet be applied); total score drift remains visible in the source ledger."]
+    : hasTrace
+      ? (scoreDriftDetails.length
+        ? scoreDriftDetails
+        : ["No material aggregate score drift (>2 points) appears in the latest evaluation batch."])
+      : [latestRouterEvaluationId
+        ? evaluations[0]?.evaluation_code_version === EVALUATION_CODE_VERSION
+          ? "The latest v3 evaluation has no persisted component trace despite the new code version; investigate the detail writer."
+          : "The latest evaluation predates the immutable component trace; the first v3 batch will expose dimension-level drift."
+        : "No Router evaluation exists yet to diagnose."];
   const ledgerCount = callLedgerRes.count ?? 0;
   const degradation = degradationRes.data ?? [];
   const shadowDecisions = shadowDecisionRes.data ?? [];
@@ -986,7 +1054,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.nextAction = status.lifecycle === "ready_for_review"
         ? "Review flagged divergences and prepare a separate market-local activation decision."
         : "Repair failing coverage/quality dimensions and continue daily cohort proofs.";
-      status.details = [`${market.toUpperCase()} latest: ${latest?.passed ? "pass" : "fail or unavailable"}`];
+      status.details = [
+        `${market.toUpperCase()} latest: ${latest?.passed ? "pass" : "fail or unavailable"}`,
+        ...routerTraceDetails,
+      ];
       status.available = !evaluationRes.error && !callLedgerRes.error && !networkCallRes.error && !cacheHitRes.error;
       return status;
     }

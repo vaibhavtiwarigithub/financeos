@@ -10,7 +10,7 @@ import {
   type LegacyDecision,
   type ResolveFn,
 } from "@/lib/evidence/evaluation/cohort-builder";
-import { evaluateCohort, type FrozenCohort } from "@/lib/evidence/evaluation/cohort";
+import { evaluateCohort, scorePath, type FrozenCohort } from "@/lib/evidence/evaluation/cohort";
 import { computeWeightedAnalystScore } from "@/lib/scoring/weighted-score";
 import type { EvidenceEnvelope, EvidenceIntent, Market, MetricBasis } from "@/lib/evidence/contracts";
 
@@ -242,6 +242,35 @@ describe("cohort builder — legacy leg reproduces the recorded score", () => {
     expect(legacy.included.insider).toBe(false);
     const { score } = computeWeightedAnalystScore(legacy.scores, legacy.included, WEIGHTS);
     expect(score).toBe(50); // matches prod exactly
+  });
+});
+
+describe("cohort score trace", () => {
+  it("decomposes the exact weighted score by included dimension without changing the score", () => {
+    const dec = decision({
+      symbol: "TRACE",
+      scores: { fundamental: 80, technical: 60, sentiment: 40, macro: 20, insider: 99 },
+      dataQuality: {
+        fundamentalDataAvailable: true, technicalDataPoints: 120,
+        sentimentDataAvailable: true, macroDataAvailable: true, insiderDataAvailable: false,
+      },
+    });
+    const cohort = assembleCohort({
+      evaluationId: "trace-eval", market: US, asOf: "2026-07-17T13:00:00Z", marketSessionDate: "2026-07-17",
+      universeSnapshotId: "trace-universe", baselinePolicyVersionId: "pv1", candidatePolicyVersionId: "pv2",
+      strategyVersion: "v1", weights: WEIGHTS, scoreThreshold: 60, priceBasis: "eod_adjusted",
+      coverageNonInferiorityMargin: 0.05, maxAdverseRankDisplacement: 5,
+      decisions: [dec], snapshot: fullSnapshot(US, ["TRACE"], ALL_INTENTS),
+    });
+    const scored = scorePath(cohort, "legacy")[0];
+    const trace = scored.scoreTrace;
+    const contributionTotal = Object.values(trace.dimensions).reduce((sum, part) => sum + part.contribution, 0);
+
+    expect(trace.dimensions.insider).toMatchObject({ score: null, included: false, effectiveWeight: 0, contribution: 0 });
+    expect(Object.values(trace.dimensions).reduce((sum, part) => sum + part.effectiveWeight, 0)).toBeCloseTo(1);
+    expect(contributionTotal).toBeCloseTo(trace.weightedScore!);
+    expect(trace.finalScore).toBe(scored.score);
+    expect(trace.capAdjustment).toBe(0);
   });
 });
 

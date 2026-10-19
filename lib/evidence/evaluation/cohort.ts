@@ -38,7 +38,7 @@ import {
   type SymbolParity,
 } from "@/lib/evidence/evaluation/parity";
 
-export const EVALUATION_CODE_VERSION = "evidence-evaluation-v2";
+export const EVALUATION_CODE_VERSION = "evidence-evaluation-v3";
 
 // ── frozen inputs ────────────────────────────────────────────────────────────
 
@@ -107,6 +107,14 @@ export interface ScoredSymbol {
   symbol: string;
   status: PathStatus;
   score: number | null;
+  /** Exact input/weight decomposition used to produce score; diagnostic only. */
+  scoreTrace: {
+    dimensions: Record<ScoreDimension, { score: number | null; included: boolean; baseWeight: number; effectiveWeight: number; contribution: number }>;
+    weightedScore: number | null;
+    roundedWeightedScore: number | null;
+    finalScore: number | null;
+    capAdjustment: number | null;
+  };
   includedDims: ScoreDimension[];
   renormalized: boolean;
   thinEvidence: boolean;
@@ -132,6 +140,15 @@ export function scorePath(cohort: FrozenCohort, path: "legacy" | "candidate"): S
         symbol: row.symbol,
         status: obs.status,
         score: null,
+        scoreTrace: {
+          dimensions: Object.fromEntries(SCORE_DIMENSIONS.map((dimension) => [dimension, {
+            score: null, included: false, baseWeight: cohort.weights[dimension], effectiveWeight: 0, contribution: 0,
+          }])) as ScoredSymbol["scoreTrace"]["dimensions"],
+          weightedScore: null,
+          roundedWeightedScore: null,
+          finalScore: null,
+          capAdjustment: null,
+        },
         includedDims: [],
         renormalized: false,
         thinEvidence: true,
@@ -152,6 +169,16 @@ export function scorePath(cohort: FrozenCohort, path: "legacy" | "candidate"): S
     const weighted = computeWeightedAnalystScore(obs.scores, obs.included, cohort.weights);
     const { renormalized, includedDims } = weighted;
     const score = capEtfLikeScore(weighted.score, row.shape === "etf" || row.shape === "metal");
+    const dimensions = Object.fromEntries(SCORE_DIMENSIONS.map((dimension) => {
+      const effectiveWeight = weighted.effWeights[dimension];
+      return [dimension, {
+        score: obs.included[dimension] ? obs.scores[dimension] : null,
+        included: obs.included[dimension],
+        baseWeight: cohort.weights[dimension],
+        effectiveWeight,
+        contribution: obs.included[dimension] ? obs.scores[dimension] * effectiveWeight : 0,
+      }];
+    })) as ScoredSymbol["scoreTrace"]["dimensions"];
     const thin = isThinEvidence(includedDims);
     const gate = resolveSignalDirection({
       isHeld: row.isHeld,
@@ -166,6 +193,13 @@ export function scorePath(cohort: FrozenCohort, path: "legacy" | "candidate"): S
       symbol: row.symbol,
       status: obs.status,
       score,
+      scoreTrace: {
+        dimensions,
+        weightedScore: SCORE_DIMENSIONS.reduce((sum, dimension) => sum + dimensions[dimension].contribution, 0),
+        roundedWeightedScore: weighted.score,
+        finalScore: score,
+        capAdjustment: score - weighted.score,
+      },
       includedDims,
       renormalized,
       thinEvidence: thin,

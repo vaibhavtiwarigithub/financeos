@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
-import { routerReadiness, type RouterEvaluationRow } from "@/lib/shadows/status";
+import { routerReadiness, routerScoreTraceDetails, type RouterEvaluationRow } from "@/lib/shadows/status";
 
 describe("shadow registry governance contract", () => {
   const migration = readFileSync("supabase/migrations/20260729210000_shadow_registry_cron_status.sql", "utf8");
@@ -268,6 +268,21 @@ describe("shadow registry governance contract", () => {
     expect(result.selectedPasses).toBe(true);
     expect(result.passingSessions.size).toBe(10);
     expect(result.passingSessions.has("2026-08-10")).toBe(false);
+  });
+
+  it("explains material Router score drift using frozen dimension contribution deltas", () => {
+    const details = routerScoreTraceDetails([{
+      symbol: "EXAMPLE",
+      score_delta: 12,
+      legacy_score_trace: { dimensions: { fundamental: { contribution: 20 }, technical: { contribution: 15 } }, weightedScore: 35, roundedWeightedScore: 35, capAdjustment: 0 },
+      candidate_score_trace: { dimensions: { fundamental: { contribution: 26 }, technical: { contribution: 21 } }, weightedScore: 47, roundedWeightedScore: 47, capAdjustment: 0 },
+    }]);
+    expect(details).toHaveLength(1);
+    expect(details[0]).toContain("EXAMPLE: final +12.0");
+    expect(details[0]).toContain("dimension contributions +12.0");
+    expect(details[0]).toContain("fundamental +6.0");
+    expect(details[0]).toContain("technical +6.0");
+    expect(details[0]).toContain("rounding 0.0; ETF cap 0.0");
   });
 
   it("paginates label coverage instead of trusting PostgREST's per-request row cap", () => {

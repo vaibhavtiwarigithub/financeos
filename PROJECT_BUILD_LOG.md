@@ -22,6 +22,16 @@ Claude should update this summary periodically with:
 
 *Log meaningful instructions below. Skip tiny wording changes and obvious bug fixes.*
 
+### Entry 13 - 2026-10-19 (Reuse-first coding-agent workflow)
+
+Instruction: Make Codex and Claude inspect the implemented system precisely before adding more code, and prefer extending/reusing the canonical owner over parallel implementations.
+Classification: Cross-agent engineering workflow / maintainability
+Affected area: Repository task intake, source discovery, architecture ownership, implementation notes, and regression verification.
+Impact: High leverage; targets duplicate routes/modules and stale assumptions without creating a second hand-maintained catalog that can drift.
+Decision: Reuse-first protocol added at `docs/development/code-reuse-protocol.md` and linked at the top of `WORK_LOG.md`, which both agents are required to read. Before creating a module/route/table/cron/UI component, agents must search definitions and callers with `rg`/Graphify, inspect contracts and tests, and record whether they will extend an existing owner or why a new owner is needed. Source/tests remain authoritative; graph results must be verified. The protocol also scales plan-first work to risk/ambiguity, scopes context without an arbitrary message-count reset, and requires deliberate consolidation—not an automatic revert—when duplication is found. Reuse is not mandatory when an existing implementation is unsafe or semantically incompatible.
+Evidence: Current repo already has architecture-first rules, feature specs, a task-claiming work log, architecture chapters, and Graphify; the missing requirement was an explicit reuse decision and caller-level proof before additions. GitHub documents definition/reference code navigation; OpenAI recommends concise scoped repository rules, deterministic checks, and context management; Anthropic supports shared project instructions. Official reference links are now in the protocol.
+Status: Implemented and linked for both tool workflows; source release pending. No `AGENTS.md`/`PRD.md` changes and no application behavior changed by this process rule.
+
 ### Entry 12 - 2026-09-11
 
 Instruction: Independently validate the proposed US technical-score diagnosis, size the no-time-stop indefinite-hold gap, state the correct fix, and repair any confirmed data defect.

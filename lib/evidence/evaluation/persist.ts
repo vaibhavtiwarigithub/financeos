@@ -110,6 +110,8 @@ export async function persistEvaluation(opts: PersistOptions): Promise<string> {
       candidate_status: d.candidate.status,
       legacy_score: d.legacy.score,
       candidate_score: d.candidate.score,
+      legacy_score_trace: d.legacy.scoreTrace,
+      candidate_score_trace: d.candidate.scoreTrace,
       score_delta: d.scoreDelta,
       legacy_rank: d.legacy.rank,
       candidate_rank: d.candidate.rank,
