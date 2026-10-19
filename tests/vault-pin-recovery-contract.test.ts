@@ -14,7 +14,7 @@ describe("forgotten Vault PIN recovery contract", () => {
     expect(route).toContain("email: OWNER_EMAIL");
     expect(route).toContain("shouldCreateUser: false");
     expect(route).toContain("process.env.NEXT_PUBLIC_SITE_URL");
-    expect(route).toContain("process.env.NEXT_PUBLIC_APP_URL");
+    expect(route).toContain('"https://financeos-phi.vercel.app"');
     expect(route).toContain('emailRedirectTo: redirectTo.toString()');
     expect(route).toContain('redirectTo.searchParams.set("next", "/dashboard/admin/vault?pin_recovery=1")');
     const recoveryStart = route.indexOf('if (action === "send_recovery_link")');

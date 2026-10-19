@@ -29,9 +29,9 @@ export async function POST(req: NextRequest) {
   // clickable sign-in link only to the canonical owner address, returning to
   // the locked Vault after /auth/confirm has established the link's session.
   if (action === "send_recovery_link") {
-    const appBase = process.env.NEXT_PUBLIC_SITE_URL
-      ?? process.env.NEXT_PUBLIC_APP_URL
-      ?? new URL(req.url).origin
+    // Use the canonical Supabase Site URL as the safe default. The active
+    // auth allow-list includes this host, not arbitrary Vercel preview hosts.
+    const appBase = process.env.NEXT_PUBLIC_SITE_URL ?? "https://financeos-phi.vercel.app"
     const redirectTo = new URL("/auth/confirm", appBase)
     redirectTo.searchParams.set("next", "/dashboard/admin/vault?pin_recovery=1")
     const { error } = await sb.auth.signInWithOtp({
