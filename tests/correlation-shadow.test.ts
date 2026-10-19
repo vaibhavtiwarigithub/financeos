@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  computeCorrelationShadow, pearson,
-  MAX_SINGLE_PAIR_CORR, MAX_AVG_CORR_TO_BOOK, MIN_SHARED_SESSIONS,
+  computeCorrelationShadow, computeCovarianceSizingShadow, covarianceShrinkage, loadPointInTimeReturnPanel, pearson,
+  MAX_SINGLE_PAIR_CORR, MAX_AVG_CORR_TO_BOOK, MIN_SHARED_SESSIONS, MIN_COVARIANCE_SESSIONS,
 } from "@/lib/portfolio/correlation-shadow";
 
 /** Deterministic series: y = rho*x + sqrt(1-rho^2)*z, so correlation is known. */
@@ -98,6 +98,102 @@ describe("absent history is UNMEASURABLE, never a pass", () => {
   });
 });
 
+describe("point-in-time covariance sizing shadow", () => {
+  const dates = Array.from({ length: MIN_COVARIANCE_SESSIONS }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}`);
+  const common = Object.fromEntries(dates.map((date, i) => [date, i % 2 === 0 ? 0.02 : -0.02]));
+
+  it("uses deterministic diagonal shrinkage that increases with dimension and decreases with sample size", () => {
+    const first = covarianceShrinkage(60, 10);
+    const repeated = covarianceShrinkage(60, 10);
+    expect(repeated).toBe(first);
+    expect(covarianceShrinkage(60, 10)).toBeGreaterThan(covarianceShrinkage(120, 10));
+    expect(covarianceShrinkage(60, 20)).toBeGreaterThan(covarianceShrinkage(60, 10));
+  });
+
+  it("shrinks but never increases the constructor size when measured portfolio risk exceeds budget", () => {
+    const result = computeCovarianceSizingShadow({
+      candidate: "NEW",
+      book: [{ symbol: "HELD", valuePct: 50 }],
+      returns: { HELD: common, NEW: common },
+      priceBasis: "adjusted_close",
+      commonSessions: dates,
+      baselineSizePct: 20,
+      maxPortfolioDailyVolPct: 1.15,
+    });
+    expect(result.state).toBe("measured");
+    expect(result.counterfactualSizePct).toBeLessThan(20);
+    expect(result.counterfactualSizePct).toBeGreaterThanOrEqual(0);
+    expect(result.counterfactualDailyVolPct).toBeLessThanOrEqual(1.15 + 1e-6);
+    expect(result.sizeReductionPct).toBeCloseTo(20 - result.counterfactualSizePct!, 4);
+  });
+
+  it("preserves the baseline when risk is already within budget", () => {
+    const result = computeCovarianceSizingShadow({
+      candidate: "NEW", book: [{ symbol: "HELD", valuePct: 5 }],
+      returns: { HELD: common, NEW: common }, priceBasis: "raw_close", commonSessions: dates,
+      baselineSizePct: 5, maxPortfolioDailyVolPct: 2,
+    });
+    expect(result.state).toBe("measured");
+    expect(result.counterfactualSizePct).toBe(5);
+    expect(result.sizeReductionPct).toBe(0);
+  });
+
+  it("does not treat insufficient history or a missing common price basis as safe risk", () => {
+    const thinDates = dates.slice(0, MIN_COVARIANCE_SESSIONS - 1);
+    const thin = Object.fromEntries(thinDates.map((date) => [date, 0.01]));
+    expect(computeCovarianceSizingShadow({
+      candidate: "NEW", book: [], returns: { NEW: thin }, priceBasis: "adjusted_close",
+      commonSessions: thinDates, baselineSizePct: 10, maxPortfolioDailyVolPct: 2,
+    })).toMatchObject({ state: "unmeasurable", counterfactualSizePct: null });
+    expect(computeCovarianceSizingShadow({
+      candidate: "NEW", book: [], returns: { NEW: common }, priceBasis: null,
+      commonSessions: dates, baselineSizePct: 10, maxPortfolioDailyVolPct: 2,
+    })).toMatchObject({ state: "unmeasurable", reason: "no_common_price_basis", counterfactualSizePct: null });
+  });
+
+  it("keeps an already over-budget book from being represented as fixed by the candidate", () => {
+    const result = computeCovarianceSizingShadow({
+      candidate: "NEW", book: [{ symbol: "HELD", valuePct: 80 }],
+      returns: { HELD: common, NEW: common }, priceBasis: "adjusted_close", commonSessions: dates,
+      baselineSizePct: 10, maxPortfolioDailyVolPct: 1,
+    });
+    expect(result.state).toBe("measured");
+    expect(result.counterfactualSizePct).toBe(0);
+    expect(result.counterfactualDailyVolPct).toBeGreaterThan(1);
+  });
+
+  it("loads only rows available by the decision instant and selects one common price basis", async () => {
+    const decisionAt = new Date("2026-10-18T18:00:00.000Z");
+    const rows: any[] = [];
+    for (let i = 0; i < MIN_COVARIANCE_SESSIONS; i++) {
+      const date = `2026-01-${String(i + 1).padStart(2, "0")}`;
+      rows.push({ id: i + 1, symbol: "A", session_date: date, simple_return: 0.01, available_at: "2026-10-18T17:00:00.000Z", price_basis: "adjusted_close", input_fingerprint: `a${i}` });
+      rows.push({ id: MIN_COVARIANCE_SESSIONS + i + 1, symbol: "B", session_date: date, simple_return: -0.01, available_at: "2026-10-18T17:00:00.000Z", price_basis: "adjusted_close", input_fingerprint: `b${i}` });
+    }
+    rows.push({ id: 9999, symbol: "A", session_date: "2026-03-01", simple_return: 0.99, available_at: "2026-10-18T19:00:00.000Z", price_basis: "adjusted_close", input_fingerprint: "future" });
+    rows.push({ id: 10000, symbol: "A", session_date: dates[0], simple_return: 0.02, available_at: "2026-10-18T17:30:00.000Z", price_basis: "adjusted_close", input_fingerprint: "revision" });
+
+    let cutoff = "";
+    const builder: any = {
+      select() { return this; }, eq() { return this; }, in() { return this; }, gte() { return this; }, not() { return this; },
+      lte(_column: string, value: string) { cutoff = value; return this; },
+      order() { return this; }, limit() { return this; },
+      then(resolve: (value: any) => unknown, reject: (reason: unknown) => unknown) {
+        const filtered = rows.filter((row) => row.available_at <= cutoff)
+          .sort((a, b) => b.available_at.localeCompare(a.available_at) || b.id - a.id);
+        return Promise.resolve({ data: filtered, error: null }).then(resolve, reject);
+      },
+    };
+    const panel = await loadPointInTimeReturnPanel({ from: () => builder }, "us", ["A", "B"], decisionAt);
+    expect(cutoff).toBe(decisionAt.toISOString());
+    expect(panel.priceBasis).toBe("adjusted_close");
+    expect(panel.commonSessions).toHaveLength(MIN_COVARIANCE_SESSIONS);
+    expect(panel.returns.A[dates[0]]).toBe(0.02);
+    expect(panel.returns.A["2026-03-01"]).toBeUndefined();
+    expect(panel.evidenceFingerprint).toMatch(/^fnv1a-/);
+  });
+});
+
 describe("BOUNDARY: the shadow may not reach the money path", () => {
   const strip = (p: string) => readFileSync(p, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
@@ -123,5 +219,14 @@ describe("BOUNDARY: the shadow may not reach the money path", () => {
     for (const forbidden of ["continue", "skipped.push", "revertClaim", "return "]) {
       expect(region).not.toContain(forbidden);
     }
+
+    const covarianceStart = route.indexOf("computeCovarianceSizingShadow({");
+    const covarianceEnd = route.indexOf("const noRoom", covarianceStart);
+    expect(covarianceStart).toBeGreaterThan(-1);
+    expect(covarianceEnd).toBeGreaterThan(covarianceStart);
+    const covarianceRegion = route.slice(covarianceStart, covarianceEnd);
+    expect(covarianceRegion).toContain('stage: "covariance_sizing_shadow"');
+    expect(covarianceRegion).not.toContain("continue");
+    expect(route).not.toContain("riskShadow.counterfactualSizePct");
   });
 });

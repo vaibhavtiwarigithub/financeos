@@ -1,7 +1,7 @@
 # Correlation-Aware Portfolio Construction — FEATURE ARCHITECTURE
 
-> Status: **Reviewed / measurement prerequisite required / P0-P1 activation not approved.** Design only.
-> Last updated: 2026-07-16.
+> Status: **Owner-approved measure-only covariance shadow implemented in mainline; money-path activation remains unapproved.**
+> Last updated: 2026-10-18.
 > Per-market applicability: **both** — correlation **gating/sizing is strictly per-market** (US/USD and India/INR pools are separate; never cross-summed). Cross-market correlation is **display-only awareness, never a gate**.
 > Sequencing: folds in **after** the in-flight Codex paper-autonomy fixes (they own `paper-trade`/`position-monitor` right now) and alongside the holdings-priority research fix.
 > Update this file when: the risk inputs, estimator, selection rule, or the gating/display boundary change.
@@ -21,13 +21,13 @@ The earlier draft overstates what is reusable from Holding Risk. Do **not** wire
 1. During ResearchAgent's existing candle fetch, append a compact, immutable per-symbol return observation with `market`, `symbol`, `as_of`, `available_at`, provider/source, return dates, daily vol, benchmark beta when measurable, overlap count, and input fingerprint. Do not make another provider call for this record.
 2. Build candidate-to-held pair estimates from observations where `available_at <= decision_at`, with at least 60 shared sessions, deterministic shrinkage, and sector-proxy fallback explicitly labeled `low_confidence`.
 3. Run the measured penalty in **shadow only** and persist baseline size/rank, shadow size/rank, evidence IDs, fallback reason, and every eligibility flip.
-4. Activate P0 only after a frozen-cohort test proves no order is larger and no baseline safety rejection becomes eligible. Activate P1 separately after shadow evidence shows the reordering improves diversification without weakening score, mandate, liquidity, capacity, or execution gates.
+4. Before any activation, run a frozen, paired portfolio replay proving no order is larger and no baseline safety rejection becomes eligible. Any candidate reordering is a separate P1 decision and needs paired evidence that it improves the objective without weakening score, mandate, liquidity, capacity, turnover, or execution gates.
 
 Until those prerequisites exist, the production constructor remains on its current conservative volatility/sector-proxy behavior. Faking candidate correlations from held-name cluster averages is prohibited.
 
-### Implementation notes — §0 item 1 SHIPPED (2026-07-16), items 2-4 NOT started
+### Implementation notes — §0 item 1 SHIPPED (2026-07-16); measurement shadow shipped (2026-10-18); activation NOT approved
 
-Item 1 (the per-symbol return-observation contract) is built. **It activates nothing.** Items 2, 3 and 4 remain open; the constructor is untouched and still runs on `beta: null, dailyVol: null` + the sector-proxy constants.
+Item 1 (the per-symbol return-observation contract) was built in July. The 2026-10-18 implementation adds a deterministic, point-in-time covariance-risk counterfactual and owner-visible evidence. **It still activates nothing:** the existing constructor, candidate ordering, sizing, fills, exits, and live path are unchanged. P0/P1 money-path activation and portfolio-return claims remain open.
 
 | Piece | Where |
 |---|---|
@@ -37,6 +37,10 @@ Item 1 (the per-symbol return-observation contract) is built. **It activates not
 | Tables (append-only, owner-read RLS) | `symbol_return_observations` summaries + `symbol_daily_returns` frozen per-session series |
 | Coverage report (owner-gated) | `GET /api/analytics/return-observation-coverage?minShared=60` |
 | Unit tests | `lib/data/return-observations.test.ts` |
+| PIT same-basis return panel + diagonal-target covariance shrinkage | `lib/portfolio/correlation-shadow.ts` |
+| Candidate baseline-vs-covariance size/risk event, measure-only | `paper-trade` → `pipeline_stage_events.stage='covariance_sizing_shadow'` |
+| Owner-only 30-day evidence reader | `GET /api/portfolio/covariance-shadow?market=us|india` |
+| Owner-facing panel | Upgrade Path → **Covariance-aware sizing · shadow** |
 
 **Hook point.** The capture piggybacks on the candles `processSymbol` already fetches for scoring — it makes **no provider call of its own**. The candle *source* (previously discarded by `.then(r => r.candles)`) is now carried alongside the bars so the observation records its provenance. The benchmark series was **hoisted, not added**: `getRegimeFeatures` previously fetched SPY/`^NSEI` inline; both it and the capture now share one promise-deduped 30-min cache, so the run still makes exactly one benchmark load per market. US benchmark closes come from `price_cache` (a DB read, not a provider call).
 
@@ -48,6 +52,12 @@ Item 1 (the per-symbol return-observation contract) is built. **It activates not
 
 **Per-session series (Option A).** `symbol_daily_returns` stores each frozen simple return with both session dates, source, `available_at`, explicit `adjusted_close`/`raw_close` basis, closes, and an immutable input fingerprint. Item 2 can align exact shared sessions point-in-time without refetching candles. Revisions remain separately auditable; an estimator must select the latest row available at its decision cutoff and must not compare incompatible price bases silently.
 
+**Covariance-risk shadow (2026-10-18).** At each paper-trader candidate evaluation, the loader selects the newest row per `(symbol, session_date)` whose `available_at <= decisionAt`, then chooses one common price basis for the candidate and the current market-local book. The counterfactual requires 60 complete shared sessions across every symbol; otherwise it records `unmeasurable` and never calls missing data low risk. It computes the sample covariance on that complete-case panel and shrinks the off-diagonal terms toward the diagonal by `clamp(p/(n+p), 0.10, 0.50)`, a deterministic dimension/sample-size rule. This convex diagonal shrink keeps the covariance matrix positive semidefinite and avoids fitting a shrinkage parameter to outcomes. The calculation starts from the actual constructor-sized candidate and may only reduce it to satisfy the same configured daily volatility cap; if the existing book already exceeds that cap, the counterfactual candidate size is zero and the reason is recorded. It does not reorder candidates, compute expected returns, or enter an order path.
+
+**Audit/UX.** `covariance_sizing_shadow` stores the constructor baseline size, shadow-only size, baseline/counterfactual estimated daily volatility, cap, sample dates/count, price basis, shrinkage and a fingerprint of the selected immutable return rows. The owner-only Upgrade Path API returns the latest 100 events in the last 30 days, separately by market. The panel states that this is a risk diagnostic—not portfolio P&L or proof of better returns. It requires no migration or additional provider call because it uses existing `pipeline_stage_events` and `symbol_daily_returns`.
+
+**What is not complete by design.** This is not the full Markowitz mean-variance optimizer: no expected-return vector `μ` is used because the existing score-to-return relationship is not validated as an expected return. No portfolio-level matched replay is emitted by this component. A future performance claim still requires a frozen baseline/variant replay with identical candidate universe, current holdings, cash, fills, costs, stops/targets, turnover, and market-local benchmark marks, plus non-overlapping outcome windows. Risk-shadow data alone cannot establish that the strategy earns more or beats a benchmark.
+
 ## 1. Verified current state (not assumed — read from code)
 
 The machinery is ~80% built and **fed fake inputs**:
@@ -56,7 +66,7 @@ The machinery is ~80% built and **fed fake inputs**:
 |---|---|
 | Sector cap (`max_positions_per_sector`, default 3, market-local) | **Enforced** ✅ |
 | Portfolio Constructor (`lib/portfolio/constructor.ts`) — name/sector/gross/**vol/correlation** rules at entry | **Runs**, and is correctly **subtractive** ("never increases a size, never force-sells the book") ✅ |
-| `beta`, `dailyVol` inputs | **`paper-trade` passes `beta: null, dailyVol: null`** → constructor falls back to a **flat `0.02` (2%/day) vol for every name** ❌ |
+| Normal paper constructor inputs | Candidate daily volatility is estimated from recent prices (with a logged 2% fallback); `beta` is null and existing book daily volatility is null, so the constructor falls back to 2%/day for held names. The new covariance estimate is shadow-only. |
 | Correlation used in the vol budget + Rule-5 haircut | **Proxied from sector**: `corr = sameSector ? CORR_SAME_SECTOR : CORR_CROSS_SECTOR` — two constants, **not measured co-movement** ❌ |
 | `max_avg_pairwise_corr` (0.7) | Explicitly *"informational bound; not solved for directly"* ❌ |
 | Real measured beta + aligned-return correlation | **Computed daily** by holding-risk (`lib/risk/holding-risk.ts`, `lib/risk/correlation.ts` → `computeCorrelationClusters`) — but powers the **Risk Analytics display only**, never the entry decision ❌ |

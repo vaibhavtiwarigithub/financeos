@@ -63,6 +63,24 @@ type ShadowBookSnapshot =
       independentBlocks: number;
       blockers: string[];
     };
+type CovarianceShadowResponse = {
+  market: "us" | "india";
+  generatedAt: string;
+  summary: {
+    events: number; measured: number; unmeasurable: number; riskTrimmed: number;
+    averageSizeReductionPct: number | null; averageBaselineDailyVolPct: number | null;
+    averageCounterfactualDailyVolPct: number | null;
+  };
+  events: Array<{
+    symbol: string; state: string; reason: string | null; createdAt: string; decisionAt: string | null; signalId: string | null;
+    baselineSizePct: number | null; counterfactualSizePct: number | null;
+    baselineDailyVolPct: number | null; counterfactualDailyVolPct: number | null;
+    maxPortfolioDailyVolPct: number | null; sizeReductionPct: number | null;
+    commonSessions: number | null; firstSession: string | null; lastSession: string | null;
+    priceBasis: string | null; shrinkage: number | null;
+  }>;
+  boundary: string;
+};
 type LifecycleFilter = "all" | "active" | "review" | "blocked" | "off";
 
 const LIFECYCLE_META: Record<ShadowLifecycle, { label: string; color: string }> = {
@@ -392,6 +410,8 @@ function ProgramPanel({ program, mobile, market, collection }: {
 
 export default function UpgradePathPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [covariance, setCovariance] = useState<CovarianceShadowResponse | null>(null);
+  const [covarianceError, setCovarianceError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
@@ -402,9 +422,10 @@ export default function UpgradePathPage() {
   const load = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
-      const [response, collectionResponse] = await Promise.all([
+      const [response, collectionResponse, covarianceResponse] = await Promise.all([
         fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" }),
         fetch("/api/admin/shadow-liveness", { cache: "no-store" }),
+        fetch(`/api/portfolio/covariance-shadow?market=${market}`, { cache: "no-store" }),
       ]);
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
       const next = await response.json() as ApiResponse;
@@ -412,6 +433,13 @@ export default function UpgradePathPage() {
       if (collectionResponse.ok) {
         const collectionPayload = await collectionResponse.json() as { programs?: ApiResponse["collection"] };
         next.collection = collectionPayload.programs?.filter((row) => row.market === market) ?? [];
+      }
+      if (covarianceResponse.ok) {
+        setCovariance(await covarianceResponse.json() as CovarianceShadowResponse);
+        setCovarianceError("");
+      } else {
+        setCovariance(null);
+        setCovarianceError(`Covariance shadow history unavailable (${covarianceResponse.status})`);
       }
       setData(next);
       setError("");
@@ -425,6 +453,7 @@ export default function UpgradePathPage() {
   useEffect(() => {
     setLoading(true);
     setData(null);
+    setCovariance(null);
     load();
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
@@ -478,6 +507,54 @@ export default function UpgradePathPage() {
     {data?.summary.attribution && <div style={{ margin: "-6px 0 18px", padding: "11px 13px", border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, color: T.textSub, fontSize: 12, lineHeight: 1.5 }}>
       <b style={{ color: T.text }}>Portfolio attribution</b> · {data.summary.attribution.measured}/{data.summary.attribution.performanceEligible} performance-eligible paths measured ({data.summary.attribution.syntheticMeasured} synthetic diagnostic, not Kairos holdings) · {data.summary.attribution.collecting} collecting · {data.summary.attribution.producerMissing} producer missing · {data.summary.attribution.invalid} invalid. <span style={{ color: T.muted }}>{data.summary.attribution.notAttributable} operational-only paths are excluded. This is separate from “Review ready,” which reflects each program’s operational evidence gate.</span>
     </div>}
+
+    <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: mobile ? "15px" : "18px 20px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: "16px", margin: 0, color: T.text }}>Covariance-aware sizing · shadow</h2>
+          <p style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, margin: "6px 0 0", maxWidth: "850px" }}>
+            Point-in-time, same-market daily returns estimate portfolio volatility. The counterfactual can only trim the constructor’s candidate size; it is not an order instruction and does not claim higher returns.
+          </p>
+        </div>
+        <StatusPill label="Measure only · orders unchanged" color={T.blue} />
+      </div>
+      {covarianceError ? <div style={{ color: T.yellow, fontSize: "12px", marginTop: "12px" }}>{covarianceError}. Existing evidence is not treated as current.</div>
+        : !covariance || covariance.summary.events === 0 ? <div style={{ color: T.muted, fontSize: "12px", marginTop: "12px" }}>No covariance-sizing decisions have been logged in the last 30 days. Evidence begins when the market-local paper trader evaluates a candidate.</div>
+          : <>
+            <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))", gap: "8px", marginTop: "14px" }}>
+              {[
+                ["Decisions · 30d", String(covariance.summary.events)],
+                ["Measurable", String(covariance.summary.measured)],
+                ["Insufficient data", String(covariance.summary.unmeasurable)],
+                ["Would trim", String(covariance.summary.riskTrimmed)],
+                ["Mean size trim", fmtPct(covariance.summary.averageSizeReductionPct)],
+              ].map(([label, value]) => <div key={label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "10px 11px" }}>
+                <div style={{ color: T.text, fontSize: "16px", fontWeight: 750 }}>{value}</div>
+                <div style={{ color: T.muted, fontSize: "10px", marginTop: "3px", textTransform: "uppercase" }}>{label}</div>
+              </div>)}
+            </div>
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", color: T.textSub, fontSize: "12px", marginTop: "10px" }}>
+              <span>Mean estimated daily volatility: {fmtPct(covariance.summary.averageBaselineDailyVolPct)} → {fmtPct(covariance.summary.averageCounterfactualDailyVolPct)}</span>
+              <span>Latest capture: {fmtDate(covariance.events[0]?.createdAt ?? null)}</span>
+            </div>
+            <div style={{ overflowX: "auto", marginTop: "12px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "720px", fontSize: "11px" }}>
+                <thead><tr>{["Symbol", "State / reason", "Base → shadow size", "Daily vol · base → shadow", "Shared sessions · basis", "Decision"].map((heading) => <th key={heading} style={{ color: T.muted, textAlign: "left", padding: "8px 7px", borderBottom: `1px solid ${T.border}`, fontWeight: 700 }}>{heading}</th>)}</tr></thead>
+                <tbody>{covariance.events.slice(0, 12).map((event, index) => <tr key={`${event.signalId ?? event.symbol}-${event.createdAt}-${index}`}>
+                  <td style={{ color: T.text, padding: "8px 7px", borderBottom: `1px solid ${T.border}66`, fontWeight: 700 }}>{event.symbol}</td>
+                  <td style={{ color: event.state === "measured" && !event.reason ? T.green : T.yellow, padding: "8px 7px", borderBottom: `1px solid ${T.border}66` }}>{event.state === "measured" ? (event.reason ? `Measured · ${event.reason.replaceAll("_", " ")}` : "Measured") : event.reason ?? "Unmeasurable"}</td>
+                  <td style={{ color: T.textSub, padding: "8px 7px", borderBottom: `1px solid ${T.border}66` }}>{fmtPct(event.baselineSizePct)} → {fmtPct(event.counterfactualSizePct)}</td>
+                  <td style={{ color: T.textSub, padding: "8px 7px", borderBottom: `1px solid ${T.border}66` }}>{fmtPct(event.baselineDailyVolPct)} → {fmtPct(event.counterfactualDailyVolPct)}</td>
+                  <td style={{ color: T.textSub, padding: "8px 7px", borderBottom: `1px solid ${T.border}66` }}>{event.commonSessions ?? "—"} · {event.priceBasis ?? "—"}</td>
+                  <td style={{ color: T.muted, padding: "8px 7px", borderBottom: `1px solid ${T.border}66` }}>{fmtDate(event.createdAt)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+            <div style={{ color: T.muted, fontSize: "11px", lineHeight: 1.5, marginTop: "8px" }}>
+              A missing or thin return panel is shown as unmeasurable, never as low risk. This panel is risk diagnostics only—not a paired portfolio P&amp;L replay or a recommendation to enable the sizing rule.
+            </div>
+          </>}
+    </section>
 
     <section style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
       {([

@@ -274,6 +274,18 @@ Cash, name/sector/gross caps, correlation, share increments and transaction cost
 then bound that amount. Cash is capacity, not a buy signal; unused cash can mean
 that no candidate passed the current evidence and risk gates.
 
+### Covariance-aware sizing evidence (shadow only)
+
+PaperTrader now compares its constructor-sized candidate with a deterministic
+covariance-budget counterfactual on Upgrade Path. It uses only point-in-time
+`symbol_daily_returns`, one common price basis, and 60 complete shared sessions
+for the candidate plus the market-local book. Covariance is shrunk toward its
+diagonal target. The counterfactual can only reduce the candidate size; it never
+changes the order or reorders candidates. Insufficient evidence is explicit.
+This is risk measurement, not a Markowitz expected-return optimizer or a proven
+portfolio improvement. Any money-path activation requires separate paired
+portfolio replay evidence and owner approval.
+
 ## 9. Exit geometry
 
 Stops and targets are recorded with entry provenance, geometry version and observed

@@ -10,7 +10,7 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
 import { resolvePaperExposureLimits } from "@/lib/portfolio/paper-limits";
-import { computeCorrelationShadow, loadShadowReturns } from "@/lib/portfolio/correlation-shadow";
+import { computeCorrelationShadow, computeCovarianceSizingShadow, loadPointInTimeReturnPanel, type PointInTimeReturnPanel } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
@@ -914,20 +914,33 @@ export async function POST(req: NextRequest) {
       // passes beta: null, and strategy_config.max_avg_pairwise_corr is NULL),
       // so "would a correlation gate have helped?" is unanswered. Logging the
       // counterfactual makes it answerable later against realised outcomes.
+      let riskReturnPanel: PointInTimeReturnPanel | null = null;
       try {
         const bookSymbols = (bookByMarket.get(market) ?? []).map((b) => b.symbol);
-        const shadowReturns = await loadShadowReturns(
-          supabase, market as "us" | "india", [signal.symbol, ...bookSymbols],
+        const decisionAt = new Date();
+        riskReturnPanel = await loadPointInTimeReturnPanel(
+          supabase, market as "us" | "india", [signal.symbol, ...bookSymbols], decisionAt,
         );
         const shadow = computeCorrelationShadow({
-          candidate: signal.symbol, book: bookSymbols, returns: shadowReturns,
+          candidate: signal.symbol, book: bookSymbols, returns: riskReturnPanel.returns,
         });
         await logStage(supabase, {
           signal_id: signal.id, symbol: signal.symbol, market,
           stage: "correlation_shadow",
           outcome: shadow.verdict,
           reason: shadow.reason,
-          detail: { ...shadow, note: "measure-only; no fill was gated on this" },
+          detail: {
+            ...shadow,
+            point_in_time: {
+              decision_at: riskReturnPanel.decisionAt,
+              price_basis: riskReturnPanel.priceBasis,
+              common_sessions: riskReturnPanel.commonSessions.length,
+              first_session: riskReturnPanel.commonSessions[0] ?? null,
+              last_session: riskReturnPanel.commonSessions.at(-1) ?? null,
+              evidence_fingerprint: riskReturnPanel.evidenceFingerprint,
+            },
+            note: "measure-only; no fill was gated on this",
+          },
         });
       } catch { /* shadow only — never affects the fill */ }
 
@@ -979,6 +992,40 @@ export async function POST(req: NextRequest) {
         skipped.push({ symbol: signal.symbol, reason });
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, book: constructorBookSnapshot } });
         continue;
+      }
+
+      // Mean-variance-inspired covariance counterfactual. It starts from the
+      // existing constructor's result and can only reduce it. It is separately
+      // persisted for later review; it never feeds the order size or any gate.
+      try {
+        const riskShadow = riskReturnPanel
+          ? computeCovarianceSizingShadow({
+              candidate: signal.symbol,
+              book: constructorBook.map((position) => ({ symbol: position.symbol, valuePct: position.valuePct })),
+              returns: riskReturnPanel.returns,
+              priceBasis: riskReturnPanel.priceBasis,
+              commonSessions: riskReturnPanel.commonSessions,
+              baselineSizePct: rawSizedPct,
+              maxPortfolioDailyVolPct: marketLimits.maxPortfolioVolPct,
+              evidenceFingerprint: riskReturnPanel.evidenceFingerprint,
+            })
+          : null;
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "covariance_sizing_shadow",
+          outcome: riskShadow?.state ?? "unmeasurable",
+          reason: riskShadow?.reason ?? "return_panel_unavailable",
+          detail: riskShadow
+            ? { ...riskShadow, decisionAt: riskReturnPanel?.decisionAt ?? null, note: "counterfactual only; not an order instruction; no expected-return estimate used" }
+            : { candidate: signal.symbol, baseline_size_pct: rawSizedPct, decisionAt: null, note: "counterfactual only; return panel load failed" },
+        });
+      } catch (error: any) {
+        await logStage(supabase, {
+          signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "covariance_sizing_shadow", outcome: "unmeasurable",
+          reason: "shadow_calculation_failed_without_behavior_change",
+          detail: { error: String(error?.message ?? error).slice(0, 180), behaviorChanged: false },
+        });
       }
 
       // A FINITE size of zero means the constructor had no room — gross cap,

@@ -666,6 +666,19 @@ Current per-order limits live in `strategy_config.max_order_notional_usd` / `max
 
 Final BUY size is the minimum of opportunity size, per-order cap, remaining atomic daily budget, buying power, and name/sector/gross/correlation/volatility limits. Quantity rounds down; zero means abstain. SELL that reduces a verified holding is exempt from BUY notional/daily budgets.
 
+**Covariance sizing shadow (2026-10-18).** PaperTrader now records a separate
+counterfactual from immutable `symbol_daily_returns`. The estimator uses only
+rows available by the candidate's decision timestamp, one common raw/adjusted
+price basis, and at least 60 complete market-local sessions for the candidate
+plus every held name. A deterministic diagonal-target covariance shrinkage
+reduces sample co-movement noise. The baseline is the existing constructor's
+candidate size; the shadow can only reduce it to the configured daily-volatility
+budget. Missing or mixed-basis history is `unmeasurable`, never zero risk. The
+event is written to `pipeline_stage_events` as `covariance_sizing_shadow` and
+shown on Upgrade Path. It is not read by the constructor or any money path, and
+it does not establish a return or benchmark benefit. See
+`features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.
+
 ### India paper liquidity floor (2026-10-13)
 
 Paper only. New India entries and top-ups need a 20-session average turnover (close x volume) of at least INR 1 crore (`liquidity_floor`; unknown or under 10 sessions fails closed as `liquidity_unknown`), and an order may not exceed 5% of that average (`adv_participation`). Checked after the signal claim and before pricing, so thin names never reach the stale-quote gate. Exits and existing holdings are never blocked. A stale quote on a quiet India name (< INR 5 crore) counts as an expected skip in run accounting. Rationale and evidence: `features/india-paper-liquidity-floor/FEATURE_ARCHITECTURE.md`; code `lib/trading/liquidity-floor.ts`.

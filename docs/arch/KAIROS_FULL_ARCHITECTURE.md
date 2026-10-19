@@ -5447,6 +5447,18 @@ Cash, name/sector/gross caps, correlation, share increments and transaction cost
 then bound that amount. Cash is capacity, not a buy signal; unused cash can mean
 that no candidate passed the current evidence and risk gates.
 
+### Covariance-aware sizing evidence (shadow only)
+
+PaperTrader now compares its constructor-sized candidate with a deterministic
+covariance-budget counterfactual on Upgrade Path. It uses only point-in-time
+`symbol_daily_returns`, one common price basis, and 60 complete shared sessions
+for the candidate plus the market-local book. Covariance is shrunk toward its
+diagonal target. The counterfactual can only reduce the candidate size; it never
+changes the order or reorders candidates. Insufficient evidence is explicit.
+This is risk measurement, not a Markowitz expected-return optimizer or a proven
+portfolio improvement. Any money-path activation requires separate paired
+portfolio replay evidence and owner approval.
+
 ## 9. Exit geometry
 
 Stops and targets are recorded with entry provenance, geometry version and observed
@@ -11108,8 +11120,8 @@ claim — so it is not counted in `coverage` and always contributes.
 # Source: features\correlation-aware-construction\FEATURE_ARCHITECTURE.md
 # Correlation-Aware Portfolio Construction — FEATURE ARCHITECTURE
 
-> Status: **Reviewed / measurement prerequisite required / P0-P1 activation not approved.** Design only.
-> Last updated: 2026-07-16.
+> Status: **Owner-approved measure-only covariance shadow implemented in mainline; money-path activation remains unapproved.**
+> Last updated: 2026-10-18.
 > Per-market applicability: **both** — correlation **gating/sizing is strictly per-market** (US/USD and India/INR pools are separate; never cross-summed). Cross-market correlation is **display-only awareness, never a gate**.
 > Sequencing: folds in **after** the in-flight Codex paper-autonomy fixes (they own `paper-trade`/`position-monitor` right now) and alongside the holdings-priority research fix.
 > Update this file when: the risk inputs, estimator, selection rule, or the gating/display boundary change.
@@ -11133,9 +11145,9 @@ The earlier draft overstates what is reusable from Holding Risk. Do **not** wire
 
 Until those prerequisites exist, the production constructor remains on its current conservative volatility/sector-proxy behavior. Faking candidate correlations from held-name cluster averages is prohibited.
 
-### Implementation notes — §0 item 1 SHIPPED (2026-07-16), items 2-4 NOT started
+### Implementation notes — §0 item 1 SHIPPED (2026-07-16); measurement shadow shipped (2026-10-18); activation NOT approved
 
-Item 1 (the per-symbol return-observation contract) is built. **It activates nothing.** Items 2, 3 and 4 remain open; the constructor is untouched and still runs on `beta: null, dailyVol: null` + the sector-proxy constants.
+Item 1 (the per-symbol return-observation contract) was built in July. The 2026-10-18 implementation adds a deterministic, point-in-time covariance-risk counterfactual and owner-visible evidence. **It still activates nothing:** the existing constructor, candidate ordering, sizing, fills, exits, and live path are unchanged. P0/P1 money-path activation and portfolio-return claims remain open.
 
 | Piece | Where |
 |---|---|
@@ -11155,6 +11167,12 @@ Item 1 (the per-symbol return-observation contract) is built. **It activates not
 **Beta honesty.** `benchmark_beta` is written **only** when genuinely measured vs the market's own benchmark (us→SPY, india→`^NSEI`) over ≥ 60 shared sessions with non-zero benchmark variance. Otherwise it is `null` and `beta_unmeasurable_reason` records why. A DB check constraint makes beta and the reason mutually exclusive, so **a sector proxy cannot be written into the beta column** — the failure mode §0 called out.
 
 **Per-session series (Option A).** `symbol_daily_returns` stores each frozen simple return with both session dates, source, `available_at`, explicit `adjusted_close`/`raw_close` basis, closes, and an immutable input fingerprint. Item 2 can align exact shared sessions point-in-time without refetching candles. Revisions remain separately auditable; an estimator must select the latest row available at its decision cutoff and must not compare incompatible price bases silently.
+
+**Covariance-risk shadow (2026-10-18).** At each paper-trader candidate evaluation, the loader selects the newest row per `(symbol, session_date)` whose `available_at <= decisionAt`, then chooses one common price basis for the candidate and the current market-local book. The counterfactual requires 60 complete shared sessions across every symbol; otherwise it records `unmeasurable` and never calls missing data low risk. It computes the sample covariance on that complete-case panel and shrinks the off-diagonal terms toward the diagonal by `clamp(p/(n+p), 0.10, 0.50)`, a deterministic dimension/sample-size rule. This convex diagonal shrink keeps the covariance matrix positive semidefinite and avoids fitting a shrinkage parameter to outcomes. The calculation starts from the actual constructor-sized candidate and may only reduce it to satisfy the same configured daily volatility cap; if the existing book already exceeds that cap, the counterfactual candidate size is zero and the reason is recorded. It does not reorder candidates, compute expected returns, or enter an order path.
+
+**Audit/UX.** `covariance_sizing_shadow` stores the constructor baseline size, shadow-only size, baseline/counterfactual estimated daily volatility, cap, sample dates/count, price basis, shrinkage and a fingerprint of the selected immutable return rows. The owner-only Upgrade Path API returns the latest 100 events in the last 30 days, separately by market. The panel states that this is a risk diagnostic—not portfolio P&L or proof of better returns. It requires no migration or additional provider call because it uses existing `pipeline_stage_events` and `symbol_daily_returns`.
+
+**What is not complete by design.** This is not the full Markowitz mean-variance optimizer: no expected-return vector `μ` is used because the existing score-to-return relationship is not validated as an expected return. No portfolio-level matched replay is emitted by this component. A future performance claim still requires a frozen baseline/variant replay with identical candidate universe, current holdings, cash, fills, costs, stops/targets, turnover, and market-local benchmark marks, plus non-overlapping outcome windows. Risk-shadow data alone cannot establish that the strategy earns more or beats a benchmark.
 
 ## 1. Verified current state (not assumed — read from code)
 

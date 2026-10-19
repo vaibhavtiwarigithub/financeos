@@ -1817,3 +1817,15 @@ and explicit owner switch.
 **Limitations.** Codex CLI and Claude Code authentication are local to their signed-in accounts; unattended execution needs the owner's awake machine and a scheduled local runner. The available Claude Routine trigger returns a run/session reference, not a structured result callback into Kairos; the inspected Routine is paused, has no project connector, and expects an obsolete schema. Claude cloud membership is not integrated. Async subscription forecasts remain outside IC until labels align to forecast submission time.
 
 **Architecture:** `features/llm-council-shadow/FEATURE_ARCHITECTURE.md`; implementation: `features/llm-council-shadow/SUBSCRIPTION_WORKERS.md`.
+
+## Decision 81: Point-in-time covariance risk shadow (2026-10-18)
+
+**Status:** Approved by Vaibhav for implementation; measurement-only. Any change to paper or live sizing requires a separate evidence review and owner decision.
+
+**Decision.** Implement a deterministic, market-local covariance-risk shadow using the immutable `symbol_daily_returns` ledger. Compare the existing constructor's sized candidate with a covariance-budgeted counterfactual using only return rows available at the decision timestamp, a common price basis and at least 60 complete shared sessions. Shrink the sample covariance toward its diagonal target so the estimated matrix remains positive semidefinite and less noisy at small book sizes. Persist the estimate provenance, coverage, baseline and counterfactual size/risk, and explicit unmeasurable reasons; surface the latest evidence on Upgrade Path.
+
+**Boundaries.** No expected-return/score-to-return mapping is inferred from raw scores; no optimizer increases size, reorders candidates, rejects fills, changes cash policy, or sells holdings. Missing/thin/mixed-basis data produces an explicit unavailable counterfactual and leaves the existing paper/live path unchanged. Cross-market covariance is display-only and out of this decision. Portfolio-return benefit cannot be claimed until a separate frozen, paired baseline/variant replay includes fills, costs, cash, capacity, turnover, and benchmark marks.
+
+**Reason.** Covariance can describe portfolio risk, but without a validated expected-return estimate it cannot identify a return-maximizing Markowitz allocation. Establish auditable risk evidence first and avoid turning unstable historical estimates into money-path decisions.
+
+**Architecture:** `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.
