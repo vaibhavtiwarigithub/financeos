@@ -18,6 +18,17 @@ export function isEtfSymbol(symbol: string): boolean {
   return KNOWN_US_ETFS.has(symbol.trim().toUpperCase());
 }
 
+/**
+ * Whether a symbol belongs to the US common-equity fundamental endpoints.
+ * Equity-only vendors return empty or malformed payloads for funds and crypto;
+ * classify those as structurally inapplicable before spending a provider call.
+ */
+export function isEquityFundamentalsApplicable(symbol: string): boolean {
+  const upper = symbol.trim().toUpperCase();
+  if (!upper || isEtfSymbol(upper)) return false;
+  return !/^[A-Z0-9]+-(?:USD|USDT|USDC)$/.test(upper);
+}
+
 export type JournalAssetType = "company" | "adr" | "etf" | "india_company" | "metal_fund";
 
 export function classifyJournalAsset(symbol: string, recordedClass?: string | null): JournalAssetType {

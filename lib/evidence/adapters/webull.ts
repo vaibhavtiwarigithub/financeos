@@ -38,6 +38,7 @@ import {
   webullSessionAvailable,
   type WebullAnalyst,
 } from "@/lib/data/webull-data";
+import { isEquityFundamentalsApplicable } from "@/lib/asset-classification";
 
 // "webull" is a first-class member of the shared ProviderId union
 // (lib/data/provider-fetch.ts) — free MCP research provider, no order path.
@@ -113,6 +114,9 @@ export const webullAnalystAdapter: ProviderAdapter = {
   ): Promise<ProviderResult> {
     const symbol = String(request.symbol ?? "").trim();
     if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
+    if (!isEquityFundamentalsApplicable(symbol)) {
+      return { ok: false, unavailableReason: "not_applicable" };
+    }
 
     // An expired / missing Webull OAuth session makes the fetcher return null
     // for EVERY symbol, indistinguishable from a real empty result. Report that
@@ -238,6 +242,9 @@ export const webullFundamentalsAdapter: ProviderAdapter = {
   ): Promise<ProviderResult> {
     const symbol = String(request.symbol ?? "").trim();
     if (!symbol) return { ok: false, unavailableReason: "genuine_no_data" };
+    if (!isEquityFundamentalsApplicable(symbol)) {
+      return { ok: false, unavailableReason: "not_applicable" };
+    }
 
     // See the analyst adapter: a dead Webull session must surface as auth_missing,
     // not genuine_no_data, or every symbol looks like it has no reported fundamentals.

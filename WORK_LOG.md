@@ -2,6 +2,8 @@
 
 | Expired health notices and exhausted council leases | Codex | pushed to main (`aa8227fb`); Vercel production READY; production records repaired | 2026-10-19 | Reuse existing `agent_alerts.auto_expire_at` lifecycle and `sweepSubscriptionBatches`; terminalize only subscription jobs whose lease expired after the configured maximum attempts. Production expired the two exhausted Claude jobs and advanced their batches as partial; cleared three explicitly expired health notices (no remaining expired-open notices). Full suite 3,991 passed/7 skipped, `tsc --noEmit` and `git diff --check` pass. No schema, score, trading, or broker changes. |
 
+| Equity-only provider applicability guard | Codex | in_progress | 2026-10-19 | Reuse `lib/asset-classification.ts` in Finnhub/Webull fundamentals and analyst shadow adapters; return `not_applicable` before provider I/O for known ETFs/leveraged funds and crypto pairs. Preserve router-off, no scoring or money-path changes. |
+
 ## Reuse-first implementation rule (Codex + Claude)
 
 Before creating a production module, route, table, cron, or UI component, follow

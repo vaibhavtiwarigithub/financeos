@@ -22,6 +22,7 @@ import type {
   FieldProvenance,
 } from "@/lib/evidence/contracts";
 import { fetchFinnhubOverview } from "@/lib/data/fundamentals";
+import { isEquityFundamentalsApplicable } from "@/lib/asset-classification";
 
 // AV-OVERVIEW-shaped map (string values), as returned by fetchFinnhubOverview.
 type Overview = Record<string, string>;
@@ -73,6 +74,9 @@ export const finnhubFundamentalsAdapter: ProviderAdapter = {
     const symbol = request.symbol;
     if (!symbol) {
       return { ok: false, unavailableReason: "genuine_no_data" };
+    }
+    if (!isEquityFundamentalsApplicable(symbol)) {
+      return { ok: false, unavailableReason: "not_applicable" };
     }
     try {
       const overview = await fetchFinnhubOverview(symbol);

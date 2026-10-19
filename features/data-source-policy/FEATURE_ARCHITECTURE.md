@@ -10,6 +10,15 @@
 > Implementation gate: no code, migration, provider activation, scoring change, or
 > deployment until this architecture is reviewed and Vaibhav says `Proceed`/`Code it`.
 
+> Scoped implementation note (2026-10-19): the existing shadow-only Finnhub and
+> Webull equity fundamentals/analyst adapters now consult the shared asset
+> classifier before provider I/O. Known ETFs (including leveraged ETFs) and
+> standard `*-USD`/`*-USDT`/`*-USDC` crypto pairs return `not_applicable` rather
+> than consuming equity-provider calls or polluting missing-data coverage. This
+> is a provider-applicability correction only: the Router remains off for scoring,
+> and no provider activation, score, eligibility, trade, or portfolio behavior
+> changes. The original cutover gate is unchanged.
+
 ## 1. Decision
 
 Build one deterministic **Canonical Evidence Router** between agents and external

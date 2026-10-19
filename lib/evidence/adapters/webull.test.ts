@@ -11,7 +11,8 @@
 //     forward estimate (1.89428), NOT a past `actual`;
 //   • fundamentals basis is "quarterly" on EVERY field and ratios stay fractions
 //     (net_margin 0.266, never rescaled);
-//   • both live no-data modes (SPY empty-ok, unknown-symbol error) → genuine_no_data;
+//   • ETFs are rejected as not_applicable before Webull is queried;
+//   • equity empty-ok / unknown-symbol errors → genuine_no_data;
 //   • validate() rejects prototype-pollution keys → schema_invalid.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,9 +56,8 @@ const AAPL_ANALYST: WebullAnalyst = {
   forecastEps: 1.89428,
 };
 
-// SPY empty-ok: the tool returned {symbol,category} only, so the real fetcher
-// yields a partial object with every signal field null (NOT null itself).
-const SPY_ANALYST_EMPTY: WebullAnalyst = {
+// Empty-ok equity payload: the tool returned no numeric fields.
+const EMPTY_ANALYST: WebullAnalyst = {
   rating: null,
   ratingLabel: null,
   targetPrice: null,
@@ -118,9 +118,17 @@ describe("webullAnalystAdapter", () => {
     expect(byField.targetPrice.unit).toBe("currency");
   });
 
-  it("empty-ok (SPY {symbol,category} → all-null) → genuine_no_data", async () => {
-    h.analyst.mockResolvedValue(SPY_ANALYST_EMPTY);
+  it("does not query an ETF for equity analyst consensus", async () => {
     const res = await webullAnalystAdapter.fetch(req("SPY"), CTX);
+    expect(res.ok).toBe(false);
+    expect(res.unavailableReason).toBe("not_applicable");
+    expect(h.session).not.toHaveBeenCalled();
+    expect(h.analyst).not.toHaveBeenCalled();
+  });
+
+  it("empty-ok equity payload → genuine_no_data", async () => {
+    h.analyst.mockResolvedValue(EMPTY_ANALYST);
+    const res = await webullAnalystAdapter.fetch(req("AAPL"), CTX);
     expect(res.ok).toBe(false);
     expect(res.unavailableReason).toBe("genuine_no_data");
   });
@@ -178,9 +186,17 @@ describe("webullFundamentalsAdapter", () => {
     expect(provenance.every((p) => p.basis === "quarterly")).toBe(true);
   });
 
-  it("empty-ok / no-data (fetcher returns null) → genuine_no_data", async () => {
+  it("does not query an ETF for equity fundamentals", async () => {
+    const res = await webullFundamentalsAdapter.fetch(fundReq("SOXL"), CTX);
+    expect(res.ok).toBe(false);
+    expect(res.unavailableReason).toBe("not_applicable");
+    expect(h.session).not.toHaveBeenCalled();
+    expect(h.financials).not.toHaveBeenCalled();
+  });
+
+  it("empty equity response → genuine_no_data", async () => {
     h.financials.mockResolvedValue(null);
-    const res = await webullFundamentalsAdapter.fetch(fundReq("SPY"), CTX);
+    const res = await webullFundamentalsAdapter.fetch(fundReq("AAPL"), CTX);
     expect(res.ok).toBe(false);
     expect(res.unavailableReason).toBe("genuine_no_data");
   });

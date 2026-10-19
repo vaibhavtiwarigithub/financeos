@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyJournalAsset, isEtfSymbol } from "@/lib/asset-classification";
+import { classifyJournalAsset, isEquityFundamentalsApplicable, isEtfSymbol } from "@/lib/asset-classification";
 
 describe("asset classification", () => {
   it("recognizes researched funds that were previously misclassified", () => {
@@ -13,6 +13,14 @@ describe("asset classification", () => {
     expect(classifyJournalAsset("MU", "us_equity")).toBe("company");
     expect(classifyJournalAsset("SKHY", "adr")).toBe("adr");
     expect(classifyJournalAsset("HDFCBANK.NS", "india")).toBe("india_company");
+  });
+
+  it("marks funds and crypto as outside equity-only fundamental providers", () => {
+    for (const symbol of ["DBA", "GLD", "SOXL", "SOXS", "SOXX", "SQQQ", "TQQQ", "BTC-USD", "ETH-USDT", "SOL-USD"]) {
+      expect(isEquityFundamentalsApplicable(symbol), symbol).toBe(false);
+    }
+    expect(isEquityFundamentalsApplicable("AAPL")).toBe(true);
+    expect(isEquityFundamentalsApplicable("BRK.B")).toBe(true);
   });
 
   it("respects the recorded metal-fund class", () => {
