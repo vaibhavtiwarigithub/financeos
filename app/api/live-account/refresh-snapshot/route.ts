@@ -8,6 +8,8 @@ import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
 import { getKiteHoldings, getKiteMargins, getKiteProfile } from "@/lib/kite";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -283,6 +285,77 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
   return out;
 }
 
+// Alpaca Live has a separate credential pair and is captured independently of
+// the selected Robinhood source. This is a read-only snapshot; no order API is
+// called here. Failed/partial reads preserve the last known-good snapshot.
+async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accountId?: string; positions?: number; accountState?: Record<string, unknown>; error?: string }> {
+  const issueKey = "broker-account:alpaca_live";
+  try {
+    const account = await fetchAlpacaAccount(false);
+    const equity = Number(account.totalValue);
+    if (account.error || !account.accountId || !Number.isFinite(equity) || equity <= 0) {
+      const reason = account.error ?? "Alpaca Live account response was incomplete; previous snapshot preserved";
+      if (account.error?.startsWith("No complete API credential pair configured")) {
+        return { broker: "alpaca_live", ok: false, error: "Live credentials are not configured in this runtime" };
+      }
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: reason });
+      return { broker: "alpaca_live", ok: false, error: reason };
+    }
+
+    const state = account.accountState ?? {};
+    const blocked = account.accountBlocked === true || account.tradingBlocked === true || state.suspend_trade === true;
+    const stateComplete = account.accountStatus != null && typeof account.accountBlocked === "boolean" && typeof account.tradingBlocked === "boolean";
+    const positions = Array.isArray(account.holdings) ? account.holdings : null;
+    if (!positions) {
+      const reason = "Alpaca Live positions response was incomplete; previous snapshot preserved";
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: reason });
+      return { broker: "alpaca_live", ok: false, error: reason };
+    }
+
+    const svc = createServiceClient();
+    const capturedAt = new Date().toISOString();
+    const { error } = await svc.from("live_account_snapshots").upsert({
+      account_id: account.accountId,
+      broker: "alpaca_live",
+      equity,
+      buying_power: account.buyingPower ?? null,
+      portfolio_value: equity,
+      position_count: positions.length,
+      nickname: "Alpaca Live",
+      account_state_json: state,
+      positions_json: positions.map(h => ({
+        symbol: h.symbol,
+        qty: h.qty,
+        quantity: String(h.qty),
+        avg_price: h.qty > 0 && h.costBasis != null ? h.costBasis / h.qty : null,
+        average_buy_price: h.qty > 0 && h.costBasis != null ? h.costBasis / h.qty : null,
+        current_price: h.currentPrice,
+        market_value: h.marketValue,
+        side: h.side,
+      })),
+      captured_at: capturedAt,
+    }, { onConflict: "account_id" });
+    if (error) {
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live snapshot could not be saved", detail: error.message });
+      return { broker: "alpaca_live", ok: false, error: `snapshot persistence failed: ${error.message}` };
+    }
+
+    if (blocked || state.closing_transactions_only === true || account.accountStatus !== "ACTIVE") {
+      const isHardBlocked = account.accountBlocked === true || account.tradingBlocked === true || state.suspend_trade === true;
+      await reportIssue({ issueKey, severity: isHardBlocked ? "critical" : "warn", category: "broker", title: "Alpaca Live account is not unrestricted", detail: `Account status ${account.accountStatus ?? "unknown"}; account_blocked=${account.accountBlocked ?? "unknown"}; trading_blocked=${account.tradingBlocked ?? "unknown"}; close_only=${state.closing_transactions_only === true}. No order action was attempted.` });
+    } else if (!stateComplete) {
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account state is incomplete", detail: "Account snapshot is visible, but broker status/block fields were not all returned; this is not proof of trading readiness." });
+    } else {
+      await resolveIssue(issueKey);
+    }
+    return { broker: "alpaca_live", ok: true, accountId: account.accountId, positions: positions.length, accountState: state };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account refresh failed", detail: reason });
+    return { broker: "alpaca_live", ok: false, error: reason };
+  }
+}
+
 // Accrue the durable India live-equity curve from Zerodha Kite — the exact
 // analogue of the US live_performance forward-build, but INR + NIFTF benchmark.
 // Kite exposes no account-value history, so we build it one day at a time:
@@ -350,9 +423,10 @@ export async function POST(req: NextRequest) {
   // Also refresh every connected cloud MCP broker (Webull, etc.) — independent of
   // Robinhood, so it runs even when RH is off/local.
   const registry = await refreshRegistryBrokers();
+  const alpacaLive = await refreshAlpacaLive();
   // Accrue the India (Kite) live-equity curve — independent + fail-soft, so a
   // stale Kite token never affects the US/registry result.
   const kite = await refreshKite();
-  const anyOk = result.ok || registry.some(r => r.ok) || kite.ok;
-  return NextResponse.json({ ...result, registry, kite }, { status: anyOk ? 200 : 500 });
+  const anyOk = result.ok || registry.some(r => r.ok) || alpacaLive.ok || kite.ok;
+  return NextResponse.json({ ...result, registry, alpacaLive, kite }, { status: anyOk ? 200 : 500 });
 }

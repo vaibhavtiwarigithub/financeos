@@ -1,22 +1,5 @@
-import { createServiceClient } from "@/lib/supabase/service";
 import type { BrokerAccount, BrokerHolding } from "./types";
-
-async function getAlpacaKeys(paper: boolean): Promise<{ key: string; secret: string } | null> {
-  const sb = createServiceClient();
-  const keyName   = paper ? "ALPACA_PAPER_API_KEY"    : "ALPACA_API_KEY";
-  const secretName = paper ? "ALPACA_PAPER_API_SECRET" : "ALPACA_API_SECRET";
-
-  const [{ data: k }, { data: s }] = await Promise.all([
-    sb.from("api_key_vault").select("key_value").eq("key_name", keyName).single(),
-    sb.from("api_key_vault").select("key_value").eq("key_name", secretName).single(),
-  ]);
-
-  const key    = (k as any)?.key_value ?? (paper ? process.env.ALPACA_PAPER_API_KEY    : process.env.ALPACA_API_KEY);
-  const secret = (s as any)?.key_value ?? (paper ? process.env.ALPACA_PAPER_API_SECRET : process.env.ALPACA_API_SECRET);
-
-  if (!key || !secret) return null;
-  return { key, secret };
-}
+import { getAlpacaCredentials } from "./alpaca-credentials";
 
 async function alpacaFetch(path: string, creds: { key: string; secret: string }, paper: boolean) {
   const base = paper ? "https://paper-api.alpaca.markets" : "https://api.alpaca.markets";
@@ -34,15 +17,17 @@ export async function fetchAlpacaAccount(paper: boolean): Promise<BrokerAccount>
   const source = paper ? "alpaca_paper" : "alpaca_live";
   const fetchedAt = new Date().toISOString();
 
-  const creds = await getAlpacaKeys(paper);
+  const creds = await getAlpacaCredentials(paper ? "paper" : "live");
   if (!creds) {
-    return { source, totalValue: 0, cashBalance: 0, holdings: [], fetchedAt, error: "No API keys — add ALPACA_PAPER_API_KEY + ALPACA_PAPER_API_SECRET to vault" };
+    const names = paper ? "ALPACA_PAPER_API_KEY + ALPACA_PAPER_API_SECRET" : "ALPACA_LIVE_API_KEY + ALPACA_LIVE_API_SECRET";
+    return { source, totalValue: 0, cashBalance: 0, holdings: [], fetchedAt, error: `No complete API credential pair configured (${names})` };
   }
 
   try {
-    const [account, positions] = await Promise.all([
+    const [account, positions, configuration] = await Promise.all([
       alpacaFetch("/v2/account", creds, paper),
       alpacaFetch("/v2/positions", creds, paper),
+      alpacaFetch("/v2/account/configurations", creds, paper).catch(() => null),
     ]);
 
     const holdings: BrokerHolding[] = (positions as any[]).map((p: any) => {
@@ -68,6 +53,23 @@ export async function fetchAlpacaAccount(paper: boolean): Promise<BrokerAccount>
 
     return {
       source,
+      accountId: typeof account.id === "string" ? account.id : undefined,
+      accountLabel: paper ? "Alpaca Paper" : "Alpaca Live",
+      accountStatus: typeof account.status === "string" ? account.status : undefined,
+      accountBlocked: typeof account.account_blocked === "boolean" ? account.account_blocked : undefined,
+      tradingBlocked: typeof account.trading_blocked === "boolean" ? account.trading_blocked : undefined,
+      transfersBlocked: typeof account.transfers_blocked === "boolean" ? account.transfers_blocked : undefined,
+      shortingEnabled: typeof account.shorting_enabled === "boolean" ? account.shorting_enabled : undefined,
+      accountState: {
+        status: typeof account.status === "string" ? account.status : null,
+        account_blocked: typeof account.account_blocked === "boolean" ? account.account_blocked : null,
+        trading_blocked: typeof account.trading_blocked === "boolean" ? account.trading_blocked : null,
+        transfers_blocked: typeof account.transfers_blocked === "boolean" ? account.transfers_blocked : null,
+        shorting_enabled: typeof account.shorting_enabled === "boolean" ? account.shorting_enabled : null,
+        fractional_trading: typeof configuration?.fractional_trading === "boolean" ? configuration.fractional_trading : null,
+        suspend_trade: typeof configuration?.suspend_trade === "boolean" ? configuration.suspend_trade : null,
+        closing_transactions_only: typeof configuration?.closing_transactions_only === "boolean" ? configuration.closing_transactions_only : null,
+      },
       totalValue:   parseFloat(account.portfolio_value ?? account.equity ?? 0),
       cashBalance:  parseFloat(account.cash ?? account.buying_power ?? 0),
       holdings,

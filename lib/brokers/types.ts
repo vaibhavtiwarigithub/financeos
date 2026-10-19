@@ -16,6 +16,12 @@ export interface BrokerAccount {
   source: BrokerName;
   accountId?: string;      // broker account number/ID for per-account risk sections
   accountLabel?: string;   // human label e.g. "Robinhood Trading (605420660)"
+  accountStatus?: string;  // broker-reported state, when available
+  accountBlocked?: boolean;
+  tradingBlocked?: boolean;
+  transfersBlocked?: boolean;
+  shortingEnabled?: boolean;
+  accountState?: Record<string, unknown>;
   totalValue: number;
   cashBalance: number;
   buyingPower?: number;

@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
+import { OWNER_EMAIL } from "@/lib/auth/owner"
 import { verifyPin, hashPin } from "@/lib/vault-pin"
 
 export const dynamic = "force-dynamic"
 
-// Step 1: POST { action: "send_otp" }
-//   → sends magic link / OTP to ADMIN_EMAIL via Supabase Auth
-//   → requires X-Vault-Pin header (current PIN) to prove identity first
+// Step 1: POST { action: "send_otp" | "send_recovery_otp" }
+//   → normal PIN change requires the current PIN; recovery requires only the signed-in owner.
 //
 // Step 2: POST { action: "verify_and_set", otp: "123456", new_pin: "newpin" }
 //   → verifies OTP via Supabase, stores new PIN in app_settings table
 //   → new PIN takes priority over VAULT_PIN env var at runtime
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "vterminater@gmail.com"
+const ADMIN_EMAIL = OWNER_EMAIL
 
 // No hardcoded fallback — vault fails closed if neither a DB-stored PIN nor
 // VAULT_PIN env is set (matches app/api/admin/vault/route.ts behavior).
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   // Must be authenticated as admin
   const sb = await createClient()
   const { data: { user } } = await sb.auth.getUser()
-  if (!user || user.email !== ADMIN_EMAIL) {
+  if (!user || user.email !== ADMIN_EMAIL || !user.email_confirmed_at) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -61,20 +61,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, message: `OTP sent to ${ADMIN_EMAIL}` })
   }
 
+  // Recovery does not require the old PIN. The signed-in, confirmed owner is
+  // checked above; Supabase sends its one-time code only to the fixed owner
+  // address and enforces the project's OTP expiry and rate limits.
+  if (action === "send_recovery_otp") {
+    const { error } = await sb.auth.signInWithOtp({
+      email: OWNER_EMAIL,
+      options: { shouldCreateUser: false },
+    })
+    if (error) {
+      return NextResponse.json({ error: "Could not send the reset code. Try again later." }, { status: 503 })
+    }
+    return NextResponse.json({ ok: true, message: `A one-time code was sent to ${OWNER_EMAIL}.` })
+  }
+
   // Step 2: verify OTP + set new PIN
   if (action === "verify_and_set") {
     const { otp, new_pin } = body
-    if (!otp || !new_pin) {
+    if (typeof otp !== "string" || !/^\d{6,8}$/.test(otp) || typeof new_pin !== "string" || !new_pin.trim()) {
       return NextResponse.json({ error: "otp and new_pin required" }, { status: 400 })
     }
-    if (new_pin.length < 6) {
-      return NextResponse.json({ error: "PIN must be at least 6 characters" }, { status: 400 })
+    if (new_pin.trim().length < 6 || new_pin.trim().length > 128) {
+      return NextResponse.json({ error: "PIN must be between 6 and 128 characters" }, { status: 400 })
     }
 
     // Verify OTP
     const { error: otpErr } = await sb.auth.verifyOtp({
-      email: ADMIN_EMAIL,
-      token: otp,
+      email: OWNER_EMAIL,
+      token: otp.trim(),
       type: "email",
     })
     if (otpErr) {
@@ -86,7 +100,7 @@ export async function POST(req: NextRequest) {
     // Store a salted scrypt HASH, never the recoverable plaintext PIN.
     const { error: dbErr } = await svc.from("app_settings").upsert({
       key: "vault_pin",
-      value: hashPin(new_pin),
+      value: hashPin(new_pin.trim()),
       updated_at: new Date().toISOString(),
     }, { onConflict: "key" })
 

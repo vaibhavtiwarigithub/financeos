@@ -5455,6 +5455,9 @@ covariance-budget counterfactual on Upgrade Path. It uses only point-in-time
 for the candidate plus the market-local book. Covariance is shrunk toward its
 diagonal target. The counterfactual can only reduce the candidate size; it never
 changes the order or reorders candidates. Insufficient evidence is explicit.
+Ledger reasons distinguish true data blockers from measured no-trim and trim
+outcomes; the owner reader also normalizes older append-only rows that carried a
+false loader-failure reason.
 This is risk measurement, not a Markowitz expected-return optimizer or a proven
 portfolio improvement. Any money-path activation requires separate paired
 portfolio replay evidence and owner approval.

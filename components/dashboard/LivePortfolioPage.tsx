@@ -234,9 +234,9 @@ export default function LivePortfolioPage({
       <RhReconnectBanner />
 
       {/* Account selector chips */}
-      {snaps.length > 1 && (
+      {snaps.length > 0 && (
         <div style={{ display: "flex", gap: "6px", marginBottom: "16px", flexWrap: "wrap" }}>
-          <button
+          {snaps.length > 1 && <button
             onClick={() => {
               const next = selectedAccounts.length === snaps.length ? [] : snaps.map(s => s.account_id);
               setSelectedAccounts(next);
@@ -248,7 +248,7 @@ export default function LivePortfolioPage({
               background: selectedAccounts.length === snaps.length ? T.accent : "none",
               color: selectedAccounts.length === snaps.length ? "#fff" : T.muted,
             }}
-          >All</button>
+          >All</button>}
           {snaps.map(s => {
             const active = selectedAccounts.includes(s.account_id);
             return (
@@ -285,6 +285,11 @@ export default function LivePortfolioPage({
                   {s.broker === "webull" ? "WB" : s.broker === "robinhood" ? "RH" : String(s.broker ?? "??").slice(0, 2).toUpperCase()}
                 </span>
                 {brokerAccountDisplayLabel({ broker: String(s.broker ?? "robinhood"), accountId: String(s.account_id), nickname: s.nickname })}
+                {s.account_state_json?.status ? ` · ${String(s.account_state_json.status).toUpperCase()}` : ""}
+                {s.account_state_json?.trading_blocked || s.account_state_json?.account_blocked || s.account_state_json?.suspend_trade || (s.broker === "alpaca_live" && s.account_state_json?.status !== "ACTIVE")
+                  ? " · RESTRICTED"
+                  : s.account_state_json?.closing_transactions_only ? " · CLOSE-ONLY"
+                    : s.broker === "alpaca_live" && (typeof s.account_state_json?.trading_blocked !== "boolean" || typeof s.account_state_json?.account_blocked !== "boolean") ? " · STATE UNKNOWN" : ""}
                 {s.equity ? " · " + maskText(fmt$(Number(s.equity)), masked) : ""}
                 {s.position_count > 0 ? ` · ${masked ? "••" : s.position_count}p` : " · no pos"}
               </button>

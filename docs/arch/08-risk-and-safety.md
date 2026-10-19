@@ -2,6 +2,14 @@
 > 2026-10-03: **Latent live-path crash removed: `.catch()` on supabase query builders.** supabase-js builders are thenables without `.catch`, so `svc.from(x).insert(y).catch(() => {})` throws a TypeError when run. It was in the leveraged-live and crypto-live crons (the `broker_orders` ledger write that runs AFTER a real fill, so the throw would have aborted the route after the order and before follow-up protection), the Kite order route (after a confirmed BUY and GTT), downside-hedge, edge-readiness and benchmark-scorecard error paths, and it crashed all four leveraged paper doors on every run. Replaced with `bestEffort()` (`lib/supabase/best-effort.ts`: awaits, logs, never throws); `tests/no-supabase-builder-catch.test.ts` fails the build if the pattern returns anywhere under `app/` or `lib/`. Live flags are unchanged (all still off); this removes a failure mode that would only have appeared on the first real live fill.
 >
 
+## API Vault PIN recovery (owner-only)
+
+The Vault remains protected by the canonical, confirmed owner session plus the PIN. If the PIN is forgotten, the locked Vault screen can request a one-time Supabase Auth email code sent only to `vterminater@gmail.com`; the API verifies the owner session again, then changes the PIN only after the code is accepted. Supabase Auth applies its configured OTP expiration and send-rate limits. Its Magic Link email template must include `{{ .Token }}` so the message contains a code the page can verify; a template that only renders `{{ .ConfirmationURL }}` is insufficient for this code-entry flow. New PINs are stored as salted scrypt hashes in `app_settings`; they override the legacy `VAULT_PIN` environment fallback. Recovery changes no API-key values and requires no database migration. A recovery email or OTP failure fails closed; the page does not claim that a message was sent unless Supabase accepted the request. The normal change-PIN flow continues to require the current PIN before requesting its email code.
+
+## Alpaca credentials and market-data boundary
+
+The canonical Alpaca credential resolver is `lib/brokers/alpaca-credentials.ts`. It resolves a complete key/secret pair per environment, preferring non-empty service-role Vault values and falling back to the matching server environment variables. Paper uses `ALPACA_PAPER_API_KEY` + `ALPACA_PAPER_API_SECRET`; Live prefers `ALPACA_LIVE_API_KEY` + `ALPACA_LIVE_API_SECRET` and accepts legacy `ALPACA_API_KEY` + `ALPACA_API_SECRET`. Paper and Live never cross-fallback. Broker status is configured only when at least one complete pair exists. Local `.env.local` values are local-development configuration; they do not automatically reach Vercel. The Live Portfolio snapshot refresh reads Alpaca Live independently of the Robinhood snapshot source, stores the broker identity and sanitized account state, and never reads Alpaca Paper into the live snapshot book. No order is submitted by that refresh. Alpaca market data is a separate surface and is not currently wired into the ResearchAgent/evidence router. The tested free IEX feed can serve as a timestamped supplemental US source, but it is not a consolidated all-venue quote and does not supply India-market data; it is not by itself proof of an execution-grade quote or protective-order feed.
+
 ## Paper cash deployment ceiling (approved, no leverage)
 
 The paper portfolio targets cash near or below 5% only when valid, risk-qualified entries are available. The owner-approved paper ceilings are 100% gross, 60% per sector, and 20% per name; the code and additive migration are deployed to production (PR #56, merge commit `3da0090d85ad6744bf70398ae8e45c3ba734b08f`). Live gates continue to use shared 80% gross, 30% sector, and 12% per-name limits. The eight-name cap, 2% daily portfolio-volatility budget, correlation/stacked-bet checks, entry eligibility, freshness, stop/target, order/daily-notional, and market-specific constraints remain. The higher paper caps increase concentration risk and are ceilings, not target weights. The first ordinary market-local paper run remains to be observed; no run was forced. See `features/paper-cash-deployment/FEATURE_ARCHITECTURE.md`.
@@ -676,7 +684,10 @@ candidate size; the shadow can only reduce it to the configured daily-volatility
 budget. Missing or mixed-basis history is `unmeasurable`, never zero risk. The
 event is written to `pipeline_stage_events` as `covariance_sizing_shadow` and
 shown on Upgrade Path. It is not read by the constructor or any money path, and
-it does not establish a return or benchmark benefit. See
+it does not establish a return or benchmark benefit. Event reasons distinguish
+actual estimator blockers from a measured no-trim or applied-trim result; the
+owner reader also normalizes earlier rows that carried a false loader-failure
+reason. See
 `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.
 
 ### India paper liquidity floor (2026-10-13)

@@ -1,18 +1,14 @@
 import { BrokerAdapter } from "@/lib/brokers/adapter-types";
 import { submitAlpacaOrder, getAlpacaOrder, cancelAlpacaOrder, getAlpacaAsset } from "@/lib/brokers/alpaca-orders";
+import { isAlpacaConfigured } from "@/lib/brokers/alpaca-credentials";
 import { capability } from "@/lib/brokers/preflight";
-import { createServiceClient } from "@/lib/supabase/service";
 
 export function alpacaAdapter(): BrokerAdapter {
   return {
     id: "alpaca",
     market: "us",
     envs: ["paper", "live"],
-    async isConfigured() {
-      const sb = createServiceClient();
-      const { data } = await sb.from("api_key_vault").select("key_name").in("key_name", ["ALPACA_PAPER_API_KEY", "ALPACA_API_KEY"]);
-      return (data && data.length > 0) || !!process.env.ALPACA_PAPER_API_KEY || !!process.env.ALPACA_API_KEY;
-    },
+    isConfigured: isAlpacaConfigured,
     async preflightOrder(o) {
       const r = await getAlpacaAsset(o.symbol, o.env);
       if (!r.ok) return capability(o, { broker: "alpaca", market: "us", source: "alpaca_assets", allowed: false, reasonCode: "asset_lookup_failed", raw: r.error });

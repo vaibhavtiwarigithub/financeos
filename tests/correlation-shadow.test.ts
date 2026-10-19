@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  computeCorrelationShadow, computeCovarianceSizingShadow, covarianceShrinkage, loadPointInTimeReturnPanel, pearson,
+  computeCorrelationShadow, computeCovarianceSizingShadow, covarianceSizingShadowEventReason, covarianceShrinkage, loadPointInTimeReturnPanel, pearson,
   MAX_SINGLE_PAIR_CORR, MAX_AVG_CORR_TO_BOOK, MIN_SHARED_SESSIONS, MIN_COVARIANCE_SESSIONS,
 } from "@/lib/portfolio/correlation-shadow";
 
@@ -31,6 +31,24 @@ describe("pearson", () => {
     // Zero variance means undefined correlation. Returning 0 would assert
     // "independent", which is a claim the data does not support.
     expect(pearson([0.01, -0.01, 0.02], [0.5, 0.5, 0.5])).toBeNull();
+  });
+});
+
+describe("covariance shadow event reasons", () => {
+  it("does not label a measured no-trim result as a missing return panel", () => {
+    expect(covarianceSizingShadowEventReason({ state: "measured", reason: null, sizeReductionPct: 0 }))
+      .toBe("within_volatility_budget_no_trim");
+  });
+
+  it("records a measured risk trim distinctly", () => {
+    expect(covarianceSizingShadowEventReason({ state: "measured", reason: null, sizeReductionPct: 1.25 }))
+      .toBe("volatility_budget_trim_applied");
+  });
+
+  it("preserves real estimator blockers and reserves loader failure for absent results", () => {
+    expect(covarianceSizingShadowEventReason({ state: "unmeasurable", reason: "incomplete_common_return_panel" }))
+      .toBe("incomplete_common_return_panel");
+    expect(covarianceSizingShadowEventReason(null)).toBe("return_panel_unavailable");
   });
 });
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
+import { covarianceSizingShadowEventReason } from "@/lib/portfolio/correlation-shadow";
 
 export const dynamic = "force-dynamic";
 
@@ -57,10 +58,16 @@ export async function GET(req: NextRequest) {
 
   const events: CovarianceEvent[] = (data ?? []).map((row: any): CovarianceEvent => {
     const detail = row.detail && typeof row.detail === "object" ? row.detail : {};
+    const state = String(row.outcome ?? "unmeasurable");
+    const sizeReductionPct = finite(detail.sizeReductionPct);
     return {
       symbol: String(row.symbol ?? detail.candidate ?? "UNKNOWN"),
-      state: String(row.outcome ?? "unmeasurable"),
-      reason: row.reason == null ? null : String(row.reason),
+      state,
+      // Repair the known historical mislabel at read time too. The append-only
+      // event remains untouched; its detail is the source for the actual result.
+      reason: state === "measured" && row.reason === "return_panel_unavailable"
+        ? covarianceSizingShadowEventReason({ state, reason: detail.reason, sizeReductionPct })
+        : row.reason == null ? null : String(row.reason),
       createdAt: String(row.created_at),
       decisionAt: detail.decisionAt == null ? null : String(detail.decisionAt),
       signalId: row.signal_id == null ? null : String(row.signal_id),
@@ -69,7 +76,7 @@ export async function GET(req: NextRequest) {
       baselineDailyVolPct: finite(detail.baselineDailyVolPct),
       counterfactualDailyVolPct: finite(detail.counterfactualDailyVolPct),
       maxPortfolioDailyVolPct: finite(detail.maxPortfolioDailyVolPct),
-      sizeReductionPct: finite(detail.sizeReductionPct),
+      sizeReductionPct,
       commonSessions: finite(detail.commonSessions),
       firstSession: detail.firstSession == null ? null : String(detail.firstSession),
       lastSession: detail.lastSession == null ? null : String(detail.lastSession),

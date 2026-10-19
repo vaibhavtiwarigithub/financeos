@@ -1,8 +1,8 @@
-// API Key Vault — requires Supabase session (admin email) + X-Vault-Pin header
-// Requires VAULT_PIN env var in .env.local. No default fallback — vault is locked if unconfigured.
+// API Key Vault — requires the confirmed owner session + X-Vault-Pin header.
+// A database-stored PIN takes priority; VAULT_PIN is the legacy fallback.
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
-import { createClient } from "@/lib/supabase/server"
+import { requireOwner } from "@/lib/auth/require-owner"
 import { verifyPin } from "@/lib/vault-pin"
 
 export const dynamic = "force-dynamic"
@@ -25,11 +25,8 @@ async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promis
 }
 
 export async function GET(req: NextRequest) {
-  const sb = await createClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user || user.email !== process.env.ADMIN_EMAIL) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  const denied = await requireOwner()
+  if (denied) return denied
 
   const svc = createServiceClient()
   const pin = req.headers.get("x-vault-pin")
@@ -56,11 +53,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const sb = await createClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user || user.email !== process.env.ADMIN_EMAIL) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  const denied = await requireOwner()
+  if (denied) return denied
 
   const body = await req.json()
   const { action, ...fields } = body

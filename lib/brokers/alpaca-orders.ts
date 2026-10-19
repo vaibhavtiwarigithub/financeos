@@ -2,28 +2,14 @@
 // Reuses the vault-key pattern from lib/brokers/alpaca.ts. All fetches fail
 // soft (never throw) so a broker hiccup shows as a clean error, not a crash.
 
-import { createServiceClient } from "@/lib/supabase/service";
-
-async function getAlpacaKeys(paper: boolean): Promise<{ key: string; secret: string } | null> {
-  const sb = createServiceClient();
-  const keyName = paper ? "ALPACA_PAPER_API_KEY" : "ALPACA_API_KEY";
-  const secretName = paper ? "ALPACA_PAPER_API_SECRET" : "ALPACA_API_SECRET";
-  const [{ data: k }, { data: s }] = await Promise.all([
-    sb.from("api_key_vault").select("key_value").eq("key_name", keyName).maybeSingle(),
-    sb.from("api_key_vault").select("key_value").eq("key_name", secretName).maybeSingle(),
-  ]);
-  const key = (k as any)?.key_value ?? (paper ? process.env.ALPACA_PAPER_API_KEY : process.env.ALPACA_API_KEY);
-  const secret = (s as any)?.key_value ?? (paper ? process.env.ALPACA_PAPER_API_SECRET : process.env.ALPACA_API_SECRET);
-  if (!key || !secret) return null;
-  return { key, secret };
-}
+import { getAlpacaCredentials } from "./alpaca-credentials";
 
 function baseUrl(env: "paper" | "live"): string {
   return env === "paper" ? "https://paper-api.alpaca.markets" : "https://api.alpaca.markets";
 }
 
 async function alpacaFetch(path: string, env: "paper" | "live", init?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
-  const creds = await getAlpacaKeys(env === "paper");
+  const creds = await getAlpacaCredentials(env);
   if (!creds) return { ok: false, error: "No Alpaca API keys configured for this environment" };
   try {
     const res = await fetch(`${baseUrl(env)}${path}`, {

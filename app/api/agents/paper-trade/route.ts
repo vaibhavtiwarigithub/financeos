@@ -10,7 +10,7 @@ import { fetchIndiaQuote } from "@/lib/india-data";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { constructPortfolio, DEFAULT_LIMITS, type BookPosition } from "@/lib/portfolio/constructor";
 import { resolvePaperExposureLimits } from "@/lib/portfolio/paper-limits";
-import { computeCorrelationShadow, computeCovarianceSizingShadow, loadPointInTimeReturnPanel, type PointInTimeReturnPanel } from "@/lib/portfolio/correlation-shadow";
+import { computeCorrelationShadow, computeCovarianceSizingShadow, covarianceSizingShadowEventReason, loadPointInTimeReturnPanel, type PointInTimeReturnPanel } from "@/lib/portfolio/correlation-shadow";
 import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
@@ -1014,7 +1014,7 @@ export async function POST(req: NextRequest) {
           signal_id: signal.id, symbol: signal.symbol, market,
           stage: "covariance_sizing_shadow",
           outcome: riskShadow?.state ?? "unmeasurable",
-          reason: riskShadow?.reason ?? "return_panel_unavailable",
+          reason: covarianceSizingShadowEventReason(riskShadow),
           detail: riskShadow
             ? { ...riskShadow, decisionAt: riskReturnPanel?.decisionAt ?? null, note: "counterfactual only; not an order instruction; no expected-return estimate used" }
             : { candidate: signal.symbol, baseline_size_pct: rawSizedPct, decisionAt: null, note: "counterfactual only; return panel load failed" },

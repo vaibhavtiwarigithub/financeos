@@ -13,6 +13,8 @@ function cleanLabel(value: unknown): string | null {
 function brokerName(broker: string): string {
   return broker === "robinhood" ? "Robinhood"
     : broker === "webull" ? "Webull"
+      : broker === "alpaca_live" ? "Alpaca Live"
+        : broker === "alpaca_paper" ? "Alpaca Paper"
       : broker === "kite" ? "Kite"
         : broker === "internal" ? "Paper Portfolio"
           : cleanLabel(broker) ?? "Broker";

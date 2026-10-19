@@ -10,7 +10,7 @@ const T = {
   accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
 };
 
-const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "financialdatasets", "robinhood", "resend", "supabase", "other"] as const;
+const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "financialdatasets", "alpaca", "robinhood", "resend", "supabase", "other"] as const;
 const ALL_TASKS = ["research", "trade", "evaluate", "thesis", "chat", "summarize", "data", "embed", "market_data", "sentiment", "options"];
 // Model ID / cost-per-token / tasks-suitable only mean something for an LLM
 // provider — showing them for a data-API key (Massive, AlphaVantage,
@@ -57,6 +57,11 @@ export default function VaultPage() {
   const [newPIN, setNewPIN] = useState("");
   const [changePINMsg, setChangePINMsg] = useState("");
   const [changingPIN, setChangingPIN] = useState(false);
+  const [recoveryStarted, setRecoveryStarted] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryNewPIN, setRecoveryNewPIN] = useState("");
+  const [recoveryMsg, setRecoveryMsg] = useState("");
 
   const unlock = useCallback(async () => {
     if (!pin.trim()) return;
@@ -148,6 +153,69 @@ export default function VaultPage() {
     setChangingPIN(false);
   }
 
+  async function sendRecoveryCode() {
+    setRecoveryBusy(true);
+    setRecoveryMsg("");
+    try {
+      const res = await fetch("/api/admin/vault/change-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send_recovery_otp" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRecoveryMsg(data.error ?? "Could not send the reset code. Try again later.");
+      } else {
+        setRecoveryStarted(true);
+        setRecoveryMsg("A one-time code was sent to vterminater@gmail.com. Check your inbox and spam folder.");
+      }
+    } catch {
+      setRecoveryMsg("Network error — the reset code was not confirmed as sent.");
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
+  async function resetPINWithCode() {
+    if (!recoveryCode.trim() || recoveryNewPIN.trim().length < 6) {
+      setRecoveryMsg("Enter the email code and a new PIN of at least 6 characters.");
+      return;
+    }
+    setRecoveryBusy(true);
+    setRecoveryMsg("");
+    try {
+      const res = await fetch("/api/admin/vault/change-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify_and_set", otp: recoveryCode.trim(), new_pin: recoveryNewPIN.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRecoveryMsg(data.error ?? "The code was invalid or expired. Request a new one and try again.");
+        return;
+      }
+
+      // Check the newly written PIN against the actual Vault endpoint before
+      // claiming success or loading key metadata.
+      const verifyRes = await fetch("/api/admin/vault", { headers: { "x-vault-pin": recoveryNewPIN.trim() } });
+      const verifyData = await verifyRes.json();
+      setRecoveryCode("");
+      setRecoveryNewPIN("");
+      if (verifyRes.ok) {
+        setPin(recoveryNewPIN.trim());
+        setKeys(verifyData.keys ?? []);
+        setUnlocked(true);
+        setRecoveryMsg("Vault PIN reset and verified. The Vault is unlocked.");
+      } else {
+        setRecoveryMsg("PIN reset succeeded, but automatic unlock failed. Use the new PIN to unlock the Vault.");
+      }
+    } catch {
+      setRecoveryMsg("Network error — reset status is unknown. Try the new PIN before requesting another code.");
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
   function editKey(k: VaultKey) {
     setForm({
       key_name: k.key_name,
@@ -228,6 +296,37 @@ export default function VaultPage() {
         {pinError && (
           <div style={{ fontSize: "13px", color: T.red, padding: "10px", background: T.red + "15", borderRadius: "8px" }}>
             {pinError}
+          </div>
+        )}
+
+        {!recoveryStarted ? (
+          <button onClick={sendRecoveryCode} disabled={recoveryBusy}
+            style={{ ...btn("#252836"), marginTop: "8px", width: "100%" }}>
+            {recoveryBusy ? "Sending reset code…" : "Forgot PIN? Email me a reset code"}
+          </button>
+        ) : (
+          <div style={{ ...card, marginTop: "16px", borderColor: T.accent + "55" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>Reset Vault PIN</div>
+            <div style={{ fontSize: "12px", color: T.muted, marginBottom: "12px" }}>
+              Enter the one-time code sent to vterminater@gmail.com and choose a new PIN. This does not change any API keys.
+            </div>
+            <input type="text" inputMode="numeric" autoComplete="one-time-code" placeholder="Email code"
+              value={recoveryCode} onChange={e => setRecoveryCode(e.target.value)} style={{ ...inp, marginBottom: "8px" }} />
+            <input type="password" autoComplete="new-password" placeholder="New Vault PIN (6+ characters)"
+              value={recoveryNewPIN} onChange={e => setRecoveryNewPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button onClick={resetPINWithCode} disabled={recoveryBusy} style={btn(T.accent)}>
+                {recoveryBusy ? "Verifying…" : "Verify code and reset PIN"}
+              </button>
+              <button onClick={sendRecoveryCode} disabled={recoveryBusy} style={btn("#252836")}>
+                Resend code
+              </button>
+            </div>
+          </div>
+        )}
+        {recoveryMsg && (
+          <div role="status" style={{ fontSize: "13px", color: recoveryMsg.toLowerCase().includes("error") || recoveryMsg.toLowerCase().includes("could not") ? T.red : T.textSub, padding: "10px", marginTop: "10px", background: T.surface, borderRadius: "8px" }}>
+            {recoveryMsg}
           </div>
         )}
       </div>

@@ -87,6 +87,25 @@ export interface CovarianceSizingShadow {
   evidenceFingerprint: string | null;
 }
 
+/**
+ * Normalize a shadow result to the event-ledger reason consumed by Upgrade Path.
+ * A measured result with no blocker is not a failed return-panel load.
+ */
+export function covarianceSizingShadowEventReason(input: {
+  state: string;
+  reason?: string | null;
+  sizeReductionPct?: number | null;
+} | null): string {
+  if (!input) return "return_panel_unavailable";
+  if (input.reason) return input.reason;
+  if (input.state === "measured") {
+    return (input.sizeReductionPct ?? 0) > 0.0001
+      ? "volatility_budget_trim_applied"
+      : "within_volatility_budget_no_trim";
+  }
+  return "shadow_reason_unavailable";
+}
+
 /** A single hot pair is the failure mode an average cannot see (EOG/OXY 0.845). */
 export const MAX_SINGLE_PAIR_CORR = 0.7;
 /** Whole-book crowding. */
