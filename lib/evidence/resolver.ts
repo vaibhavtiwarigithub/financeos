@@ -48,6 +48,8 @@ export interface ResolveRequest {
   // Shadow collection may exercise an inactive policy. Every other caller is
   // blocked while router_enabled=false, preventing accidental pre-cutover use.
   allowDisabledPolicy?: boolean;
+  /** Shadow-only independent provider probe; never usable by scored callers. */
+  forceProvider?: ProviderId;
   /** Evaluation-only mode: read canonical cache but never lease/call/enqueue. */
   cacheOnly?: boolean;
   /** Exact inactive candidate policy; allowed only for cache-only shadow evaluation. */
@@ -178,6 +180,9 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
   if (req.policyVersionId && (!req.cacheOnly || !req.allowDisabledPolicy)) {
     return envelope<T>(base, "", "unavailable", "miss", null, [], [], "disabled_by_policy");
   }
+  if (req.forceProvider && (!req.allowDisabledPolicy || !req.runId?.startsWith("shadow:"))) {
+    return envelope<T>(base, "", "unavailable", "miss", null, [], [], "disabled_by_policy");
+  }
   const spec = INTENT_CATALOG[intent];
   if (!spec.markets.includes(market)) {
     return envelope<T>(base, "", "not_applicable", "miss", null, [], [], "not_applicable");
@@ -201,6 +206,7 @@ export async function resolveEvidence<T = unknown>(req: ResolveRequest): Promise
 
   // 3-4. candidate chain: registry order → policy mode → drop runtime-disabled
   const chain = applyMode(adaptersForIntent(intent, market), rule)
+    .filter((adapter) => !req.forceProvider || adapter.providerId === req.forceProvider)
     .filter((a) => runtime.get(a.providerId)?.enabled !== false);
 
   if (rule.mode === "off") {

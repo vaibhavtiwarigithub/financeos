@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolveEvidence } from "@/lib/evidence/resolver";
 import { ADAPTERS_BY_INTENT } from "@/lib/evidence/registry";
 import { isMarket, type EvidenceIntent, type Market } from "@/lib/evidence/contracts";
+import { isEquityFundamentalsApplicable } from "@/lib/asset-classification";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,6 +32,15 @@ const WALLCLOCK_MS = 45_000;
 // Only intents that actually have a registered adapter are worth shadowing.
 const SHADOW_INTENTS = (Object.keys(ADAPTERS_BY_INTENT) as EvidenceIntent[]);
 const MARKET_WIDE_INTENTS = new Set<EvidenceIntent>(["macro.regime_inputs"]);
+// A bounded source-specific probe prevents the internal legacy-cache bridge at
+// the head of Auto from hiding whether a broker adapter itself works. One probe
+// type is selected per tick and the persisted cursor rotates it across ticks.
+const US_PROVIDER_PROBES = [
+  { provider: "alpaca" as const, intent: "price.daily_bars" as const },
+  { provider: "robinhood_mcp" as const, intent: "price.quote" as const },
+  { provider: "webull" as const, intent: "fundamentals.reported" as const },
+  { provider: "webull" as const, intent: "analyst.consensus" as const },
+];
 
 export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) {
@@ -98,7 +108,11 @@ export async function GET(req: NextRequest) {
   // makes the slice order stable across ticks so the offset means the same thing
   // each time; this rotates the start point so every tick works a fresh slice.
   const cursorKey = `evidence_shadow_cursor:${market}`;
-  const { data: cursorRow } = await svc.from("app_settings").select("value").eq("key", cursorKey).maybeSingle();
+  const providerProbeKey = `evidence_shadow_provider_probe:${market}`;
+  const [{ data: cursorRow }, { data: providerProbeRow }] = await Promise.all([
+    svc.from("app_settings").select("value").eq("key", cursorKey).maybeSingle(),
+    svc.from("app_settings").select("value").eq("key", providerProbeKey).maybeSingle(),
+  ]);
   const startOffset = allSymbols.length > 0 ? (Number(cursorRow?.value ?? 0) % allSymbols.length + allSymbols.length) % allSymbols.length : 0;
   const symbols = allSymbols.length > 0
     ? [...allSymbols.slice(startOffset), ...allSymbols.slice(0, startOffset)]
@@ -106,6 +120,10 @@ export async function GET(req: NextRequest) {
 
   let resolvedFresh = 0, resolvedLive = 0, unavailable = 0, symbolsDone = 0;
   const perIntent: Record<string, { ok: number; unavailable: number }> = {};
+  const providerProbe = market === "us"
+    ? US_PROVIDER_PROBES[(Number(providerProbeRow?.value ?? 0) || 0) % US_PROVIDER_PROBES.length]
+    : null;
+  const providerProbeCounts = providerProbe ? { provider: providerProbe.provider, intent: providerProbe.intent, ok: 0, unavailable: 0, skipped: 0, stoppedReason: null as string | null } : null;
 
   // Market-wide facts are resolved once, never once per symbol. The observed
   // macro adapter is cache-fed by ResearchAgent and performs no external call.
@@ -147,11 +165,43 @@ export async function GET(req: NextRequest) {
         perIntent[intent].unavailable++;
       }
     }
+    if (providerProbe && Date.now() - started <= WALLCLOCK_MS && !providerProbeCounts?.stoppedReason) {
+      const eligible = providerProbe.provider === "webull"
+        ? isEquityFundamentalsApplicable(symbol)
+        : !/\.NS$|\.BO$|^[A-Z0-9]+-(?:USD|USDT|USDC)$/.test(symbol);
+      if (eligible) {
+        try {
+          const env = await resolveEvidence({
+            market, intent: providerProbe.intent, symbol,
+            runId: `shadow:${market}:provider-probe`,
+            allowDisabledPolicy: true,
+            forceProvider: providerProbe.provider,
+          });
+          if (env.payload != null && (env.quality === "fresh" || env.quality === "stale")) providerProbeCounts!.ok++;
+          else {
+            providerProbeCounts!.unavailable++;
+            if (["auth_missing", "schema_invalid", "entitlement_missing", "rate_limited", "daily_budget", "timeout", "provider_error"].includes(env.unavailableReason ?? "")) {
+              providerProbeCounts!.stoppedReason = env.unavailableReason ?? "provider_error";
+            }
+          }
+        } catch {
+          providerProbeCounts!.unavailable++;
+        }
+      } else {
+        providerProbeCounts!.skipped++;
+      }
+    } else if (providerProbe && providerProbeCounts?.stoppedReason) {
+      providerProbeCounts.skipped++;
+    }
   }
 
   if (allSymbols.length > 0) {
     const nextOffset = (startOffset + symbolsDone) % allSymbols.length;
     await svc.from("app_settings").upsert({ key: cursorKey, value: String(nextOffset), updated_at: new Date().toISOString() });
+    if (providerProbe) {
+      const nextProbe = ((Number(providerProbeRow?.value ?? 0) || 0) + 1) % US_PROVIDER_PROBES.length;
+      await svc.from("app_settings").upsert({ key: providerProbeKey, value: String(nextProbe), updated_at: new Date().toISOString() });
+    }
   }
 
   return NextResponse.json({
@@ -166,6 +216,7 @@ export async function GET(req: NextRequest) {
     resolvedLive,
     unavailable,
     perIntent,
+    providerProbe: providerProbeCounts,
     note: "shadow-only — router_enabled=false; logged to provider_call_ledger + evidence_cache_v2, never scored",
   });
 }

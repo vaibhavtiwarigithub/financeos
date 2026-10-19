@@ -15,7 +15,7 @@ import { reportIssue, resolveIssue } from "@/lib/system-health";
 export type ProviderId =
   | "alpha_vantage" | "financialdatasets" | "massive" | "finnhub"
   | "fmp" | "eodhd" | "twelvedata" | "upstox" | "fred" | "gdelt"
-  | "sec" | "yahoo" | "webull" | "kairos";
+  | "sec" | "yahoo" | "webull" | "robinhood_mcp" | "alpaca" | "kairos";
 
 interface ProviderConfig {
   label: string;
@@ -39,6 +39,8 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   sec:               { label: "SEC EDGAR",         dailyBudget: null }, // official XBRL, no key; ~10 req/s fair-access (paced)
   yahoo:             { label: "Yahoo Finance",     dailyBudget: null }, // unofficial quoteSummary; no published cap (paced + fail-soft)
   webull:            { label: "Webull",            dailyBudget: null }, // free MCP research tools (analyst/fundamentals); auto-refresh token, no daily cap
+  robinhood_mcp:     { label: "Robinhood MCP",     dailyBudget: null }, // read-only market-data MCP; unknown provider-side rate limit
+  alpaca:            { label: "Alpaca Market Data", dailyBudget: null }, // Basic plan 200/min; feed/entitlement is account-specific
   kairos:            { label: "Kairos observed",   dailyBudget: null }, // internal compatibility bridge; no external call
 };
 
@@ -51,6 +53,7 @@ const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 const PACING_MS: Partial<Record<ProviderId, number>> = {
   massive: 12_500, // 5/min
   gdelt:   5_500,  // 1 req / 5s
+  alpaca:  350,    // conservative under documented Basic 200/min ceiling
 };
 
 // AV signals a rate-limit/throttle via a "Note" or "Information" field (no data).

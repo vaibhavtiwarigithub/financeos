@@ -6,7 +6,8 @@
 // chains follow features/data-source-policy/FEATURE_ARCHITECTURE.md §22.
 //
 // This is a pure lookup: importing it wires NOTHING into scoring or the money
-// path. router_enabled stays false; no resolver consumes this yet.
+// path. The evidence-shadow worker may use it for diagnostics; router_enabled
+// stays false for scored research.
 
 import type { EvidenceIntent, ProviderAdapter, ProviderId, ProviderSpec, Market } from "@/lib/evidence/contracts";
 import { finnhubFundamentalsAdapter } from "@/lib/evidence/adapters/finnhub";
@@ -17,6 +18,8 @@ import { eodhdBarsAdapter } from "@/lib/evidence/adapters/eodhd";
 import { twelvedataBarsAdapter } from "@/lib/evidence/adapters/twelvedata";
 import { edgarInsiderAdapter } from "@/lib/evidence/adapters/edgar";
 import { upstoxBarsAdapter, yahooIndiaBarsAdapter } from "@/lib/evidence/adapters/india-bars";
+import { alpacaIexBarsAdapter } from "@/lib/evidence/adapters/alpaca";
+import { robinhoodMcpQuoteAdapter } from "@/lib/evidence/adapters/robinhood-mcp";
 import {
   observedBarsAdapter,
   observedFundamentalsAdapter,
@@ -34,29 +37,33 @@ export const ADAPTERS_BY_INTENT: Partial<Record<EvidenceIntent, ProviderAdapter[
   // EDGAR (free, ~10/s, router-paced) first; Massive (5/min paced, richer detail) backs
   // the tail. Insider is sparse by nature — most names have <3 open-market trades.
   "insider.transactions":  [observedInsiderAdapter, edgarInsiderAdapter, massiveInsiderAdapter],
-  // US candles: Massive → EODHD → TwelveData as an EXPLICIT router chain (§8).
+  // US bars: Massive → EODHD → TwelveData → Alpaca IEX as explicit sources.
   // These used to be one "massive" adapter that hid the fallback internally, so
   // provenance recorded a nominal source rather than the serving one and a
   // `mode: "only"` policy could not actually pin a provider. Each source is now
   // its own adapter; the router owns the fallback and the ledger sees three
   // distinct providers. Order is unchanged: Massive first (no daily cap),
   // TwelveData (800/day) backs the tail that Massive's 5/min starves.
-  // NOTE: the resolver caps a single resolve at MAX_SYNC_ATTEMPTS=2 live calls,
-  // so the third source is reached via the durable refresh queue rather than
-  // synchronously — a deliberate Vercel wall-clock bound, not an oversight.
+  // NOTE: ordinary Auto fallback caps a resolve at MAX_SYNC_ATTEMPTS=2 live
+  // calls. The evidence-shadow worker also source-pins one provider per tick,
+  // so later candidates (including Alpaca) collect independent observations
+  // without changing that request bound or letting the internal bridge hide them.
   // India's native sources (Upstox → Yahoo) sit after the US ones; each adapter
   // is market-scoped, so `adaptersForIntent` hands US exactly the chain it had
   // before and India its own. Without these India could only reach bars through
   // the kairos compatibility bridge, i.e. only while the legacy fetch still runs.
   "price.daily_bars":      [
     observedBarsAdapter,
-    massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter,
+    massiveBarsAdapter, eodhdBarsAdapter, twelvedataBarsAdapter, alpacaIexBarsAdapter,
     upstoxBarsAdapter, yahooIndiaBarsAdapter,
   ],
+  // Broker quote is shadow-only and is separately provider-probed by the
+  // evidence-shadow worker; it is not an execution mark or price authority.
+  "price.quote":          [robinhoodMcpQuoteAdapter],
   "sentiment.news":        [observedSentimentAdapter],
   "macro.regime_inputs":   [observedMacroAdapter],
-  // fundamentals.valuation / events.* /
-  // price.quote — deferred: their existing chains stay legacy until adapters land.
+  // fundamentals.valuation / events.* remain deferred: their existing chains
+  // stay legacy until adapters land.
 };
 
 // Flat list of every registered adapter (for capability-status seeding + tests).
@@ -116,6 +123,20 @@ export const PROVIDER_SPECS: Partial<Record<ProviderId, ProviderSpec>> = {
     dailyLimitState: "unknown", rateLimitState: "unknown",
     minIntervalMs: 0, reserveCalls: 0, entitlementRequired: true, credentialRef: "WEBULL_MCP_ACCESS_TOKEN",
     trustTier: 2, official: true,
+  },
+  robinhood_mcp: {
+    id: "robinhood_mcp", label: "Robinhood MCP", transport: "mcp",
+    markets: ["us"], capabilities: ["price.quote"],
+    dailyLimitState: "unknown", rateLimitState: "unknown",
+    minIntervalMs: 2_500, reserveCalls: 0, entitlementRequired: true,
+    credentialRef: "Robinhood MCP OAuth", trustTier: 2, official: true,
+  },
+  alpaca: {
+    id: "alpaca", label: "Alpaca IEX", transport: "http",
+    markets: ["us"], capabilities: ["price.daily_bars"],
+    dailyLimitState: "unknown", rateLimitState: "known", rateLimitCalls: 200, rateLimitWindowSeconds: 60,
+    minIntervalMs: 350, reserveCalls: 0, entitlementRequired: true,
+    credentialRef: "ALPACA_PAPER_API_KEY + ALPACA_PAPER_API_SECRET", trustTier: 2, official: true,
   },
   massive: {
     id: "massive", label: "Massive", transport: "http",

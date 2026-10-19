@@ -30,8 +30,14 @@ describe("adaptersForIntent — market filtering", () => {
     expect(ids).not.toContain("finnhub"); // Finnhub spec is US-only.
   });
 
-  it("returns [] for an intent with no registered chain", () => {
-    expect(adaptersForIntent("price.quote", "us")).toEqual([]);
+  it("registers Robinhood MCP quotes for US but never India", () => {
+    expect(adaptersForIntent("price.quote", "us").map((a) => a.providerId)).toEqual(["robinhood_mcp"]);
+    expect(adaptersForIntent("price.quote", "india")).toEqual([]);
+  });
+
+  it("registers Alpaca IEX bars as a US-only provider", () => {
+    expect(adaptersForIntent("price.daily_bars", "us").map((a) => a.providerId)).toContain("alpaca");
+    expect(adaptersForIntent("price.daily_bars", "india").map((a) => a.providerId)).not.toContain("alpaca");
   });
 });
 

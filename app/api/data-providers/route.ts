@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { providerConfig, type ProviderId } from "@/lib/data/provider-fetch";
 import { PROVIDER_SPECS } from "@/lib/evidence/registry";
+import { isAlpacaConfigured } from "@/lib/brokers/alpaca-credentials";
+import { hasRobinhoodToken } from "@/lib/robinhood-mcp";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +46,8 @@ const KEY_ENV: Record<ProviderId, string | null> = {
   sec: null,   // SEC EDGAR — official, no key
   yahoo: null, // Yahoo quoteSummary — unofficial, no key
   webull: null, // Webull MCP — OAuth token in vault, not an env key
+  robinhood_mcp: null, // Robinhood MCP OAuth token in the encrypted API vault
+  alpaca: null, // Alpaca credentials may be in the encrypted API vault or env
 };
 
 type LimitState = "known" | "none" | "unknown";
@@ -204,6 +208,12 @@ export async function GET() {
       fdKeyPresent = !!(data as any)?.key_value;
     } catch { /* leave false */ }
   }
+  const [alpacaCredentialPresent, robinhoodCredentialPresent, webullCredentialPresent] = await Promise.all([
+    isAlpacaConfigured().catch(() => false),
+    hasRobinhoodToken(svc).catch(() => false),
+    svc.from("api_key_vault").select("key_value").eq("key_name", "WEBULL_MCP_ACCESS_TOKEN").maybeSingle()
+      .then(({ data }: any) => typeof data?.key_value === "string" && data.key_value.length > 0, () => false),
+  ]);
 
   // Existing budget rollups + the three Evidence-Router runtime tables. Each new
   // read is independently fault-isolated (a missing table/permission → empty, not
@@ -256,7 +266,11 @@ export async function GET() {
     const envName = KEY_ENV[id];
     const keyVal = envName ? process.env[envName] : undefined;
     const credentialRequired = envName !== null || spec?.credentialRef != null;
-    const keyPresent = !credentialRequired || (id === "financialdatasets" ? fdKeyPresent : !!keyVal);
+    const keyPresent = !credentialRequired || (id === "financialdatasets" ? fdKeyPresent
+      : id === "alpaca" ? alpacaCredentialPresent
+      : id === "robinhood_mcp" ? robinhoodCredentialPresent
+      : id === "webull" ? webullCredentialPresent
+      : !!keyVal);
     const expiresAt = jwtExpiryIso(keyVal);
     const daysToExpiry = expiresAt ? Math.round((new Date(expiresAt).getTime() - Date.now()) / 86400000) : null;
     const todayCalls = Number(todayByProv.get(id) ?? 0);

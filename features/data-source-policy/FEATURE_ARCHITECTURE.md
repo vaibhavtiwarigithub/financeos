@@ -2,13 +2,15 @@
 
 > 2026-07-31 current-state correction: India per-symbol GDELT sentiment is retired from active scoring after zero usable production coverage. Replacement NSE/Google headline evidence is a separate shadow and is not an active `sentiment.news` provider policy. See `features/pipeline-data-and-timing/FEATURE_ARCHITECTURE.md`.
 
-> Status: **DRAFT FOR CLAUDE + OWNER REVIEW. DESIGN ONLY.**
+> Status: **OWNER-APPROVED FOR ADDITIVE BROKER-DATA SHADOW ADAPTERS ONLY (2026-10-19).**
 > Date: 2026-07-13
 > Owner request: stop rewriting agent code and quota logic whenever a provider or
 > MCP tool changes. Give the owner simple market/evidence controls while Kairos
 > automatically handles provider selection, freshness, pacing, fallback, and audit.
-> Implementation gate: no code, migration, provider activation, scoring change, or
-> deployment until this architecture is reviewed and Vaibhav says `Proceed`/`Code it`.
+> Original implementation gate (historical): no code, migration, provider
+> activation, scoring change, or deployment until reviewed and approved. The
+> scoped 2026-10-19 broker-data shadow addition below is separately approved; the
+> original score-router cutover gate remains in force.
 
 > Scoped implementation note (2026-10-19): the existing shadow-only Finnhub and
 > Webull equity fundamentals/analyst adapters now consult the shared asset
@@ -18,6 +20,16 @@
 > is a provider-applicability correction only: the Router remains off for scoring,
 > and no provider activation, score, eligibility, trade, or portfolio behavior
 > changes. The original cutover gate is unchanged.
+
+> Owner approval (2026-10-19): implement additive Alpaca and Robinhood read-only
+> market-data adapters using this router and its existing shadow collector. Keep
+> `router_enabled=false`; these feeds may populate comparison evidence only, not
+> score inputs, execution marks, sizing, or orders. Webull's existing quarterly
+> fundamentals and analyst adapters remain in shadow. Do not add Webull OpenAPI
+> quotes/bars until the separate OpenAPI entitlement and live schema are verified.
+> Alpaca Basic/IEX and Robinhood MCP are source-specific contracts, not a
+> consolidated-tape substitute. Missing credentials, entitlement, timestamps, or
+> valid schema must remain an explicit unavailable/degraded result.
 
 ## 1. Decision
 
@@ -921,6 +933,34 @@ Keep these as reviewed defaults, not permanent truths:
 - **Sentiment/insider/macro:** preserve current chains during router shadow phase.
 - **All policy modes:** Auto.
 - **Router flags:** off until dual-run evidence passes separately per market.
+
+### Owner-approved broker source observations (2026-10-19)
+
+- Robinhood MCP L1 quotes are collected only through the bounded US shadow path.
+  Both venue-side timestamps must exist, be fresh, and be mutually aligned; the
+  quote is not an execution mark or score input.
+- Alpaca daily bars use the Basic-plan IEX feed, explicitly labeled as partial
+  venue coverage. They are appended as a US bars fallback and are also probed
+  directly by the rotating shadow worker so the Kairos cache bridge cannot hide
+  whether Alpaca itself is available. Production credentials are separate from
+  local `.env.local` and must be configured server-side before that probe can
+  succeed in Vercel.
+- Webull quarterly fundamentals and analyst adapters already exist and are
+  shadow-probed directly. Their auth/entitlement failures stop repeated probes
+  within that tick and remain visible in the provider ledger. Webull OpenAPI
+  candles/quotes are not assumed from a brokerage login and remain unregistered
+  until a separate OpenAPI data entitlement and contract are verified.
+- Source-specific probes rotate across scheduled shadow ticks, respect existing
+  provider budgets/pacing, and write only canonical cache + append-only ledger
+  records. No score, sizing, portfolio, execution, or live-trading consumer is
+  introduced by this approval.
+- Implementation status (2026-10-19): adapters and rotating probes are coded;
+  deterministic parser/registry/resolver tests pass. The full production contract
+  is not yet validated: the first scheduled runs must show fresh Alpaca IEX bars
+  and Robinhood quote observations, while Webull auth/entitlement remains a
+  separate provider condition. Keep each broker marked unvalidated until those
+  observations and parity reports exist; do not promote a source based on code
+  registration alone.
 
 ## 23. Riskiest assumptions to validate first
 

@@ -24,10 +24,10 @@ const bars = (n: number): Candle[] =>
     open: 100, high: 101, low: 99, close: 100, volume: 1_000,
   }));
 
-describe("market scoping — US chain must be untouched", () => {
-  it("gives US exactly its original bars chain, with no India source added", () => {
+describe("market scoping — US and India chains remain isolated", () => {
+  it("appends only the explicit US Alpaca IEX fallback, with no India source added", () => {
     const us = adaptersForIntent("price.daily_bars", "us").map(a => a.providerId);
-    expect(us).toEqual(["kairos", "massive", "eodhd", "twelvedata"]);
+    expect(us).toEqual(["kairos", "massive", "eodhd", "twelvedata", "alpaca"]);
     // Yahoo serves US fundamentals, so a provider-level capability list would
     // have leaked it into the US bars chain. It must not be here.
     expect(us).not.toContain("yahoo");

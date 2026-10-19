@@ -528,11 +528,12 @@ export async function inspectRobinhoodMcpCapabilities(): Promise<
   }
 }
 
-/** Read-only quote transport; validation of prices and venue times belongs to the caller. */
-export async function readRobinhoodLeveragedQuoteRows(symbols: string[]): Promise<Record<string, unknown>[]> {
-  const allowed = new Set(["SOXL", "SOXS", "TQQQ", "SQQQ", "SOXX", "QQQ"]);
+/** Read-only, bounded quote transport for the research shadow; callers validate values/timestamps. */
+export async function readRobinhoodEquityQuoteRows(symbols: string[]): Promise<Record<string, unknown>[]> {
   const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
-  if (!unique.length || unique.some((s) => !allowed.has(s))) throw new Error("symbol outside leveraged quote allowlist");
+  if (!unique.length || unique.length > 20 || unique.some((s) => !/^[A-Z][A-Z0-9.-]{0,14}$/.test(s))) {
+    throw new Error("invalid Robinhood equity quote request");
+  }
   const svc = createServiceClient();
   const token = await getValidAccessToken(svc);
   if (!token.ok || !token.token) throw new Error("Robinhood MCP not connected");
@@ -557,6 +558,14 @@ export async function readRobinhoodLeveragedQuoteRows(symbols: string[]): Promis
     : Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
   if (!quotes.length) throw new Error("Robinhood MCP equity quote payload unrecognized");
   return quotes.map((item: any) => item?.quote ?? item).filter((item: any) => item && typeof item === "object");
+}
+
+/** Narrow compatibility wrapper for the leveraged-exit quote path. */
+export async function readRobinhoodLeveragedQuoteRows(symbols: string[]): Promise<Record<string, unknown>[]> {
+  const allowed = new Set(["SOXL", "SOXS", "TQQQ", "SQQQ", "SOXX", "QQQ"]);
+  const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  if (!unique.length || unique.some((s) => !allowed.has(s))) throw new Error("symbol outside leveraged quote allowlist");
+  return readRobinhoodEquityQuoteRows(unique);
 }
 
 export type RobinhoodCryptoQuote = {

@@ -110,6 +110,22 @@ describe("resolveEvidence safety gates", () => {
     expect(state.upserts[0]?.provenance).toEqual(provenance);
   });
 
+  it("allows source-pinned provider resolution only to the evidence-shadow worker", async () => {
+    const blocked = await resolveEvidence({
+      market: "us", symbol: "AAPL", intent: "fundamentals.reported",
+      forceProvider: "finnhub", runId: "research:ordinary",
+    });
+    expect(blocked.unavailableReason).toBe("disabled_by_policy");
+    expect(state.adapter?.fetch).not.toHaveBeenCalled();
+
+    const probed = await resolveEvidence({
+      market: "us", symbol: "AAPL", intent: "fundamentals.reported",
+      forceProvider: "finnhub", runId: "shadow:us:provider-probe", allowDisabledPolicy: true,
+    });
+    expect(probed.quality).toBe("fresh");
+    expect(probed.providersAttempted).toEqual(["finnhub"]);
+  });
+
   it("does not call a provider when the durable pacing lease is denied", async () => {
     state.rpcAcquired = false;
 
