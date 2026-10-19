@@ -177,10 +177,15 @@ there can be no armed/visible plan without its `created` evidence event.
   in this codebase; building one is a distinct, larger scope (would need
   Robinhood MCP support that hasn't been confirmed to exist) and is not
   assumed here.
-- **Does not watch Kite/India manual fills.** The owner's ask was specifically
-  the agentic (Robinhood, `605420660`) account. India protective-order
-  placement already exists on a separate, more mature path
-  (`lib/protective/`); extending detection there is a future, separate ask.
+- **Does not run the full manual-fill Guardian workflow for Kite/India.** The
+  original Stage 0/1 workflow remains scoped to agentic Robinhood account
+  `605420660`. An India Live Portfolio P0 coverage panel was added separately
+  on 2026-10-19 (`features/india-live-guardian-scorecard/FEATURE_ARCHITECTURE.md`):
+  it reads live Kite delivery holdings and the broker's active GTT list and
+  reports matched, partial, conflicting or missing sell coverage. It does not
+  detect/attribute India manual fills, propose a stop, create an owner-arm plan,
+  or change Kite orders. Full India Guardian lifecycle remains unbuilt and
+  needs its own design/approval because Kite GTT children are LIMIT orders.
 
 ## 5. Decisions implemented
 

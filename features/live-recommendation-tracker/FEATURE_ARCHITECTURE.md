@@ -7,6 +7,15 @@ Decisions taken: (1) all six Robinhood accounts, read-only; (2) the buy ideas co
 Deviations from the draft: response state lives on the daily mark row (2 recommendation tables instead of 3, plus `live_guardian_revisions`); `risk_review` recommendations are not recorded (224 distinct account/symbol/reason keys in the snapshots, noise rather than advice); the stop-rule shadow runs on matured buy ideas at their proposal price because only one Guardian stop has ever been suggested.
 Files: migration 20261014162931, `lib/live-recommendations/core.ts`, `app/api/agents/live-recommendations/route.ts`, `app/api/live-portfolio/recommendations/route.ts`, `components/dashboard/RecommendationsPanel.tsx`, tests `live-recommendations-core` and `live-recommendations-wiring`.
 
+The stored live-recommendation ledger above remains US/Robinhood-specific. On
+2026-10-19, the India Live Portfolio received a separate read-only scorecard
+that uses India `decision_observations` and matured `observation_labels` against
+the NIFTY 50. It deliberately does not read US recommendation rows or infer
+India buy-response history from current holdings. See
+`features/india-live-guardian-scorecard/FEATURE_ARCHITECTURE.md` for its data
+contract, limitations, and separate future work for a persistent India
+recommendation/response ledger.
+
 ## What the owner asked for (2026-10-14)
 On the Live Portfolio page, show ALL recommendations; record whether each was taken or not; track how each fared against its symbol; revise the Guardian daily from that evidence; count how many times the Guardian alerted, the price to sell at, and current P/L depending on what was done.
 

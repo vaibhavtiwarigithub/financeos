@@ -650,7 +650,7 @@ workspace switcher in every shell.
 | `/dashboard/markets` | Markets | Macro sentinel gauge, sector TradingView chart, insider trades, breadth |
 | `/dashboard/smart-money` | Smart Money | Options flow, insider signals, trade queue; 4 tabs; both markets |
 | `/dashboard/india` | India | NSE score tracker, ₹ paper portfolio, Kite live holdings, India order form |
-| `/dashboard/live-portfolio` | Live Portfolio | All Robinhood account positions, CSV import, trade enrichment, performance chart |
+| `/dashboard/live-portfolio` | Live Portfolio | Market switch: US broker portfolios or India Zerodha Kite/Coin, market-local performance, Guardian coverage and research outcome views |
 | `/dashboard/journal` | Decision Journal | Trade decision log, signal→fill→outcome linking |
 | `/dashboard/mentor` | Mentor | MentorAgent coaching insights |
 | `/dashboard/briefing` | Legacy redirect | Redirects to `/dashboard`. Briefings are email-only since 2026-09-08 — the dashboard card was removed |
@@ -894,6 +894,25 @@ last-available NAV, units, invested value and P&L are shown on India Live Portfo
 but no mutual fund enters equity research, scoring, stops, targets, ladders, performance
 history or order execution. A missing Coin NAV withholds combined totals rather than
 being treated as zero; Coin endpoint failure does not blank valid Kite equity holdings.
+
+India Live Portfolio also includes two market-specific, owner-only read models:
+
+- **Manual Trade Guardian · India / Kite** compares current delivery holdings to
+  the broker-visible active GTT list and reports exact-quantity coverage,
+  partial/over-quantity, conflicts, missing sell legs, or unknown status. It is
+  read-only; it does not identify manual fills, suggest stops, or create/modify/
+  cancel orders. Kite GTT children are LIMIT orders and can fail to fill after a
+  gap through the trigger, so a matching GTT is not a guaranteed stop.
+- **Recommendations & Guardian scorecard · India** reads entry-eligible India
+  decision observations and their already-matured benchmark-neutral labels at
+  2/5/10/20 sessions. The comparator is NIFTY 50. Aggregate return/hit-rate
+  cards are descriptive, not independent-sample IC or t-stat. Current holdings
+  are not presented as proof the owner acted on a recommendation. The existing
+  `live_recommendations` ledger and SPY scorecard remain US-only.
+
+These views add no scheduler, database schema, stop policy, or broker-order
+path. Full India manual-fill detection, owner-armed stop plans, and ongoing
+software-stop monitoring remain separate unbuilt work.
 
 ### Broker adapter layer
 

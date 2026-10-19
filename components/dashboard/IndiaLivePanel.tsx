@@ -5,6 +5,7 @@ import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/Pri
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
 import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
+import { IndiaManualTradeGuardianPanel, IndiaRecommendationsGuardianScorecard } from "@/components/dashboard/IndiaLiveGuardianPanels";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -381,6 +382,10 @@ export default function IndiaLivePanel() {
 
         {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
         <LivePerformanceChart market="india" refreshKey={chartRefreshKey} />
+
+        {/* ── India-only Guardian and research outcome scorecard ── */}
+        <IndiaManualTradeGuardianPanel />
+        <IndiaRecommendationsGuardianScorecard holdings={holdings} />
 
         {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
