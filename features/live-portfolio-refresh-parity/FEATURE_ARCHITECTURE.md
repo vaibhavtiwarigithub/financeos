@@ -1,6 +1,6 @@
 # Live portfolio refresh and market parity
 
-**Status:** Implemented locally; production release pending. Read-only broker/account access only. No order, account-routing, safety-threshold, or live-trading changes.
+**Status:** Implemented, pushed to `main`, and production-verified (`882563a0cbd18193c5939255f58f35a115af6b48`, 2026-10-19). Read-only broker/account access only. No order, account-routing, safety-threshold, or live-trading changes.
 
 ## Goal
 
@@ -44,7 +44,9 @@ Make the US and India live portfolio pages describe the same operational facts c
 
 ## Release boundary
 
-These edits are local and have not been pushed or deployed. Production runtime credential/entitlement checks remain separate: local `.env.local` is not a Vercel secret store, and broker account connectivity does not establish a market-data subscription. Do not claim live Alpaca/Webull market data is feeding scores from this implementation.
+Production verification on 2026-10-19: the deployed US page successfully refreshed Robinhood and Webull read-only snapshots; the India page successfully refreshed Kite holdings and wrote a Kite live-performance point. No orders were placed. Production live-performance currently has only two India points (2026-07-13 and 2026-10-19), so recent windows with fewer than two points correctly keep the labeled paper proxy until fresh daily Kite observations accumulate. The scheduled `kairos-live-snapshot` job is active; Kite's daily access-token lifecycle still requires a valid same-day token for each day's capture.
+
+Production runtime credential/entitlement checks remain separate: local `.env.local` is not a Vercel secret store, and broker account connectivity does not establish a market-data subscription. Do not claim live Alpaca/Webull market data is feeding scores from this implementation.
 
 ## Explicitly not claimed complete
 
