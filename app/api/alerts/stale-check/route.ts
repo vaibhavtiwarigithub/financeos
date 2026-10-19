@@ -1,4 +1,5 @@
 import { COUNCIL_QUEUE_GRACE_MIN, COUNCIL_UNSCORED_GRACE_MIN, findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
+import { resolveExpiredIssues } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { findCouncilDivergence, type DivergenceRun } from "@/lib/monitoring/council-divergence";
 import { councilMemberOf } from "@/lib/research/score-history";
@@ -115,6 +116,11 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
 async function runCheck() {
   const svc = createServiceClient();
   const now = new Date();
+
+  // Time-bounded informational/health notices should leave the open badge once
+  // their declared window has passed; no operator action or symptom recovery is
+  // implied by this archival transition.
+  await resolveExpiredIssues(svc, now);
 
   // Historical missed/failed-run alerts used to stay open forever: the checker
   // only examined today's schedule and never reconciled a later successful run.

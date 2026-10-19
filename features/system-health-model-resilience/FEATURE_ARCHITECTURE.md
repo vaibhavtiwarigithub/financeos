@@ -29,6 +29,10 @@ Implementation allowed: Yes
   Supabase error and identifies failed/deferred symbols without persisting raw
   provider exception text. These changes affect only health accuracy and
   diagnostics, never scoring or trading.
+- 2026-10-19: the scheduled stale-check now resolves open `agent_alerts` whose
+  explicit `auto_expire_at` has passed. This makes the existing self-expiry
+  contract effective in the persistent health badge; it does not imply that a
+  data provider recovered, and the alert remains in history as resolved.
 
 ## Why this feature exists
 

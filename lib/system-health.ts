@@ -94,6 +94,31 @@ export async function resolveIssue(issueKey: string, client?: SupabaseClient): P
 }
 
 /**
+ * Resolve open notices whose explicit auto-expiry has passed. `auto_expire_at`
+ * is a persisted contract (for example, a daily provider budget notice); merely
+ * hiding expired rows from one view would leave System Health falsely open.
+ * The timestamp predicate is applied atomically so a concurrently refreshed
+ * alert is not resolved using an older expiry value.
+ */
+export async function resolveExpiredIssues(
+  client?: SupabaseClient,
+  now = new Date(),
+): Promise<void> {
+  const svc = client ?? createServiceClient();
+  try {
+    const { error } = await svc
+      .from("agent_alerts")
+      .update({ resolved: true, resolved_at: now.toISOString() })
+      .eq("resolved", false)
+      .not("auto_expire_at", "is", null)
+      .lte("auto_expire_at", now.toISOString());
+    if (error) console.error("[system-health] resolveExpiredIssues failed:", error.message);
+  } catch (e) {
+    console.error("[system-health] resolveExpiredIssues threw:", e);
+  }
+}
+
+/**
  * Reconcile a set of issue_keys against the conditions that are currently
  * active for a given key PREFIX: report each active one, and resolve any open
  * alert under that prefix whose key is no longer active. Lets a scheduled

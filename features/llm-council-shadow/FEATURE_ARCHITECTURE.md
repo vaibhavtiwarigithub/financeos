@@ -91,6 +91,13 @@ member scores are independent; later bounded rounds receive only prior-round
 anonymous scores/evidence. Median consensus is deterministic and no orchestrator
 inference call is billed. A concurrent poll will not repeat an active job.
 
+On each scheduled queue sweep, an expired lease at the two-attempt limit is
+terminalized as `expired` with `lease_attempts_exhausted` before the existing
+batch-advance RPC runs. This prevents a job that cannot legally be reclaimed
+from holding its batch in `running` until the 12-hour deadline. The batch may
+advance as partial; this does not retry inference or treat missing members as
+successful forecasts.
+
 The official-client runner has no Kairos service credentials, drops project
 configuration and provider-key environment variables, disables model tools,
 web search and MCPs, and uses an isolated temporary working directory. Claude

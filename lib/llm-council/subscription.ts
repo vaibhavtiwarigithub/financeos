@@ -38,6 +38,33 @@ export async function enqueueSubscription(svc: any, config: any, snapshot: any, 
 }
 
 export async function sweepSubscriptionBatches(svc: any) {
+  // A lease can be reclaimed once. If the second lease expires, attempts is 2
+  // and claim() correctly refuses a third inference call — but the old status
+  // remained `leased`, causing advance() to wait until the 12-hour batch
+  // deadline. Mark only those expired, exhausted leases terminal before the
+  // existing batch advancer runs. The status/lease predicates make this safe
+  // against a concurrent worker that has already obtained a fresh lease.
+  const now = new Date().toISOString();
+  const { data: exhaustedLeases, error: leaseReadError } = await svc
+    .from("llm_council_jobs")
+    .select("id")
+    .eq("status", "leased")
+    .lte("lease_until", now)
+    .gte("attempts", 2)
+    .limit(500);
+  if (leaseReadError) throw new Error("subscription_lease_sweep_unavailable");
+  const exhaustedIds = (exhaustedLeases ?? []).map((job: any) => job.id).filter(Boolean);
+  if (exhaustedIds.length) {
+    const { error: expireError } = await svc
+      .from("llm_council_jobs")
+      .update({ status: "expired", failure_code: "lease_attempts_exhausted" })
+      .in("id", exhaustedIds)
+      .eq("status", "leased")
+      .lte("lease_until", now)
+      .gte("attempts", 2);
+    if (expireError) throw new Error("subscription_lease_sweep_failed");
+  }
+
   const { data, error } = await svc.from("llm_council_batches").select("id").eq("status", "running").order("created_at").limit(100);
   if (error) throw new Error("subscription_queue_unavailable");
   for (const batch of data ?? []) {

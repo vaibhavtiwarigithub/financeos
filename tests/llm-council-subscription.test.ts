@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { isWorkerId, isWorkerModel, subscriptionPrompt, validateSubscriptionResult, workerTokenHash } from "@/lib/llm-council/subscription";
+import { isWorkerId, isWorkerModel, subscriptionPrompt, sweepSubscriptionBatches, validateSubscriptionResult, workerTokenHash } from "@/lib/llm-council/subscription";
 import { sha256 } from "@/lib/llm-council/core";
 
 const job = { expected_model: "test-model" };
@@ -13,6 +13,43 @@ const packet = { symbol: "TEST-NO-REAL-ASSET", facts: { as_of: "2026-10-10", gro
 const forecast = { score: 52, confidence: 0.4, rationale: "Synthetic", bull_case: "Growth", bear_case: "Unknown", evidence_citations: [{ claim: "Growth 8", source: "facts.growth", as_of: "2026-10-10" }] };
 const body = { job_id: "11111111-1111-4111-8111-111111111111", lease_id: "22222222-2222-4222-8222-222222222222", actual_model: "test-model", input_sha256: sha256(JSON.stringify(packet)), forecast };
 describe("subscription worker boundary", () => {
+  it("terminalizes only exhausted expired leases before advancing their batches", async () => {
+    const calls: Array<{ table: string; operation: string; payload?: unknown; filters: unknown[] }> = [];
+    const svc = {
+      from(table: string) {
+        const call = { table, operation: "select", payload: undefined as unknown, filters: [] as unknown[] };
+        calls.push(call);
+        const builder: any = {
+          select: () => builder,
+          update: (payload: unknown) => { call.operation = "update"; call.payload = payload; return builder; },
+          eq: (...args: unknown[]) => { call.filters.push(["eq", ...args]); return builder; },
+          lte: (...args: unknown[]) => { call.filters.push(["lte", ...args]); return builder; },
+          gte: (...args: unknown[]) => { call.filters.push(["gte", ...args]); return builder; },
+          in: (...args: unknown[]) => { call.filters.push(["in", ...args]); return builder; },
+          order: (...args: unknown[]) => { call.filters.push(["order", ...args]); return builder; },
+          limit: () => builder,
+          then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
+            const data = table === "llm_council_jobs" && call.operation === "select"
+              ? [{ id: "job-expired" }]
+              : table === "llm_council_batches" ? [{ id: "batch-partial" }] : [];
+            return Promise.resolve({ data, error: null }).then(resolve, reject);
+          },
+        };
+        return builder;
+      },
+      async rpc(name: string, args: unknown) { calls.push({ table: "rpc", operation: name, payload: args, filters: [] }); return { error: null }; },
+    };
+
+    await sweepSubscriptionBatches(svc);
+
+    const terminalize = calls.find((call) => call.table === "llm_council_jobs" && call.operation === "update");
+    expect(terminalize?.payload).toEqual({ status: "expired", failure_code: "lease_attempts_exhausted" });
+    expect(terminalize?.filters).toContainEqual(["eq", "status", "leased"]);
+    expect(terminalize?.filters).toContainEqual(["gte", "attempts", 2]);
+    expect(terminalize?.filters.some((filter: any) => filter[0] === "lte" && filter[1] === "lease_until")).toBe(true);
+    expect(calls.find((call) => call.table === "rpc")?.payload).toEqual({ p_batch: "batch-partial" });
+  });
+
   it("hashes only correctly shaped bearer credentials", () => {
     expect(workerTokenHash(`Bearer kcw_${"a".repeat(64)}`)).toBe(sha256(`kcw_${"a".repeat(64)}`));
     for (const header of [null, "Bearer service-role-key", "kcw_abc", `Bearer kcw_${"g".repeat(64)}`]) expect(workerTokenHash(header)).toBeNull();
