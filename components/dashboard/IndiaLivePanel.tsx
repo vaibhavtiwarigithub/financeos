@@ -43,6 +43,18 @@ type Holding = {
   value: number;
 };
 
+type DayPosition = {
+  symbol: string;
+  tradingsymbol: string;
+  exchange: string;
+  product: string | null;
+  qty: number;
+  buy_price: number;
+  last_price: number;
+  pnl: number;
+  value: number;
+};
+
 type CoinHolding = {
   isin: string;
   fund: string;
@@ -70,6 +82,9 @@ type CoinPortfolio = {
 
 type Portfolio = {
   holdings: Holding[];
+  positions?: DayPosition[];
+  positions_available?: boolean;
+  positions_error?: string | null;
   connected: boolean;
   currency?: string;
   cash?: number | null;
@@ -77,6 +92,7 @@ type Portfolio = {
   combined_nav?: number | null;
   coin?: CoinPortfolio;
   error?: string;
+  fetched_at?: string;
 };
 
 type ScoreRow = {
@@ -108,6 +124,9 @@ export default function IndiaLivePanel() {
   // ── Holdings ───────────────────────────────────────────────────────────────
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [portfolioLoading, setPortfolioLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  const [chartRefreshKey, setChartRefreshKey] = useState(0);
 
   // ── Scored India signals ───────────────────────────────────────────────────
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -125,19 +144,59 @@ export default function IndiaLivePanel() {
   const connected = !!status?.connected;
   const { masked, setRevealed } = useRevealToggle();
 
+  const loadStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kite/status");
+      setStatus(await res.json());
+    } catch {
+      setStatus(null);
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  const loadPortfolio = useCallback(async () => {
+    setPortfolioLoading(true);
+    try {
+      const res = await fetch("/api/kite/portfolio");
+      setPortfolio(await res.json());
+    } catch {
+      setPortfolio({ holdings: [], connected: false, error: "Failed to load portfolio" });
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, []);
+
+  const syncNow = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshNote(null);
+    try {
+      const res = await fetch("/api/live-account/refresh-snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "owner_manual_refresh" }),
+      });
+      const result = await res.json();
+      const failed = [
+        ...(result.registry ?? []).filter((r: any) => !r.ok && r.error !== "not connected").map((r: any) => r.broker),
+        ...(result.alpacaLive?.ok || !result.alpacaLive?.error || result.alpacaLive.error === "Live credentials are not configured in this runtime" ? [] : ["Alpaca Live"]),
+        ...(result.kite?.ok || !result.kite?.error ? [] : ["Kite performance"]),
+      ];
+      setRefreshNote(failed.length
+        ? `Sync completed with provider issues: ${Array.from(new Set(failed)).join(", ")}. Check System Health; displayed holdings remain the latest successful broker read.`
+        : "Broker sync completed. Holdings below are read directly from Kite; no order was placed.");
+      await Promise.all([loadStatus(), loadPortfolio()]);
+      setChartRefreshKey(v => v + 1);
+    } catch (error) {
+      setRefreshNote(error instanceof Error ? error.message : "Broker sync failed. Existing data is unchanged.");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadPortfolio, loadStatus]);
+
   useEffect(() => {
-    fetch("/api/kite/status")
-      .then(r => r.json())
-      .then((d: KiteStatus) => setStatus(d))
-      .catch(() => setStatus(null))
-      .finally(() => setStatusLoading(false));
-
-    fetch("/api/kite/portfolio")
-      .then(r => r.json())
-      .then((d: Portfolio) => setPortfolio(d))
-      .catch(() => setPortfolio({ holdings: [], connected: false, error: "Failed to load portfolio" }))
-      .finally(() => setPortfolioLoading(false));
-
+    void loadStatus();
+    void loadPortfolio();
     fetch(`/api/charts/score-history?symbols=${NIFTY_15.join(",")}&period=ALL`)
       .then(r => r.json())
       .then((d: { bySymbol?: Record<string, ScoreRow[]> }) => {
@@ -160,7 +219,7 @@ export default function IndiaLivePanel() {
       })
       .catch(() => setSignals([]))
       .finally(() => setSignalsLoading(false));
-  }, []);
+  }, [loadPortfolio, loadStatus]);
 
   // One stable idempotency key per order intent — reused across retries of the same
   // order so the server dedupes a double-submit; regenerated for each new order.
@@ -226,7 +285,10 @@ export default function IndiaLivePanel() {
   const cash = portfolio?.cash ?? null;
   const equityNav = portfolio?.nav ?? (cash != null ? cash + totalValue : totalValue);
   const nav = portfolio?.combined_nav ?? equityNav;
-  const positionCount = holdings.length + (coinAvailable ? (coin?.holding_count ?? 0) : 0);
+  const positionCount = new Set([
+    ...holdings.map(h => h.symbol),
+    ...(portfolio?.positions ?? []).map(p => p.symbol),
+  ]).size + (coinAvailable ? (coin?.holding_count ?? 0) : 0);
   const investedAssetsValue = totalValue + (coinValued ? coin.total_value! : 0);
   const coinAllocationPct = coinValued && investedAssetsValue > 0
     ? (coin.total_value! / investedAssetsValue) * 100
@@ -271,7 +333,14 @@ export default function IndiaLivePanel() {
       title="India · Zerodha Kite"
       subtitle="NSE equities via Kite · Coin mutual funds read-only"
       cadence="daily"
-      toolbar={<EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />}
+      toolbar={
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
+          <button onClick={syncNow} disabled={refreshing} style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: refreshing ? T.muted : T.accent, borderRadius: "8px", padding: "8px 14px", fontSize: "12px", fontWeight: 600, cursor: refreshing ? "wait" : "pointer" }}>
+            {refreshing ? "Syncing brokers…" : "↻ Sync brokers"}
+          </button>
+        </div>
+      }
       help={{
         whatItDoes: "Live NSE holdings and read-only Coin mutual funds from your Zerodha account, plus AI-scored Indian stocks you can buy or sell with explicit real-order confirmation. Kite issues a fresh access token each day — reconnect when it expires.",
         whatToLookFor: [
@@ -290,6 +359,8 @@ export default function IndiaLivePanel() {
             Zerodha Connection
           </div>
           <StatusBar />
+          {portfolio?.fetched_at && <div style={{ color: T.muted, fontSize: "10px", marginTop: "7px" }}>Kite data fetched {new Date(portfolio.fetched_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</div>}
+          {refreshNote && <div role="status" style={{ color: refreshNote.includes("provider issues") || refreshNote.includes("failed") ? T.amber : T.green, fontSize: "11px", marginTop: "8px", lineHeight: 1.5 }}>{refreshNote}</div>}
         </div>
 
         {/* ── Stat cards (shared with US Live) ── */}
@@ -309,7 +380,7 @@ export default function IndiaLivePanel() {
         )}
 
         {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
-        <LivePerformanceChart market="india" />
+        <LivePerformanceChart market="india" refreshKey={chartRefreshKey} />
 
         {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
@@ -389,6 +460,45 @@ export default function IndiaLivePanel() {
                 ))}
               </div>
             </>
+          )}
+        </div>
+
+        {/* ── Same-day positions are shown separately; never double-counted into delivery holdings or NAV. ── */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "5px" }}>
+            Today’s Kite positions <span style={{ color: T.textSub, fontWeight: 400 }}>(not added to delivery holdings or NAV)</span>
+          </div>
+          <div style={{ fontSize: "11px", color: T.muted, marginBottom: "12px" }}>
+            Broker-reported day positions are distinct from demat delivery holdings; position rows are displayed separately to avoid double counting.
+          </div>
+          {portfolioLoading ? (
+            <div style={{ color: T.muted, fontSize: "13px" }}>Loading today’s positions…</div>
+          ) : !holdingsConnected ? (
+            <div style={{ color: T.muted, fontSize: "13px" }}>Reconnect Kite to read positions.</div>
+          ) : portfolio?.positions_available === false ? (
+            <div style={{ color: T.amber, fontSize: "12px" }}>Day positions could not be loaded. Delivery holdings remain available. {portfolio.positions_error ?? ""}</div>
+          ) : (portfolio?.positions ?? []).length === 0 ? (
+            <div style={{ color: T.muted, fontSize: "13px" }}>No open same-day Kite positions.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "560px" }}>
+                <thead><tr style={{ color: T.muted }}>
+                  {[["Symbol", "left"], ["Product", "left"], ["Qty", "right"], ["Avg ₹", "right"], ["LTP ₹", "right"], ["P&L ₹", "right"]].map(([label, align]) => (
+                    <th key={label} style={{ padding: "4px 12px 8px 0", textAlign: align as "left" | "right", fontSize: "10px", fontWeight: 500, textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{(portfolio?.positions ?? []).map((p, i) => (
+                  <tr key={`${p.symbol}:${p.product ?? ""}:${i}`} style={{ borderTop: `1px solid ${T.border}` }}>
+                    <td style={{ padding: "9px 12px 9px 0", fontWeight: 700 }}>{p.tradingsymbol}<span style={{ marginLeft: "6px", color: T.muted, fontSize: "9px", fontWeight: 400 }}>{p.exchange}</span></td>
+                    <td style={{ padding: "9px 12px 9px 0", color: T.textSub }}>{p.product ?? "—"}</td>
+                    <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{maskText(String(p.qty), masked)}</td>
+                    <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", color: T.textSub }}>{maskText(inr(p.buy_price), masked)}</td>
+                    <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace" }}>{maskText(inr(p.last_price), masked)}</td>
+                    <td style={{ padding: "9px 12px 9px 0", textAlign: "right", fontFamily: "monospace", color: p.pnl >= 0 ? T.green : T.red }}>{maskText(`${p.pnl >= 0 ? "+" : ""}${inr(p.pnl)}`, masked)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
           )}
         </div>
 

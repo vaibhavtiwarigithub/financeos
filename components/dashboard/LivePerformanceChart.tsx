@@ -34,10 +34,12 @@ export default function LivePerformanceChart({
   market = "us",
   accounts,
   showHoldingsToggle = false,
+  refreshKey = 0,
 }: {
   market?: "us" | "india";
   accounts?: string[];
   showHoldingsToggle?: boolean;
+  refreshKey?: number;
 }) {
   const [period, setPeriod] = useState<TF>("1M");
   const [chartData, setChartData] = useState<ChartPoint[]>([]);
@@ -74,7 +76,7 @@ export default function LivePerformanceChart({
     }
   }, [market, acctKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadChart(period); }, [period, loadChart]);
+  useEffect(() => { loadChart(period); }, [period, loadChart, refreshKey]);
 
   const lastPt = chartData[chartData.length - 1];
   const portfolioLastPct = lastPt && typeof lastPt.portfolio === "number" ? lastPt.portfolio : null;

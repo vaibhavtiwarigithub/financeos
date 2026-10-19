@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { getKiteHoldings, getKiteMargins, getKiteMutualFundHoldings } from "@/lib/kite";
+import { getKiteHoldings, getKiteMargins, getKiteMutualFundHoldings, getKitePositions } from "@/lib/kite";
 import { buildCoinPortfolio } from "@/lib/brokers/coin";
 
 export const dynamic = "force-dynamic";
@@ -13,10 +13,11 @@ export async function GET() {
   const ownerGate = await requireOwner();
   if (ownerGate) return ownerGate;
 
-  const [res, marg, coinRes] = await Promise.all([
+  const [res, marg, coinRes, positionsRes] = await Promise.all([
     getKiteHoldings(),
     getKiteMargins(),
     getKiteMutualFundHoldings(),
+    getKitePositions(),
   ]);
   if (!res.ok) return NextResponse.json({ holdings: [], connected: false, error: res.error });
 
@@ -30,6 +31,24 @@ export async function GET() {
     pnl: h.pnl,
     value: (h.last_price ?? 0) * (h.quantity ?? 0),
   }));
+
+  // Keep same-day positions separate from delivery holdings. Kite's `net`
+  // positions can include carry-forward quantities; neither view is combined
+  // with delivery holdings for NAV, preventing accidental double counting.
+  const dayPositions = Array.isArray(positionsRes.data?.day) ? positionsRes.data.day : [];
+  const positions = dayPositions
+    .filter((p: any) => Number(p.quantity ?? 0) !== 0)
+    .map((p: any) => ({
+      symbol: `${p.tradingsymbol}.${p.exchange === "BSE" ? "BO" : "NS"}`,
+      tradingsymbol: p.tradingsymbol,
+      exchange: p.exchange,
+      product: p.product ?? null,
+      qty: Number(p.quantity ?? 0),
+      buy_price: Number(p.average_price ?? p.buy_price ?? 0),
+      last_price: Number(p.last_price ?? 0),
+      pnl: Number(p.pnl ?? 0),
+      value: Math.abs(Number(p.last_price ?? 0) * Number(p.quantity ?? 0)),
+    }));
 
   // Liquid cash (buying power) — best-effort; a margins hiccup must not blank holdings.
   const cash = marg.ok ? (marg.equityNet ?? null) : null;
@@ -64,5 +83,17 @@ export async function GET() {
     ? nav + coin.total_value
     : null;
 
-  return NextResponse.json({ holdings, connected: true, currency: "INR", cash, nav, combined_nav: combinedNav, coin });
+  return NextResponse.json({
+    holdings,
+    positions,
+    positions_available: positionsRes.ok,
+    positions_error: positionsRes.ok ? null : positionsRes.error,
+    connected: true,
+    currency: "INR",
+    cash,
+    nav,
+    combined_nav: combinedNav,
+    coin,
+    fetched_at: new Date().toISOString(),
+  });
 }

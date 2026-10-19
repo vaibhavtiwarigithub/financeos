@@ -193,6 +193,15 @@ export async function getKiteHoldings(svc?: any) {
   return kiteGet("/portfolio/holdings", svc);
 }
 
+/**
+ * Kite's day/net positions are distinct from demat delivery holdings. Callers
+ * should render them separately and must not add both sets into one NAV: the
+ * broker may include carry-forward quantities in its net view.
+ */
+export async function getKitePositions(svc?: any) {
+  return kiteGet("/portfolio/positions", svc);
+}
+
 const instrumentCaches = new Map<string, { fetchedAt: number; bySymbol: Map<string, any> }>();
 
 /** Broker-authoritative NSE equity identity. Kite publishes this master daily. */

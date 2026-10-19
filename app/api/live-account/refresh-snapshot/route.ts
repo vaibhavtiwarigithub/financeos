@@ -5,11 +5,12 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { captureAllRobinhoodAccounts } from "@/lib/robinhood-mcp";
 import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
 import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
-import { getKiteHoldings, getKiteMargins, getKiteProfile } from "@/lib/kite";
+import { getAccessToken as getKiteAccessToken, getKiteHoldings, getKiteMargins, getKiteProfile } from "@/lib/kite";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { requireOwner } from "@/lib/auth/require-owner";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 100;
@@ -230,10 +231,22 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
   }
   for (const cfg of Object.values(MCP_BROKERS)) {
     try {
-      if (!(await hasToken(svc, cfg))) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: "not connected" }); continue; }
+      if (!(await hasToken(svc, cfg))) {
+        // A deliberately unconnected optional provider is not a live failure.
+        // Clear any old snapshot-failure alert; connection health has its own
+        // issue key and remains authoritative for an expired/revoked token.
+        await resolveIssue(`broker-snapshot:${cfg.id}`);
+        out.push({ broker: cfg.id, ok: false, accounts: 0, error: "not connected" });
+        continue;
+      }
       const accts = await captureAccounts(cfg);
       const valid = accts.filter(a => !a.error && a.accountId && a.accountId !== "unknown" && a.totalValue != null);
-      if (!valid.length) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: accts[0]?.error ?? "no valid accounts" }); continue; }
+      if (!valid.length) {
+        const reason = accts[0]?.error ?? "no valid accounts";
+        await reportIssue({ issueKey: `broker-snapshot:${cfg.id}`, severity: "warn", category: "broker", title: `${cfg.label} live snapshot refresh failed`, detail: safeRefreshError(reason) });
+        out.push({ broker: cfg.id, ok: false, accounts: 0, error: reason });
+        continue;
+      }
       const rows = valid.map(a => ({
         account_id: a.accountId!,
         broker: cfg.id,
@@ -251,7 +264,11 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
         captured_at: capturedAt,
       }));
       const { error: upErr } = await svc.from("live_account_snapshots").upsert(rows, { onConflict: "account_id" });
-      if (upErr) { out.push({ broker: cfg.id, ok: false, accounts: 0, error: upErr.message }); continue; }
+      if (upErr) {
+        await reportIssue({ issueKey: `broker-snapshot:${cfg.id}`, severity: "warn", category: "broker", title: `${cfg.label} live snapshot could not be saved`, detail: safeRefreshError(upErr.message) });
+        out.push({ broker: cfg.id, ok: false, accounts: 0, error: upErr.message });
+        continue;
+      }
 
       // SAFE auto-REMOVE (pruning) — delete only THIS broker's own accounts that
       // it no longer returns, gated on a successful capture with >=1 valid
@@ -277,12 +294,21 @@ async function refreshRegistryBrokers(): Promise<{ broker: string; ok: boolean; 
 
       const perfRows = valid.map(a => ({ account_id: a.accountId!, date: day, equity: a.totalValue, bench_nav: vooClose }));
       await svc.from("live_performance").upsert(perfRows, { onConflict: "account_id,date" }).then(undefined, () => {});
+      await resolveIssue(`broker-snapshot:${cfg.id}`);
       out.push({ broker: cfg.id, ok: true, accounts: valid.length });
     } catch (e) {
-      out.push({ broker: cfg.id, ok: false, accounts: 0, error: String(e) });
+      const reason = e instanceof Error ? e.message : String(e);
+      await reportIssue({ issueKey: `broker-snapshot:${cfg.id}`, severity: "warn", category: "broker", title: `${cfg.label} live snapshot refresh failed`, detail: safeRefreshError(reason) });
+      out.push({ broker: cfg.id, ok: false, accounts: 0, error: reason });
     }
   }
   return out;
+}
+
+function safeRefreshError(value: unknown): string {
+  return String(value)
+    .replace(/(access[_ -]?token|refresh[_ -]?token|api[_ -]?key|secret)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .slice(0, 500);
 }
 
 // Alpaca Live has a separate credential pair and is captured independently of
@@ -296,9 +322,10 @@ async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accou
     if (account.error || !account.accountId || !Number.isFinite(equity) || equity <= 0) {
       const reason = account.error ?? "Alpaca Live account response was incomplete; previous snapshot preserved";
       if (account.error?.startsWith("No complete API credential pair configured")) {
+        await resolveIssue(issueKey);
         return { broker: "alpaca_live", ok: false, error: "Live credentials are not configured in this runtime" };
       }
-      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: reason });
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: safeRefreshError(reason) });
       return { broker: "alpaca_live", ok: false, error: reason };
     }
 
@@ -308,7 +335,7 @@ async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accou
     const positions = Array.isArray(account.holdings) ? account.holdings : null;
     if (!positions) {
       const reason = "Alpaca Live positions response was incomplete; previous snapshot preserved";
-      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: reason });
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account snapshot unavailable", detail: safeRefreshError(reason) });
       return { broker: "alpaca_live", ok: false, error: reason };
     }
 
@@ -336,7 +363,7 @@ async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accou
       captured_at: capturedAt,
     }, { onConflict: "account_id" });
     if (error) {
-      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live snapshot could not be saved", detail: error.message });
+      await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live snapshot could not be saved", detail: safeRefreshError(error.message) });
       return { broker: "alpaca_live", ok: false, error: `snapshot persistence failed: ${error.message}` };
     }
 
@@ -351,7 +378,7 @@ async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accou
     return { broker: "alpaca_live", ok: true, accountId: account.accountId, positions: positions.length, accountState: state };
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account refresh failed", detail: reason });
+    await reportIssue({ issueKey, severity: "warn", category: "broker", title: "Alpaca Live account refresh failed", detail: safeRefreshError(reason) });
     return { broker: "alpaca_live", ok: false, error: reason };
   }
 }
@@ -367,20 +394,32 @@ async function refreshAlpacaLive(): Promise<{ broker: string; ok: boolean; accou
 // error just skips the day; it must never fail the US/registry refresh.
 async function refreshKite(): Promise<{ ok: boolean; equity?: number; positions?: number; error?: string }> {
   const svc = createServiceClient();
+  const fail = async (error: string) => {
+    // Token expiry already has its own System Health issue. Only report a
+    // snapshot-provider failure when a current-day token exists; a deliberately
+    // disconnected/expired Kite session is not a second failure condition.
+    const token = await getKiteAccessToken(svc);
+    if (token.fresh) {
+      await reportIssue({ issueKey: "broker-snapshot:kite", severity: "warn", category: "broker", title: "Kite live snapshot refresh failed", detail: safeRefreshError(error) }, svc);
+    } else {
+      await resolveIssue("broker-snapshot:kite", svc);
+    }
+    return { ok: false, error: safeRefreshError(error) };
+  };
   try {
     const [prof, hold, marg] = await Promise.all([
       getKiteProfile(svc),
       getKiteHoldings(svc),
       getKiteMargins(svc),
     ]);
-    if (!prof.ok) return { ok: false, error: `kite profile: ${prof.error}` };
-    if (!hold.ok) return { ok: false, error: `kite holdings: ${hold.error}` };
-    if (!marg.ok) return { ok: false, error: `kite margins: ${marg.error}` };
+    if (!prof.ok) return await fail(`kite profile: ${prof.error}`);
+    if (!hold.ok) return await fail(`kite holdings: ${hold.error}`);
+    if (!marg.ok) return await fail(`kite margins: ${marg.error}`);
 
     const holdings: any[] = Array.isArray(hold.data) ? hold.data : [];
     const holdingsValue = holdings.reduce((s, h) => s + (Number(h.last_price ?? 0) * Number(h.quantity ?? 0)), 0);
     const nav = Number(marg.equityNet ?? 0) + holdingsValue;
-    if (!Number.isFinite(nav)) return { ok: false, error: "computed India NAV is not finite" };
+    if (!Number.isFinite(nav)) return await fail("computed India NAV is not finite");
 
     // ^NSEI close for the day (fail-soft — a null bench is a valid row, the
     // chart just skips the benchmark line for that point).
@@ -404,22 +443,31 @@ async function refreshKite(): Promise<{ ok: boolean; equity?: number; positions?
       },
       { onConflict: "account_id,date" },
     );
-    if (upErr) return { ok: false, error: `live_performance upsert: ${upErr.message}` };
+    if (upErr) return await fail(`live_performance upsert: ${upErr.message}`);
+    await resolveIssue("broker-snapshot:kite", svc);
     return { ok: true, equity: nav, positions: holdings.length };
   } catch (e) {
-    return { ok: false, error: `kite accrual error: ${String(e)}` };
+    return await fail(`kite accrual error: ${String(e)}`);
   }
 }
 
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Manual sync is owner-only and explicitly JSON-only. The scheduled path
+    // remains cron-secret protected. Both paths call the same read-only writers.
+    if (!req.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const ownerGate = await requireOwner();
+    if (ownerGate) return ownerGate;
   }
   // Route to the configured snapshot source: cloud MCP or local Claude-exec.
   const svc = createServiceClient();
   const { data: cfg } = await svc.from("strategy_config").select("live_account_source").limit(1).maybeSingle();
   const source = (cfg as any)?.live_account_source ?? "claude_exec";
   const result = source === "robinhood_mcp" ? await refreshViaMcp() : await fetchAndStoreAccountSnapshot();
+  if (result.ok) await resolveIssue("broker-snapshot:robinhood");
+  else await reportIssue({ issueKey: "broker-snapshot:robinhood", severity: "warn", category: "broker", title: `Robinhood live snapshot refresh failed (${source})`, detail: safeRefreshError(result.error ?? "No successful account snapshot returned") });
   // Also refresh every connected cloud MCP broker (Webull, etc.) — independent of
   // Robinhood, so it runs even when RH is off/local.
   const registry = await refreshRegistryBrokers();
@@ -428,5 +476,11 @@ export async function POST(req: NextRequest) {
   // stale Kite token never affects the US/registry result.
   const kite = await refreshKite();
   const anyOk = result.ok || registry.some(r => r.ok) || alpacaLive.ok || kite.ok;
-  return NextResponse.json({ ...result, registry, alpacaLive, kite }, { status: anyOk ? 200 : 500 });
+  return NextResponse.json({
+    ...result,
+    error: result.error ? safeRefreshError(result.error) : undefined,
+    registry: registry.map(r => ({ ...r, error: r.error ? safeRefreshError(r.error) : undefined })),
+    alpacaLive: { ...alpacaLive, error: alpacaLive.error ? safeRefreshError(alpacaLive.error) : undefined },
+    kite: { ...kite, error: kite.error ? safeRefreshError(kite.error) : undefined },
+  }, { status: anyOk ? 200 : 500 });
 }

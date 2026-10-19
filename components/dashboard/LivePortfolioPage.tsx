@@ -70,6 +70,8 @@ export default function LivePortfolioPage({
   const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [loadingHoldings, setLoadingHoldings] = useState(liveSnaps.length > 0);
   const [snaps, setSnaps] = useState<any[]>(liveSnaps);
+  const [syncingBrokers, setSyncingBrokers] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   const [files, setFiles] = useState<FileRecord[]>(initialFiles);
   const [uploading, setUploading] = useState(false);
@@ -117,6 +119,33 @@ export default function LivePortfolioPage({
       setLoadingHoldings(false);
     }
   }, [selectedAccounts]);
+
+  async function syncBrokers() {
+    setSyncingBrokers(true);
+    setSyncNote(null);
+    try {
+      const r = await fetch("/api/live-account/refresh-snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "owner_manual_refresh" }),
+      });
+      const d = await r.json();
+      const failed = [
+        ...(d.ok ? [] : ["selected Robinhood source"]),
+        ...(d.registry ?? []).filter((b: any) => !b.ok && b.error !== "not connected").map((b: any) => b.broker),
+        ...(d.alpacaLive?.ok || !d.alpacaLive?.error || d.alpacaLive?.error === "Live credentials are not configured in this runtime" ? [] : ["Alpaca Live"]),
+        ...(d.kite?.ok || !d.kite?.error ? [] : ["Kite performance"]),
+      ];
+      setSyncNote(failed.length
+        ? `Sync finished with issues: ${Array.from(new Set(failed)).join(", ")}. Check System Health; last successful snapshots are preserved.`
+        : "Read-only broker sync completed. No orders were placed.");
+      await loadHoldings();
+    } catch (error) {
+      setSyncNote(error instanceof Error ? error.message : "Broker sync failed. Existing snapshots are unchanged.");
+    } finally {
+      setSyncingBrokers(false);
+    }
+  }
 
   useEffect(() => { loadHoldings(); }, [loadHoldings]);
 
@@ -180,7 +209,10 @@ export default function LivePortfolioPage({
   const totalEquity = selectedSnaps.reduce((s, a) => s + Number(a.equity ?? a.portfolio_value ?? 0), 0);
   const buyingPower = selectedSnaps.reduce((s, a) => s + Number(a.buying_power ?? 0), 0);
   const positionCount = holdings.length;
-  const syncedAt = selectedSnaps[0]?.captured_at;
+  const syncedAt = selectedSnaps.reduce((latest: string | null, snap: any) => {
+    const value = snap.captured_at ? String(snap.captured_at) : null;
+    return value && (!latest || value > latest) ? value : latest;
+  }, null);
   const hasSnaps = snaps.length > 0;
 
   const totalPnl = holdings.reduce((s, h) => s + h.totalPnlDollar, 0);
@@ -210,20 +242,22 @@ export default function LivePortfolioPage({
             <div style={{ fontSize: "11px", color: T.amber }}>
               Last synced: {new Date(syncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               {" · "}
-              <span>auto-syncs every 2h on trading days (kairos-live-snapshot); Refresh for on-demand</span>
+              <span>scheduled sync every 2h on trading days; “Sync brokers” requests a fresh read</span>
             </div>
           )}
-          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>Not yet synced — the 2h live-snapshot cron will populate this, or hit Refresh now</div>}
+          {!hasSnaps && <div style={{ fontSize: "11px", color: T.amber }}>No saved account snapshot yet. Use “Sync brokers” for a read-only refresh.</div>}
+          {syncNote && <div role="status" style={{ fontSize: "11px", color: syncNote.includes("issues") || syncNote.includes("failed") ? T.amber : T.green, marginTop: "6px", lineHeight: 1.5 }}>{syncNote}</div>}
         </>
       }
       toolbar={
         <>
           <EyeToggle masked={masked} onToggle={() => setRevealed(r => !r)} />
           <button
-            onClick={() => loadHoldings()}
-            style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: T.accent, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+            onClick={syncBrokers}
+            disabled={syncingBrokers}
+            style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, color: syncingBrokers ? T.muted : T.accent, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: 600, cursor: syncingBrokers ? "wait" : "pointer" }}
           >
-            ↻ Refresh
+            {syncingBrokers ? "Syncing brokers…" : "↻ Sync brokers"}
           </button>
         </>
       }
