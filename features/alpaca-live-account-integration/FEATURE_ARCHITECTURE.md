@@ -57,9 +57,9 @@ Goal: recognize the live credentials without exposing them, verify the account u
 ## Vault recovery release requirements
 
 - Keep the PIN-recovery link visible on the locked Vault screen without requiring the forgotten PIN.
-- Only the authenticated, confirmed owner may request a one-time code; the destination is fixed to the canonical owner email, never client-supplied.
-- Change the stored salted PIN hash only after OTP verification; do not modify API keys.
-- Ensure the deployed Supabase Auth email template includes the OTP token required by the code-entry flow; verify the setting without exposing OTPs.
+- Only the authenticated, confirmed owner may request a one-time sign-in link; the destination is fixed to the canonical owner email, never client-supplied.
+- Use the deployed project's default clickable Magic Link template, redirect through `/auth/confirm`, then return to the Vault. Do not require a numeric OTP unless the configured email template visibly renders one.
+- Change the stored salted PIN hash only after the confirmed owner has a fresh sign-in (15-minute window); do not modify API keys.
 - Verify on the deployed site that the control is visible, then request an email only when the owner chooses it. A production route test must not send unsolicited mail.
 
 ## Prioritized queue
@@ -78,7 +78,7 @@ Goal: recognize the live credentials without exposing them, verify the account u
 - Credential unit tests cover canonical Live names, legacy alias, Vault precedence, empty rows, incomplete pairs, and strict Paper/Live separation.
 - Account tests cover inactive/blocked states, errors, stale refresh, no credential leakage, and missing account IDs.
 - Snapshot-producer and portfolio tests prove Alpaca Live appears after refresh, Alpaca Paper does not, same symbols in different brokers remain separate, errored accounts preserve prior snapshots and do not dilute NAV, and unauthenticated users receive no account data.
-- Vault recovery tests prove the locked state exposes “Forgot PIN?”, the destination cannot be changed by request input, unauthenticated/unconfirmed sessions fail closed, invalid/expired OTP leaves the old hash intact, and successful OTP verifies the new PIN.
+- Vault recovery tests prove the locked state exposes “Forgot PIN?”, the destination cannot be changed by request input, unauthenticated/unconfirmed/stale sessions fail closed, and a fresh link-authenticated session can set a new salted PIN hash.
 - End-to-end read-only account test confirms the expected account status and positions without logging secrets, account numbers, or exact balances.
 - Typecheck, focused tests, full test suite, production build, secret scan, deployment readiness, and a final browser check of the production Vault page are required before calling the recovery link fixed in production.
 
