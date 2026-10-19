@@ -1,5 +1,7 @@
 # Work Log
 
+| Expired health notices and exhausted council leases | Codex | pushed to main (`aa8227fb`); Vercel production READY; production records repaired | 2026-10-19 | Reuse existing `agent_alerts.auto_expire_at` lifecycle and `sweepSubscriptionBatches`; terminalize only subscription jobs whose lease expired after the configured maximum attempts. Production expired the two exhausted Claude jobs and advanced their batches as partial; cleared three explicitly expired health notices (no remaining expired-open notices). Full suite 3,991 passed/7 skipped, `tsc --noEmit` and `git diff --check` pass. No schema, score, trading, or broker changes. |
+
 ## Reuse-first implementation rule (Codex + Claude)
 
 Before creating a production module, route, table, cron, or UI component, follow
