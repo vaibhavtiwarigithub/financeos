@@ -2,14 +2,18 @@
 // signals make a dead or stalled council visible instead of silent (nothing reads council scores, so nothing else would notice).
 //   1. Unscored research: a symbol's NEWEST observation (the one the council would pick) is older than the grace period and
 //      has no council run. Older same-symbol observations are superseded by design and never count.
-//   2. Stalled workers: subscription jobs sitting in `queued` past the grace period mean a local worker (Claude/Codex) is not
-//      draining, usually the PC is off or the CLI signed out. DeepSeek still scores; the other members wait.
+//   2. Delayed workers: selected subscription jobs queued past the grace period are a real score-latency signal. A recent
+//      `last_seen_at` means the local worker is active and draining a backlog, not offline; stale/missing heartbeat means it
+//      has stopped progressing. DeepSeek still scores while the local members wait.
 
 export type CouncilObservation = { id: number; market: "us" | "india"; symbol: string; ts: string };
-export type QueuedCouncilJob = { family: string; created_at: string };
+export type QueuedCouncilJob = { family: string; created_at: string; last_seen_at?: string | null };
 
 export const COUNCIL_UNSCORED_GRACE_MIN = 90;
 export const COUNCIL_QUEUE_GRACE_MIN = 120;
+export const COUNCIL_WORKER_HEARTBEAT_GRACE_MIN = 30;
+
+export type StalledWorkerSummary = { count: number; oldest: string; active: boolean; lastSeenAt: string | null };
 
 export function findUnscoredResearch(args: { now: Date; observations: CouncilObservation[]; scoredObservationIds: Set<number>; graceMin?: number }) {
   const grace = (args.graceMin ?? COUNCIL_UNSCORED_GRACE_MIN) * 60_000;
@@ -28,13 +32,25 @@ export function findUnscoredResearch(args: { now: Date; observations: CouncilObs
   return byMarket;
 }
 
-export function findStalledWorkers(args: { now: Date; jobs: QueuedCouncilJob[]; graceMin?: number }) {
+export function findStalledWorkers(args: { now: Date; jobs: QueuedCouncilJob[]; graceMin?: number; heartbeatGraceMin?: number }) {
   const grace = (args.graceMin ?? COUNCIL_QUEUE_GRACE_MIN) * 60_000;
-  const byFamily = new Map<string, { count: number; oldest: string }>();
+  const heartbeatGrace = (args.heartbeatGraceMin ?? COUNCIL_WORKER_HEARTBEAT_GRACE_MIN) * 60_000;
+  const byFamily = new Map<string, StalledWorkerSummary>();
   for (const j of args.jobs) {
     if (args.now.getTime() - Date.parse(j.created_at) < grace) continue;
+    // Old queued work is a real lag signal, but not evidence that a worker is
+    // dead if that worker has recently claimed/submitted jobs. Keep the alert
+    // while backlog exists; callers can distinguish active backlog from a
+    // worker that has stopped progressing.
     const cur = byFamily.get(j.family);
-    byFamily.set(j.family, { count: (cur?.count ?? 0) + 1, oldest: !cur || j.created_at < cur.oldest ? j.created_at : cur.oldest });
+    const lastSeenIsRecent = j.last_seen_at != null && args.now.getTime() - Date.parse(j.last_seen_at) < heartbeatGrace;
+    const latestSeen = j.last_seen_at && (!cur?.lastSeenAt || j.last_seen_at > cur.lastSeenAt) ? j.last_seen_at : cur?.lastSeenAt ?? null;
+    byFamily.set(j.family, {
+      count: (cur?.count ?? 0) + 1,
+      oldest: !cur || j.created_at < cur.oldest ? j.created_at : cur.oldest,
+      active: Boolean(cur?.active || lastSeenIsRecent),
+      lastSeenAt: latestSeen,
+    });
   }
   return byFamily;
 }

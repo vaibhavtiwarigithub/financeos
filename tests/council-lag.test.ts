@@ -27,6 +27,17 @@ describe("council silence detection", () => {
     expect(stalled.get("claude")).toMatchObject({ count: 2, oldest: "2026-10-13T08:00:00Z" });
     expect(stalled.has("codex")).toBe(false);
   });
+  it("distinguishes an active worker draining an old backlog from a stopped worker", () => {
+    const workers = findStalledWorkers({
+      now,
+      jobs: [
+        { family: "claude", created_at: "2026-10-13T08:00:00Z", last_seen_at: "2026-10-13T11:45:00Z" },
+        { family: "codex", created_at: "2026-10-13T08:00:00Z", last_seen_at: "2026-10-13T10:00:00Z" },
+      ],
+    });
+    expect(workers.get("claude")).toMatchObject({ active: true, lastSeenAt: "2026-10-13T11:45:00Z" });
+    expect(workers.get("codex")).toMatchObject({ active: false });
+  });
   it("the Learning IC route orders by the table's real timestamp column (production 500 on 2026-10-13: created_at does not exist)", () => {
     const route = readFileSync("app/api/learning/council-ic/route.ts", "utf8");
     expect(route).toContain('.order("evaluated_at"');

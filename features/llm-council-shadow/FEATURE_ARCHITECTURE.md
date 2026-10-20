@@ -149,7 +149,7 @@ The council is a new, independent score dimension, so it is shown wherever the o
 | Learning page → "LLM Council · rank IC (shadow)" | per member, composite, deterministic baseline and 50/50 blend: observations, sessions, independent windows, mean rank IC, t-stat, state, per horizon and cohort; daily coverage per member | `/api/learning/council-ic` | owner + viewer |
 | Trading page (pending signals, paper trades) | inline `Council 58 (60 · 55 · 58)` beside the deterministic score | `/api/research/council/latest` | owner + viewer |
 | Upgrade Path | program `llm-council-shadow` (operational-only attribution), liveness probe on `llm_council_runs` | registry + liveness | owner |
-| System Health alerts | `council-unscored:<market>` (newest observation unscored >90 min) and `council-workers-stalled:<family>` (subscription jobs queued >2 h = PC off / CLI signed out) | stale-check | owner |
+| System Health alerts | `council-unscored:<market>` (newest observation unscored >90 min); `council-workers-stalled:<family>` (selected subscription jobs queued >2 h; fresh heartbeat means active backlog, no heartbeat for 30 min means stopped worker); `council-monitoring:worker-queue` if the monitor cannot read the queue | stale-check | owner |
 | System Health alerts (divergence) | `council-divergence:<market>` (category `models`): a HELD or ENTRY-ELIGIBLE symbol whose council median differs from the deterministic composite by >= 20 points AFTER removing the market's own median offset (India ran ~12.6 below, US ~3.7 below on 2026-10-13), or whose three members disagree by >= 25 points. Lists up to 8 symbols with reasons; resolves when none; informational only (the trader never reads council scores) | stale-check every 4 h; `lib/monitoring/council-divergence.ts` | owner |
 
 **Not integrated, on purpose:** the paper trader, rotation, exits and sizing (shadow-only until evidence); the Learner's weight mutation and dimension IC ledger (those
@@ -162,6 +162,10 @@ India 04-05 (research 04:00/05:00, trader 04:10), 07-08 (research 07:00, trader 
 trader 11:15 ET), 18-20 (research 14:00 ET, trader 15:15 ET), 22-23 catch-up. DeepSeek completes within minutes; Claude and Codex run on the
 owner's PC and finish roughly 10-30 minutes later, so for the India 04:00 slot (trader at 04:10) the local-worker scores arrive after the trade.
 Claude and Codex forecasts are evaluated with availability-aligned labels (first close after the forecast was returned).
+
+## Worker monitoring and recovery (2026-10-20)
+
+The queue-health check is scoped to the configured subscription worker IDs, ignores synthetic jobs, and joins the registered worker's `last_seen_at`. Old queued jobs remain visible as a score-latency warning; if a worker has claimed work in the last 30 minutes the warning says it is actively draining a backlog, not that it is offline. If no heartbeat has arrived in 30 minutes, the warning names the likely local causes (PC/session unavailable, CLI sign-in, or usage pause). A failed queue query raises `council-monitoring:worker-queue` and does not resolve prior worker alerts. The daily Codex watchdog checks local supervisor existence and production member/job status; it may restart an existing supervisor only when the private config is present and the signed-in session is available. It never rotates credentials, changes models/roster, or launches extra test inferences. Local Claude/Codex membership use still cannot operate while the owner workstation/session is unavailable; API-provider uptime is also outside Kairos's control.
 
 ## GPT-5.6 Luna and paired deterministic comparison (implemented locally 2026-10-11)
 

@@ -357,7 +357,7 @@ async function runCheck() {
   // council never scored (scorer/schedule down) and subscription jobs stuck in the queue (local Claude/Codex worker down).
   const councilSignals: Record<string, unknown> = {};
   try {
-    const { data: councilConfig } = await svc.from("llm_council_config").select("enabled").eq("id", "global").maybeSingle();
+    const { data: councilConfig } = await svc.from("llm_council_config").select("enabled,subscription_worker_ids").eq("id", "global").maybeSingle();
     if (councilConfig?.enabled) {
       const windowStart = new Date(now.getTime() - 12 * 3_600_000).toISOString();
       const observations = await fetchAllRows((from, to) => svc.from("decision_observations").select("id,market,symbol,ts")
@@ -386,27 +386,51 @@ async function runCheck() {
           }, svc);
         } else await resolveIssue(key, svc);
       }
-      const { data: queued } = await svc.from("llm_council_jobs").select("created_at,llm_council_workers!inner(family),llm_council_batches!inner(synthetic)")
-        .eq("status", "queued").eq("llm_council_batches.synthetic", false).lt("created_at", new Date(now.getTime() - COUNCIL_QUEUE_GRACE_MIN * 60_000).toISOString()).limit(1000);
-      const stalledWorkers = findStalledWorkers({
-        now,
-        jobs: (queued ?? []).map((j: any) => ({ family: String((Array.isArray(j.llm_council_workers) ? j.llm_council_workers[0] : j.llm_council_workers)?.family ?? "unknown"), created_at: String(j.created_at) })),
-      });
-      for (const family of ["claude", "codex"]) {
-        const key = `council-workers-stalled:${family}`;
-        const hit = stalledWorkers.get(family);
-        councilSignals[key] = hit ?? null;
-        if (hit) {
-          await reportIssue({
-            issueKey: key, severity: "warn", category: "cron",
-            title: `LLM council ${family} worker is not draining its queue`,
-            detail: [
-              `${hit.count} council job(s) have been queued for over ${COUNCIL_QUEUE_GRACE_MIN} min (oldest ${hit.oldest.slice(0, 16)} UTC).`,
-              "The Claude/Codex members run on your PC (Kairos Council Worker supervisors). Likely the PC is off or asleep, the CLI is signed out, or a usage limit paused the worker. DeepSeek still scores; this member's scores are missing until it drains. Jobs expire 12 h after creation.",
-            ].join(" · "),
-            autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
-          }, svc);
-        } else await resolveIssue(key, svc);
+      const workerIds = Array.isArray(councilConfig.subscription_worker_ids)
+        ? councilConfig.subscription_worker_ids.filter((id: unknown): id is string => typeof id === "string")
+        : [];
+      const queueKey = "council-monitoring:worker-queue";
+      const { data: queued, error: queueError } = workerIds.length
+        ? await svc.from("llm_council_jobs").select("created_at,llm_council_workers!inner(family,last_seen_at),llm_council_batches!inner(synthetic)")
+          .in("worker_id", workerIds).eq("status", "queued").eq("llm_council_batches.synthetic", false)
+          .lt("created_at", new Date(now.getTime() - COUNCIL_QUEUE_GRACE_MIN * 60_000).toISOString()).limit(1000)
+        : { data: [], error: null };
+      if (queueError) {
+        councilSignals[queueKey] = { errorCode: queueError.code ?? "unknown" };
+        await reportIssue({
+          issueKey: queueKey, severity: "warn", category: "cron",
+          title: "LLM council worker health could not be verified",
+          detail: `The council job queue query failed (${queueError.code ?? "unknown"}); existing worker alerts were left unchanged.`,
+          autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+        }, svc);
+      } else {
+        await resolveIssue(queueKey, svc);
+        const stalledWorkers = findStalledWorkers({
+          now,
+          jobs: (queued ?? []).map((j: any) => {
+            const worker = Array.isArray(j.llm_council_workers) ? j.llm_council_workers[0] : j.llm_council_workers;
+            return { family: String(worker?.family ?? "unknown"), created_at: String(j.created_at), last_seen_at: worker?.last_seen_at ?? null };
+          }),
+        });
+        for (const family of ["claude", "codex"]) {
+          const key = `council-workers-stalled:${family}`;
+          const hit = stalledWorkers.get(family);
+          councilSignals[key] = hit ?? null;
+          if (hit) {
+            const active = hit.active && hit.lastSeenAt;
+            await reportIssue({
+              issueKey: key, severity: "warn", category: "cron",
+              title: active ? `LLM council ${family} has delayed queued jobs` : `LLM council ${family} worker is not draining its queue`,
+              detail: [
+                `${hit.count} council job(s) have been queued for over ${COUNCIL_QUEUE_GRACE_MIN} min (oldest ${hit.oldest.slice(0, 16)} UTC).`,
+                active
+                  ? `The registered worker is active (last claim ${hit.lastSeenAt!.slice(0, 16)} UTC), but the backlog is still delaying per-symbol scores; jobs expire 12 h after creation.`
+                  : "No recent worker claim was recorded. Claude/Codex members require a signed-in, awake Windows session; check the Kairos Council Worker supervisor, CLI login, and provider usage limit. DeepSeek can continue scoring while these jobs wait.",
+              ].join(" · "),
+              autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+            }, svc);
+          } else await resolveIssue(key, svc);
+        }
       }
     }
   } catch { /* best-effort: monitoring must never break the check */ }
