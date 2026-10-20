@@ -49,11 +49,13 @@ export function IndiaManualTradeGuardianPanel() {
     {error && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 10 }}>{error}{data?.holdingsAvailable === false && <> · <a href="/api/kite/login" style={{ color: T.accent }}>Reconnect Kite</a> to load holdings and GTT coverage.</>}</div>}
     {loading ? <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Checking Kite holdings and GTTs…</div> : data && <>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, color: T.sub, fontSize: 12 }}>
-        <span>{data.holdingsAvailable === false ? "Holdings unavailable" : `${positions.length} delivery position(s)`}</span><span>·</span><span style={{ color: T.green }}>{covered} exact-quantity GTT coverage</span><span>·</span><span style={{ color: uncovered ? T.amber : T.sub }}>{uncovered} need attention / not verified</span>
+        {data.holdingsAvailable === false
+          ? <span style={{ color: T.amber }}>Holdings unavailable · GTT coverage unknown</span>
+          : <><span>{positions.length} delivery position(s)</span><span>·</span><span style={{ color: T.green }}>{covered} exact-quantity GTT coverage</span><span>·</span><span style={{ color: uncovered ? T.amber : T.sub }}>{uncovered} need attention / not verified</span></>}
         {data.asOf && <span style={{ marginLeft: "auto", color: T.muted }}>Read {new Date(data.asOf).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span>}
       </div>
-      {!data.gttAvailable && <div style={{ color: T.amber, fontSize: 12, marginTop: 10 }}>GTT status could not be verified from Kite. Positions are shown as unknown, not assumed protected. {data.error}</div>}
-      {data.holdingsAvailable === false ? <div style={{ color: T.amber, fontSize: 12, marginTop: 12 }}>Holdings are unavailable, so Guardian coverage cannot be assessed. Reconnect Kite and refresh this page.</div> : positions.length === 0 ? <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>No positive-quantity Kite delivery holdings to check.</div> : <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+      {!data.gttAvailable && data.holdingsAvailable !== false && <div style={{ color: T.amber, fontSize: 12, marginTop: 10 }}>GTT status could not be verified from Kite. Positions are shown as unknown, not assumed protected. {data.error}</div>}
+      {data.holdingsAvailable === false ? <div style={{ color: T.amber, fontSize: 12, marginTop: 12 }}>Guardian cannot assess coverage until Kite holdings are available.</div> : positions.length === 0 ? <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>No positive-quantity Kite delivery holdings to check.</div> : <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
         {positions.map((position) => {
           const p = position.protection; const color = STATE_COLOR[p.state];
           return <div key={position.symbol} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
