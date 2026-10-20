@@ -1,8 +1,8 @@
 "use client";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 
-// REQUIRED ENV VAR: Add VAULT_PIN=fos-vault-2026 to your .env.local
-// The vault API route checks this header on every request.
+// The Vault PIN is checked server-side; this page never loads API key values
+// until the authenticated owner has unlocked it.
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -59,16 +59,10 @@ export default function VaultPage() {
   const [changingPIN, setChangingPIN] = useState(false);
   const [recoveryStarted, setRecoveryStarted] = useState(false);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
   const [recoveryNewPIN, setRecoveryNewPIN] = useState("");
+  const [recoveryConfirmPIN, setRecoveryConfirmPIN] = useState("");
   const [recoveryMsg, setRecoveryMsg] = useState("");
-
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("pin_recovery") === "1") {
-      setRecoveryStarted(true);
-      setRecoveryMsg("Email link verified. Choose a new Vault PIN within 15 minutes.");
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
 
   const unlock = useCallback(async () => {
     if (!pin.trim()) return;
@@ -160,31 +154,43 @@ export default function VaultPage() {
     setChangingPIN(false);
   }
 
-  async function sendRecoveryLink() {
+  async function sendRecoveryCode() {
     setRecoveryBusy(true);
     setRecoveryMsg("");
     try {
       const res = await fetch("/api/admin/vault/change-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send_recovery_link" }),
+        body: JSON.stringify({ action: "send_recovery_code" }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setRecoveryMsg(data.error ?? "Could not send the reset link. Try again later.");
+        setRecoveryMsg(data.error ?? "Could not send the reset code. Try again later.");
       } else {
-        setRecoveryMsg("A one-time sign-in link was sent to vterminater@gmail.com. Open it in this browser; it will return here to finish the PIN reset.");
+        setRecoveryStarted(true);
+        setRecoveryCode("");
+        setRecoveryNewPIN("");
+        setRecoveryConfirmPIN("");
+        setRecoveryMsg("A one-time reset code was sent to vterminater@gmail.com. Enter the newest code below.");
       }
     } catch {
-      setRecoveryMsg("Network error — the reset link was not confirmed as sent.");
+      setRecoveryMsg("Network error — the reset code was not confirmed as sent.");
     } finally {
       setRecoveryBusy(false);
     }
   }
 
-  async function resetPINFromLink() {
+  async function resetPINFromCode() {
+    if (!/^\d{6}$/.test(recoveryCode.trim())) {
+      setRecoveryMsg("Enter the six-digit code from the latest email.");
+      return;
+    }
     if (recoveryNewPIN.trim().length < 6) {
       setRecoveryMsg("Enter a new Vault PIN of at least 6 characters.");
+      return;
+    }
+    if (recoveryNewPIN.trim() !== recoveryConfirmPIN.trim()) {
+      setRecoveryMsg("The new PIN entries do not match.");
       return;
     }
     setRecoveryBusy(true);
@@ -193,11 +199,11 @@ export default function VaultPage() {
       const res = await fetch("/api/admin/vault/change-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "verify_link_and_set", new_pin: recoveryNewPIN.trim() }),
+        body: JSON.stringify({ action: "verify_code_and_set", code: recoveryCode.trim(), new_pin: recoveryNewPIN.trim() }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setRecoveryMsg(data.error ?? "The recovery link was not verified or has expired. Request a new one and try again.");
+        setRecoveryMsg(data.error ?? "The reset code was not verified or has expired. Request a new one and try again.");
         return;
       }
 
@@ -205,7 +211,9 @@ export default function VaultPage() {
       // claiming success or loading key metadata.
       const verifyRes = await fetch("/api/admin/vault", { headers: { "x-vault-pin": recoveryNewPIN.trim() } });
       const verifyData = await verifyRes.json();
+      setRecoveryCode("");
       setRecoveryNewPIN("");
+      setRecoveryConfirmPIN("");
       if (verifyRes.ok) {
         setPin(recoveryNewPIN.trim());
         setKeys(verifyData.keys ?? []);
@@ -305,24 +313,28 @@ export default function VaultPage() {
         )}
 
         {!recoveryStarted ? (
-          <button onClick={sendRecoveryLink} disabled={recoveryBusy}
+          <button onClick={sendRecoveryCode} disabled={recoveryBusy}
             style={{ ...btn("#252836"), marginTop: "8px", width: "100%" }}>
-            {recoveryBusy ? "Sending reset link…" : "Forgot PIN? Email me a reset link"}
+            {recoveryBusy ? "Sending reset code…" : "Forgot PIN? Email me a reset code"}
           </button>
         ) : (
           <div style={{ ...card, marginTop: "16px", borderColor: T.accent + "55" }}>
             <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>Reset Vault PIN</div>
             <div style={{ fontSize: "12px", color: T.muted, marginBottom: "12px" }}>
-              Open the one-time sign-in link sent to vterminater@gmail.com in this browser. After it returns here, choose a new PIN. This does not change any API keys.
+              Enter the six-digit code from the latest email sent to vterminater@gmail.com. This changes only your Vault PIN; it does not change any API keys or your account password.
             </div>
+            <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="Six-digit email code"
+              value={recoveryCode} onChange={e => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, 6))} style={{ ...inp, marginBottom: "10px" }} />
             <input type="password" autoComplete="new-password" placeholder="New Vault PIN (6+ characters)"
               value={recoveryNewPIN} onChange={e => setRecoveryNewPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
+            <input type="password" autoComplete="new-password" placeholder="Confirm new Vault PIN"
+              value={recoveryConfirmPIN} onChange={e => setRecoveryConfirmPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button onClick={resetPINFromLink} disabled={recoveryBusy} style={btn(T.accent)}>
+              <button onClick={resetPINFromCode} disabled={recoveryBusy} style={btn(T.accent)}>
                 {recoveryBusy ? "Updating…" : "Set new Vault PIN"}
               </button>
-              <button onClick={sendRecoveryLink} disabled={recoveryBusy} style={btn("#252836")}>
-                Resend link
+              <button onClick={sendRecoveryCode} disabled={recoveryBusy} style={btn("#252836")}>
+                Resend code
               </button>
             </div>
           </div>

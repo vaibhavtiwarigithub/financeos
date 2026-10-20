@@ -17,7 +17,7 @@ Goal: recognize the live credentials without exposing them, verify the account u
 - Authenticated live holdings and risk rollup: `app/api/portfolio/holdings/route.ts` (a distinct consumer; update only if the Alpaca account is intentionally included in that risk view).
 - Existing read-only account enumeration: `lib/brokers/index.ts`; this does not by itself populate the snapshot-driven Live Portfolio page.
 - Guardian: `lib/trading/guardian-protection-monitor.ts`, currently restricted to a specific Robinhood account and its own proposal/execution gates. Do not broaden it as part of account discovery.
-- Vault PIN recovery: `app/dashboard/admin/vault/page.tsx`, `app/api/admin/vault/change-pin/route.ts`, and the current architecture contract in `docs/arch/08-risk-and-safety.md`.
+- Vault PIN recovery: `app/dashboard/admin/vault/page.tsx`, `app/api/admin/vault/change-pin/route.ts`, and the current architecture contract in `docs/arch/08-risk-and-safety.md`. Recovery uses a Supabase-generated one-time code sent through the configured app email provider, not a clickable Auth magic link; email template changes are not required.
 - Health alert lifecycle: existing System Health issue reporter and alert taxonomy; do not add a parallel health store.
 
 ## Phase 0 — credential recognition and read-only verification (now)
@@ -78,7 +78,7 @@ Goal: recognize the live credentials without exposing them, verify the account u
 - Credential unit tests cover canonical Live names, legacy alias, Vault precedence, empty rows, incomplete pairs, and strict Paper/Live separation.
 - Account tests cover inactive/blocked states, errors, stale refresh, no credential leakage, and missing account IDs.
 - Snapshot-producer and portfolio tests prove Alpaca Live appears after refresh, Alpaca Paper does not, same symbols in different brokers remain separate, errored accounts preserve prior snapshots and do not dilute NAV, and unauthenticated users receive no account data.
-- Vault recovery tests prove the locked state exposes “Forgot PIN?”, the destination cannot be changed by request input, unauthenticated/unconfirmed/stale sessions fail closed, and a fresh link-authenticated session can set a new salted PIN hash.
+- Vault recovery tests prove the locked state exposes “Forgot PIN?”, recovery email can only target the canonical owner, the one-time code is verified as a confirmed owner before a new salted PIN hash is stored, and the new PIN is confirmed before the Vault unlocks.
 - End-to-end read-only account test confirms the expected account status and positions without logging secrets, account numbers, or exact balances.
 - Typecheck, focused tests, full test suite, production build, secret scan, deployment readiness, and a final browser check of the production Vault page are required before calling the recovery link fixed in production.
 

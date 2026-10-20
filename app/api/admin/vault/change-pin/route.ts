@@ -3,14 +3,14 @@ import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { OWNER_EMAIL } from "@/lib/auth/owner"
 import { hashPin } from "@/lib/vault-pin"
+import { emailDeliveryAvailable, getEmailProvider } from "@/lib/providers/email"
+import { buildVaultPinRecoveryEmailHtml, vaultPinRecoverySubject } from "@/lib/email/vault-pin-recovery-email"
 
 export const dynamic = "force-dynamic"
 
-// Recovery uses the project's default Supabase magic-link template, which sends
-// a clickable ConfirmationURL rather than a visible numeric OTP. The link
-// returns through /auth/confirm and back to the locked Vault with a recovery
-// marker. The write endpoint still requires the confirmed owner and a fresh
-// Supabase sign-in, so a stale browser session cannot reset the Vault PIN.
+// Recovery uses a Supabase-generated recovery OTP delivered through Kairos'
+// checked email provider. No clickable Supabase auth URL is sent, avoiding
+// email-security scanners consuming the one-time token before the owner opens it.
 
 const ADMIN_EMAIL = OWNER_EMAIL
 
@@ -22,43 +22,66 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const body = await req.json()
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 })
+  }
   const { action } = body
 
-  // Recovery does not require the old PIN. Send the default template's
-  // clickable sign-in link only to the canonical owner address, returning to
-  // the locked Vault after /auth/confirm has established the link's session.
-  if (action === "send_recovery_link") {
-    // Use the canonical Supabase Site URL as the safe default. The active
-    // auth allow-list includes this host, not arbitrary Vercel preview hosts.
-    const appBase = process.env.NEXT_PUBLIC_SITE_URL ?? "https://financeos-phi.vercel.app"
-    const redirectTo = new URL("/auth/confirm", appBase)
-    redirectTo.searchParams.set("next", "/dashboard/admin/vault?pin_recovery=1")
-    const { error } = await sb.auth.signInWithOtp({
-      email: OWNER_EMAIL,
-      options: { shouldCreateUser: false, emailRedirectTo: redirectTo.toString() },
-    })
-    if (error) {
-      return NextResponse.json({ error: "Could not send the reset link. Try again later." }, { status: 503 })
+  // Recovery does not require the old PIN. Generate a Supabase recovery OTP,
+  // then deliver it through the app's configured email provider. Using the
+  // provider explicitly lets the owner receive a code without changing the
+  // shared Supabase Magic Link template used by regular sign-in flows.
+  if (action === "send_recovery_code") {
+    if (!(await emailDeliveryAvailable())) {
+      return NextResponse.json({ error: "Vault recovery email is not configured. Contact the app owner." }, { status: 503 })
     }
-    return NextResponse.json({ ok: true, message: `A one-time sign-in link was sent to ${OWNER_EMAIL}.` })
+    const svc = createServiceClient()
+    const { data, error } = await svc.auth.admin.generateLink({ type: "recovery", email: OWNER_EMAIL })
+    const code = data?.properties?.email_otp
+    if (error || typeof code !== "string" || !/^\d{6}$/.test(code)) {
+      return NextResponse.json({ error: "Could not create a reset code. Try again later." }, { status: 503 })
+    }
+
+    const provider = getEmailProvider()
+    if (!provider.sendChecked) {
+      return NextResponse.json({ error: "The configured email provider cannot verify delivery." }, { status: 503 })
+    }
+    const sent = await provider.sendChecked({
+      from: process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>",
+      to: OWNER_EMAIL,
+      subject: vaultPinRecoverySubject(),
+      html: buildVaultPinRecoveryEmailHtml({ code, ownerEmail: OWNER_EMAIL }),
+    })
+    if (!sent.ok) {
+      return NextResponse.json({ error: "Could not send the reset code. Check the email provider configuration and try again." }, { status: 503 })
+    }
+    return NextResponse.json({ ok: true, message: `A one-time reset code was sent to ${OWNER_EMAIL}.` })
   }
 
-  // The email link authenticates the owner. Only accept the PIN update within
-  // 15 minutes of that sign-in; the canonical email/session check above remains
-  // mandatory and the existing PIN is never returned or recovered.
-  if (action === "verify_link_and_set") {
-    const { new_pin } = body
+  // Supabase verifies OTP expiry/one-time use. Only the confirmed canonical
+  // owner can update the Vault PIN; no old PIN or existing sign-in timestamp
+  // is trusted, and only a salted hash is persisted.
+  if (action === "verify_code_and_set") {
+    const { new_pin, code } = body
+    if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
+      return NextResponse.json({ error: "Enter the six-digit code from the latest email." }, { status: 400 })
+    }
     if (typeof new_pin !== "string" || !new_pin.trim()) {
       return NextResponse.json({ error: "new_pin required" }, { status: 400 })
     }
     if (new_pin.trim().length < 6 || new_pin.trim().length > 128) {
       return NextResponse.json({ error: "PIN must be between 6 and 128 characters" }, { status: 400 })
     }
-    const lastSignIn = user.last_sign_in_at ? Date.parse(user.last_sign_in_at) : NaN
-    const ageMs = Date.now() - lastSignIn
-    if (!Number.isFinite(lastSignIn) || ageMs < -60_000 || ageMs > 15 * 60_000) {
-      return NextResponse.json({ error: "Open the newest Vault recovery link from your email, then try again." }, { status: 403 })
+    const { data: verified, error: verifyError } = await sb.auth.verifyOtp({
+      email: OWNER_EMAIL,
+      token: code,
+      type: "recovery",
+    })
+    if (verifyError || verified.user?.email !== OWNER_EMAIL || !verified.user.email_confirmed_at) {
+      return NextResponse.json({ error: "The code is invalid, expired, or already used. Request a new code and use the latest email." }, { status: 403 })
     }
 
     const svc = createServiceClient()
