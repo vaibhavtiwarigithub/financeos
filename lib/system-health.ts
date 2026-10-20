@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
+import { isOwnerActionAlert } from "@/lib/alerts/classification";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // System Health issue funnel.
@@ -115,6 +116,43 @@ export async function resolveExpiredIssues(
     if (error) console.error("[system-health] resolveExpiredIssues failed:", error.message);
   } catch (e) {
     console.error("[system-health] resolveExpiredIssues threw:", e);
+  }
+}
+
+/** Resolve aged informational notices while retaining owner actions and history. */
+export async function resolveStaleInformationalIssues(
+  client?: SupabaseClient,
+  now = new Date(),
+): Promise<void> {
+  const svc = client ?? createServiceClient();
+  const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const { data, error } = await svc
+      .from("agent_alerts")
+      .select("id,severity,category,title,detail")
+      .eq("resolved", false)
+      .in("severity", ["info", "success"])
+      .lt("created_at", cutoff)
+      .or(`auto_expire_at.is.null,auto_expire_at.lte.${now.toISOString()}`)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (error) {
+      console.error("[system-health] resolveStaleInformationalIssues read failed:", error.message);
+      return;
+    }
+    const ids = (data ?? [])
+      .filter((row: any) => !isOwnerActionAlert(row))
+      .map((row: any) => row.id)
+      .filter((id: unknown): id is string => typeof id === "string");
+    if (!ids.length) return;
+    const { error: updateError } = await svc
+      .from("agent_alerts")
+      .update({ resolved: true, resolved_at: now.toISOString() })
+      .in("id", ids)
+      .eq("resolved", false);
+    if (updateError) console.error("[system-health] resolveStaleInformationalIssues update failed:", updateError.message);
+  } catch (e) {
+    console.error("[system-health] resolveStaleInformationalIssues threw:", e);
   }
 }
 

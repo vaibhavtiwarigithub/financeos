@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { isOwnerActionAlert } from "@/lib/alerts/classification";
 
 // Persistent System Health card. Reads OPEN agent_alerts (the System Health
 // funnel — model deprecations, AV budget, broker-token expiry, kill-switch
@@ -55,10 +56,6 @@ function ageBadge(createdAt: string): { text: string; stuck: boolean } | null {
 // that only its human owner can reconnect does not: it needs attention, but it
 // is not evidence that the automated system is malfunctioning. Keep it visible
 // in its own section instead of training the failure badge to mean two things.
-function isOwnerAction(a: Alert): boolean {
-  return a.category === "broker" || /\b(reconnect|owner action|manual login)\b/i.test(`${a.title} ${a.detail ?? ""}`);
-}
-
 // A deep link / hint per category so the card is actionable, not just informational.
 function fixHint(a: Alert): { href?: string; label: string } {
   const cat = a.category;
@@ -182,9 +179,9 @@ export default function SystemHealthCard() {
     );
   }
 
-  const ownerActions = alerts.filter(isOwnerAction);
-  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success" && !isOwnerAction(alert));
-  const notices = alerts.filter(alert => (alert.severity === "info" || alert.severity === "success") && !isOwnerAction(alert));
+  const ownerActions = alerts.filter(isOwnerActionAlert);
+  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success" && !isOwnerActionAlert(alert));
+  const notices = alerts.filter(alert => (alert.severity === "info" || alert.severity === "success") && !isOwnerActionAlert(alert));
   const sorted = [...actionAlerts].sort(
     (a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)
       || (a.created_at < b.created_at ? 1 : -1),

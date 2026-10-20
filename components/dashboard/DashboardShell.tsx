@@ -7,6 +7,7 @@ import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
 import { MarketProvider, MarketSwitcher } from "@/lib/market-context";
 import { ChartNoAxesCombined } from "lucide-react";
 import { EXCLUDE_SHADOW_FILTER } from "@/lib/trading/proposal-status";
+import { isActionableHealthAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -395,12 +396,14 @@ export default function DashboardShell({ profile, children }: { profile: Profile
     router.push("/login");
   }
 
-  const unreadCount = alerts.length;
+  const actionAlerts = alerts.filter(isActionableHealthAlert);
+  const ownerActionCount = alerts.filter(isOwnerActionAlert).length;
+  const noticeCount = alerts.filter(a => !isActionableHealthAlert(a) && !isOwnerActionAlert(a)).length;
+  const unreadCount = actionAlerts.length;
 
-  const worstSeverity = alerts.find(a => a.severity === "critical") ? "critical"
-    : alerts.find(a => a.severity === "error") ? "error"
-    : alerts.find(a => a.severity === "warn") ? "warn"
-    : alerts.find(a => a.severity === "info") ? "info"
+  const worstSeverity = actionAlerts.find(a => a.severity === "critical") ? "critical"
+    : actionAlerts.find(a => a.severity === "error") ? "error"
+    : actionAlerts.find(a => a.severity === "warn") ? "warn"
     : null;
   const bellColor = worstSeverity ? SEV[worstSeverity].dot : T.muted;
 
@@ -454,26 +457,26 @@ export default function DashboardShell({ profile, children }: { profile: Profile
           <div ref={bellRef} style={{ position: "relative" }}>
             <button
               onClick={() => setBellOpen(o => !o)}
-              title={`${unreadCount} alert${unreadCount !== 1 ? "s" : ""}`}
+              title={`${unreadCount} system issue${unreadCount !== 1 ? "s" : ""}; ${ownerActionCount} owner action${ownerActionCount !== 1 ? "s" : ""}; ${noticeCount} notice${noticeCount !== 1 ? "s" : ""}`}
               style={{
                 background: bellOpen ? T.card : "none",
                 border: `1px solid ${bellOpen ? T.border : "transparent"}`,
                 borderRadius: "8px", padding: "6px 8px", cursor: "pointer",
-                color: unreadCount > 0 ? bellColor : T.muted, fontSize: "16px",
+                color: unreadCount > 0 ? bellColor : ownerActionCount > 0 ? T.yellow : noticeCount > 0 ? T.blue : T.muted, fontSize: "16px",
                 position: "relative", display: "flex", alignItems: "center",
               }}
             >
               🔔
-              {unreadCount > 0 && (
+              {(unreadCount > 0 || ownerActionCount > 0 || noticeCount > 0) && (
                 <span style={{
                   position: "absolute", top: "2px", right: "2px",
                   width: "16px", height: "16px", borderRadius: "50%",
-                  background: worstSeverity === "error" ? T.red : worstSeverity === "warn" ? T.yellow : T.blue,
+                  background: worstSeverity === "critical" || worstSeverity === "error" ? T.red : worstSeverity === "warn" ? T.yellow : ownerActionCount > 0 ? T.yellow : T.blue,
                   color: "#000", fontSize: "9px", fontWeight: 700,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   border: `2px solid ${T.surface}`,
                 }}>
-                  {unreadCount > 9 ? "9+" : unreadCount}
+                  {unreadCount > 0 ? (unreadCount > 9 ? "9+" : unreadCount) : "·"}
                 </span>
               )}
             </button>
@@ -489,7 +492,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
                 {/* Dropdown header */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: `1px solid ${T.border}` }}>
                   <span style={{ fontSize: "12px", fontWeight: 700, color: T.text }}>
-                    Alerts {unreadCount > 0 && <span style={{ color: T.muted, fontWeight: 400 }}>({unreadCount})</span>}
+                    Alerts <span style={{ color: T.muted, fontWeight: 400 }}>({unreadCount} system · {ownerActionCount} owner · {noticeCount} notices)</span>
                   </span>
                   {unreadCount > 0 && (
                     <button

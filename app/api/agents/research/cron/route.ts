@@ -524,6 +524,9 @@ export async function POST(req: NextRequest) {
   const failedCandidates = entries
     .filter((entry, i) => !entry.isHeld && results[i]?.error)
     .map(entry => entry.symbol);
+  const failedHeld = entries
+    .filter((entry, i) => entry.isHeld && results[i]?.error)
+    .map(entry => entry.symbol);
   const failedDetails = results
     .filter(r => r && r.error)
     .slice(0, 10)
@@ -711,7 +714,7 @@ export async function POST(req: NextRequest) {
       severity: errs === processed ? "critical" : "warn",
       category: "cron",
       title: `Research: ${errs} symbol${errs > 1 ? "s" : ""} failed`,
-      detail: `${failureDetails}. ${ok} succeeded; ${failedCandidates.length} failed candidate(s) queued for bounded retry.`,
+      detail: `${failureDetails}. ${ok} succeeded; ${failedCandidates.length} failed non-held candidate(s) queued for bounded retry; ${failedHeld.length} held symbol(s) will be retried by the next holding research pass.`,
       autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
     }, supabase);
   } else {

@@ -31,7 +31,14 @@ describe("research signal regressions", () => {
     const pendingThrow = source.indexOf("agent_signals pending supersession failed");
     const signalInsert = source.indexOf('from("agent_signals").insert(signalRow)');
     expect(pendingUpdate).toBeGreaterThan(0);
+    expect(source).toContain("withSupabaseRetry(");
     expect(pendingThrow).toBeGreaterThan(pendingUpdate);
     expect(signalInsert).toBeGreaterThan(pendingThrow);
+  });
+
+  it("reports held-symbol failures as next-pass retries rather than queued candidates", () => {
+    const source = read("app/api/agents/research/cron/route.ts");
+    expect(source).toContain("const failedHeld = entries");
+    expect(source).toContain("held symbol(s) will be retried by the next holding research pass");
   });
 });

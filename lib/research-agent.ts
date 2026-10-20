@@ -19,6 +19,7 @@ import { persistObservedResearchEvidence } from "@/lib/evidence/observed-cache";
 import type { Market } from "@/lib/evidence/contracts";
 import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
@@ -2238,8 +2239,10 @@ export async function processSymbol(
     }
     // ponytail: expire stale pending signals for this symbol so paper-trade can't
     // pick an older higher-scored row over the fresh capped one (score ordering, not recency).
-    const { error: pendingSupersessionError } = await supabase.from("agent_signals").update({ status: "superseded" })
-      .eq("market", market).eq("symbol", symbol).eq("status", "pending");
+    const { error: pendingSupersessionError } = await withSupabaseRetry(
+      () => supabase.from("agent_signals").update({ status: "superseded" })
+        .eq("market", market).eq("symbol", symbol).eq("status", "pending"),
+    );
     if (pendingSupersessionError) {
       throw new Error(`agent_signals pending supersession failed for ${market}:${symbol}: ${pendingSupersessionError.message}`);
     }
