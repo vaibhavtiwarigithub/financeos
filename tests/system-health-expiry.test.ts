@@ -36,6 +36,7 @@ describe("System Health auto-expiry", () => {
     const calls: Array<{ table: string; operation: string; payload?: unknown; filters: unknown[] }> = [];
     const rows = [
       { id: "stale-info", severity: "info", category: "data", title: "Old evidence notice", detail: null },
+      { id: "stale-ready", severity: "warn", category: "data", title: "✅ Router shadow evidence is ready", detail: null },
       { id: "owner-action", severity: "info", category: "broker", title: "Reconnect broker", detail: null },
     ];
     const client = {
@@ -62,10 +63,10 @@ describe("System Health auto-expiry", () => {
     await resolveStaleInformationalIssues(client as any, now);
 
     expect(calls).toHaveLength(2);
-    expect(calls[0].filters).toContainEqual(["in", "severity", ["info", "success"]]);
+    expect(calls[0].filters).toContainEqual(["in", "severity", ["info", "success", "warn"]]);
     expect(calls[0].filters).toContainEqual(["lt", "created_at", "2026-09-20T20:00:00.000Z"]);
     expect(calls[0].filters).toContainEqual(["or", "auto_expire_at.is.null,auto_expire_at.lte.2026-10-20T20:00:00.000Z"]);
     expect(calls[1].payload).toEqual({ resolved: true, resolved_at: now.toISOString() });
-    expect(calls[1].filters).toContainEqual(["in", "id", ["stale-info"]]);
+    expect(calls[1].filters).toContainEqual(["in", "id", ["stale-info", "stale-ready"]]);
   });
 });

@@ -7,7 +7,7 @@ import { getMarketSupport, SUPPORT_META } from "@/lib/market-support";
 import { MarketProvider, MarketSwitcher } from "@/lib/market-context";
 import { ChartNoAxesCombined } from "lucide-react";
 import { EXCLUDE_SHADOW_FILTER } from "@/lib/trading/proposal-status";
-import { isActionableHealthAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
+import { isActionableHealthAlert, isInformationalNoticeAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -398,7 +398,7 @@ export default function DashboardShell({ profile, children }: { profile: Profile
 
   const actionAlerts = alerts.filter(isActionableHealthAlert);
   const ownerActionCount = alerts.filter(isOwnerActionAlert).length;
-  const noticeCount = alerts.filter(a => !isActionableHealthAlert(a) && !isOwnerActionAlert(a)).length;
+  const noticeCount = alerts.filter(a => isInformationalNoticeAlert(a) && !isOwnerActionAlert(a)).length;
   const unreadCount = actionAlerts.length;
 
   const worstSeverity = actionAlerts.find(a => a.severity === "critical") ? "critical"

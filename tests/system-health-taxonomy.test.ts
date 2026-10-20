@@ -6,7 +6,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("System Health taxonomy", () => {
   it("counts actions separately from collapsed informational notices", () => {
     const card = read("components/dashboard/SystemHealthCard.tsx");
-    expect(card).toContain('alert.severity !== "info"');
+    expect(card).toContain("isInformationalNoticeAlert(alert)");
     expect(card).toContain("No system failure");
     expect(card).toContain("ownerActions");
     expect(card).toContain("operational notice");

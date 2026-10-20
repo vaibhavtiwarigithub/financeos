@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isActionableHealthAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
+import { isActionableHealthAlert, isInformationalNoticeAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
 
 describe("shared alert classification", () => {
   it("keeps broker reconnect and owner actions out of the failure count", () => {
@@ -14,5 +14,7 @@ describe("shared alert classification", () => {
     expect(isActionableHealthAlert({ severity: "critical", category: "cron" })).toBe(true);
     expect(isActionableHealthAlert({ severity: "info", category: "data" })).toBe(false);
     expect(isActionableHealthAlert({ severity: "success", category: "system" })).toBe(false);
+    expect(isInformationalNoticeAlert({ severity: "warn", title: "✅ Router shadow evidence is ready" })).toBe(true);
+    expect(isActionableHealthAlert({ severity: "warn", title: "✅ Router shadow evidence is ready" })).toBe(false);
   });
 });

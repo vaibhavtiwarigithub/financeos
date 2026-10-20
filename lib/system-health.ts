@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/service";
-import { isOwnerActionAlert } from "@/lib/alerts/classification";
+import { isInformationalNoticeAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // System Health issue funnel.
@@ -131,7 +131,7 @@ export async function resolveStaleInformationalIssues(
       .from("agent_alerts")
       .select("id,severity,category,title,detail")
       .eq("resolved", false)
-      .in("severity", ["info", "success"])
+      .in("severity", ["info", "success", "warn"])
       .lt("created_at", cutoff)
       .or(`auto_expire_at.is.null,auto_expire_at.lte.${now.toISOString()}`)
       .order("created_at", { ascending: true })
@@ -141,7 +141,7 @@ export async function resolveStaleInformationalIssues(
       return;
     }
     const ids = (data ?? [])
-      .filter((row: any) => !isOwnerActionAlert(row))
+      .filter((row: any) => isInformationalNoticeAlert(row) && !isOwnerActionAlert(row))
       .map((row: any) => row.id)
       .filter((id: unknown): id is string => typeof id === "string");
     if (!ids.length) return;

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { isOwnerActionAlert } from "@/lib/alerts/classification";
+import { isInformationalNoticeAlert, isOwnerActionAlert } from "@/lib/alerts/classification";
 
 // Persistent System Health card. Reads OPEN agent_alerts (the System Health
 // funnel — model deprecations, AV budget, broker-token expiry, kill-switch
@@ -180,8 +180,8 @@ export default function SystemHealthCard() {
   }
 
   const ownerActions = alerts.filter(isOwnerActionAlert);
-  const actionAlerts = alerts.filter(alert => alert.severity !== "info" && alert.severity !== "success" && !isOwnerActionAlert(alert));
-  const notices = alerts.filter(alert => (alert.severity === "info" || alert.severity === "success") && !isOwnerActionAlert(alert));
+  const actionAlerts = alerts.filter(alert => !isInformationalNoticeAlert(alert) && !isOwnerActionAlert(alert));
+  const notices = alerts.filter(alert => isInformationalNoticeAlert(alert) && !isOwnerActionAlert(alert));
   const sorted = [...actionAlerts].sort(
     (a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)
       || (a.created_at < b.created_at ? 1 : -1),

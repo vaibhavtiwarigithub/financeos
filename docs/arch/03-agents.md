@@ -1151,8 +1151,8 @@ Deep-link fix hints. Tier-1 safe actions (retry, resolve info/warn) are one-clic
 The global alert bell shares the same owner-action classification: broker reconnects and local
 subscription-worker outages remain visible, but are not counted as app-system failures. Its badge
 counts actionable warn/error/critical issues; the drawer separately reports owner actions and
-informational/success notices. The four-hour stale-check also resolves informational/success
-notices older than 30 days (history remains in `agent_alerts`); it preserves warn/critical issues,
+informational/success notices. The four-hour stale-check also resolves informational notices older
+than 30 days (history remains in `agent_alerts`); it preserves warn/critical issues,
 broker/owner actions, and notices with an active explicit expiry. Research retries only transient
 failures of the idempotent pending-signal supersession update, rather than replaying a whole symbol
 research transaction.
