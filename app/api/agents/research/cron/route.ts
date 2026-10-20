@@ -13,6 +13,7 @@ import { emitAlert } from "@/lib/alerts/emit";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
+import { researchCandidateCap } from "@/lib/agents/research-capacity";
 import {
   getClosedDayCatchupEligibility,
   getMarketDayStatus,
@@ -226,10 +227,7 @@ export async function POST(req: NextRequest) {
       .eq("status", "weekend_staged")
       .eq("as_of_session", asOfSession);
     const staged = new Set((alreadyStaged ?? []).map((row: any) => String(row.symbol).toUpperCase()));
-    const configuredCap = marketScope === "india"
-      ? Number.parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8", 10)
-      : Number.parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40", 10);
-    const cap = Number.isFinite(configuredCap) ? Math.max(1, configuredCap) : 8;
+    const cap = researchCandidateCap(marketScope);
     const catchupSymbols = queued.filter((symbol) => !staged.has(symbol)).slice(0, cap);
     allEntries = catchupSymbols.length > 0 ? await gatherSymbols(supabase, catchupSymbols, marketScope) : [];
   } else {

@@ -1,10 +1,46 @@
 # Broker-Compatible Broad US Research Universe
 
-> Status: **PROPOSED — architecture only.** No schema, ingestion, schedule, score,
-> eligibility, paper, or live-order behavior changes are authorized by this document.
-> Last revised: 2026-09-09.
+> Status: **Broad-universe program remains proposed.** A separately bounded,
+> research-only capacity adjustment was implemented on 2026-10-19: India candidate
+> ceiling 8→10 and new-US-listing first-look cap 2→4. No catalog schema, new
+> ingestion source, schedule, score, eligibility, paper, or live-order behavior
+> change is included. Stage 0 remains required before a full-universe build.
+> Last revised: 2026-10-19.
 > Money-path influence: **none**. A broker preflight immediately before an order
 > remains the only broker-tradability authority.
+
+### Bounded capacity decision — 2026-10-19
+
+Production evidence supports a small increase to existing rotating lanes, not a
+new cron or a market-wide daily LLM pass. The regular schedule is two scored US
+passes plus one US discovery-only pass and one separate four-symbol leveraged
+pass; India has two scored passes plus one discovery-only pass. Retries and manual
+runs can add executions, so these are scheduled opportunities, not a guaranteed
+exact run count. On 2026-10-19, US regular passes processed 54 and 59 signals but
+deferred 46 and 42 workload items; the discovery-only pass completed 14 names in
+34 seconds, and the leveraged pass completed four in 15 seconds. India completed
+two normal passes with eight new candidates each and one discovery pass with
+eight, each in about 10–14 seconds.
+
+Accordingly, the existing India candidate ceiling moves from 8 to 10 per
+invocation, with up to five of those slots reserved for freshness-rotated NIFTY-50
+coverage; the remaining slots continue to come from current watchlist, carry-forward
+and broad-NSE screen lanes. Newly listed US first-look observations move from two
+to four per run, still with a hard ceiling of four and the existing persisted,
+oldest-attempt-first queue. This modestly increases possible India candidate slots
+from 24 to 30 candidate slots across the three scheduled passes and US new-listing
+first-look capacity from two to four names in its dedicated daily discovery pass;
+duplicate/held symbols, market calendars, wall-clock budgets and source
+availability mean actual unique research counts will be lower and must be read
+from `agent_runs`.
+
+The adjustment does not add Alpaca, Robinhood or Webull to canonical scoring:
+the recent broker adapters are still evidence-only, and production had no recent
+completed Alpaca or Robinhood calls in the research provider ledger. They can only
+expand the score inputs after scheduled observations demonstrate reliable coverage,
+freshness, and applicable data contracts. No US regular-pass cap increase is made
+while runs already defer dozens of items. Watch the existing deferred counts,
+run duration, missingness and System Health before considering any further increase.
 
 ## 0. Decision summary
 

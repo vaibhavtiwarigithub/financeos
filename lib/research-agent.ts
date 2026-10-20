@@ -40,6 +40,7 @@ import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification"
 import { applyStrategyTilt, loadTradingMandate, resolveHorizonDays } from "@/lib/trading-mandate";
 import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
 import { buildIndicativeTradePlan } from "@/lib/trading/trade-plan";
+import { newListingObservationCap, researchCandidateCap } from "@/lib/agents/research-capacity";
 import { shadowDecisionEntryEvidence } from "@/lib/shadows/decision-evidence";
 import {
   classifyFinancialDatasetsFailure,
@@ -835,7 +836,7 @@ export async function gatherSymbols(
   // throughput without ever overrunning maxDuration (the 50-cap timeout that
   // watchdog-reaped runs for 2 days). Overflow beyond the cap already carries
   // forward via applyCandidateCarryForward.
-  const candidateCap = parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40");
+  const candidateCap = researchCandidateCap("us");
   // Take the top `candidateCap` this run; carry the overflow forward (raised
   // priority, no starvation) instead of the old silent `.slice()` drop.
   // Provenance for anything the cap pushes into the queue.
@@ -946,8 +947,7 @@ export async function gatherSymbols(
     }
     const usable = [...candidatesBySymbol.entries()].filter(([symbol]) => !allWithMetals.has(symbol))
       .map(([symbol, rows]) => ({ ...rows[0], symbol, listingCandidateIds: rows.map((row: any) => Number(row.id)) }));
-    const requested = Number.parseInt(process.env.RESEARCH_NEW_LISTING_OBSERVATIONS_PER_RUN ?? "2", 10);
-    const cap = Number.isFinite(requested) ? Math.max(0, Math.min(4, requested)) : 2;
+    const cap = newListingObservationCap();
     for (const row of usable.slice(0, cap) as any[]) {
       const symbol = String(row.symbol).trim().toUpperCase();
       allWithMetals.add(symbol);
@@ -1006,7 +1006,7 @@ export async function gatherSymbols(
     // narrow RSI/P-E screen from making benchmark leaders invisible for weeks.
     // The index lane only causes research; every entry/risk/rotation gate stays
     // downstream and unchanged.
-    const indiaCap = parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8");
+    const indiaCap = researchCandidateCap("india");
     const deferredIndia = await readDeferredCandidates(supabase, "india");
     const cacheCandidates = await fetchIndiaScreenCandidates(supabase, Math.max(20, indiaCap * 2));
     const rawList = cacheCandidates.length > 0 ? cacheCandidates : niftyCandidates(indiaCap);
@@ -1029,7 +1029,7 @@ export async function gatherSymbols(
       // Reserve up to half of the candidate budget for core benchmark coverage;
       // manual names still retain explicit priority.
       indexRotation,
-      indexReserve: Math.min(4, Math.max(0, Math.floor(indiaCap / 2))),
+      indexReserve: Math.min(5, Math.max(0, Math.floor(indiaCap / 2))),
       deferred: deferredIndia.map(q => q.symbol),
       watchlist: watchlist.indiaOther,
       screened: rawList,

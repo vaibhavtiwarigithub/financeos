@@ -1,3 +1,5 @@
+import { researchCandidateCap } from "@/lib/agents/research-capacity";
+
 export type AgentCapacityRow = {
   agent: string;
   workloadType: "queue" | "eligible_work" | "scheduled_workload" | "no_queue";
@@ -24,9 +26,7 @@ export function estimatedClearDays(backlog: number | null, daily: number | null)
 }
 
 export async function loadAgentCapacity(svc: any, market: "us" | "india"): Promise<AgentCapacityRow[]> {
-  const configuredResearchCap = market === "india"
-    ? Number.parseInt(process.env.RESEARCH_INDIA_CANDIDATE_CAP ?? "8", 10)
-    : Number.parseInt(process.env.RESEARCH_CANDIDATE_CAP ?? "40", 10);
+  const configuredResearchCap = researchCandidateCap(market);
 
   const [queueResult, stagedResult, researchRunsResult, pendingSignalsResult, positionsResult] = await Promise.all([
     svc.from("research_queue").select("symbol, deferred_at").eq("market", market),
