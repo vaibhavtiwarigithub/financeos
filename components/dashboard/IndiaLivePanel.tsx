@@ -385,7 +385,7 @@ export default function IndiaLivePanel() {
 
         {/* ── India-only Guardian and research outcome scorecard ── */}
         <IndiaManualTradeGuardianPanel />
-        <IndiaRecommendationsGuardianScorecard holdings={holdings} />
+        <IndiaRecommendationsGuardianScorecard holdings={holdings} holdingsKnown={portfolio?.connected === true} />
 
         {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>

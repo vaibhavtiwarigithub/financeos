@@ -902,12 +902,15 @@ India Live Portfolio also includes two market-specific, owner-only read models:
   partial/over-quantity, conflicts, missing sell legs, or unknown status. It is
   read-only; it does not identify manual fills, suggest stops, or create/modify/
   cancel orders. Kite GTT children are LIMIT orders and can fail to fill after a
-  gap through the trigger, so a matching GTT is not a guaranteed stop.
+  gap through the trigger, so a matching GTT is not a guaranteed stop. When
+  holdings cannot be read, the panel reports status unavailable and offers a
+  Kite reconnect action rather than showing a false empty book.
 - **Recommendations & Guardian scorecard · India** reads entry-eligible India
   decision observations and their already-matured benchmark-neutral labels at
   2/5/10/20 sessions. The comparator is NIFTY 50. Aggregate return/hit-rate
   cards are descriptive, not independent-sample IC or t-stat. Current holdings
-  are not presented as proof the owner acted on a recommendation. The existing
+  are not presented as proof the owner acted on a recommendation; a held/not-held
+  label is shown only when Kite holdings have been verified. The existing
   `live_recommendations` ledger and SPY scorecard remain US-only.
 
 These views add no scheduler, database schema, stop policy, or broker-order

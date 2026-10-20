@@ -12,6 +12,7 @@ The India Live Portfolio did not show the Manual Trade Guardian or the Recommend
 
 - Owner-only `GET /api/live-portfolio/india-guardian` reads current Kite delivery holdings and `GET /gtt/triggers` through the existing `kiteGet` helper.
 - Each holding is compared with active same-symbol GTTs. The view reports exact-quantity match, partial quantity, excess quantity, no SELL leg, multiple GTTs needing reconciliation, or unknown when Kite's trigger list cannot be read.
+- If Kite holdings cannot be read (including an expired daily token), the panel reports holdings as unavailable and gives a Reconnect Kite action; it never displays an empty book as "no holdings" or claims coverage.
 - A two-leg OCO GTT's two children are not summed; their common quantity is compared once with the holding.
 - This is **broker-visible GTT coverage**, not the full US Manual Trade Guardian workflow. It does not detect manual fills as events, calculate or propose a stop, create an owner approval plan, place/modify/cancel a GTT, or run an automatic software-stop monitor. Do not call a position protected when Kite's read fails.
 - The view warns that Kite GTT children are LIMIT orders and may not fill after a gap through the trigger.
@@ -22,6 +23,7 @@ The India Live Portfolio did not show the Manual Trade Guardian or the Recommend
 - The database's benchmark-neutral label is the NIFTY 50 comparison; the route does not import the US `live_recommendations` ledger, `trade_proposals`, SPY marks, or Robinhood position state.
 - Aggregate mean excess return and hit rate are descriptive only. These daily decisions overlap, so the UI explicitly says they are not inferential IC/t-stat estimates.
 - Recent rows show the frozen composite and dimensions, reference price, matured outcome where available, and whether the symbol is **currently** held in Kite. Current holdings do not establish whether the owner bought and later sold after the recommendation; the UI says so.
+- The current-holding label is shown only while the Kite holdings read is confirmed; otherwise it says the status is unknown. Hit rates are displayed as ordinary non-negative percentages, separate from signed excess returns.
 - If history exceeds the explicit 2,000-observation read cap, the response flags truncation and the UI warns that aggregates cover only the most recent 2,000 eligible observations. (The P0 response should be extended with a scheduled aggregate producer before anyone treats it as a complete long-run scorecard.)
 
 ## Security and execution boundaries
