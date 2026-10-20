@@ -1840,28 +1840,39 @@ export default function SettingsPage() {
               <label style={{ color: T.textSub, fontSize: "12px" }}>Vault PIN
                 <input type="password" autoComplete="current-password" value={webullVaultPin} onChange={e => setWebullVaultPin(e.target.value)} style={{ display: "block", width: "min(280px, 78vw)", marginTop: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "9px 10px", fontSize: "13px" }} />
               </label>
-              <button disabled={webullAuthLoading || !webullVaultPin} onClick={async () => {
+              <button disabled={webullAuthLoading} onClick={async () => {
+                if (!webullVaultPin.trim()) {
+                  setWebullAuthResult({ state: "vault_pin_required", detail: "Enter your Vault PIN above. No request was sent." });
+                  return;
+                }
                 setWebullAuthLoading(true); setWebullAuthResult(null);
                 try {
-                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin }, body: JSON.stringify({ action: "create" }) });
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin.trim() }, body: JSON.stringify({ action: "create" }) });
                   const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
                 } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
                 finally { setWebullAuthLoading(false); }
-              }} style={{ background: T.accent, color: "#fff", border: 0, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading || !webullVaultPin ? 0.65 : 1 }}>
+              }} style={{ background: T.accent, color: "#fff", border: 0, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading ? 0.65 : 1 }}>
                 {webullAuthLoading ? "Requesting…" : "Request Webull verification"}
               </button>
-              <button disabled={webullAuthLoading || !webullVaultPin} onClick={async () => {
+              <button disabled={webullAuthLoading} onClick={async () => {
+                if (!webullVaultPin.trim()) {
+                  setWebullAuthResult({ state: "vault_pin_required", detail: "Enter your Vault PIN above. No request was sent." });
+                  return;
+                }
                 setWebullAuthLoading(true); setWebullAuthResult(null);
                 try {
-                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin }, body: JSON.stringify({ action: "check" }) });
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin.trim() }, body: JSON.stringify({ action: "check" }) });
                   const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
                   if (result.state === "token_active") setProviders((p: any) => p ? { ...p, webullOpenApi: { ...p.webullOpenApi, accessTokenPresent: true } } : p);
                 } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
                 finally { setWebullAuthLoading(false); }
-              }} style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading || !webullVaultPin ? 0.65 : 1 }}>
+              }} style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading ? 0.65 : 1 }}>
                 {webullAuthLoading ? "Checking…" : "Check verification"}
               </button>
             </div>
+            {!webullVaultPin.trim() && <div style={{ color: T.textSub, fontSize: "12px", marginTop: "9px" }}>
+              Enter your Vault PIN before requesting verification. Forgot it? <a href="/dashboard/admin/vault" style={{ color: T.accent, textDecoration: "underline" }}>Reset your Vault PIN</a>.
+            </div>}
             {webullAuthResult && <div role="status" style={{ marginTop: "12px", background: T.surface, border: `1px solid ${webullAuthResult.state === "token_active" ? T.green : T.amber}`, borderRadius: "8px", padding: "10px 12px", color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>
               <b style={{ color: webullAuthResult.state === "token_active" ? T.green : T.amber }}>Status: {String(webullAuthResult.state).replaceAll("_", " ")}</b>
               {webullAuthResult.detail && <span> · {String(webullAuthResult.detail).replaceAll("_", " ")}</span>}
