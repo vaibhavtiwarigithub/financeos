@@ -1,5 +1,15 @@
 # Kairos — Agents
 
+## Post-close price-prewarm failure visibility (2026-10-20)
+
+The market-local `/api/agents/price-prewarm` route reports explicit query errors,
+per-symbol failures and deadline skips, and a later clean run resolves the corresponding
+market-scoped alert. It now also reports unexpected exceptions raised while resolving the
+scope or running the bounded refresh, rather than returning only an HTTP error that could
+leave the monitoring dashboard unaware. Public responses use generic error text; exception
+details stay in route logs. A scope failure is fail-closed (no refresh is claimed), while
+research, scoring, paper positions and order paths remain independent and unchanged.
+
 ## Leveraged ETF research and measurement correction (2026-10-16)
 
 The ordinary ETF composite is not a validated SOXL/SOXS/TQQQ/SQQQ trading

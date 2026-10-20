@@ -96,9 +96,19 @@ export async function POST(req: NextRequest) {
     )];
   } catch (e: any) {
     // Unlike the research cron, this route has nothing else to fall back to: an
-    // empty scope would report a clean run having refreshed nothing.
+    // empty scope would report a clean run having refreshed nothing. Surface
+    // unexpected exceptions too; returning 503 without a health row made this
+    // failure mode invisible to the dashboard and stale-check.
+    await reportIssue({
+      issueKey: `price-prewarm-scope-error:${market}`,
+      severity: "warn",
+      category: "data",
+      title: `Post-close price prewarm could not resolve its ${market.toUpperCase()} scope`,
+      detail: "Scope resolution raised an unexpected exception; no symbols were refreshed. Check the route logs for the exception.",
+      autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    }, svc).catch(() => {});
     return NextResponse.json(
-      { market, error: `prewarm scope resolution failed: ${e?.message ?? String(e)}` },
+      { market, error: "prewarm scope resolution failed; no symbols were refreshed" },
       { status: 503 },
     );
   }
@@ -120,8 +130,19 @@ export async function POST(req: NextRequest) {
   try {
     result = await prewarmPriceCache(symbols, svc, { market, deadlineAt });
   } catch (e: any) {
+    // Keep diagnostics out of the public response; provider/DB exceptions can
+    // contain request details. Health tells the owner that no completion was
+    // confirmed, and the next clean tick resolves this same market-scoped key.
+    await reportIssue({
+      issueKey: `price-prewarm-incomplete:${market}`,
+      severity: "warn",
+      category: "data",
+      title: `Post-close price prewarm failed unexpectedly (${market.toUpperCase()})`,
+      detail: `The bounded refresh raised an unexpected exception before completion; no successful result was confirmed for ${symbols.length} scoped symbols. Check route logs, then verify per-symbol bars advance on the next run.`,
+      autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    }, svc).catch(() => {});
     return NextResponse.json(
-      { market, symbols: symbols.length, error: `prewarm threw: ${e?.message ?? String(e)}` },
+      { market, symbols: symbols.length, error: "prewarm failed unexpectedly; see System Health" },
       { status: 500 },
     );
   }

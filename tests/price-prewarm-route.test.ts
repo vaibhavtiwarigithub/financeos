@@ -111,6 +111,30 @@ describe("a partial refresh is reported, never hidden", () => {
     }), expect.anything());
   });
 
+  it("reports unexpected scope exceptions to System Health without exposing the exception", async () => {
+    h.positions.mockImplementation(() => { throw new Error("private connection detail"); });
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "prewarm scope resolution failed; no symbols were refreshed" });
+    expect(h.report).toHaveBeenCalledWith(expect.objectContaining({
+      issueKey: "price-prewarm-scope-error:us",
+      detail: expect.stringContaining("unexpected exception"),
+    }), expect.anything());
+    expect(JSON.stringify(h.report.mock.calls)).not.toContain("private connection detail");
+  });
+
+  it("reports unexpected refresh exceptions and keeps the failure visible for the next clean tick", async () => {
+    h.prewarm.mockRejectedValue(new Error("private provider request detail"));
+    const res = await call();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: "prewarm failed unexpectedly; see System Health" });
+    expect(h.report).toHaveBeenCalledWith(expect.objectContaining({
+      issueKey: "price-prewarm-incomplete:us",
+      title: expect.stringContaining("failed unexpectedly"),
+    }), expect.anything());
+    expect(JSON.stringify(h.report.mock.calls)).not.toContain("private provider request detail");
+  });
+
   it("resolves the issue on a clean run", async () => {
     await call();
     expect(h.report).not.toHaveBeenCalled();

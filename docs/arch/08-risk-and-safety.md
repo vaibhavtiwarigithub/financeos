@@ -892,8 +892,11 @@ Widening costs almost nothing: `prewarmPriceCache` resolves freshness for the wh
 one bulk query and fetches only what is genuinely stale, under the existing deadline.
 Ordering carries the budget policy — open positions, then today's candidates, then
 benchmarks, then the recent-decision tail — so whatever the deadline cuts is the least
-costly to leave stale. The scope query fails SOFT to the old batch: a wider prewarm is an
-improvement, never a precondition for the research run.
+costly to leave stale. A scope-query failure is fail-closed for this prewarm: it returns
+503 and raises a market-scoped System Health warning instead of pretending an empty
+universe is healthy. Research itself remains independent and can still complete. An
+unexpected exception during the bounded refresh also raises the same incomplete-refresh
+warning; provider or database exception text is kept out of the API response.
 
 An **empty read is UNKNOWN and alerts** — "no rows" and "the query is wrong" are
 indistinguishable, so it is never treated as proof of health. Likewise a job that writes
