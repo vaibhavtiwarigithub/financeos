@@ -11,11 +11,11 @@ type GuardianPayload = { asOf?: string; holdingsAvailable?: boolean; gttAvailabl
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, marginBottom: 20 }}>
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-      <div>
+      <div style={{ flex: "1 1 420px", minWidth: 0 }}>
         <div style={{ color: T.text, fontWeight: 750, fontSize: 15 }}>{title}</div>
         <div style={{ color: T.sub, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>{subtitle}</div>
       </div>
-      <span style={{ color: T.amber, background: "#2D1B00", padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: ".06em" }}>READ-ONLY · KITE</span>
+      <span style={{ color: T.amber, background: "#2D1B00", padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: ".06em", whiteSpace: "nowrap", flexShrink: 0 }}>READ-ONLY · KITE</span>
     </div>
     {children}
   </section>;
