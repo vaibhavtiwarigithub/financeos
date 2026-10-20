@@ -222,7 +222,6 @@ export default function SettingsPage() {
   const [providerHistory, setProviderHistory] = useState<any[] | null>(null);
   const [webullPreflight, setWebullPreflight] = useState<any | null>(null);
   const [webullPreflightLoading, setWebullPreflightLoading] = useState(false);
-  const [webullVaultPin, setWebullVaultPin] = useState("");
   const [webullAuthResult, setWebullAuthResult] = useState<any | null>(null);
   const [webullAuthLoading, setWebullAuthLoading] = useState(false);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
@@ -1837,17 +1836,10 @@ export default function SettingsPage() {
               Starts Webull’s 2FA token request and stores the pending token in the owner Vault. You approve the request and enter the SMS code only inside the official Webull app—never in Kairos. No paid market-data subscription is purchased or enabled by this flow.
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "end", marginTop: "13px" }}>
-              <label style={{ color: T.textSub, fontSize: "12px" }}>Vault PIN
-                <input type="password" autoComplete="current-password" value={webullVaultPin} onChange={e => setWebullVaultPin(e.target.value)} style={{ display: "block", width: "min(280px, 78vw)", marginTop: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "9px 10px", fontSize: "13px" }} />
-              </label>
               <button disabled={webullAuthLoading} onClick={async () => {
-                if (!webullVaultPin.trim()) {
-                  setWebullAuthResult({ state: "vault_pin_required", detail: "Enter your Vault PIN above. No request was sent." });
-                  return;
-                }
                 setWebullAuthLoading(true); setWebullAuthResult(null);
                 try {
-                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin.trim() }, body: JSON.stringify({ action: "create" }) });
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create" }) });
                   const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
                 } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
                 finally { setWebullAuthLoading(false); }
@@ -1855,13 +1847,9 @@ export default function SettingsPage() {
                 {webullAuthLoading ? "Requesting…" : "Request Webull verification"}
               </button>
               <button disabled={webullAuthLoading} onClick={async () => {
-                if (!webullVaultPin.trim()) {
-                  setWebullAuthResult({ state: "vault_pin_required", detail: "Enter your Vault PIN above. No request was sent." });
-                  return;
-                }
                 setWebullAuthLoading(true); setWebullAuthResult(null);
                 try {
-                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin.trim() }, body: JSON.stringify({ action: "check" }) });
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check" }) });
                   const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
                   if (result.state === "token_active") setProviders((p: any) => p ? { ...p, webullOpenApi: { ...p.webullOpenApi, accessTokenPresent: true } } : p);
                 } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
@@ -1870,16 +1858,13 @@ export default function SettingsPage() {
                 {webullAuthLoading ? "Checking…" : "Check verification"}
               </button>
             </div>
-            {!webullVaultPin.trim() && <div style={{ color: T.textSub, fontSize: "12px", marginTop: "9px" }}>
-              Enter your Vault PIN before requesting verification. Forgot it? <a href="/dashboard/admin/vault" style={{ color: T.accent, textDecoration: "underline" }}>Reset your Vault PIN</a>.
-            </div>}
             {webullAuthResult && <div role="status" style={{ marginTop: "12px", background: T.surface, border: `1px solid ${webullAuthResult.state === "token_active" ? T.green : T.amber}`, borderRadius: "8px", padding: "10px 12px", color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>
               <b style={{ color: webullAuthResult.state === "token_active" ? T.green : T.amber }}>Status: {String(webullAuthResult.state).replaceAll("_", " ")}</b>
               {webullAuthResult.detail && <span> · {String(webullAuthResult.detail).replaceAll("_", " ")}</span>}
               {webullAuthResult.httpStatus && <span> · HTTP {webullAuthResult.httpStatus}</span>}
               {webullAuthResult.instruction && <div style={{ marginTop: "5px" }}>{webullAuthResult.instruction}</div>}
               {webullAuthResult.state === "token_active" && <div style={{ marginTop: "5px" }}>The token is stored in the owner Vault. Now run the one-shot AAPL snapshot check below. Data access may still be limited by Webull account permissions; Kairos will not purchase a subscription.</div>}
-              {webullAuthResult.state === "vault_locked" && <div style={{ marginTop: "5px" }}>The PIN did not unlock the Vault. No token was created or changed.</div>}
+              {(webullAuthResult.httpStatus === 401 || webullAuthResult.httpStatus === 403) && <div style={{ marginTop: "5px" }}>Your owner session is not authorized. Sign in with the owner account; no token was created or changed.</div>}
               {webullAuthResult.state === "http_rejected" && <div style={{ marginTop: "5px" }}>Webull rejected token authentication. Check that the app key and secret are for the production OpenAPI application configured for this environment.</div>}
             </div>}
           </section>

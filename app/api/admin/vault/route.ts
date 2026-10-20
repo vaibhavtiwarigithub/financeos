@@ -1,9 +1,8 @@
-// API Key Vault — requires the confirmed owner session + X-Vault-Pin header.
-// A database-stored PIN takes priority; VAULT_PIN is the legacy fallback.
+// API Key Vault — confirmed owner session only. The service-role client and
+// owner check stay server-side; viewers never receive vault access.
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { requireOwner } from "@/lib/auth/require-owner"
-import { verifyPin } from "@/lib/vault-pin"
 
 export const dynamic = "force-dynamic"
 
@@ -12,32 +11,11 @@ function maskKey(k: string): string {
   return k.slice(0, 4) + "•".repeat(Math.min(k.length - 8, 20)) + k.slice(-4)
 }
 
-// Constant-time PIN check — supports scrypt-hashed (new) and legacy plaintext
-// stored values. See lib/vault-pin.ts.
-function pinMatches(input: string | null, active: string): boolean {
-  return verifyPin(input, active)
-}
-
-async function getActivePin(svc: ReturnType<typeof createServiceClient>): Promise<string | null> {
-  // DB-stored PIN takes priority over env var (allows runtime change without redeploy)
-  const { data } = await svc.from("app_settings").select("value").eq("key", "vault_pin").single()
-  return data?.value ?? process.env.VAULT_PIN ?? null
-}
-
-export async function GET(req: NextRequest) {
+export async function GET() {
   const denied = await requireOwner()
   if (denied) return denied
 
   const svc = createServiceClient()
-  const pin = req.headers.get("x-vault-pin")
-  const activePin = await getActivePin(svc)
-  if (!activePin) {
-    return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
-  }
-  if (!pinMatches(pin, activePin)) {
-    return NextResponse.json({ error: "Vault locked — PIN required" }, { status: 403 })
-  }
-
   const { data, error } = await svc.from("api_key_vault").select("*").order("provider")
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -60,14 +38,6 @@ export async function POST(req: NextRequest) {
   const { action, ...fields } = body
 
   const svc = createServiceClient()
-  const pin = req.headers.get("x-vault-pin")
-  const activePin = await getActivePin(svc)
-  if (!activePin) {
-    return NextResponse.json({ error: "Vault not configured — set VAULT_PIN in .env.local or via Settings" }, { status: 503 })
-  }
-  if (!pinMatches(pin, activePin)) {
-    return NextResponse.json({ error: "Vault locked" }, { status: 403 })
-  }
 
   if (action === "upsert") {
     const row: Record<string, unknown> = {
@@ -94,19 +64,6 @@ export async function POST(req: NextRequest) {
     const { error } = await svc.from("api_key_vault")
       .update({ enabled: fields.enabled })
       .eq("key_name", fields.key_name)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true })
-  }
-
-  if (action === "change_pin") {
-    const newPin = fields.new_pin?.trim()
-    if (!newPin || newPin.length < 6) {
-      return NextResponse.json({ error: "PIN must be at least 6 characters" }, { status: 400 })
-    }
-    const { error } = await svc.from("app_settings").upsert(
-      { key: "vault_pin", value: newPin, updated_at: new Date().toISOString() },
-      { onConflict: "key" }
-    )
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true })
   }

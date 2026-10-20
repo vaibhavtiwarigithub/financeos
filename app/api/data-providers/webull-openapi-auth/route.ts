@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
-import { verifyPin } from "@/lib/vault-pin";
 import { callWebullTokenApi } from "@/lib/data/webull-openapi-auth";
 import { normalizeWebullCredential, type WebullOpenApiCredentials } from "@/lib/data/webull-openapi-preflight";
 
@@ -17,13 +16,6 @@ async function readVault(svc: any, keyName: string): Promise<string | null> {
     const { data, error } = await svc.from("api_key_vault").select("key_value").eq("provider", PROVIDER).eq("key_name", keyName).maybeSingle();
     return !error && typeof data?.key_value === "string" ? normalizeWebullCredential(data.key_value) : null;
   } catch { return null; }
-}
-
-async function readActivePin(svc: any): Promise<string | null> {
-  try {
-    const { data } = await svc.from("app_settings").select("value").eq("key", "vault_pin").maybeSingle();
-    return data?.value ?? process.env.VAULT_PIN ?? null;
-  } catch { return process.env.VAULT_PIN ?? null; }
 }
 
 async function writeVault(svc: any, keyName: string, value: string, enabled: boolean, notes: string): Promise<boolean> {
@@ -70,16 +62,12 @@ function responseStatus(result: { state: string }): number {
 export async function POST(req: NextRequest) {
   const denied = await requireOwner();
   if (denied) return denied;
-  const svc = createServiceClient();
-  const pin = req.headers.get("x-vault-pin");
-  const activePin = await readActivePin(svc);
-  if (!activePin) return NextResponse.json({ state: "vault_unconfigured" }, { status: 503 });
-  if (!pin || !verifyPin(pin, activePin)) return NextResponse.json({ state: "vault_locked" }, { status: 403 });
 
   let body: { action?: unknown };
   try { body = await req.json(); } catch { return NextResponse.json({ state: "invalid_request" }, { status: 400 }); }
   const action = body.action;
   if (action !== "create" && action !== "check") return NextResponse.json({ state: "invalid_request" }, { status: 400 });
+  const svc = createServiceClient();
 
   if (action === "create") {
     const pending = await readVault(svc, PENDING_KEY);

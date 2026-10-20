@@ -958,7 +958,7 @@ Keep these as reviewed defaults, not permanent truths:
   calls, or expose account/order endpoints. A valid preflight is necessary but
   not sufficient for the separate five-day source/coverage/parity review.
 - If Webull 2FA blocks that preflight, Settings may start the documented
-  `/auth/tokens/create` flow after owner authentication and Vault-PIN validation.
+  `/auth/tokens/create` flow after canonical owner-session authorization.
   The pending token is stored server-side under a distinct pending Vault key;
   the browser never receives it. The owner approves the request and enters any
   SMS code only in Webull's official app. A separate status check promotes the

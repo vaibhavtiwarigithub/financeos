@@ -135,7 +135,7 @@ data plane:
   `strategy_evaluations`, `benchmark_scorecard`, `rotation_events`.
 - **Secrets:** `api_key_vault` — a **single global vault** keyed by
   `key_name`/`provider` UNIQUE; resolution is vault-first / env-fallback,
-  service-role-locked (`lib/llm-keys.ts`, `lib/vault-pin.ts`). LLM keys and broker
+  service-role-locked (`lib/llm-keys.ts`, owner-only server routes). LLM keys and broker
   OAuth tokens all share this one store.
 
 **Genuinely-shared market facts (NOT user data — must stay global):**

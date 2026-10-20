@@ -1829,3 +1829,11 @@ and explicit owner switch.
 **Reason.** Covariance can describe portfolio risk, but without a validated expected-return estimate it cannot identify a return-maximizing Markowitz allocation. Establish auditable risk evidence first and avoid turning unstable historical estimates into money-path decisions.
 
 **Architecture:** `features/correlation-aware-construction/FEATURE_ARCHITECTURE.md`.
+
+## Decision 82: Use the owner session as the Vault access gate (2026-10-20)
+
+**Status:** Approved by Vaibhav; implemented.
+
+**Decision.** Remove the redundant Vault PIN/password and its recovery/change flows. The API Vault and Webull OpenAPI verification use the existing confirmed canonical owner session enforced server-side by `requireOwner()`. Keep viewer denial, service-role isolation, masked key values, and all broker/API-key protections. The account login password remains the single interactive password.
+
+**Cleanup.** Delete any obsolete `app_settings.vault_pin` hash after the new owner-session-only deployment is verified. No schema migration is needed.

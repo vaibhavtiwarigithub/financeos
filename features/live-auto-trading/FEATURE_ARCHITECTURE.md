@@ -73,7 +73,7 @@ Autonomy uses independent keys that all must pass:
 
 Unknown or missing values fail closed. Do not replace the deployment kill constant with only a DB boolean. The environment flag is a release control; the DB toggle is an owner runtime control.
 
-Settings changes require owner authorization, CSRF/request guards, a recent session or vault-PIN re-auth, typed `ENABLE AUTO`, and an append-only decision-journal record containing old/new policy, actor, timestamp, and expiry. L4 begins as a maximum 24-hour renewable lease. A future L5 design may extend the lease only after evidence.
+Settings changes require owner authorization, CSRF/request guards, a recent authenticated owner session, typed `ENABLE AUTO`, and an append-only decision-journal record containing old/new policy, actor, timestamp, and expiry. L4 begins as a maximum 24-hour renewable lease. A future L5 design may extend the lease only after evidence.
 
 LLMs and agents cannot change any activation key, cap, account, strategy lifecycle, or lease.
 

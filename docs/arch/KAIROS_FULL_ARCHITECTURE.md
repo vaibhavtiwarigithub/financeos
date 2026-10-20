@@ -7956,7 +7956,7 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R8  #33 weighted-score: explicit `abstain` flag for <2 dims (no meaningless partial number mistaken for a score)
 - [~] R9  #16/#31 owner-gate: DONE smart-money, theme-scout GET, mentor evaluate/journal/scores, import-csv. TODO metered public data (options/chain, social/sentiment, charts/*)
 - [x] R10 #17/#32 RLS: owner-scoped corporate_actions/evidence_records/experiment_runs/paper_order_events/strategy_versions/trade_decision_embeddings + service-only universe_snapshots* (migration 144)
-- [x] R11 #18 vault: PIN stored as salted scrypt hash (`lib/vault-pin.ts`), legacy-plaintext compat verify (no lockout). Key-value envelope-encryption still TODO (separate, larger).
+- [x] R11 #18 vault: historical PIN implementation removed 2026-10-20. Vault reads/writes now rely on the confirmed canonical owner session via `requireOwner()`; no separate PIN or recovery flow. Key-value envelope-encryption remains a separate TODO.
 - [x] R12 #34 redacted literal cron secret from migration 022 text (dead — job unscheduled by 052, CRON_SECRET already rotated). NOTE: git history still contains it (rotation, not rewrite, is the real fix — done).
 
 ### R13 design note — shared execution service (REVIEW BEFORE CODING)
@@ -23589,7 +23589,7 @@ Autonomy uses independent keys that all must pass:
 
 Unknown or missing values fail closed. Do not replace the deployment kill constant with only a DB boolean. The environment flag is a release control; the DB toggle is an owner runtime control.
 
-Settings changes require owner authorization, CSRF/request guards, a recent session or vault-PIN re-auth, typed `ENABLE AUTO`, and an append-only decision-journal record containing old/new policy, actor, timestamp, and expiry. L4 begins as a maximum 24-hour renewable lease. A future L5 design may extend the lease only after evidence.
+Settings changes require owner authorization, CSRF/request guards, a recent authenticated owner session, typed `ENABLE AUTO`, and an append-only decision-journal record containing old/new policy, actor, timestamp, and expiry. L4 begins as a maximum 24-hour renewable lease. A future L5 design may extend the lease only after evidence.
 
 LLMs and agents cannot change any activation key, cap, account, strategy lifecycle, or lease.
 
@@ -25607,7 +25607,7 @@ data plane:
   `strategy_evaluations`, `benchmark_scorecard`, `rotation_events`.
 - **Secrets:** `api_key_vault` — a **single global vault** keyed by
   `key_name`/`provider` UNIQUE; resolution is vault-first / env-fallback,
-  service-role-locked (`lib/llm-keys.ts`, `lib/vault-pin.ts`). LLM keys and broker
+  service-role-locked (`lib/llm-keys.ts`, owner-only server routes). LLM keys and broker
   OAuth tokens all share this one store.
 
 **Genuinely-shared market facts (NOT user data — must stay global):**

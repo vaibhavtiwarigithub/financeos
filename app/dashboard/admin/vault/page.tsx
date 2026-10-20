@@ -1,9 +1,8 @@
 "use client";
-import { useState, useCallback } from "react";
-import { VAULT_RECOVERY_CODE_MAX_LENGTH, isVaultRecoveryCode } from "@/lib/vault-pin-recovery";
+import { useState, useCallback, useEffect } from "react";
 
-// The Vault PIN is checked server-side; this page never loads API key values
-// until the authenticated owner has unlocked it.
+// The server enforces the confirmed owner session on every Vault request.
+// This page only receives masked key values and never has a separate PIN.
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -45,64 +44,51 @@ const emptyForm = {
 };
 
 export default function VaultPage() {
-  const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
-  const [pinError, setPinError] = useState("");
+  const [pageError, setPageError] = useState("");
   const [keys, setKeys] = useState<VaultKey[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saveMsg, setSaveMsg] = useState("");
-  const [showChangePIN, setShowChangePIN] = useState(false);
-  const [newPIN, setNewPIN] = useState("");
-  const [changePINMsg, setChangePINMsg] = useState("");
-  const [changingPIN, setChangingPIN] = useState(false);
-  const [recoveryStarted, setRecoveryStarted] = useState(false);
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState("");
-  const [recoveryNewPIN, setRecoveryNewPIN] = useState("");
-  const [recoveryConfirmPIN, setRecoveryConfirmPIN] = useState("");
-  const [recoveryMsg, setRecoveryMsg] = useState("");
-
-  const unlock = useCallback(async () => {
-    if (!pin.trim()) return;
+  const loadKeys = useCallback(async () => {
     setLoading(true);
-    setPinError("");
+    setPageError("");
     try {
-      const res = await fetch("/api/admin/vault", {
-        headers: { "x-vault-pin": pin },
-      });
-      if (res.status === 403) {
-        setPinError("Wrong PIN. Only the account owner can access.");
-        setLoading(false);
-        return;
-      }
-      if (res.status === 401) {
-        setPinError("Not authorized. Sign in as vterminater@gmail.com.");
-        setLoading(false);
-        return;
-      }
+      const res = await fetch("/api/admin/vault", { cache: "no-store" });
       const data = await res.json();
-      if (data.error) {
-        setPinError(data.error);
-        setLoading(false);
+      if (!res.ok) {
+        setKeys([]);
+        setUnlocked(false);
+        setPageError(res.status === 401 || res.status === 403
+          ? "Sign in with the owner account to access API keys."
+          : (data.error ?? "Vault unavailable."));
         return;
       }
       setKeys(data.keys ?? []);
       setUnlocked(true);
     } catch {
-      setPinError("Network error — vault unavailable.");
+      setPageError("Network error — vault unavailable.");
+      setUnlocked(false);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [pin]);
+  }, []);
+
+  useEffect(() => { void loadKeys(); }, [loadKeys]);
 
   async function toggle(keyName: string, enabled: boolean) {
-    await fetch("/api/admin/vault", {
+    const res = await fetch("/api/admin/vault", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-vault-pin": pin },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "toggle", key_name: keyName, enabled }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setSaveMsg("Error: " + (data.error ?? "Could not update key."));
+      return;
+    }
     setKeys(prev => prev.map(k => k.key_name === keyName ? { ...k, enabled } : k));
   }
 
@@ -116,118 +102,19 @@ export default function VaultPage() {
     setSaveMsg("");
     const res = await fetch("/api/admin/vault", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-vault-pin": pin },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "upsert", ...form }),
     });
     const data = await res.json();
-    if (data.error) {
+    if (!res.ok || data.error) {
       setSaveMsg("Error: " + data.error);
     } else {
       setSaveMsg("Saved.");
       setForm(emptyForm);
       setShowAddForm(false);
-      // Refresh list
-      const listRes = await fetch("/api/admin/vault", { headers: { "x-vault-pin": pin } });
-      const listData = await listRes.json();
-      setKeys(listData.keys ?? []);
+      await loadKeys();
     }
     setSaving(false);
-  }
-
-  async function changePIN() {
-    if (!newPIN.trim()) return;
-    setChangingPIN(true);
-    setChangePINMsg("");
-    const res = await fetch("/api/admin/vault", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-vault-pin": pin },
-      body: JSON.stringify({ action: "change_pin", new_pin: newPIN }),
-    });
-    const data = await res.json();
-    if (data.error) {
-      setChangePINMsg("Error: " + data.error);
-    } else {
-      setPin(newPIN);
-      setNewPIN("");
-      setShowChangePIN(false);
-      setChangePINMsg("PIN changed. Using new PIN for this session.");
-    }
-    setChangingPIN(false);
-  }
-
-  async function sendRecoveryCode() {
-    setRecoveryBusy(true);
-    setRecoveryMsg("");
-    try {
-      const res = await fetch("/api/admin/vault/change-pin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send_recovery_code" }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setRecoveryMsg(data.error ?? "Could not send the reset code. Try again later.");
-      } else {
-        setRecoveryStarted(true);
-        setRecoveryCode("");
-        setRecoveryNewPIN("");
-        setRecoveryConfirmPIN("");
-        setRecoveryMsg("A one-time reset code was sent to vterminater@gmail.com. Enter the newest code below.");
-      }
-    } catch {
-      setRecoveryMsg("Network error — the reset code was not confirmed as sent.");
-    } finally {
-      setRecoveryBusy(false);
-    }
-  }
-
-  async function resetPINFromCode() {
-    if (!isVaultRecoveryCode(recoveryCode.trim())) {
-      setRecoveryMsg("Enter the numeric reset code from the latest email.");
-      return;
-    }
-    if (recoveryNewPIN.trim().length < 6) {
-      setRecoveryMsg("Enter a new Vault PIN of at least 6 characters.");
-      return;
-    }
-    if (recoveryNewPIN.trim() !== recoveryConfirmPIN.trim()) {
-      setRecoveryMsg("The new PIN entries do not match.");
-      return;
-    }
-    setRecoveryBusy(true);
-    setRecoveryMsg("");
-    try {
-      const res = await fetch("/api/admin/vault/change-pin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "verify_code_and_set", code: recoveryCode.trim(), new_pin: recoveryNewPIN.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setRecoveryMsg(data.error ?? "The reset code was not verified or has expired. Request a new one and try again.");
-        return;
-      }
-
-      // Check the newly written PIN against the actual Vault endpoint before
-      // claiming success or loading key metadata.
-      const verifyRes = await fetch("/api/admin/vault", { headers: { "x-vault-pin": recoveryNewPIN.trim() } });
-      const verifyData = await verifyRes.json();
-      setRecoveryCode("");
-      setRecoveryNewPIN("");
-      setRecoveryConfirmPIN("");
-      if (verifyRes.ok) {
-        setPin(recoveryNewPIN.trim());
-        setKeys(verifyData.keys ?? []);
-        setUnlocked(true);
-        setRecoveryMsg("Vault PIN reset and verified. The Vault is unlocked.");
-      } else {
-        setRecoveryMsg("PIN reset succeeded, but automatic unlock failed. Use the new PIN to unlock the Vault.");
-      }
-    } catch {
-      setRecoveryMsg("Network error — reset status is unknown. Try the new PIN before requesting another code.");
-    } finally {
-      setRecoveryBusy(false);
-    }
   }
 
   function editKey(k: VaultKey) {
@@ -279,70 +166,16 @@ export default function VaultPage() {
     return (
       <div style={{ padding: "28px", maxWidth: "460px" }}>
         <div style={{ fontSize: "20px", fontWeight: 600, marginBottom: "6px" }}>API Key Vault</div>
-        <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>
-          Enter your vault PIN to unlock.
-        </div>
-
-        {/* Security note */}
         <div style={{ ...card, borderColor: T.accent + "44", background: T.accent + "0D", marginBottom: "24px" }}>
           <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>
-            <strong style={{ color: T.accent }}>Security notice:</strong> This vault is protected by
-            your Supabase session (<span style={{ color: T.text }}>vterminater@gmail.com</span>) +
-            vault PIN. Never share your PIN. Keys are masked in transit.
+            <strong style={{ color: T.accent }}>Owner access only:</strong> Access uses the same account
+            you signed in with. Stored key values remain masked in this view.
           </div>
         </div>
-
-        <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "12px" }}>
-          <input
-            type="password"
-            placeholder="Vault PIN"
-            value={pin}
-            onChange={e => setPin(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && unlock()}
-            style={{ ...inp, flex: 1 }}
-            autoFocus
-          />
-          <button onClick={unlock} disabled={loading} style={btn(T.accent)}>
-            {loading ? "Checking…" : "Unlock Vault"}
-          </button>
-        </div>
-
-        {pinError && (
+        {loading && <div role="status" style={{ color: T.textSub, fontSize: "13px" }}>Loading owner Vault…</div>}
+        {!loading && pageError && (
           <div style={{ fontSize: "13px", color: T.red, padding: "10px", background: T.red + "15", borderRadius: "8px" }}>
-            {pinError}
-          </div>
-        )}
-
-        {!recoveryStarted ? (
-          <button onClick={sendRecoveryCode} disabled={recoveryBusy}
-            style={{ ...btn("#252836"), marginTop: "8px", width: "100%" }}>
-            {recoveryBusy ? "Sending reset code…" : "Forgot PIN? Email me a reset code"}
-          </button>
-        ) : (
-          <div style={{ ...card, marginTop: "16px", borderColor: T.accent + "55" }}>
-            <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>Reset Vault PIN</div>
-            <div style={{ fontSize: "12px", color: T.muted, marginBottom: "12px" }}>
-              Enter the reset code from the latest email sent to vterminater@gmail.com. This changes only your Vault PIN; it does not change any API keys or your account password.
-            </div>
-            <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={VAULT_RECOVERY_CODE_MAX_LENGTH} placeholder="Email reset code"
-              value={recoveryCode} onChange={e => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, VAULT_RECOVERY_CODE_MAX_LENGTH))} style={{ ...inp, marginBottom: "10px" }} />
-            <input type="password" autoComplete="new-password" placeholder="New Vault PIN (6+ characters)"
-              value={recoveryNewPIN} onChange={e => setRecoveryNewPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
-            <input type="password" autoComplete="new-password" placeholder="Confirm new Vault PIN"
-              value={recoveryConfirmPIN} onChange={e => setRecoveryConfirmPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button onClick={resetPINFromCode} disabled={recoveryBusy} style={btn(T.accent)}>
-                {recoveryBusy ? "Updating…" : "Set new Vault PIN"}
-              </button>
-              <button onClick={sendRecoveryCode} disabled={recoveryBusy} style={btn("#252836")}>
-                Resend code
-              </button>
-            </div>
-          </div>
-        )}
-        {recoveryMsg && (
-          <div role="status" style={{ fontSize: "13px", color: recoveryMsg.toLowerCase().includes("error") || recoveryMsg.toLowerCase().includes("could not") ? T.red : T.textSub, padding: "10px", marginTop: "10px", background: T.surface, borderRadius: "8px" }}>
-            {recoveryMsg}
+            {pageError}
           </div>
         )}
       </div>
@@ -361,51 +194,21 @@ export default function VaultPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
         <div style={{ fontSize: "20px", fontWeight: 600 }}>API Key Vault</div>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button onClick={() => { setShowChangePIN(v => !v); setChangePINMsg(""); }} style={btn("#252836")}>
-            {showChangePIN ? "Cancel" : "Change PIN"}
-          </button>
           <button onClick={() => { setShowAddForm(v => !v); setForm(emptyForm); setSaveMsg(""); }} style={btn(T.accent)}>
             {showAddForm ? "Cancel" : "+ Add Key"}
           </button>
         </div>
       </div>
-      <div style={{ fontSize: "13px", color: T.muted, marginBottom: showChangePIN ? "12px" : "24px" }}>
+      <div style={{ fontSize: "13px", color: T.muted, marginBottom: "24px" }}>
         {keys.length} key{keys.length !== 1 ? "s" : ""} registered
       </div>
-
-      {showChangePIN && (
-        <div style={{ ...card, marginBottom: "20px", borderColor: T.yellow + "44" }}>
-          <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "10px", color: T.yellow }}>Change Vault PIN</div>
-          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <input
-              type="password"
-              placeholder="New PIN"
-              value={newPIN}
-              onChange={e => setNewPIN(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && changePIN()}
-              style={{ ...inp, flex: 1 }}
-            />
-            <button onClick={changePIN} disabled={changingPIN || !newPIN} style={btn(T.yellow, "#000")}>
-              {changingPIN ? "Changing…" : "Set PIN"}
-            </button>
-          </div>
-          {changePINMsg && (
-            <div style={{ marginTop: "8px", fontSize: "12px", color: changePINMsg.startsWith("Error") ? T.red : T.green }}>
-              {changePINMsg}
-            </div>
-          )}
-          <div style={{ marginTop: "8px", fontSize: "11px", color: T.muted }}>
-            New PIN applies immediately. Update VAULT_PIN in .env.local to persist across server restarts.
-          </div>
-        </div>
-      )}
 
       {/* Security note */}
       <div style={{ ...card, borderColor: T.accent + "44", background: T.accent + "0D", marginBottom: "20px" }}>
         <div style={{ fontSize: "12px", color: T.textSub, lineHeight: "1.6" }}>
           <strong style={{ color: T.accent }}>Session active:</strong> You are authenticated as{" "}
-          <span style={{ color: T.text }}>vterminater@gmail.com</span> + vault PIN verified.
-          Keys are masked in this view. Vault rows are service-role–only (RLS enforced).
+          <span style={{ color: T.text }}>vterminater@gmail.com</span>.
+          Keys are masked in this view. Every Vault API request is owner-checked server-side; Vault rows are service-role–only (RLS enforced).
         </div>
       </div>
 

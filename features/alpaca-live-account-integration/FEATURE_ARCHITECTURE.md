@@ -4,7 +4,7 @@
 
 ## Problem and goal
 
-The owner has applied for an Alpaca individual brokerage account and has added its live API key pair to local `.env.local`. Kairos already has Alpaca account/order adapters, but the authenticated US Live Portfolio route currently reads Robinhood only; the app does not consistently recognize the owner's explicit `ALPACA_LIVE_API_KEY` / `ALPACA_LIVE_API_SECRET` names. The Vault PIN recovery implementation exists locally, but production still renders only the locked-PIN form.
+The owner has applied for an Alpaca individual brokerage account and has added its live API key pair to local `.env.local`. Kairos already has Alpaca account/order adapters, but the authenticated US Live Portfolio route currently reads Robinhood only; the app does not consistently recognize the owner's explicit `ALPACA_LIVE_API_KEY` / `ALPACA_LIVE_API_SECRET` names. The Vault uses the confirmed owner session without a separate PIN or recovery flow.
 
 Goal: recognize the live credentials without exposing them, verify the account using read-only endpoints, show Alpaca Live as a distinct account beside other live broker accounts, and make system/connection failures visible. The actual Live Portfolio page reads `live_account_snapshots` via `app/api/live-portfolio/route.ts`; its producer is `app/api/live-account/refresh-snapshot/route.ts`. The separate holdings/risk API is not the page's account source. Then maintain a prioritized queue for additional broker, Guardian, and market-data work without silently treating an account connection as trading readiness.
 
@@ -17,7 +17,7 @@ Goal: recognize the live credentials without exposing them, verify the account u
 - Authenticated live holdings and risk rollup: `app/api/portfolio/holdings/route.ts` (a distinct consumer; update only if the Alpaca account is intentionally included in that risk view).
 - Existing read-only account enumeration: `lib/brokers/index.ts`; this does not by itself populate the snapshot-driven Live Portfolio page.
 - Guardian: `lib/trading/guardian-protection-monitor.ts`, currently restricted to a specific Robinhood account and its own proposal/execution gates. Do not broaden it as part of account discovery.
-- Vault PIN recovery: `app/dashboard/admin/vault/page.tsx`, `app/api/admin/vault/change-pin/route.ts`, and the current architecture contract in `docs/arch/08-risk-and-safety.md`. Recovery uses a Supabase-generated one-time code sent through the configured app email provider, not a clickable Auth magic link; email template changes are not required.
+- Vault access: `app/dashboard/admin/vault/page.tsx` and `app/api/admin/vault/route.ts`; owner-session authorization is enforced by `requireOwner()`, and stored key values remain masked.
 - Health alert lifecycle: existing System Health issue reporter and alert taxonomy; do not add a parallel health store.
 
 ## Phase 0 — credential recognition and read-only verification (now)
