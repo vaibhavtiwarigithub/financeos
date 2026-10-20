@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { isVaultRecoveryCode } from "../lib/vault-pin-recovery";
 
 const read = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
@@ -12,7 +13,7 @@ describe("forgotten Vault PIN recovery contract", () => {
     expect(route).toContain("user.email !== ADMIN_EMAIL || !user.email_confirmed_at");
     expect(route).toContain('if (action === "send_recovery_code")');
     expect(route).toContain('generateLink({ type: "recovery", email: OWNER_EMAIL })');
-    expect(route).toContain('typeof code !== "string" || !/^\\d{6}$/.test(code)');
+    expect(route).toContain("!isVaultRecoveryCode(code)");
     expect(route).toContain("emailDeliveryAvailable()");
     expect(route).toContain("provider.sendChecked");
     expect(route).toContain("to: OWNER_EMAIL");
@@ -21,6 +22,16 @@ describe("forgotten Vault PIN recovery contract", () => {
     expect(recoveryStart).toBeGreaterThan(route.indexOf("if (!user"));
     expect(route.slice(recoveryStart, recoveryEnd)).not.toContain("checkCurrentPin");
     expect(route).not.toContain("emailRedirectTo");
+  });
+
+  it("accepts numeric OTPs across configured lengths and rejects malformed values", () => {
+    expect(isVaultRecoveryCode("123456")).toBe(true);
+    expect(isVaultRecoveryCode("12345678")).toBe(true);
+    expect(isVaultRecoveryCode("123456789012")).toBe(true);
+    expect(isVaultRecoveryCode("12345")).toBe(false);
+    expect(isVaultRecoveryCode("1234567890123")).toBe(false);
+    expect(isVaultRecoveryCode("12a456")).toBe(false);
+    expect(isVaultRecoveryCode(undefined)).toBe(false);
   });
 
   it("changes the PIN only after a one-time recovery OTP verifies the confirmed owner", () => {

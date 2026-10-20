@@ -5,6 +5,7 @@ import { OWNER_EMAIL } from "@/lib/auth/owner"
 import { hashPin } from "@/lib/vault-pin"
 import { emailDeliveryAvailable, getEmailProvider } from "@/lib/providers/email"
 import { buildVaultPinRecoveryEmailHtml, vaultPinRecoverySubject } from "@/lib/email/vault-pin-recovery-email"
+import { isVaultRecoveryCode } from "@/lib/vault-pin-recovery"
 
 export const dynamic = "force-dynamic"
 
@@ -41,7 +42,15 @@ export async function POST(req: NextRequest) {
     const svc = createServiceClient()
     const { data, error } = await svc.auth.admin.generateLink({ type: "recovery", email: OWNER_EMAIL })
     const code = data?.properties?.email_otp
-    if (error || typeof code !== "string" || !/^\d{6}$/.test(code)) {
+    if (error || !isVaultRecoveryCode(code)) {
+      // Never log the OTP, email, or action URL. These fields distinguish an
+      // Auth API failure from an unexpected response shape without secrets.
+      console.error("[vault-pin-recovery] Supabase recovery OTP unavailable", {
+        errorName: error?.name ?? null,
+        errorCode: (error as { code?: string } | null)?.code ?? null,
+        hasOtp: typeof code === "string",
+        otpLength: typeof code === "string" ? code.length : null,
+      })
       return NextResponse.json({ error: "Could not create a reset code. Try again later." }, { status: 503 })
     }
 
@@ -66,8 +75,8 @@ export async function POST(req: NextRequest) {
   // is trusted, and only a salted hash is persisted.
   if (action === "verify_code_and_set") {
     const { new_pin, code } = body
-    if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
-      return NextResponse.json({ error: "Enter the six-digit code from the latest email." }, { status: 400 })
+    if (!isVaultRecoveryCode(code)) {
+      return NextResponse.json({ error: "Enter the numeric reset code from the latest email." }, { status: 400 })
     }
     if (typeof new_pin !== "string" || !new_pin.trim()) {
       return NextResponse.json({ error: "new_pin required" }, { status: 400 })

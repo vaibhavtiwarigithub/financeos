@@ -1,5 +1,6 @@
 "use client";
 import { useState, useCallback } from "react";
+import { VAULT_RECOVERY_CODE_MAX_LENGTH, isVaultRecoveryCode } from "@/lib/vault-pin-recovery";
 
 // The Vault PIN is checked server-side; this page never loads API key values
 // until the authenticated owner has unlocked it.
@@ -181,8 +182,8 @@ export default function VaultPage() {
   }
 
   async function resetPINFromCode() {
-    if (!/^\d{6}$/.test(recoveryCode.trim())) {
-      setRecoveryMsg("Enter the six-digit code from the latest email.");
+    if (!isVaultRecoveryCode(recoveryCode.trim())) {
+      setRecoveryMsg("Enter the numeric reset code from the latest email.");
       return;
     }
     if (recoveryNewPIN.trim().length < 6) {
@@ -321,10 +322,10 @@ export default function VaultPage() {
           <div style={{ ...card, marginTop: "16px", borderColor: T.accent + "55" }}>
             <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>Reset Vault PIN</div>
             <div style={{ fontSize: "12px", color: T.muted, marginBottom: "12px" }}>
-              Enter the six-digit code from the latest email sent to vterminater@gmail.com. This changes only your Vault PIN; it does not change any API keys or your account password.
+              Enter the reset code from the latest email sent to vterminater@gmail.com. This changes only your Vault PIN; it does not change any API keys or your account password.
             </div>
-            <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="Six-digit email code"
-              value={recoveryCode} onChange={e => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, 6))} style={{ ...inp, marginBottom: "10px" }} />
+            <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={VAULT_RECOVERY_CODE_MAX_LENGTH} placeholder="Email reset code"
+              value={recoveryCode} onChange={e => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, VAULT_RECOVERY_CODE_MAX_LENGTH))} style={{ ...inp, marginBottom: "10px" }} />
             <input type="password" autoComplete="new-password" placeholder="New Vault PIN (6+ characters)"
               value={recoveryNewPIN} onChange={e => setRecoveryNewPIN(e.target.value)} style={{ ...inp, marginBottom: "10px" }} />
             <input type="password" autoComplete="new-password" placeholder="Confirm new Vault PIN"
