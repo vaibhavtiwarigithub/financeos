@@ -8,6 +8,13 @@ The India Live Portfolio did not show the Manual Trade Guardian or the Recommend
 
 ## P0 behavior now implemented
 
+### Live Portfolio presentation parity (2026-10-19)
+
+- The shared Live Portfolio sequence is Guardian → Recommendations & Guardian scorecard → broker connection/account selector → account statistics → performance chart → holdings. India places its Kite Guardian and India scorecard before the Kite connection summary, matching the US order without merging broker data.
+- The India Guardian and scorecard use the same card shell, title treatment, spacing, collapse affordance, KPI strip, filter/sort controls, and desktop-table/mobile-card behavior as the US panels. The data vocabulary remains market-specific (Kite GTT/NIFTY 50 rather than Robinhood Guardian plans/SPY).
+- India currently has no persistent recommendation-response ledger. The scorecard therefore labels present-day holding state as “Held now” / “Not held” / “Unknown”; it never represents those states as whether a recommendation was taken. Daily overlapping observation summaries remain descriptive, not IC/t-stat evidence.
+- Other portfolio sections remain appropriately market-specific: US account chips/RH transaction import versus India Coin, day positions, and scored Kite order candidates. They use the same top-level shared-section order where a like-for-like section exists; market-exclusive broker data is not fabricated to create visual symmetry.
+
 ### Manual Trade Guardian · India / Kite
 
 - Owner-only `GET /api/live-portfolio/india-guardian` reads current Kite delivery holdings and `GET /gtt/triggers` through the existing `kiteGet` helper.

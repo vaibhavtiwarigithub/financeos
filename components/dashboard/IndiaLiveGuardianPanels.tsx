@@ -9,9 +9,14 @@ type Protection = { state: "covered" | "unprotected" | "partial" | "overcovered"
 type GuardianPayload = { asOf?: string; holdingsAvailable?: boolean; gttAvailable?: boolean; error?: string; positions?: Array<{ symbol: string; qty: number; averagePrice: number | null; protection: Protection }> };
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
-  return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, marginBottom: 16 }}>
-    <div style={{ color: T.text, fontWeight: 750, fontSize: 15 }}>{title}</div>
-    <div style={{ color: T.sub, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>{subtitle}</div>
+  return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, marginBottom: 20 }}>
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ color: T.text, fontWeight: 750, fontSize: 15 }}>{title}</div>
+        <div style={{ color: T.sub, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>{subtitle}</div>
+      </div>
+      <span style={{ color: T.amber, background: "#2D1B00", padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: ".06em" }}>READ-ONLY · KITE</span>
+    </div>
     {children}
   </section>;
 }
@@ -42,7 +47,7 @@ export function IndiaManualTradeGuardianPanel() {
   const positions = data?.positions ?? [];
   const covered = positions.filter((position) => position.protection.state === "covered").length;
   const uncovered = positions.filter((position) => position.protection.state !== "covered").length;
-  return <Panel title="Manual Trade Guardian · India / Kite" subtitle="Read-only coverage check for current Kite delivery holdings, including positions you entered manually. It reads Kite’s active GTT book; it does not create, change, arm, cancel, or monitor orders.">
+  return <Panel title="Manual Trade Guardian" subtitle="India · Read-only coverage check for current Kite delivery holdings, including positions you entered manually. It reads Kite’s active GTT book; it does not create, change, arm, cancel, or monitor orders.">
     <div style={{ marginTop: 12, padding: "10px 12px", background: "#2D1B00", border: `1px solid ${T.amber}33`, borderRadius: 8, color: T.amber, fontSize: 12, lineHeight: 1.5 }}>
       Kite GTT exits are limit-child orders, not guaranteed stop-market fills. A gap through the stop can leave the sell unfilled. This panel reports broker-visible GTTs only; it is not a software-stop alert service.
     </div>
@@ -75,6 +80,9 @@ type Scorecard = { error?: string; asOf: string; lookbackDays: number; observati
 export function IndiaRecommendationsGuardianScorecard({ holdings, holdingsKnown }: { holdings: Holding[]; holdingsKnown: boolean }) {
   const [data, setData] = useState<Scorecard | null>(null);
   const [error, setError] = useState("");
+  const [open, setOpen] = useState(true);
+  const [filter, setFilter] = useState<"all" | "held" | "not_held" | "unmatured">("all");
+  const [sort, setSort] = useState<"recent" | "score" | "excess">("recent");
   useEffect(() => {
     let active = true;
     fetch("/api/live-portfolio/india-recommendations", { cache: "no-store" })
@@ -89,29 +97,92 @@ export function IndiaRecommendationsGuardianScorecard({ holdings, holdingsKnown 
     for (const row of data?.rows ?? []) if (!bySymbol.has(row.symbol)) bySymbol.set(row.symbol, row);
     return [...bySymbol.values()].slice(0, 20);
   }, [data]);
-  return <Panel title="Recommendations & Guardian scorecard · India" subtitle="Entry-eligible deterministic India research observations and their matured outcomes versus NIFTY 50. These are research recommendations—not Kite orders. The current-holding badge is not proof that you bought the recommendation when issued.">
-    {error && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 10 }}>{error}</div>}
-    {!data && !error && <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Loading India research outcomes…</div>}
-    {data && <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8, marginTop: 14 }}>
-        {data.summary.map((item) => <div key={item.horizon} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
-          <div style={{ color: T.muted, fontSize: 10, textTransform: "uppercase" }}>h{item.horizon} · NIFTY-relative</div>
-          <div style={{ color: item.meanExcessPct == null ? T.muted : item.meanExcessPct >= 0 ? T.green : T.red, fontWeight: 750, fontSize: 15, marginTop: 3 }}>{PCT(item.meanExcessPct)}</div>
-          <div style={{ color: T.sub, fontSize: 10, marginTop: 3 }}>n={item.n} matured · hit {RATE(item.hitRatePct)}</div>
-        </div>)}
+  const h10 = data?.summary.find((item) => item.horizon === 10);
+  const scorecardRows = latestBySymbol
+    .filter((row) => {
+      const symbol = row.symbol.replace(/\.(NS|BO)$/i, "").toUpperCase();
+      const held = heldSymbols.has(symbol);
+      if (filter === "held") return holdingsKnown && held;
+      if (filter === "not_held") return holdingsKnown && !held;
+      if (filter === "unmatured") return !row.labels.some((label) => label.horizon === 10 || label.horizon === 5 || label.horizon === 2);
+      return true;
+    })
+    .sort((a, b) => {
+      if (sort === "recent") return Date.parse(b.researchedAt) - Date.parse(a.researchedAt);
+      const aValue = sort === "score" ? a.score : a.labels.find((label) => label.horizon === 10)?.excessPct;
+      const bValue = sort === "score" ? b.score : b.labels.find((label) => label.horizon === 10)?.excessPct;
+      if (aValue == null && bValue == null) return Date.parse(b.researchedAt) - Date.parse(a.researchedAt);
+      if (aValue == null) return 1;
+      if (bValue == null) return -1;
+      return bValue - aValue;
+    });
+  const metric = (label: string, value: string, detail?: string, color = T.text) => <div key={label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", minWidth: 0 }}>
+    <div style={{ color: T.muted, fontSize: 11 }}>{label}</div><div style={{ color, fontSize: 18, fontWeight: 750, marginTop: 2 }}>{value}</div>{detail && <div style={{ color: T.sub, fontSize: 11, marginTop: 2 }}>{detail}</div>}
+  </div>;
+  const filters = [
+    { id: "all" as const, label: "All researched" }, { id: "held" as const, label: "Currently held" },
+    { id: "not_held" as const, label: "Not currently held" }, { id: "unmatured" as const, label: "Outcome not mature" },
+  ];
+  const columns = ["Date", "Symbol / score", "Dimensions", "Reference", "Holding", "Matured outcome vs NIFTY 50"];
+  return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20, marginBottom: 20 }}>
+    <style>{`.india-rec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}.india-rec-table{display:none}.india-rec-cards{display:grid;gap:8px}@media(min-width:760px){.india-rec-table{display:block;overflow-x:auto}.india-rec-cards{display:none}}`}</style>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div>
+        <div style={{ color: T.text, fontWeight: 750, fontSize: 15 }}>Recommendations & Guardian scorecard</div>
+        <div style={{ color: T.sub, fontSize: 12, marginTop: 4, maxWidth: 760, lineHeight: 1.5 }}>
+          Entry-eligible India research observations and matured outcomes versus NIFTY 50. These are research observations—not Kite orders. Current holdings do not prove that you bought a recommendation when issued.
+          {data?.asOf ? ` Updated ${new Date(data.asOf).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}.` : ""}
+        </div>
       </div>
-      <div style={{ color: T.muted, fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>{data.observationCount} eligible observations in the last {data.lookbackDays} days · as of {new Date(data.asOf).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}. Daily observations overlap; these descriptive averages are not independent-sample IC or t-stat evidence. {data.semantics}</div>
-      {data.truncated && <div style={{ color: T.amber, fontSize: 11, marginTop: 5 }}>This read is capped at the 2,000 most recent eligible observations; aggregate statistics are limited to that window.</div>}
-      {latestBySymbol.length === 0 ? <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>No India entry-eligible research observations in this window.</div> : <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-        {latestBySymbol.map((row) => {
-          const horizonLabel = row.labels.find((label) => label.horizon === 10) ?? row.labels.find((label) => label.horizon === 5) ?? row.labels.find((label) => label.horizon === 2);
+      <button onClick={() => setOpen((value) => !value)} style={{ background: "transparent", color: T.sub, border: `1px solid ${T.border}`, borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{open ? "Collapse" : "Expand"}</button>
+    </div>
+    {error && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 12 }}>{error}</div>}
+    {!data && !error && <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Loading India research outcomes…</div>}
+    {data && open && <>
+      <div className="india-rec-grid" style={{ marginTop: 14 }}>
+        {metric("Eligible observations", data.observationCount.toLocaleString("en-IN"), `last ${data.lookbackDays} days`)}
+        {metric("Latest symbols shown", String(latestBySymbol.length), holdingsKnown ? `${latestBySymbol.filter((row) => heldSymbols.has(row.symbol.replace(/\.(NS|BO)$/i, "").toUpperCase())).length} held now` : "holding status unavailable")}
+        {metric("Matured h10 outcomes", String(h10?.n ?? 0), "NIFTY-relative labels")}
+        {metric("Mean h10 excess", PCT(h10?.meanExcessPct), "vs NIFTY 50", h10?.meanExcessPct == null ? T.muted : h10.meanExcessPct >= 0 ? T.green : T.red)}
+        {metric("h10 positive excess", RATE(h10?.hitRatePct), "descriptive hit rate", h10?.hitRatePct == null ? T.muted : h10.hitRatePct >= 50 ? T.green : T.red)}
+      </div>
+      <div style={{ color: T.muted, fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>{data.observationCount.toLocaleString("en-IN")} eligible observations · as of {new Date(data.asOf).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}. Daily observations overlap; descriptive averages are not inferential IC or t-stat evidence. {data.semantics}</div>
+      {data.truncated && <div style={{ color: T.amber, fontSize: 11, marginTop: 5 }}>This read is capped at the 2,000 most recent eligible observations; aggregates cover only that window.</div>}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 16 }}>
+        {filters.map((item) => <button key={item.id} onClick={() => setFilter(item.id)} style={{ background: filter === item.id ? T.accent : "transparent", color: filter === item.id ? "#fff" : T.sub, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>{item.label}</button>)}
+        <select aria-label="Sort India scorecard" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} style={{ marginLeft: "auto", background: T.surface, color: T.sub, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+          <option value="recent">Most recent</option><option value="score">Highest score</option><option value="excess">Best h10 excess</option>
+        </select>
+      </div>
+      {scorecardRows.length === 0 ? <div style={{ color: T.muted, fontSize: 12, marginTop: 14 }}>No India observations match this filter.</div> : <>
+        <div className="india-rec-table" style={{ marginTop: 12 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ borderBottom: `1px solid ${T.border}` }}>{columns.map((column, index) => <th key={column} style={{ textAlign: index === 0 || index === 1 || index === 2 || index === 4 ? "left" : "right", padding: "6px 8px", fontWeight: 600, whiteSpace: "nowrap", color: T.muted }}>{column}</th>)}</tr></thead>
+          <tbody>{scorecardRows.map((row) => {
+            const label = row.labels.find((item) => item.horizon === 10) ?? row.labels.find((item) => item.horizon === 5) ?? row.labels.find((item) => item.horizon === 2);
+            const symbol = row.symbol.replace(/\.(NS|BO)$/i, "");
+            const held = heldSymbols.has(symbol.toUpperCase());
+            return <tr key={row.id} style={{ borderTop: `1px solid ${T.border}`, color: T.text }}>
+              <td style={{ padding: "8px", whiteSpace: "nowrap", color: T.muted }}>{new Date(row.researchedAt).toLocaleDateString("en-IN")}</td>
+              <td style={{ padding: "8px", fontWeight: 700 }}>{symbol} <span style={{ color: T.accent }}>· {row.score ?? "—"}</span></td>
+              <td style={{ padding: "8px", color: T.sub, whiteSpace: "nowrap" }}>F {row.dimensions.fundamental ?? "—"} · T {row.dimensions.technical ?? "—"} · S {row.dimensions.sentiment ?? "—"} · M {row.dimensions.macro ?? "—"} · I {row.dimensions.insider ?? "—"}</td>
+              <td style={{ padding: "8px", textAlign: "right", whiteSpace: "nowrap" }}>{INR(row.referencePrice)}</td>
+              <td style={{ padding: "8px", color: !holdingsKnown ? T.amber : held ? T.green : T.muted, whiteSpace: "nowrap" }}>{!holdingsKnown ? "Unknown" : held ? "Held now" : "Not held"}</td>
+              <td style={{ padding: "8px", textAlign: "right", color: label?.excessPct == null ? T.muted : label.excessPct >= 0 ? T.green : T.red, whiteSpace: "nowrap" }}>{label ? `h${label.horizon} · ${PCT(label.symbolReturnPct)} symbol · ${PCT(label.niftyReturnPct)} NIFTY · ${PCT(label.excessPct)} excess` : "No matured outcome"}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        <div className="india-rec-cards" style={{ marginTop: 12 }}>{scorecardRows.map((row) => {
+          const label = row.labels.find((item) => item.horizon === 10) ?? row.labels.find((item) => item.horizon === 5) ?? row.labels.find((item) => item.horizon === 2);
           const symbol = row.symbol.replace(/\.(NS|BO)$/i, "");
-          return <div key={row.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px 12px", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div><div style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{symbol} <span style={{ color: T.accent }}>score {row.score ?? "—"}</span> <span style={{ color: !holdingsKnown ? T.amber : heldSymbols.has(symbol.toUpperCase()) ? T.green : T.muted, fontSize: 10 }}>{!holdingsKnown ? "HOLDING STATUS UNKNOWN" : heldSymbols.has(symbol.toUpperCase()) ? "CURRENTLY HELD" : "NOT CURRENTLY HELD"}</span></div><div style={{ color: T.muted, fontSize: 10, marginTop: 3 }}>{new Date(row.researchedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} · ref {INR(row.referencePrice)} · {row.scoringVersion ?? "score version unavailable"}</div><div style={{ color: T.sub, fontSize: 10, marginTop: 4 }}>F {row.dimensions.fundamental ?? "—"} · T {row.dimensions.technical ?? "—"} · S {row.dimensions.sentiment ?? "—"} · M {row.dimensions.macro ?? "—"} · I {row.dimensions.insider ?? "—"}</div></div>
-            <div style={{ textAlign: "right", fontSize: 11 }}><div style={{ color: T.sub }}>{horizonLabel ? `Matured h${horizonLabel.horizon}` : "Outcome not mature"}</div><div style={{ color: horizonLabel?.excessPct == null ? T.muted : horizonLabel.excessPct >= 0 ? T.green : T.red, fontWeight: 700, marginTop: 3 }}>{horizonLabel ? `${PCT(horizonLabel.symbolReturnPct)} symbol · ${PCT(horizonLabel.niftyReturnPct)} NIFTY · ${PCT(horizonLabel.excessPct)} excess` : "No matured label"}</div></div>
+          const held = heldSymbols.has(symbol.toUpperCase());
+          return <div key={row.id} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><div><span style={{ color: T.text, fontWeight: 750 }}>{symbol}</span> <span style={{ color: T.accent }}>score {row.score ?? "—"}</span> <span style={{ color: !holdingsKnown ? T.amber : held ? T.green : T.muted, fontSize: 10 }}>{!holdingsKnown ? "HOLDING UNKNOWN" : held ? "HELD NOW" : "NOT HELD"}</span></div><span style={{ color: T.muted, fontSize: 11 }}>{new Date(row.researchedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span></div>
+            <div style={{ color: T.muted, fontSize: 10, marginTop: 5 }}>Ref {INR(row.referencePrice)} · {row.scoringVersion ?? "score version unavailable"}</div>
+            <div style={{ color: T.sub, fontSize: 11, marginTop: 6 }}>F {row.dimensions.fundamental ?? "—"} · T {row.dimensions.technical ?? "—"} · S {row.dimensions.sentiment ?? "—"} · M {row.dimensions.macro ?? "—"} · I {row.dimensions.insider ?? "—"}</div>
+            <div style={{ color: label?.excessPct == null ? T.muted : label.excessPct >= 0 ? T.green : T.red, fontSize: 11, fontWeight: 650, marginTop: 7 }}>{label ? `Matured h${label.horizon}: ${PCT(label.symbolReturnPct)} symbol · ${PCT(label.niftyReturnPct)} NIFTY · ${PCT(label.excessPct)} excess` : "Outcome not mature"}</div>
           </div>;
-        })}
-      </div>}
+        })}</div>
+      </>}
     </>}
-  </Panel>;
+  </section>;
 }

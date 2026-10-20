@@ -354,6 +354,11 @@ export default function IndiaLivePanel() {
       }}
     >
 
+        {/* Keep the shared Live Portfolio section order: Guardian, scorecard,
+            broker connection, account summary, performance, holdings. */}
+        <IndiaManualTradeGuardianPanel />
+        <IndiaRecommendationsGuardianScorecard holdings={holdings} holdingsKnown={portfolio?.connected === true} />
+
         {/* ── a) Connection status bar ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "14px 18px", marginBottom: "16px" }}>
           <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "8px" }}>
@@ -382,10 +387,6 @@ export default function IndiaLivePanel() {
 
         {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
         <LivePerformanceChart market="india" refreshKey={chartRefreshKey} />
-
-        {/* ── India-only Guardian and research outcome scorecard ── */}
-        <IndiaManualTradeGuardianPanel />
-        <IndiaRecommendationsGuardianScorecard holdings={holdings} holdingsKnown={portfolio?.connected === true} />
 
         {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>
