@@ -167,7 +167,11 @@ describe("daily US symbol-directory discovery contract", () => {
     expect(collector.lastIndexOf('from("us_symbol_directory_snapshot").upsert({ id: "us"')).toBeGreaterThan(collector.indexOf('from("listing_candidate_events").upsert'));
     expect(research).toContain('["directory_observed", "listed_observing"]');
     expect(research).toContain('order("last_research_attempt_at", { ascending: true, nullsFirst: true })');
-    expect(research).toContain('RESEARCH_NEW_LISTING_OBSERVATIONS_PER_RUN');
+    // The cap is parsed by the shared capacity helper, not by duplicating env
+    // parsing inside the research agent. Assert the agent is wired to that
+    // helper so moving the implementation does not create a false failure.
+    expect(research).toContain('import { newListingObservationCap, researchCandidateCap } from "@/lib/agents/research-capacity"');
+    expect(research).toContain('const cap = newListingObservationCap();');
     expect(cron).toContain("forceEntryIneligible: true");
     expect(cron).toContain('"new_listing_observation"]');
     expect(cron).toContain(': marketEntries.filter(e => e.discovery_source !== "new_listing_observation")');
