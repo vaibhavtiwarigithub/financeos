@@ -10,7 +10,7 @@ const T = {
   accent: "#6366F1", green: "#34D399", red: "#F87171", yellow: "#FBBF24",
 };
 
-const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "financialdatasets", "alpaca", "robinhood", "resend", "supabase", "other"] as const;
+const PROVIDERS = ["anthropic", "deepseek", "gemini", "openai", "groq", "massive", "alphavantage", "financialdatasets", "alpaca", "robinhood", "webull_openapi", "resend", "supabase", "other"] as const;
 const ALL_TASKS = ["research", "trade", "evaluate", "thesis", "chat", "summarize", "data", "embed", "market_data", "sentiment", "options"];
 // Model ID / cost-per-token / tasks-suitable only mean something for an LLM
 // provider — showing them for a data-API key (Massive, AlphaVantage,

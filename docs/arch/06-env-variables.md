@@ -115,6 +115,7 @@ These keys are NOT in `.env.local`. They live in Supabase and are fetched at run
 | `ROBINHOOD_ACCESS_TOKEN` | Robinhood OAuth Token | CAS-protected refresh via `lib/robinhood-mcp-client.ts` |
 | `ROBINHOOD_REFRESH_TOKEN` | Robinhood Refresh Token | Used to refresh access token before expiry |
 | `WEBULL_MCP_*` (vault, `provider: webull_mcp`) | Webull Cloud MCP OAuth | `WEBULL_MCP_CLIENT_ID` / `_ACCESS_TOKEN` / `_REFRESH_TOKEN` / `_TOKEN_EXPIRES`. Written on the one-time OAuth connect (`/api/broker-mcp/webull/login`→`/callback`; legacy `/api/webull/*` 307-redirects there); CAS refresh in the config-driven `lib/brokers/mcp-driver.ts` (registry entry `MCP_BROKERS.webull`). Read-only (Phase 1). NOT env vars — vault rows |
+| `WEBULL_OPENAPI_APP_KEY`, `WEBULL_OPENAPI_APP_SECRET`, `WEBULL_OPENAPI_ACCESS_TOKEN` (env or vault, `provider: webull_openapi`) | Webull signed OpenAPI data preflight only | Server-side only. Legacy local env aliases `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` are accepted. The optional access token is required for this account's verified 2FA response. Never reuse `provider: webull_trade` credentials. Current scope is one owner-triggered AAPL snapshot contract check; not scheduled research or order access. |
 | `STOCKTWITS_TOKEN` | StockTwits | Social sentiment for US tickers |
 
 ---
@@ -145,6 +146,7 @@ the entire RAG path silently no-ops — no errors, no embeddings, no retrieval.
 | `FMP_API_KEY` | ResearchAgent screener (FinancialDatasets `screen_stocks`) |
 | `KITE_ACCESS_TOKEN` | `lib/brokers/adapters/kite.ts` |
 | `ROBINHOOD_ACCESS_TOKEN` | `lib/robinhood-mcp-client.ts` |
+| `WEBULL_OPENAPI_*` (or legacy `WEBULL_APP_KEY` / `WEBULL_APP_SECRET`) | Owner-only Webull OpenAPI token lifecycle + one-shot market-data contract preflight; not yet a research source |
 | `JINA_API_KEY` | `lib/providers/embeddings/jina.ts`, `lib/providers/rerank/jina.ts` |
 | `RESEND_API_KEY` | `lib/providers/email/resend.ts` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | `lib/providers/email/smtp.ts` (only when `EMAIL_PROVIDER=smtp`) |

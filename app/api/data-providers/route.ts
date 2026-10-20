@@ -5,6 +5,7 @@ import { providerConfig, type ProviderId } from "@/lib/data/provider-fetch";
 import { PROVIDER_SPECS } from "@/lib/evidence/registry";
 import { isAlpacaConfigured } from "@/lib/brokers/alpaca-credentials";
 import { hasRobinhoodToken } from "@/lib/robinhood-mcp";
+import { normalizeWebullCredential } from "@/lib/data/webull-openapi-preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -214,6 +215,18 @@ export async function GET() {
     svc.from("api_key_vault").select("key_value").eq("key_name", "WEBULL_MCP_ACCESS_TOKEN").maybeSingle()
       .then(({ data }: any) => typeof data?.key_value === "string" && data.key_value.length > 0, () => false),
   ]);
+  const webullOpenApiVaultKeys = await svc.from("api_key_vault")
+    .select("key_name, key_value")
+    .eq("provider", "webull_openapi")
+    .in("key_name", ["WEBULL_OPENAPI_APP_KEY", "WEBULL_OPENAPI_APP_SECRET", "WEBULL_OPENAPI_ACCESS_TOKEN"])
+    .then(({ data, error }: any) => error ? [] : data ?? [], () => []);
+  const webullOpenApiVault = new Map<string, string>(webullOpenApiVaultKeys.map((row: any) => [row.key_name, row.key_value]));
+  const webullOpenApi = {
+    appKeyPresent: !!(normalizeWebullCredential(process.env.WEBULL_OPENAPI_APP_KEY) ?? normalizeWebullCredential(process.env.WEBULL_APP_KEY) ?? normalizeWebullCredential(webullOpenApiVault.get("WEBULL_OPENAPI_APP_KEY"))),
+    appSecretPresent: !!(normalizeWebullCredential(process.env.WEBULL_OPENAPI_APP_SECRET) ?? normalizeWebullCredential(process.env.WEBULL_APP_SECRET) ?? normalizeWebullCredential(webullOpenApiVault.get("WEBULL_OPENAPI_APP_SECRET"))),
+    accessTokenPresent: !!(normalizeWebullCredential(process.env.WEBULL_OPENAPI_ACCESS_TOKEN) ?? normalizeWebullCredential(webullOpenApiVault.get("WEBULL_OPENAPI_ACCESS_TOKEN"))),
+    note: "Credential presence is not proof of authentication, entitlement, or usable market data.",
+  };
 
   // Existing budget rollups + the three Evidence-Router runtime tables. Each new
   // read is independently fault-isolated (a missing table/permission → empty, not
@@ -341,6 +354,7 @@ export async function GET() {
 
   return NextResponse.json({
     providers,
+    webullOpenApi,
     bottleneck: bottleneck ? { id: bottleneck.id, label: bottleneck.label, pctUsed: bottleneck.pctUsed } : null,
     // Runtime-state provenance so the UI can caption "as of" for the new fields.
     ledgerWindowHours: 24,

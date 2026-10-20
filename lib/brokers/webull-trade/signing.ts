@@ -90,14 +90,18 @@ export function isTimestampFresh(
   return Number.isFinite(ts) && Number.isFinite(maxSkewMs) && maxSkewMs >= 0 && Math.abs(now - ts) <= maxSkewMs;
 }
 
-export function buildSignatureHeaders(req: SignableRequest, appSecret: string): Record<string, string> {
+export function buildSignatureHeaders(
+  req: SignableRequest,
+  appSecret: string,
+  apiVersion: string = API_VERSION,
+): Record<string, string> {
   return {
     [HEADER.appKey]: req.appKey,
     [HEADER.timestamp]: req.timestamp,
     [HEADER.nonce]: req.nonce,
     [HEADER.algorithm]: SIGNATURE_ALGORITHM,
     [HEADER.version]: SIGNATURE_VERSION,
-    [HEADER.apiVersion]: API_VERSION,
+    [HEADER.apiVersion]: apiVersion,
     [HEADER.signature]: signRequest(req, appSecret),
   };
 }

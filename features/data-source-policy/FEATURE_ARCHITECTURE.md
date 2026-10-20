@@ -950,6 +950,22 @@ Keep these as reviewed defaults, not permanent truths:
   within that tick and remain visible in the provider ledger. Webull OpenAPI
   candles/quotes are not assumed from a brokerage login and remain unregistered
   until a separate OpenAPI data entitlement and contract are verified.
+- A bounded, owner-triggered Settings preflight is allowed to establish that
+  prerequisite: it reads only one fixed AAPL US-stock snapshot, uses the
+  separate `webull_openapi` credential namespace (or server environment),
+  validates the response shape, and returns redacted status only. It does not
+  persist the quote, register the provider in the evidence router, schedule
+  calls, or expose account/order endpoints. A valid preflight is necessary but
+  not sufficient for the separate five-day source/coverage/parity review.
+- If Webull 2FA blocks that preflight, Settings may start the documented
+  `/auth/tokens/create` flow after owner authentication and Vault-PIN validation.
+  The pending token is stored server-side under a distinct pending Vault key;
+  the browser never receives it. The owner approves the request and enters any
+  SMS code only in Webull's official app. A separate status check promotes the
+  token to the active OpenAPI Vault key only when Webull reports `NORMAL`.
+  This flow does not purchase market-data access. If the account's existing
+  permissions do not allow the fixed snapshot, Webull remains unavailable and
+  the current providers continue unchanged.
 - Source-specific probes rotate across scheduled shadow ticks, respect existing
   provider budgets/pacing, and write only canonical cache + append-only ledger
   records. No score, sizing, portfolio, execution, or live-trading consumer is

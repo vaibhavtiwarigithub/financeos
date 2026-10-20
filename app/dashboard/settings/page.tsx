@@ -220,6 +220,11 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<any | null>(null);
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providerHistory, setProviderHistory] = useState<any[] | null>(null);
+  const [webullPreflight, setWebullPreflight] = useState<any | null>(null);
+  const [webullPreflightLoading, setWebullPreflightLoading] = useState(false);
+  const [webullVaultPin, setWebullVaultPin] = useState("");
+  const [webullAuthResult, setWebullAuthResult] = useState<any | null>(null);
+  const [webullAuthLoading, setWebullAuthLoading] = useState(false);
   const loadKite = () => fetch("/api/kite/status").then(r => r.json()).then(setKite).catch(() => {});
 
   // Autonomous trading (PA3 — per-market off/manual/autonomous)
@@ -1825,6 +1830,90 @@ export default function SettingsPage() {
         <div style={{ maxWidth: "1100px" }}>
           {/* Canonical Evidence Router — Routing Policy (owner-only, shadow mode) */}
           <DataRoutingPanel />
+
+          <section aria-label="Webull OpenAPI access verification" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,22px)", marginTop: "20px" }}>
+            <div style={{ color: T.text, fontWeight: 700, fontSize: "14px" }}>Webull OpenAPI access verification</div>
+            <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55, marginTop: "5px", maxWidth: "800px" }}>
+              Starts Webull’s 2FA token request and stores the pending token in the owner Vault. You approve the request and enter the SMS code only inside the official Webull app—never in Kairos. No paid market-data subscription is purchased or enabled by this flow.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "end", marginTop: "13px" }}>
+              <label style={{ color: T.textSub, fontSize: "12px" }}>Vault PIN
+                <input type="password" autoComplete="current-password" value={webullVaultPin} onChange={e => setWebullVaultPin(e.target.value)} style={{ display: "block", width: "min(280px, 78vw)", marginTop: "5px", background: T.surface, border: `1px solid ${T.border}`, color: T.text, borderRadius: "7px", padding: "9px 10px", fontSize: "13px" }} />
+              </label>
+              <button disabled={webullAuthLoading || !webullVaultPin} onClick={async () => {
+                setWebullAuthLoading(true); setWebullAuthResult(null);
+                try {
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin }, body: JSON.stringify({ action: "create" }) });
+                  const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
+                } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
+                finally { setWebullAuthLoading(false); }
+              }} style={{ background: T.accent, color: "#fff", border: 0, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading || !webullVaultPin ? 0.65 : 1 }}>
+                {webullAuthLoading ? "Requesting…" : "Request Webull verification"}
+              </button>
+              <button disabled={webullAuthLoading || !webullVaultPin} onClick={async () => {
+                setWebullAuthLoading(true); setWebullAuthResult(null);
+                try {
+                  const response = await fetch("/api/data-providers/webull-openapi-auth", { method: "POST", headers: { "Content-Type": "application/json", "x-vault-pin": webullVaultPin }, body: JSON.stringify({ action: "check" }) });
+                  const result = await response.json(); setWebullAuthResult({ ...result, httpStatus: response.status });
+                  if (result.state === "token_active") setProviders((p: any) => p ? { ...p, webullOpenApi: { ...p.webullOpenApi, accessTokenPresent: true } } : p);
+                } catch { setWebullAuthResult({ state: "request_failed", detail: "network_error" }); }
+                finally { setWebullAuthLoading(false); }
+              }} style={{ background: T.surface, color: T.text, border: `1px solid ${T.border}`, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullAuthLoading ? "wait" : "pointer", opacity: webullAuthLoading || !webullVaultPin ? 0.65 : 1 }}>
+                {webullAuthLoading ? "Checking…" : "Check verification"}
+              </button>
+            </div>
+            {webullAuthResult && <div role="status" style={{ marginTop: "12px", background: T.surface, border: `1px solid ${webullAuthResult.state === "token_active" ? T.green : T.amber}`, borderRadius: "8px", padding: "10px 12px", color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>
+              <b style={{ color: webullAuthResult.state === "token_active" ? T.green : T.amber }}>Status: {String(webullAuthResult.state).replaceAll("_", " ")}</b>
+              {webullAuthResult.detail && <span> · {String(webullAuthResult.detail).replaceAll("_", " ")}</span>}
+              {webullAuthResult.httpStatus && <span> · HTTP {webullAuthResult.httpStatus}</span>}
+              {webullAuthResult.instruction && <div style={{ marginTop: "5px" }}>{webullAuthResult.instruction}</div>}
+              {webullAuthResult.state === "token_active" && <div style={{ marginTop: "5px" }}>The token is stored in the owner Vault. Now run the one-shot AAPL snapshot check below. Data access may still be limited by Webull account permissions; Kairos will not purchase a subscription.</div>}
+              {webullAuthResult.state === "vault_locked" && <div style={{ marginTop: "5px" }}>The PIN did not unlock the Vault. No token was created or changed.</div>}
+              {webullAuthResult.state === "http_rejected" && <div style={{ marginTop: "5px" }}>Webull rejected token authentication. Check that the app key and secret are for the production OpenAPI application configured for this environment.</div>}
+            </div>}
+          </section>
+
+          <section aria-label="Webull OpenAPI market data verification" style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,22px)", marginTop: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ color: T.text, fontWeight: 700, fontSize: "14px" }}>Webull OpenAPI market-data check</div>
+                <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.55, marginTop: "5px", maxWidth: "760px" }}>
+                  Separate from Webull Cloud MCP and Webull trading. This owner-only check requests one public AAPL snapshot to verify OpenAPI authentication and response shape. It does not save data, run on a schedule, affect research scores, or access orders/accounts.
+                </div>
+              </div>
+              <button
+                disabled={webullPreflightLoading}
+                onClick={async () => {
+                  setWebullPreflightLoading(true);
+                  setWebullPreflight(null);
+                  try {
+                    const response = await fetch("/api/data-providers/webull-openapi-preflight", { method: "POST" });
+                    const body = await response.json();
+                    setWebullPreflight({ ...body, httpStatus: response.status });
+                  } catch {
+                    setWebullPreflight({ state: "request_failed", detail: "network_error" });
+                  } finally { setWebullPreflightLoading(false); }
+                }}
+                style={{ background: T.accent, color: "#fff", border: 0, borderRadius: "7px", padding: "9px 13px", fontSize: "12px", fontWeight: 600, cursor: webullPreflightLoading ? "wait" : "pointer", opacity: webullPreflightLoading ? 0.7 : 1 }}
+              >{webullPreflightLoading ? "Checking…" : "Test Webull OpenAPI"}</button>
+            </div>
+            <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", marginTop: "13px", color: T.textSub, fontSize: "12px" }}>
+              <span>App key: {providers?.webullOpenApi?.appKeyPresent ? <b style={{ color: T.green }}>configured</b> : <b style={{ color: T.red }}>missing</b>}</span>
+              <span>App secret: {providers?.webullOpenApi?.appSecretPresent ? <b style={{ color: T.green }}>configured</b> : <b style={{ color: T.red }}>missing</b>}</span>
+              <span>Access token: {providers?.webullOpenApi?.accessTokenPresent ? <b style={{ color: T.green }}>configured</b> : <b style={{ color: T.amber }}>not configured</b>}</span>
+            </div>
+            {webullPreflight && (
+              <div role="status" style={{ marginTop: "13px", background: T.surface, border: `1px solid ${webullPreflight.state === "snapshot_contract_valid" ? T.green : T.amber}`, borderRadius: "8px", padding: "10px 12px", color: T.textSub, fontSize: "12px", lineHeight: 1.55 }}>
+                <b style={{ color: webullPreflight.state === "snapshot_contract_valid" ? T.green : T.amber }}>Result: {String(webullPreflight.state).replaceAll("_", " ")}</b>
+                {webullPreflight.detail && <span> · {String(webullPreflight.detail).replaceAll("_", " ")}</span>}
+                {webullPreflight.httpStatus && <span> · HTTP {webullPreflight.httpStatus}</span>}
+                {webullPreflight.lastTradeTime && <span> · Webull last-trade timestamp: {new Date(webullPreflight.lastTradeTime).toLocaleString()}</span>}
+                {webullPreflight.state === "access_token_required" && <div style={{ marginTop: "5px" }}>Use the Webull OpenAPI access-verification card above; Kairos stores the token only after Webull reports it active. Do not put it under <code>webull_trade</code>.</div>}
+                {webullPreflight.state === "http_rejected" && <div style={{ marginTop: "5px" }}>Webull rejected the request. Its FAQ says this can mean missing/invalid authentication or insufficient market-data permission. This app will not purchase a subscription; if your account has no free access, leave Webull out of the data route.</div>}
+                {webullPreflight.state === "snapshot_contract_valid" && <div style={{ marginTop: "5px" }}>Authentication and this AAPL response contract passed. Kairos still needs the required shadow coverage/parity review before registering this source for scheduled research.</div>}
+              </div>
+            )}
+          </section>
 
           <div style={{ borderTop: `1px solid ${T.border}`, margin: "28px 0 20px" }} />
 
