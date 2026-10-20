@@ -58,14 +58,29 @@ export async function POST(req: NextRequest) {
     if (!provider.sendChecked) {
       return NextResponse.json({ error: "The configured email provider cannot verify delivery." }, { status: 503 })
     }
+    const configuredFrom = process.env.EMAIL_FROM?.trim()
+    const smtpMailbox = process.env.SMTP_USER?.trim()
+    const smtpFrom = provider.name === "smtp" && smtpMailbox && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(smtpMailbox)
+      ? `Kairos <${smtpMailbox}>`
+      : undefined
     const sent = await provider.sendChecked({
-      from: process.env.EMAIL_FROM || "Kairos <onboarding@resend.dev>",
+      // Gmail SMTP only permits the authenticated mailbox (or a verified
+      // alias) as From. Keep the Resend test sender only as a last fallback.
+      from: configuredFrom || smtpFrom || "Kairos <onboarding@resend.dev>",
       to: OWNER_EMAIL,
       subject: vaultPinRecoverySubject(),
       html: buildVaultPinRecoveryEmailHtml({ code, ownerEmail: OWNER_EMAIL }),
     })
     if (!sent.ok) {
-      return NextResponse.json({ error: "Could not send the reset code. Check the email provider configuration and try again." }, { status: 503 })
+      // This route is restricted above to the confirmed owner. Email provider
+      // adapters return a bounded, safe error string (not credentials or body).
+      const detail = typeof sent.error === "string" && sent.error.trim()
+        ? sent.error.trim().slice(0, 220)
+        : "The provider did not accept the email.";
+      return NextResponse.json({
+        error: `Could not send the reset code: ${detail}`,
+        provider: provider.name,
+      }, { status: 503 })
     }
     return NextResponse.json({ ok: true, message: `A one-time reset code was sent to ${OWNER_EMAIL}.` })
   }

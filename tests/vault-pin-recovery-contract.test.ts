@@ -17,6 +17,8 @@ describe("forgotten Vault PIN recovery contract", () => {
     expect(route).toContain("emailDeliveryAvailable()");
     expect(route).toContain("provider.sendChecked");
     expect(route).toContain("to: OWNER_EMAIL");
+    expect(route).toContain("sent.error.trim().slice(0, 220)");
+    expect(route).toContain("Kairos <${smtpMailbox}>");
     const recoveryStart = route.indexOf('if (action === "send_recovery_code")');
     const recoveryEnd = route.indexOf('if (action === "verify_code_and_set")', recoveryStart);
     expect(recoveryStart).toBeGreaterThan(route.indexOf("if (!user"));
