@@ -4,7 +4,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, medianScore, type CouncilLabelPoint } from "@/lib/llm-council/core";
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
-import { availabilityAlignedLabel } from "@/lib/llm-council/availability-label";
+import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 
 export const dynamic = "force-dynamic";
@@ -243,18 +243,18 @@ export async function POST(req: NextRequest) {
         const { error } = await svc.from("llm_council_ic_runs").insert(cells.map((cell) => ({
           evaluation_batch_id: batchId, market: cell.market, horizon_days: cell.horizonDays,
           series_key: cell.seriesKey, forecast_model: cell.forecastModel,
-          cohort_key: "forecast_available_close_v1", observation_count: cell.observationCount,
+          cohort_key: "forecast_available_close_v2", observation_count: cell.observationCount,
           qualifying_sessions: cell.qualifyingSessions, independent_windows: Number(cell.independentWindows.toFixed(4)),
           mean_session_rank_ic: cell.meanSessionRankIc, sd_session_rank_ic: cell.sdSessionRankIc,
           t_stat: cell.tStat, classification: cell.classification,
-          reason: `${cell.reason} Subscription labels use price_cache closes strictly after forecast availability and the versioned research benchmark; gross close-to-close price movement, not execution P&L.`,
+          reason: `${AVAILABILITY_LABEL_VERSION}. ${cell.reason} Subscription labels use price_cache closes strictly after forecast availability and the versioned research benchmark; gross close-to-close price movement, not execution P&L.`,
         })));
         if (error) return NextResponse.json({ error: `Could not persist ${market} availability-aligned IC cells` }, { status: 500 });
       }
       availabilityCells.push({ market, horizon, series: cells.length });
     }
   }
-  return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v1", shadowOnly: true });
+  return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v2", shadowOnly: true });
 }
 
 // Vercel Cron invokes configured routes with GET. Keep the same secret check

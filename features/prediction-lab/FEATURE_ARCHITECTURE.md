@@ -1,12 +1,17 @@
 # Prediction Lab: evidence-led council, formula and strategy improvement
 
-**Status: PROPOSED — architecture reviewed by Claude 2026-10-21 (verdict: REVISE, then approve P0–P1 only). Not approved for implementation.**
+**Status: owner-approved P0 correctness repairs and P1 read-only comparison implemented and locally verified on 2026-10-21. Broader P0 audit/calibration prerequisites, P2+ and extra inference remain gated. Production status must be checked against the release Git SHA, not inferred from this document.**
 
-Version: 1.1 (Claude review revision; see "Review revision log" at the end of section 20 and `CLAUDE_REVIEW_FINDINGS.md`) · Author: Codex · Reviewer: Claude · Requested by the owner: 2026-10-21.
+Version: 1.2 (implementation reconciliation supersedes review assumptions; see section 20 and `CLAUDE_REVIEW_FINDINGS.md`) · Author: Codex · Reviewer: Claude · Requested by the owner: 2026-10-21.
 Source baseline: `main` at `4d4e7b309e357625863deff11fc5df4cd0d678b5`.
-Implementation status of this proposal: none. No migration, inference, experiment
-registration, roster change, order, scoring change or production activation is
-authorized by writing or reviewing this document.
+Implementation scope: no schema changes or extra inference. The owner's
+"plan full fix and go ahead" authorizes the reviewed correctness repairs and
+first read-only release, not paid challengers, roster changes or trading adoption.
+
+Sections describing pre-fix defects and counts are the source-baseline audit,
+not claims that those defects remain unfixed. The v1.2 reconciliation near the
+end is the implementation/status authority; the original review is retained
+for traceability.
 
 ## 1. The user-facing objective
 
@@ -160,7 +165,7 @@ Read-only inspection on 2026-10-21 found:
 
 **Claude re-verification, 2026-10-21 (read-only SQL against production; batch `2026-10-20 23:47:54 UTC`):** every number above reproduced exactly (US DeepSeek all-research h2 +0.309/5 sessions and h5 +0.335/2; India h2 −0.108/6 and h5 −0.318/3; US availability-aligned median h2 +0.110/3 and h5 +0.219/1; registry counts 3 fixed + 1 insider-v2 + 9 mined; `strategy_template_shadow_configs` does not exist). Additional facts the original draft did not record:
 
-- **The council tracks the deterministic score almost exactly.** US all-research h2: deterministic `analyst_score_paired` +0.332, 50/50 blend +0.332, API median/DeepSeek +0.309; h5: deterministic +0.398 vs median +0.335. India h2: deterministic −0.171 vs council −0.108. Debated and independent series are identical to the digit (zero debate rounds). The prompt contains the deterministic score, so the council's *incremental* information is currently unmeasured; the paired delta against the deterministic series is the first question, and it needs no new inference (see P1).
+- **Anchoring is a hypothesis, not established by similar ICs.** US all-research h2: deterministic `analyst_score_paired` +0.332, blend +0.332, API median +0.309; h5 +0.398 versus +0.335. India h2 −0.171 versus −0.108. These correlations with outcomes do not measure correlation between the scores or establish copying. P1 reconstructs the paired session-level IC differences and direct score-rank correlation from the stored forecasts and labels. It cannot identify a causal anchoring effect without a separate ablation.
 - **Realized subscription roster in the labelled cohort:** `claude-sonnet-4-6` and `gpt-5.6-sol` cover 103 observations and 1 session at h2; `claude-sonnet-5-5` and `gpt-5.6-luna` cover 257–258 observations and 3 sessions. The members are not covering the same names, so any head-to-head must use the intersection.
 - **All these ICs rest on 1–6 sessions.** The 3-month US composite audit (`docs/audits/2026-10-14-us-book-vs-xlk-and-score-quality.md`) found rank IC +0.03 (t≈0.4); a +0.33 over five sessions is noise-scale, not a contradiction. Never show an IC without its session count.
 - `trial_family_ledger` holds 4 rows, all family `external-strategy-discovery-us-v1`, all registered by `strategy-replay-route`.
@@ -610,7 +615,7 @@ approved or a requirement to create five tables regardless of reuse findings.
 | `prediction_comparison_runs` | **Extend** `llm_council_ic_runs` / `score_variant_eval_runs` with nullable `baseline_series_key`, `paired_delta_ic`, `paired_delta_ic_hac_t`, `common_sample_hash`, `statistics_version`; add a table only if the council and formula result shapes cannot share one view | Both already store per-cell sessions, windows, IC, t, classification, reason and a batch id. The genuinely missing facts are the pairing and the statistics version |
 | `prediction_review_notes` | **Defer to P6**; then a relational table (this one is genuinely new: no hypothesis/lesson store exists) | There is no critic until P6; creating the table earlier is speculative |
 
-Net new persistent objects through P5: **zero tables, nine nullable columns** (in the existing result/registry tables), plus a read-only projection route. Every column added must be additive and leave legacy rows readable.
+Preference: zero new tables where existing owners can preserve the required contracts. The listed four registry fields plus five fields on EACH of two result tables would mean **14 column additions**, not nine. No such migration is approved in P0/P1. Hashes alone cannot reproduce a changing label dataset: any future sealed result needs versioned source references/revisions and a reconstructible manifest or immutable artifact. Mutable current config is not an approval audit trail. The final minimal persistence plan remains P2 review work, not a proven zero-table constraint through P5.
 
 Forecasts continue through existing council run/forecast/turn/job/call ledgers;
 no alternate call accounting. Strategy trials stay in `trial_family_ledger`;
@@ -775,7 +780,7 @@ sequence does not authorize implementation before review/owner approval.
 | P0 — reconcile owners and contracts (**review: audit done, repairs pending**) | Source/production matrix is in `CLAUDE_REVIEW_FINDINGS.md`. Repairs to schedule: (1) strategy-replay GET must not register trials (P1-1), (2) per-session close times incl. early closes in the label builder (P1-2), (3) rename or re-implement the compiler RSI (P1-3), (4) session-indexed lags and a calibrated small-sample t reference (P1-4) | Each repair has a fixture test; no inference or new trial; no unsafe legacy route invoked as read-only. Items not audited by this review (simulator/constructor parity, attribution writer, lot/cost handling) are marked NOT PERFORMED in the findings and remain P0 work before P5 |
 | P1 — existing evidence visibility **(smallest useful release; recommended first and only approval now)** | Read-only Prediction Lab projection over `llm_council_ic_runs`, `score_variant_eval_runs` and `upgrade_path_attribution_runs`, with symbol links, session counts beside every IC, and the **zero-cost paired council-minus-deterministic delta** computed from stored series on the common symbols | Real stored rows displayed, missing/immature vs broken distinguished, no new inference or tables; no cross-family ranking; every IC shows its session count and a `descriptive` label until the gate in section 11 is met |
 | P2 — paired measurement foundation | Reviewed manifest/provenance storage, common labels, paired delta/HAC, legacy preservation | Calendar, pairing, missingness, multiplicity/endpoint and immutable-retry tests; migration/RLS verification and next scheduled production batch |
-| P3 — one prompt challenger (**review: DEFER; do not approve now**) | Same packet/identity, isolated experimental calls and current output contract | Precondition added by review: the incumbent's paired delta against the deterministic score must first have at least 30 matured sessions at the primary horizon so its variance (the input to any power calculation) is measured rather than guessed; the challenger would double the calls of the member it challenges for a result that cannot be evaluated at h10 for roughly six months. Owner separately approves sample/cost/quota; transport, accounting and identity verified. Prospective receipt only; no claim of accuracy before maturity |
+| P3 — one prompt challenger (**deferred; separate cost/sample approval**) | Same packet/identity, isolated experimental calls and current output contract | Thirty dates may be a planning checkpoint, not an evidence gate. Incumbent-minus-deterministic variance does not identify challenger-minus-incumbent variance, which also depends on their covariance. Paired differences can be less noisy, not always more. Require a declared pilot/precision design and cost approval; never claim a fixed month count establishes significance. Current work does not invoke a challenger |
 | P4 — supported deterministic family | Existing fixed/mined/technical adapters, bounded declarative rule family, genuine purged historical validation | Freeze family; pass compiler/controls/cost/calendar/OOS manifests; seal only truthful evidence; verify a scheduled producer |
 | P5 — portfolio-impact producer | One explicit policy intervention, canonical replay parity and attribution | Both books reconcile; shared opportunity universe/versions; program-specific persisted result; enough evidence or honest collecting/blocker |
 | P6 — outcome review/proposals | Representative deterministic review sample, structured notes and bounded future proposal | Evidence/counterexamples stored; no prompt/code/settings auto-change; cost approval before any critic inference |
@@ -869,7 +874,44 @@ If a prerequisite fails, shrink/defer that phase with a precise blocker and the
 next safe action. Do not imply all stages can be built or financially validated
 in one session. Do not lower evidence gates to satisfy a completion request.
 
-### Review revision log (Claude, 2026-10-21; document version 1.0 → 1.1)
+### Codex reconciliation, v1.2, 2026-10-21
+
+The historical Claude review below is retained as a review record, not current
+policy. Its claims of demonstrated score copying, an automatic 30-date gate,
+"nine columns" and all P0 auditing being complete are superseded here. No
+approval state is inferred from an evaluator or mutable config. In particular,
+the simulator/constructor parity, purging, packet/worker construction and full
+privacy audit remain unperformed prerequisites for later phases.
+
+P0/P1 implemented scope: replay GET is read-only; POST registration errors fail
+closed; expected-entry labels use verified 2026 US early closes and reject
+missing entry marks, not-yet-closed outcome bars or unknown special-session windows; explicit `rsi_wilder`
+preserves legacy `rsi` semantics; production formula evaluations use
+session-distance descriptive HAC. Future council evaluations write corrected
+delayed labels as cohort v2, without rewriting old v1 rows.
+
+P1 adds `GET /api/learning/prediction-lab` and a Learning overview using existing
+source ledgers. It reconstructs initial-member comparisons and an initial-score
+median on a common availability start per run (API persisted response timestamp
+when explicit availability is absent; subscription availability must be known).
+Every row has its own matched deterministic sample and direct rank-correlation
+diagnostic. Identity includes requested/actual model, source, prompt version and
+stage; effort is not available in this projection and is explicitly disclosed.
+Different rows are not a head-to-head leaderboard. Exact realized roster is part
+of the median identity. It uses a complete paginated trailing-90-day read; a
+bounded-scope overflow fails rather than publishing partial evidence.
+
+The projection has no writes, paid calls, trial registration, sealed evidence
+claim or winner verdict. Current cached marks can be revised, so the read-time
+sample hash is diagnostic only. No source/prospective record is overwritten.
+Existing family panels remain canonical for their stored results. Label
+immaturity and absent marks share an explicit unlabelled-window count in this
+first release; a richer maturity-versus-provider-health breakdown is still
+future work. Symbol-level expansion and sealed cross-lane portfolio impacts
+remain later phases; P1 links existing symbol score history rather than
+claiming that complete per-symbol tournament is implemented.
+
+### Review revision log (Claude, 2026-10-21; historical document version 1.0 → 1.1)
 
 Material changes and their rationale; full evidence and sources are in `CLAUDE_REVIEW_FINDINGS.md`.
 

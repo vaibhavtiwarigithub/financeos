@@ -68,7 +68,7 @@ describe("subscription availability-aligned labels", () => {
     expect(migration).toContain("p_hash is null or p_hash !~");
     expect(migration).toContain("jsonb_typeof(p_snapshot)<>'object'");
     expect(migration).toContain("execution_mode=y.execution_mode");
-    expect(evaluator).toContain('"forecast_available_close_v1"');
+    expect(evaluator).toContain('"forecast_available_close_v2"');
     expect(evaluator).toContain('.eq("execution_source", "subscription")');
     expect(evaluator).toContain("availabilityAlignedLabel");
     expect(control).toContain('"api", "subscription", "hybrid"');

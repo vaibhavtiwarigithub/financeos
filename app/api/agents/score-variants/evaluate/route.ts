@@ -70,14 +70,14 @@ export async function GET(req: NextRequest) {
       const out: Record<string, unknown>[] = [];
       for (const [sample, rows] of [["forward", forward], ["hindsight", hindsight]] as const) {
         for (const def of VARIANTS) {
-          const ev = evaluateVariant(def, rows, horizon);
+          const ev = evaluateVariant(def, rows, horizon, market);
           out.push({
             evaluation_batch_id: batchId, variant_set: VARIANT_SET, variant_id: def.id, market, sample, horizon_days: horizon,
             sessions: ev.sessions, avg_cross_section: Number(ev.avgCrossSection.toFixed(2)), independent_windows: Number(ev.independentWindows.toFixed(4)),
             variant_mean_ic: ev.variant.meanIc, variant_ic_t: ev.variant.icT, variant_top_fifth: ev.variant.topFifthExcess, variant_bottom_fifth: ev.variant.bottomFifthExcess, variant_spread: ev.variant.spread, variant_spread_t: ev.variant.spreadT,
             paired_spread_delta: ev.pairedSpreadDelta, paired_spread_delta_t: ev.pairedSpreadDeltaT,
             baseline_mean_ic: ev.baseline.meanIc, baseline_ic_t: ev.baseline.icT, baseline_top_fifth: ev.baseline.topFifthExcess, baseline_bottom_fifth: ev.baseline.bottomFifthExcess, baseline_spread: ev.baseline.spread, baseline_spread_t: ev.baseline.spreadT,
-            classification: ev.classification, meets_adoption_gate: sample === "forward" && ev.meetsAdoptionGate, reason: sample === "hindsight" ? `HINDSIGHT sample (before the variants were declared): reference only. ${ev.reason}` : ev.reason,
+            classification: ev.classification, meets_adoption_gate: false, reason: `${sample === "hindsight" ? "HINDSIGHT: reference only. " : ""}session-distance-hac-v2-descriptive; t is descriptive, not calibrated small-sample inference. ${ev.reason}`,
           });
         }
       }
@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
     const forward = all.filter((r) => Date.parse(r.ts) >= declaredAt);
     const hindsight = all.filter((r) => Date.parse(r.ts) < declaredAt);
     for (const [sample, rows] of [["forward", forward], ["hindsight", hindsight]] as const) {
-      const ev = evaluateVariant(def, rows, horizon);
+      const ev = evaluateVariant(def, rows, horizon, market);
       minedOut.push({
         evaluation_batch_id: batchId, variant_set: row.variant_set, variant_id: row.variant_id, market,
         sample, horizon_days: horizon, sessions: ev.sessions, avg_cross_section: Number(ev.avgCrossSection.toFixed(2)),

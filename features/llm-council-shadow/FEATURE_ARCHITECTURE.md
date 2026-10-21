@@ -1,5 +1,25 @@
 # Multi-LLM Research Council and Scorecard
 
+## Prediction Lab read-only comparison contract
+
+The owner's 2026-10-21 approval adds a Learning-page projection, not a council
+roster, prompt, scoring or trading change. The projection compares initial
+member scores and the actual returned roster's initial median to the frozen
+deterministic score on matched raw outcomes. It preserves requested/actual
+model, execution source and prompt identity. It uses a common availability
+close per run, the versioned research benchmark and complete regular-session
+marks. Current cached marks are not sealed experiment evidence; results remain
+descriptive and mixed holding/entry cohorts are labelled as such.
+
+The corrected availability helper does not slide past a missing expected entry,
+models 2026 US early closes, rejects unmodelled special sessions/years, and
+requires the outcome close to have happened by evaluation time. New scheduled
+subscription IC rows use `forecast_available_close_v2`; historical rows are not
+rewritten. The new matched panel's paired t uses actual market-session
+distances and is descriptive only. Older Council tables retain explicitly
+labelled legacy descriptive t values. Full P0/P1 boundaries and later gates:
+`features/prediction-lab/FEATURE_ARCHITECTURE.md` version 1.2.
+
 ## 2026-10-16 operational repair
 
 The hybrid council's Claude/Codex subscription scores were absent because the

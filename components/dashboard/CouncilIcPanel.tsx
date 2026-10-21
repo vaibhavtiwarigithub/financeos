@@ -6,7 +6,8 @@ import { useMarket } from "@/lib/market-context";
 
 // LLM council (shadow) evidence on the Learning page: rank IC and t-stat per member, composite median, the deterministic
 // baseline and the fixed 50/50 blend, on the SAME matured outcomes, plus daily coverage. Viewer-safe stored aggregates
-// (/api/learning/council-ic). A cell is evidence only once it has enough independent windows; until then it says so.
+// (/api/learning/council-ic). Legacy descriptive statistics, not validated ESS
+// or an adoption verdict. New matched comparisons live in Prediction Lab.
 
 type Cell = { horizon_days: number; series_key: string; forecast_model: string | null; cohort_key: string; observation_count: number; qualifying_sessions: number; independent_windows: number; mean_session_rank_ic: number | null; sd_session_rank_ic: number | null; t_stat: number | null; classification: string; reason: string };
 type Coverage = { date: string; runs: number; completed: number; partial: number; failed: number; deepseek: number; claude: number; codex: number };
@@ -17,6 +18,7 @@ const COHORT_LABEL: Record<string, string> = {
   all_research_v1: "All research symbols (scored at each research slot)",
   near_threshold_entry_long_v1: "Near-threshold entry candidates (original predeclared slice)",
   forecast_available_close_v1: "Availability-aligned (label starts at the next close after each forecast was returned)",
+  forecast_available_close_v2: "Availability-aligned v2 (expected next close, early-close aware, missing entry fails closed)",
 };
 const SERIES_LABEL = (key: string) => {
   if (key === "composite:median") return "Council median";
@@ -92,7 +94,7 @@ export default function CouncilIcPanel() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ color: T.muted, textAlign: "left" }}>
-                      {["Series", "Observations", "Sessions", "Independent windows", "Mean rank IC", "t-stat", "State"].map((h) => <th key={h} style={{ padding: "4px 10px 4px 0", fontWeight: 400 }}>{h}</th>)}
+                      {["Series", "Observations", "Sessions", "Rough windows (sessions/h)", "Mean rank IC", "Legacy descriptive t", "State"].map((h) => <th key={h} style={{ padding: "4px 10px 4px 0", fontWeight: 400 }}>{h}</th>)}
                     </tr>
                   </thead>
                   <tbody>

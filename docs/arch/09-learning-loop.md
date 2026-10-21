@@ -1,4 +1,47 @@
 # Kairos — Learning Loop
+
+## Prediction Lab: compare forecasts without changing trades
+
+Learning → Prediction Lab is the read-only entry point for council, formula and
+strategy evidence. Select US or India and a 2-, 5-, 10- or 20-session outcome.
+Each model's **initial** score and an initial-median council are compared with
+the frozen deterministic score on exactly the same symbol/outcome rows within
+that table row. Requested/actual model, execution source and prompt version are
+separate identities. Different rows can have different coverage and are not a
+model leaderboard. The ten-session prompt's other horizons test portability.
+
+The panel shows both rank ICs, their paired session-level difference and direct
+score-rank correlation. Similar outcome IC alone is not evidence that an LLM
+copied the score. This broad research cohort mixes holdings, entry candidates
+and instrument types; it cannot by itself establish entry-selection skill.
+There is no symbol-specific winning formula or automatic trading integration.
+
+Delayed forecasts start at the first expected regular-session close strictly
+after all returned member forecasts were available. Missing that expected mark
+does not shift entry. Both price series must cover every intervening session;
+the evaluation cutoff must reach the horizon close. The close helper models
+official 2026 US early closes and DST; unmodelled India special sessions and
+unsupported calendar years fail closed. Corrected scheduled subscription labels
+use `forecast_available_close_v2`, leaving older result rows untouched.
+
+The view reconstructs from stored forecasts and current cached prices, not a
+sealed prospective dataset or executable P&L. Its sample hash identifies the
+returned reconstruction only. Missing data/immaturity are reported together,
+not passed as evidence. Sessions divided by horizon is a rough planning count,
+not estimated effective sample size. A session-distance Bartlett HAC t is
+withheld below 20 dates and 12 rough windows and remains descriptive above
+those floors. Existing Council tables retain their legacy descriptive t;
+neither statistic authorizes adoption. Fixed/mined score evaluators now use
+session-distance HAC for new rows and cannot pass an adoption gate from IC.
+
+The replay seam's GET performs no trial registration or writes. POST records a
+trial attempt but still refuses sealing without purged out-of-sample evidence.
+Legacy `rsi` retains its simple-window definition; the distinct `rsi_wilder`
+operator supports explicit Wilder semantics without changing frozen rules.
+Paid prompt challengers, new strategy cohorts, calibrated inference and causal
+portfolio-level baseline/variant replay remain later, separately gated work.
+
+Implementation contract: `features/prediction-lab/FEATURE_ARCHITECTURE.md`.
 > 2026-10-03: **US regime features are null on 5,721 observations (2026-08-17 .. 2026-10-03).** `features.regime.{trend, volTercile, realizedVol}` come from the US benchmark series, which was frozen at 2026-08-03 by an ascending+limit(260) read of `price_cache` (fixed 2026-10-03). `decision_observations` is immutable, so those rows stay null: any regime-conditioned analysis, archetype grading or calibration must exclude US rows from 2026-08-17 to the fix date (rows from the first post-fix research run onward are populated). No other feature group dropped >=30 points of coverage between July and the last week (checked across technical/fundamental/sentiment/macro/quality keys).
 >
 

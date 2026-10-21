@@ -7,6 +7,9 @@
 // This module turns that observation into a test that cannot be fooled by hindsight.
 
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
+import { expectedMarketSessionsBetween, getMarketDayStatus, researchSessionCloseAt } from "@/lib/trading/market-calendar";
+
+export const SCORE_STATISTICS_VERSION = "session-distance-hac-v2-descriptive";
 
 export type Dim = "fundamental" | "technical" | "sentiment" | "insider" | "insider_v2";
 export const VARIANT_SET = "variant_set_v1";
@@ -48,21 +51,43 @@ export function variantScore(def: VariantDef, row: ObsRow): number | null {
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 /** Bartlett-kernel Newey-West t for a mean of ordered session statistics. */
-export function hacMeanT(xs: readonly number[], maxLag: number): number | null {
+export function hacMeanT(xs: readonly number[], maxLag: number, positions?: readonly number[]): number | null {
   const n = xs.length;
   if (n < 2 || !xs.every(Number.isFinite)) return null;
+  if (positions && (positions.length !== n || positions.some((v, i) => !Number.isInteger(v) || (i > 0 && v <= positions[i - 1])))) return null;
   const m = mean([...xs]);
-  const lag = Math.max(0, Math.min(Math.floor(maxLag), n - 1));
+  if (!Number.isFinite(maxLag)) return null;
+  const lag = Math.max(0, positions ? Math.floor(maxLag) : Math.min(Math.floor(maxLag), n - 1));
   let longRunVariance = xs.reduce((sum, x) => sum + (x - m) ** 2, 0) / n;
-  for (let k = 1; k <= lag; k++) {
-    let covariance = 0;
-    for (let t = k; t < n; t++) covariance += (xs[t] - m) * (xs[t - k] - m);
-    covariance /= n;
-    const bartlett = 1 - k / (lag + 1);
-    longRunVariance += 2 * bartlett * covariance;
+  for (let i = 1; i < n; i++) {
+    for (let j = i - 1; j >= 0; j--) {
+      const distance = positions ? positions[i] - positions[j] : i - j;
+      if (distance > lag) break;
+      longRunVariance += 2 * (1 - distance / (lag + 1)) * (xs[i] - m) * (xs[j] - m) / n;
+    }
   }
   if (!(longRunVariance > 0) || !Number.isFinite(longRunVariance)) return null;
   return m / Math.sqrt(longRunVariance / n);
+}
+
+/** Calendar distance is independent of which dates qualified for a score cell.
+ * Unknown/special calendars return null rather than silently using row offsets.
+ */
+export function sessionDistanceT(rows: readonly { day: string; value: number }[], horizon: number, market: "us" | "india"): number | null {
+  if (rows.length < 2 || !Number.isInteger(horizon) || horizon < 1) return null;
+  try {
+    const first = rows[0].day;
+    if (rows.some((r) => researchSessionCloseAt(market, r.day) == null)) return null;
+    const cursor = new Date(`${first}T12:00:00Z`);
+    const end = new Date(`${rows[rows.length - 1].day}T12:00:00Z`);
+    if ((end.getTime() - cursor.getTime()) / 86_400_000 > 4000) return null;
+    for (; cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+      const state = getMarketDayStatus(market, cursor);
+      if (!state.calendarSupported || state.kind === "special_session") return null;
+    }
+    const positions = rows.map((r) => r.day === first ? 0 : expectedMarketSessionsBetween(market, first, r.day).length);
+    return hacMeanT(rows.map((r) => r.value), Math.max(0, horizon - 1), positions);
+  } catch { return null; }
 }
 
 /** Mean outcome of the top and bottom fifth by score (ties broken by symbol so results are reproducible). */
@@ -96,20 +121,23 @@ export interface VariantEval {
   reason: string;
 }
 
-function aggregate(perSession: Array<{ day: string; ic: number; top: number; bottom: number }>, horizon: number): ScoreStats {
+function aggregate(perSession: Array<{ day: string; ic: number; top: number; bottom: number }>, horizon: number, market?: "us" | "india"): ScoreStats {
   if (!perSession.length) return { meanIc: null, icT: null, topFifthExcess: null, bottomFifthExcess: null, spread: null, spreadT: null };
   const ics = perSession.map((s) => s.ic);
   const spreads = perSession.map((s) => s.top - s.bottom);
   const lag = Math.min(Math.max(0, horizon - 1), perSession.length - 1);
+  const t = (values: number[]) => market
+    ? sessionDistanceT(perSession.map((s, i) => ({ day: s.day, value: values[i] })), horizon, market)
+    : hacMeanT(values, lag);
   return {
-    meanIc: mean(ics), icT: hacMeanT(ics, lag),
+    meanIc: mean(ics), icT: t(ics),
     topFifthExcess: mean(perSession.map((s) => s.top)), bottomFifthExcess: mean(perSession.map((s) => s.bottom)),
-    spread: mean(spreads), spreadT: hacMeanT(spreads, lag),
+    spread: mean(spreads), spreadT: t(spreads),
   };
 }
 
 /** Evaluate one variant against the live composite on the same rows, session by session. */
-export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizonDays: number): VariantEval {
+export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizonDays: number, market?: "us" | "india"): VariantEval {
   const bySession = new Map<string, Array<{ symbol: string; v: number; a: number; y: number }>>();
   for (const r of rows) {
     const v = variantScore(def, r);
@@ -136,11 +164,13 @@ export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizo
   }
   const sessions = vPer.length;
   const independentWindows = sessions / horizonDays;
-  const variant = aggregate(vPer, horizonDays);
-  const baseline = aggregate(bPer, horizonDays);
+  const variant = aggregate(vPer, horizonDays, market);
+  const baseline = aggregate(bPer, horizonDays, market);
   const pairedDeltas = vPer.map((s, i) => (s.top - s.bottom) - (bPer[i].top - bPer[i].bottom));
   const pairedSpreadDelta = pairedDeltas.length ? mean(pairedDeltas) : null;
-  const pairedSpreadDeltaT = hacMeanT(pairedDeltas, Math.min(horizonDays - 1, Math.max(0, pairedDeltas.length - 1)));
+  const pairedSpreadDeltaT = market
+    ? sessionDistanceT(vPer.map((s, i) => ({ day: s.day, value: pairedDeltas[i] })), horizonDays, market)
+    : hacMeanT(pairedDeltas, Math.min(horizonDays - 1, Math.max(0, pairedDeltas.length - 1)));
   const enough = sessions >= MIN_SESSIONS && independentWindows >= MIN_INDEPENDENT_WINDOWS;
   // This evaluator is a univariate score diagnostic, not a paired portfolio
   // replay. A t threshold here cannot authorize adoption or imply P&L lift.
@@ -150,7 +180,7 @@ export function evaluateVariant(def: VariantDef, rows: readonly ObsRow[], horizo
     pairedSpreadDelta, pairedSpreadDeltaT,
     classification: enough ? "measured_descriptive" : "insufficient_evidence", meetsAdoptionGate,
     reason: enough
-      ? `Descriptive per-session rank/spread statistics only. Candidate-minus-baseline spread is paired by session; its t-stat uses Bartlett Newey-West HAC standard error with lag ${Math.min(horizonDays - 1, Math.max(0, sessions - 1))}. sessions/horizon (${independentWindows.toFixed(2)}) is only a rough non-overlap count, not measured effective sample size. Not a promotion gate; paired portfolio-level OOS replay with costs is required.`
+      ? `${market ? SCORE_STATISTICS_VERSION : "legacy-positional-hac-descriptive"}: descriptive per-session rank/spread statistics only. Candidate-minus-baseline spread is paired by session; its t-stat uses Bartlett Newey-West HAC standard error with lag ${market ? horizonDays - 1 : Math.min(horizonDays - 1, Math.max(0, sessions - 1))}${market ? " measured in actual market-session distances" : " in filtered-row positions"}. sessions/horizon (${independentWindows.toFixed(2)}) is only a rough non-overlap count, not measured effective sample size. Not a promotion gate; paired portfolio-level OOS replay with costs is required.`
       : `${sessions} qualifying sessions yield a rough ${independentWindows.toFixed(2)} non-overlap windows (sessions ÷ horizon), not measured effective sample size; need at least ${MIN_SESSIONS} sessions and ${MIN_INDEPENDENT_WINDOWS} rough windows for descriptive classification.`,
   };
 }

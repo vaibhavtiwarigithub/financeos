@@ -76,7 +76,10 @@ export type Indicator =
   | { fn: "close" }
   | { fn: "open" }
   | { fn: "sma"; period: number }
+  /** Legacy simple-window RSI: retain semantics for frozen specifications. */
   | { fn: "rsi"; period: number }
+  /** Wilder recursive smoothing, explicitly distinct from the legacy operator. */
+  | { fn: "rsi_wilder"; period: number }
   /** True range of the last `period` bars, as a fraction of close. */
   | { fn: "range_pct"; period: number }
   /** Narrowest range in `period` bars (NR-n family): 1 when today's range is the
@@ -151,6 +154,6 @@ function usesClose(p: Predicate): boolean {
 function indicatorUsesClose(i: Indicator): boolean {
   // sma/rsi/range are derived FROM closes, so a predicate using them on the
   // signal bar also consumes that bar's close.
-  return i.fn === "close" || i.fn === "sma" || i.fn === "rsi"
+  return i.fn === "close" || i.fn === "sma" || i.fn === "rsi" || i.fn === "rsi_wilder"
     || i.fn === "range_pct" || i.fn === "is_narrowest_range";
 }

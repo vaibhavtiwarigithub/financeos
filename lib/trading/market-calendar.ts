@@ -50,6 +50,29 @@ export type MarketDayStatus = {
   calendarSupported: boolean;
 };
 
+/** Research-label close timestamp. Unknown years/special sessions fail closed.
+ * NYSE 2026 equity early closes: Nov 27 and Dec 24, 13:00 ET.
+ * Source: https://www.nyse.com/trade/hours-calendars
+ * Does not change the existing order/session-open gate.
+ */
+export function researchSessionCloseAt(market: "us" | "india", session: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(session)) return null;
+  const date = new Date(`${session}T12:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== session) return null;
+  if (getMarketDayStatus(market, date).kind !== "trading_day") return null;
+  const [year, month, day] = session.split("-").map(Number);
+  const early = market === "us" && ["2026-11-27", "2026-12-24"].includes(session);
+  const hour = market === "india" ? 15 : early ? 13 : 16;
+  const minute = market === "india" ? 30 : 0;
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: market === "us" ? "America/New_York" : "Asia/Kolkata",
+    hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(guess));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return guess - (Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute")) - guess);
+}
+
 function marketKey(market: string): "us" | "india" {
   return market === "india" ? "india" : "us";
 }

@@ -15,7 +15,10 @@ describe("score variant forward shadow wiring", () => {
   it("splits forward from hindsight on the registered declaration time", () => {
     expect(evaluator).toContain("Date.parse(r.ts) >= declaredMs");
     expect(evaluator).toContain("Date.parse(r.ts) < declaredMs");
-    expect(evaluator).toContain('sample === "forward" && ev.meetsAdoptionGate');
+    // A descriptive score diagnostic is not an executable portfolio replay.
+    // Neither hindsight nor forward IC alone can pass an adoption gate.
+    expect(evaluator).not.toContain('sample === "forward" && ev.meetsAdoptionGate');
+    expect(evaluator.match(/meets_adoption_gate: false/g)).toHaveLength(2);
   });
   it("refuses to run if the code's variants differ from the registered set", () => {
     expect(evaluator).toContain("code variants differ from the registered set");

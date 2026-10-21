@@ -8,6 +8,7 @@ import DimensionDiagnosticsSummary from "@/components/dashboard/DimensionDiagnos
 import DimensionIcPanel from "@/components/dashboard/DimensionIcPanel";
 import IcRegressionPanel from "@/components/dashboard/IcRegressionPanel";
 import CouncilIcPanel from "@/components/dashboard/CouncilIcPanel";
+import PredictionLabPanel from "@/components/dashboard/PredictionLabPanel";
 import EventIcPanel from "@/components/dashboard/EventIcPanel";
 import IndexSleevePanel from "@/components/dashboard/IndexSleevePanel";
 import ScoreVariantsPanel from "@/components/dashboard/ScoreVariantsPanel";
@@ -146,14 +147,15 @@ export default function LearningPage({
       )}
       <div style={{ padding: "clamp(12px, 4vw, 28px) clamp(12px, 4vw, 28px) 32px" }}>
 
-      <StrategyGovernancePanel />
+      <PredictionLabPanel />
+      <div id="strategy-evidence"><StrategyGovernancePanel /></div>
       <DimensionDiagnosticsSummary />
       <DimensionIcPanel />
       <IcRegressionPanel />
-      <CouncilIcPanel />
+      <div id="council-evidence"><CouncilIcPanel /></div>
       <EventIcPanel />
       <IndexSleevePanel />
-      <ScoreVariantsPanel />
+      <div id="formula-evidence"><ScoreVariantsPanel /></div>
       <ScoreFormulaMiningPanel />
       <MacroContextPanel market={market} />
       {market === "us" && <ScoreVariantsPanel set="insider_v2" />}

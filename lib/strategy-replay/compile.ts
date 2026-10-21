@@ -62,7 +62,7 @@ function sma(closes: number[], end: number, period: number): number | null {
   return sum / period;
 }
 
-/** Wilder RSI, the standard definition. Frozen: changing it is a new ruleVersion. */
+/** Legacy simple-window RSI. Retained for immutable v1 specs; not Wilder RSI. */
 function rsi(closes: number[], end: number, period: number): number | null {
   if (end < period) return null;
   let gain = 0, loss = 0;
@@ -71,11 +71,27 @@ function rsi(closes: number[], end: number, period: number): number | null {
     if (d >= 0) gain += d; else loss -= d;
   }
   let avgGain = gain / period, avgLoss = loss / period;
-  // Seed then smooth is the textbook form; with a single window this reduces to
-  // the simple average, which is what the seed period means.
+  // This legacy operator intentionally does not recursively smooth.
   if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
+}
+
+export function wilderRsi(closes: readonly number[], end: number, period: number): number | null {
+  if (!Number.isInteger(period) || !Number.isInteger(end) || period < 1 || end < period || end >= closes.length) return null;
+  if (!closes.slice(0, end + 1).every(Number.isFinite)) return null;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const delta = closes[i] - closes[i - 1];
+    gain += Math.max(0, delta); loss += Math.max(0, -delta);
+  }
+  gain /= period; loss /= period;
+  for (let i = period + 1; i <= end; i++) {
+    const delta = closes[i] - closes[i - 1];
+    gain = (gain * (period - 1) + Math.max(0, delta)) / period;
+    loss = (loss * (period - 1) + Math.max(0, -delta)) / period;
+  }
+  return loss === 0 ? (gain === 0 ? 50 : 100) : 100 - 100 / (1 + gain / loss);
 }
 
 function rangePct(bars: Bar[], end: number, period: number): number | null {
@@ -111,6 +127,7 @@ function indicatorValue(ind: Indicator, ctx: EvalCtx): number | null {
     case "open": return bars[idx].open;
     case "sma": return sma(closes, idx, ind.period);
     case "rsi": return rsi(closes, idx, ind.period);
+    case "rsi_wilder": return wilderRsi(closes, idx, ind.period);
     case "range_pct": return rangePct(bars, idx, ind.period);
     case "is_narrowest_range": return isNarrowestRange(bars, idx, ind.period);
     case "return_pct_from_entry":

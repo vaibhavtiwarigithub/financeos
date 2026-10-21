@@ -4,14 +4,15 @@
 // rule into events, run the existing portfolio simulator, mark a deterministic
 // NAV/benchmark path, and persist a sealed result to `backtest_experiments`.
 //
-// Every run registers its specification in `trial_family_ledger` FIRST, so the
-// multiple-testing denominator is the family's true total and cannot reset.
+// A persistence attempt registers its specification in `trial_family_ledger`
+// FIRST. GET is exploratory and never registers; it cannot seal evidence.
 //
 // NEGATIVE CONTROLS RUN ALONGSIDE EVERY REQUEST. If a rule that cannot have an
 // edge reports one, the seam is wrong -- debug the seam, not the strategy.
 //
 // GET  = dry run, returns the result and writes nothing.
-// POST = persists. Owner or cron only.
+// POST = registers the attempt, then refuses sealing until purged OOS exists.
+// Owner or cron only.
 //
 // Changes no score, position, order, stop, target or broker state.
 import { NextRequest, NextResponse } from "next/server";
@@ -219,7 +220,7 @@ async function run(req: NextRequest, persist: boolean) {
   for (const spec of specs) {
     // Register FIRST: a spec that ran is a trial whether or not it produced a
     // usable result.
-    const { data: reg } = await svc.rpc("register_trial", {
+    const registration = persist ? await svc.rpc("register_trial", {
       p_family: TRIAL_FAMILY,
       p_spec_fingerprint: specFingerprint(spec),
       p_kind: spec.role === "negative_control" ? "rule" : "rule",
@@ -228,7 +229,9 @@ async function run(req: NextRequest, persist: boolean) {
       p_registered_by: "strategy-replay-route",
       p_code_version: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
       p_adapted_from: spec.adaptedFrom ?? null,
-    });
+    }) : { data: null, error: null };
+    if (registration.error) return NextResponse.json({ error: "Trial registration failed; replay refused" }, { status: 500 });
+    const reg = registration.data;
     const trial = Array.isArray(reg) ? reg[0] : reg;
     results.push({ ...(await replayOne(svc, spec, bars, bench)), trial });
   }
@@ -236,6 +239,7 @@ async function run(req: NextRequest, persist: boolean) {
   const trialsConsidered = Math.max(1, ...results.map((r: any) => r.trial?.trials_considered ?? 1));
   const payload = {
     trialFamily: TRIAL_FAMILY,
+    trialCountIsPreview: !persist,
     barCount,
     trialsConsidered,
     results,
