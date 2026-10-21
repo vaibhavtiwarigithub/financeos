@@ -172,6 +172,24 @@ export async function POST(req: NextRequest) {
   } else {
     await resolveIssue("crypto-native-universe-coverage", supabase);
   }
+  const staleCandleSymbols = targets.flatMap((pair) => {
+    const latestDate = cryptoCompletedCandles(candleResults.get(pair.symbol)?.candles ?? []).at(-1)?.date ?? null;
+    return latestDate === expectedSession ? [] : [{ symbol: pair.symbol, observedSession: latestDate }];
+  });
+  if (staleCandleSymbols.length > 0) {
+    const details = staleCandleSymbols
+      .map(({ symbol, observedSession }) => `${symbol} (${observedSession ?? "no completed candle"})`)
+      .join(", ");
+    await reportIssue({
+      issueKey: "crypto-native-daily-candle-freshness",
+      severity: "warn",
+      category: "data",
+      title: `Crypto research candle coverage partial (${fresh}/${targets.length})`,
+      detail: `Expected completed UTC session ${expectedSession}. Missing or stale daily candles: ${details}. These symbols were refused; no stale candle was scored or traded.`,
+    }, supabase);
+  } else {
+    await resolveIssue("crypto-native-daily-candle-freshness", supabase);
+  }
   return NextResponse.json({ success: true, run_id: run.id, expected_session: expectedSession, fresh_daily_evidence: fresh, admitted, refusals: rows.filter((row) => !row.admitted).map((row) => ({ symbol: row.symbol, reason: row.refusal_reason })) });
 }
 

@@ -222,6 +222,17 @@ unchanged. The guarded migration refuses unexpected RPC source drift and was
 first executed inside a rolled-back transaction. RPC mandate version is integer 1;
 the descriptive policy name stays in the snapshot, not in the integer argument.
 
+### Research-feed health follow-up — 2026-10-20
+
+The daily collector now raises the stable System Health issue
+`crypto-native-daily-candle-freshness` whenever one or more selected research
+targets lack a completed candle for the expected UTC session. Its detail lists
+only the affected symbols and last observed session; the existing persisted
+universe run/member rows remain the source of full provider provenance. The
+collector resolves this issue only after every selected target has a current
+completed candle. This is an observability repair: stale/missing symbols remain
+refused, and it changes no candidate score, paper fill, stop/target, or live gate.
+
 - no leverage, perpetuals, options, staking yield, lending, DeFi, transfers, or
   custody/wallet functionality;
 - no on-chain metric until it is licensed, point-in-time, and coverage-audited;

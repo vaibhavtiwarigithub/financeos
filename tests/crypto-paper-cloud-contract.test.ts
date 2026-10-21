@@ -84,4 +84,13 @@ describe("crypto paper Stage 3 cloud contract", () => {
     expect(entry).not.toContain("crypto_native_paper_execution_evidence_pending");
     expect(entry).toContain("fetchCryptoCandles(symbol, avKey ?? \"\")");
   });
+
+  it("surfaces incomplete daily-candle coverage in System Health and auto-resolves on recovery", () => {
+    const research = read("app/api/agents/crypto-research-shadow/route.ts");
+    expect(research).toContain('issueKey: "crypto-native-daily-candle-freshness"');
+    expect(research).toContain("staleCandleSymbols.length > 0");
+    expect(research).toContain('severity: "warn"');
+    expect(research).toContain('await resolveIssue("crypto-native-daily-candle-freshness", supabase)');
+    expect(research).toContain("no completed candle");
+  });
 });

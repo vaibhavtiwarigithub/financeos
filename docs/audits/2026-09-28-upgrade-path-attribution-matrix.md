@@ -1,5 +1,28 @@
 # Upgrade Path attribution matrix (baseline audit 2026-09-28; production recheck 2026-09-29)
 
+## Production recheck — 2026-10-20
+
+The ledger is still **not a portfolio-P&L attribution system for every Upgrade
+Path item**. A read-only production query found 19 rows, all `US / international-allocation /
+matched_replay / measured`, with `as_of_session` from 2025-07-18 through
+2026-10-19. There are no production attribution rows for India or for the
+stock-paper shadow programs. These international-allocation rows remain the
+synthetic fixed-allocation comparator described below; do not present them as a
+Kairos-paper-book counterfactual or use their average as the expected impact of
+another upgrade path.
+
+The Markowitz/covariance shadow is separately collecting risk diagnostics
+through `pipeline_stage_events`, not writing attribution rows: 19 US events
+through 2026-10-20 and 15 India events through 2026-10-19. Those events do not
+measure P&L improvement. Candidate histories below the 60-session contract
+remain `unmeasurable`, and the risk-only variant does not estimate expected
+returns.
+
+The remaining program-specific producer gaps and owner-defined replay arms in
+the matrix below therefore remain open. A row in the generic shadow book,
+signal-level IC, trade-level outcome, or covariance diagnostics is not a
+substitute for paired baseline/variant portfolio replay.
+
 ## 2026-09-29 follow-up
 
 Production recheck confirms the attribution ledger remains a synthetic fixed-allocation diagnostic, not Kairos-book P&L. The latest `international-allocation` producer run (2026-09-28, observed session 2026-09-25) refused to append a second immutable attribution row for the same program/version/session because its recomputed snapshot differed from the existing row. The existing result remains unchanged: net incremental return **−6.3191%**, 20 independent 63-session blocks, t = **−0.6947**. This is not evidence to promote international allocation. The source replay fingerprints for the same end date differ between Sep 26 and Sep 28; the underlying historical-price revision has not been identified, so the historical row must not be rewritten or treated as an idempotent retry.

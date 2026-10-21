@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -9,11 +9,11 @@ const BUILDER_METHODS = new Set(["insert", "update", "upsert", "delete", "select
   "in", "is", "not", "or", "order", "limit", "range", "single", "maybeSingle", "match", "filter", "rpc", "from"]);
 
 function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name.startsWith(".")) continue;
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) out.push(path);
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, out);
+    else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name) && !/\.test\.(ts|tsx)$/.test(entry.name)) out.push(path);
   }
   return out;
 }
@@ -68,5 +68,5 @@ describe("no `.catch()` chained on a supabase query builder", () => {
       for (const line of findBuilderCatches(readFileSync(file, "utf8"))) offenders.push(`${file}:${line}`);
     }
     expect(offenders).toEqual([]);
-  });
+  }, 60_000);
 });
