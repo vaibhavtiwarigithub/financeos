@@ -14,6 +14,7 @@ import { fetchNifty50Constituents } from "@/lib/nifty50-constituents";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
+import { activeScoredDimensions, applicableResearchDimensions, availableScoredDimensions, dimensionApplicability } from "@/lib/scoring/dimension-applicability";
 import { observationsFromLegacyMask, runDegradationGuard, symbolShapeOf } from "@/lib/evidence/degradation-runtime";
 import { persistObservedResearchEvidence } from "@/lib/evidence/observed-cache";
 import type { Market } from "@/lib/evidence/contracts";
@@ -210,34 +211,11 @@ const TRADING_ACCOUNT = process.env.TRADING_ACCOUNT_NUMBER ?? "965848641";
 export type Dimension = "fundamental" | "technical" | "sentiment" | "macro" | "insider" | "options" | "analyst";
 
 export function applicableDimensions(entry: SymbolEntry): Set<Dimension> {
-  const india = isIndia(entry.symbol);
-  const dims = new Set<Dimension>(["technical"]); // every tradable symbol has price evidence
-  // Crypto: 24/7, no company fundamentals/insider/options/analyst.
-  // Matches ETF precedent (sentiment + macro) but without fundamental neutral baseline.
-  if (CRYPTO_SYMBOLS.has(entry.symbol)) {
-    dims.add("macro");
-    dims.add("sentiment");
-    return dims;
-  }
-  if (india) {
-    dims.add("fundamental"); // Yahoo/Upstox fundamentals; no US-style insider/options/analyst
-    // India news evidence is collected in a separate shadow. It is deliberately
-    // not applicable to scoring until a validated feature is promoted.
-    // Replacement India news evidence is shadow-only until separately promoted.
-    return dims;
-  }
-  // MacroSentinel is backed by US-only FRED series and macro_regime has no
-  // market column. India therefore treats macro as structurally inapplicable,
-  // matching fetchMacroScore's honest unavailable result.
-  dims.add("macro");
-  if (entry.isEtf) {
-    dims.add("sentiment"); // ETFs carry social/news sentiment but no single-company fundamentals/insider/analyst
-    return dims;
-  }
-  // US individual equity — all dimensions, except insider for ADRs (no Form 4).
-  dims.add("fundamental"); dims.add("sentiment"); dims.add("options"); dims.add("analyst");
-  if (!isReviewedAdr(entry.symbol)) dims.add("insider");
-  return dims;
+  return applicableResearchDimensions({
+    symbol: entry.symbol,
+    market: isIndia(entry.symbol) ? "india" : "us",
+    isEtf: entry.isEtf,
+  }) as Set<Dimension>;
 }
 
 export type DiscoverySource =
@@ -1556,7 +1534,8 @@ export async function processSymbol(
   evidenceRunId?: string | null,
   writeContext?: ResearchSignalWriteContext,
 ): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number; obsId: number | null }> {
-  const { symbol, isHeld, isEtf, assetClass = "us_equity" } = entry;
+  const { symbol, isHeld, assetClass = "us_equity" } = entry;
+  const isEtf = entry.isEtf || canonicalIsEtfSymbol(symbol);
   const source: string = isHeld ? "holding" : "screener";
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
   const fundamentalMaxAgeDays = entry.fundamentalMaxAgeDays ?? DEFAULT_FUNDAMENTAL_MAX_AGE_DAYS;
@@ -1570,7 +1549,7 @@ export async function processSymbol(
   // Structural capability map — a dimension a symbol can't have is never fetched
   // (ETF fundamentals, ADR insider, India US-only sources). Missing dimensions
   // are already excluded from the weighted score via the availability mask.
-  const applicable = applicableDimensions(entry);
+  let applicable = applicableDimensions(entry);
 
   // Phase 0: fetch all real data in parallel — no LLM-generated numbers
   const [socialResult, insiderResult, fundamentalResult, candleResult, fiiDii] = await Promise.all([
@@ -1733,6 +1712,22 @@ export async function processSymbol(
     },
   });
 
+  // Refine the structural mask using the computed fundamental contract. For
+  // example, a REIT must be fetched to identify its sector, but the scorer
+  // explicitly returns a neutral placeholder until FFO/AFFO evidence exists.
+  // Such a placeholder is not a real signal and must not dilute other factors.
+  const scoredApplicability = dimensionApplicability({
+    symbol,
+    market: india ? "india" : "us",
+    isEtf,
+    fundamentalEvidence: (scores.evidence as any)?.fundamental ?? null,
+  });
+  const scoredDimensions = activeScoredDimensions(scoredApplicability);
+  for (const dim of SCORE_DIMENSIONS) {
+    if (scoredDimensions.has(dim)) applicable.add(dim);
+    else applicable.delete(dim);
+  }
+
   // Transitional Router compatibility bridge. It writes the evidence already
   // fetched above into the canonical cache; it never performs another provider
   // request and remains observational while router_enabled=false.
@@ -1857,8 +1852,8 @@ export async function processSymbol(
   // Shared with lib/validation/engine.ts (computeWeightedAnalystScore) so a
   // challenger is validated against the SAME scoring rule that runs live.
   const dq = scores.dataQuality ?? ({} as any);
-  const included: DimensionRecord<boolean> = {
-    fundamental: !isEtf && dq.fundamentalDataAvailable === true,
+  const included = availableScoredDimensions(scoredApplicability, {
+    fundamental: dq.fundamentalDataAvailable === true,
     // scoreTechnicals/computeTechnicals both require >=15 candles before
     // computing a real RSI(14)/EMA20 — below that they already return neutral
     // 50 internally, but this check previously only required >0 candles, so a
@@ -1867,7 +1862,7 @@ export async function processSymbol(
     sentiment: dq.sentimentDataAvailable === true,
     macro: dq.macroDataAvailable === true,
     insider: dq.insiderDataAvailable === true,
-  };
+  });
   const weightOf = applyStrategyTilt<ScoreDimension>(
     { fundamental: fw, technical: tw, sentiment: sw, macro: mw, insider: iw },
     tradingMandate.strategy_preference,
@@ -2375,7 +2370,9 @@ export async function processSymbol(
     const f = scores.evidence?.fundamental as Record<string, unknown> | undefined;
     if (!f) return null;
     return {
-      status: isEtf ? "inapplicable" : (scores.dataQuality?.fundamentalDataAvailable ? "available" : "unavailable"),
+      status: scoredApplicability.fundamental.state === "not_applicable" ? "inapplicable"
+        : scoredApplicability.fundamental.state === "not_enabled" ? "not_enabled"
+        : (scores.dataQuality?.fundamentalDataAvailable ? "available" : "unavailable"),
       note: f.note ?? null,
       symbol: f.symbol ?? null,
       sector: f.sector ?? null,
@@ -2551,6 +2548,7 @@ export async function processSymbol(
         },
         ...(scores.evidence ?? {}), regime, ...(screener ? { screener } : {}), ...(discovery ? { discovery } : {}),
         weighting: { renormalized, included_dims: includedDims, base_weights: weightOf, applied_weights: effWeights },
+        dimension_applicability: { version: "dimension-applicability.v1", dimensions: scoredApplicability },
         trading_mandate: tradingMandate,
         trade_plan: tradePlan,
         ...(instrumentFamilyEvidence ? { instrument_family_evidence: instrumentFamilyEvidence } : {}),
@@ -2577,14 +2575,16 @@ export async function processSymbol(
         // for rows written from this version forward.
         quality: Object.fromEntries(
           (["fundamental","technical","sentiment","macro","insider"] as const).map(dim => {
-            const isApplicable = applicable.has(dim as "fundamental"|"technical"|"sentiment"|"macro"|"insider"|"options"|"analyst");
+            const applicability = scoredApplicability[dim];
+            const isApplicable = applicability.state === "applicable";
             const isPresent = included[dim] ?? false;
             const isDegraded = isPresent && !includedDims.includes(dim);
-            const state = !isApplicable ? "inapplicable"
+            const state = applicability.state === "not_applicable" ? "inapplicable"
+              : applicability.state === "not_enabled" ? "not_enabled"
               : isPresent && !isDegraded ? "ok"
               : isDegraded ? "degraded"
               : "missing";
-            return [dim, { state }];
+            return [dim, { state, reason: applicability.reason }];
           })
         ),
       },

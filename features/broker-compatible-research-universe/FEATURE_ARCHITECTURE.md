@@ -1,6 +1,6 @@
 # Broker-Compatible Broad US Research Universe
 
-> Status: **Broad-universe program remains proposed.** A separately bounded,
+> Status: **Broad-universe program remains proposed; Stage 0 evidence is partial.** A separately bounded,
 > research-only capacity adjustment was implemented on 2026-10-19: India candidate
 > ceiling 8→10 and new-US-listing first-look cap 2→4. No catalog schema, new
 > ingestion source, schedule, score, eligibility, paper, or live-order behavior
@@ -8,6 +8,27 @@
 > Last revised: 2026-10-19.
 > Money-path influence: **none**. A broker preflight immediately before an order
 > remains the only broker-tradability authority.
+
+### Stage 0 evidence refresh — 2026-10-20
+
+Production verification is recorded in
+[`STAGE_0_EVIDENCE_2026-10-20.md`](./STAGE_0_EVIDENCE_2026-10-20.md). Alpaca's
+existing evidence-only adapter successfully returned fresh, adjusted IEX daily
+bars for seven sampled US symbols (219 bars each, 2025-12-05 through 2026-10-20)
+after paper credentials were configured. A separate read-only Alpaca MCP sample
+returned seven recent IEX daily sessions for 24 additional, sector-diverse
+large-cap symbols. A prior `auth_missing` call predates the production setup.
+The response feed is IEX, not consolidated SIP, so this demonstrates
+connectivity and a useful diagnostic sample—not all-VOO coverage, measured price
+agreement, intraday execution readiness, or permission to change scoring.
+
+The same-day US regular research pass had 101 eligible symbols, 73 successful,
+and 28 deferred; the discovery-only run completed 15. The current workload is
+already bounded by deferrals. Cached US classifications cover sector/exchange
+for 169 of 250 profiles but industry for none. The Stage 0 gates for a stratified
+Alpaca coverage comparison, full source/retention terms, NYSE reference coverage,
+classification contract, historical membership, and $2m/$5m/$10m liquidity arms
+remain open. No full-US daily cap increase or scoring-source change is justified.
 
 ### Bounded capacity decision — 2026-10-19
 

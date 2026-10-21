@@ -147,7 +147,7 @@ function isScorablePe(pe: number): boolean {
 export function scoreFundamentals(overview: Record<string, string>, isEtf: boolean, currentPrice?: number): { score: number; evidence: Record<string, unknown> } {
   if (isEtf) {
     // ETFs have no P/E/earnings — use a neutral baseline (momentum drives the score elsewhere).
-    return { score: 55, evidence: { note: "ETF — no company fundamentals; neutral 55 baseline" } };
+    return { score: 55, evidence: { applicability: "not_applicable", note: "ETF — no company fundamentals; neutral 55 baseline" } };
   }
   if (isReitSector(overview?.Sector)) {
     // See isReitSector's comment: every component this function scores
@@ -158,7 +158,7 @@ export function scoreFundamentals(overview: Record<string, string>, isEtf: boole
     // neutral baseline instead of scoring on a distorted number. Revisit
     // once a real FFO/AFFO data source exists and production evidence
     // (currently n=1) is enough to derive a validated REIT-specific formula.
-    return { score: 55, evidence: { note: "REIT — P/E, profit margin, ROE, and EPS are distorted by mandatory real-estate depreciation; neutral 55 baseline pending an FFO/AFFO data source", sector_raw: overview?.Sector ?? null } };
+    return { score: 55, evidence: { applicability: "not_enabled", note: "REIT — P/E, profit margin, ROE, and EPS are distorted by mandatory real-estate depreciation; neutral 55 baseline pending an FFO/AFFO data source", sector_raw: overview?.Sector ?? null } };
   }
   if (!overview?.Symbol) {
     // A real stock whose fundamentals just weren't fetched (rate limit / no key).

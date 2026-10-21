@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { computeWeightedAnalystScore } from "@/lib/scoring/weighted-score";
+import { activeScoredDimensions, dimensionApplicability } from "@/lib/scoring/dimension-applicability";
 
 /**
  * ETF fundamental is INAPPLICABLE — and nothing was checking it.
@@ -53,12 +54,16 @@ describe("ETF fundamental is inapplicable, not merely available", () => {
     expect(Math.abs(withConstant.score - withoutConstant.score)).toBeGreaterThan(5);
   });
 
-  it("the live path gates fundamental on !isEtf — the one line holding the invariant", () => {
-    // Route-shaped on purpose: the guard lives in the caller, not in the pure
-    // function, so no unit test of computeWeightedAnalystScore can reach it.
+  it("the live path gates fundamental on the shared applicability contract", () => {
     const agent = readFileSync("lib/research-agent.ts", "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, " ")
       .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-    expect(agent).toMatch(/fundamental:\s*!isEtf\s*&&\s*dq\.fundamentalDataAvailable\s*===\s*true/);
+    expect(agent).toMatch(/const included = availableScoredDimensions\(scoredApplicability,/);
+  });
+
+  it("marks a leveraged ETF fundamental dimension N/A in the shared model", () => {
+    const applicability = dimensionApplicability({ symbol: "SOXL", market: "us", isEtf: true });
+    expect(applicability.fundamental.state).toBe("not_applicable");
+    expect(activeScoredDimensions(applicability)).not.toContain("fundamental");
   });
 });

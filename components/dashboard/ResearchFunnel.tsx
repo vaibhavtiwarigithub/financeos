@@ -380,14 +380,24 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
               </section>}
 
               <div style={{ color: T.muted, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>Quant audit · how the available-evidence score was built</div>
+              <div style={{ color: T.muted, fontSize: "10px", marginBottom: "7px" }}>“Not applicable” means the factor does not describe this instrument; “Not enabled” means it could be relevant but is deliberately outside this market’s active formula. Both are excluded from this score. Missing data is shown separately.</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "8px", marginBottom: "14px" }}>
-                {Object.entries(s.dimensions).map(([dim, d]: [string, any]) => <div key={dim} style={{ background: T.surface, border: `1px solid ${d.state === "ok" ? T.border : T.amber + "44"}`, borderRadius: "8px", padding: "10px", opacity: d.state === "inapplicable" ? .68 : 1 }}>
-                  <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase" }}>{dim} · {d.state}</div>
-                  <div style={{ color: T.text, fontSize: "17px", fontWeight: 800, margin: "3px 0" }}>{d.state === "inapplicable" || d.state === "missing" ? "Not used" : d.score ?? "—"}</div>
+                {Object.entries(s.dimensions).map(([dim, d]: [string, any]) => {
+                  const statusLabel = d.state === "inapplicable" ? "Not applicable"
+                    : d.state === "not_enabled" ? "Not enabled"
+                    : d.state === "ok" ? "Used"
+                    : d.state === "missing" ? "Missing data"
+                    : d.state === "degraded" ? "Degraded"
+                    : titleCase(d.state);
+                  const excluded = d.state === "inapplicable" || d.state === "not_enabled";
+                  return <div key={dim} style={{ background: T.surface, border: `1px solid ${d.state === "ok" ? T.border : T.amber + "44"}`, borderRadius: "8px", padding: "10px", opacity: excluded ? .72 : 1 }}>
+                  <div style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase" }}>{dim} · {statusLabel}</div>
+                  <div style={{ color: T.text, fontSize: "17px", fontWeight: 800, margin: "3px 0" }}>{excluded || d.state === "missing" ? "Not used" : d.score ?? "—"}</div>
                   <div style={{ color: T.textSub, fontSize: "10px" }}>weight {Math.round((d.weight ?? 0) * 100)}% · contributes {d.contribution ?? 0} pts</div>
                   {d.note && <div style={{ color: T.muted, fontSize: "10px", marginTop: "5px", lineHeight: 1.4 }}>{d.note}</div>}
-                  {d.state !== "inapplicable" && Object.keys(d.evidence ?? {}).length > 0 && <div style={{ color: T.muted, fontSize: "10px", marginTop: "5px", lineHeight: 1.45 }}>{Object.entries(d.evidence).map(([k, v]) => `${k.replaceAll("_", " ")}: ${pretty(v)}`).join(" · ")}</div>}
-                </div>)}
+                  {!excluded && Object.keys(d.evidence ?? {}).length > 0 && <div style={{ color: T.muted, fontSize: "10px", marginTop: "5px", lineHeight: 1.45 }}>{Object.entries(d.evidence).map(([k, v]) => `${k.replaceAll("_", " ")}: ${pretty(v)}`).join(" · ")}</div>}
+                </div>;
+                })}
               </div>
 
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", padding: "10px 0", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, marginBottom: "12px" }}>

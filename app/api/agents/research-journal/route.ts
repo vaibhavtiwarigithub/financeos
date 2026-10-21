@@ -294,18 +294,27 @@ export async function GET(req: NextRequest) {
       || Boolean(instrument?.family && (instrument.family.endsWith("_etf") || instrument.family.endsWith("_fund")));
     const weighting = obs.features?.weighting ?? {};
     const quality = obs.features?.quality ?? {};
+    const dimensionApplicability = obs.features?.dimension_applicability?.dimensions ?? null;
     const rationale = signal?.rationale ?? packet?.summary ?? null;
     const dimensions = Object.fromEntries(DIMS.map(dim => {
       const score = obs[`${dim}_score`];
       const weight = Number(weighting.applied_weights?.[dim] ?? obs.weights_used?.[dim] ?? 0);
-      const state = quality?.[dim]?.state ?? (obs.availability_mask?.[dim] ? "ok" : "missing");
+      const structural = dimensionApplicability?.[dim];
+      const legacyFundInapplicable = !structural && isFund && (dim === "fundamental" || dim === "insider");
+      const state = structural?.state === "not_applicable" || legacyFundInapplicable ? "inapplicable"
+        : structural?.state === "not_enabled" ? "not_enabled"
+        : quality?.[dim]?.state ?? (obs.availability_mask?.[dim] ? "ok" : "missing");
       const feature = obs.features?.[dim] ?? {};
       return [dim, {
-        score, weight, contribution: Number.isFinite(score) && Number.isFinite(weight) ? Number((score * weight).toFixed(2)) : null,
-        state, note: feature?.note ?? null, evidence: compactEvidence(feature),
+        score, weight: ["inapplicable", "not_enabled"].includes(state) ? 0 : weight,
+        contribution: ["inapplicable", "not_enabled"].includes(state) ? 0
+          : Number.isFinite(score) && Number.isFinite(weight) ? Number((score * weight).toFixed(2)) : null,
+        state,
+        note: structural?.reason ?? quality?.[dim]?.reason ?? feature?.note ?? null,
+        evidence: ["inapplicable", "not_enabled"].includes(state) ? {} : compactEvidence(feature),
       }];
     }));
-    if (isFund) {
+    if (isFund && !dimensionApplicability) {
       dimensions.fundamental.state = "inapplicable";
       dimensions.fundamental.weight = 0;
       dimensions.fundamental.contribution = 0;
@@ -331,7 +340,7 @@ export async function GET(req: NextRequest) {
     const earliest = history.length ? history[history.length - 1] : null;
     const held = Boolean(packet?.is_held_position);
     const discoveryState = held ? "holding" : history.length <= 1 ? "new" : "recurring";
-    const applicableDims = DIMS.filter(dim => dimensions[dim].state !== "inapplicable");
+    const applicableDims = DIMS.filter(dim => !["inapplicable", "not_enabled"].includes(dimensions[dim].state));
     const usableDims = applicableDims.filter(dim => dimensions[dim].state === "ok");
     const baseWeights = weighting.base_weights ?? obs.weights_used ?? {};
     const structuralWeight = applicableDims.reduce((sum, dim) => sum + Math.max(0, Number(baseWeights[dim] ?? 0)), 0);

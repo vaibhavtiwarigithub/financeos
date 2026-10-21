@@ -57,3 +57,10 @@ oos-sigma-*.json
 tmp/
 output/
 __pycache__/
+
+# Temporary local verification outputs (keep source tests and fixtures tracked).
+/.next-*/
+/.codex-*-tests.json
+/.codex-vitest*.json
+/tmp-review-sep25-tests.json
+/tsconfig.*.tsbuildinfo

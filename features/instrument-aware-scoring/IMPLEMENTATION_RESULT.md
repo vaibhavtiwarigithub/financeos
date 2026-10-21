@@ -53,3 +53,22 @@ curated ETF cohort in the new ledger. Every family therefore remains below the
 - Supabase migrations `20260824183930`, `20260824185010`, and
   `20260824190302`: applied and directly verified.
 - Production Vercel deployment: Ready.
+
+## Owner-approved applicability correction (2026-10-20)
+
+The owner later explicitly approved correcting structurally invalid dimensions
+so they do not contribute to a symbol's composite. This is separate from
+promoting any family-specific shadow feature. The shared
+`dimension-applicability.v1` contract now gates both evidence-only collection
+and the five-dimension availability mask, persists per-dimension state/reason in
+the existing decision feature JSON, and labels the states in Research Journal.
+It corrects India-listed ETF ordering and prevents a present-but-disabled India
+feed from entering the score. This can change research scores/paper eligibility
+for affected instruments; it does not change base weights, thresholds, sizing,
+exits, order controls, or live flags. India funds with only one applicable
+dimension still abstain under the existing minimum-two-dimension rule.
+
+Code and docs are local pending release. Focused verification and production
+deployment must be recorded here and in `WORK_LOG.md` before calling this
+change shipped. Pre-correction and post-correction score observations must be
+kept separate by code version.
