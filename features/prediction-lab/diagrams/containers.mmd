@@ -1,0 +1,16 @@
+C4Container
+  title Prediction Lab - Existing Deployments and Proposed Responsibilities
+  Person(owner, "Owner", "Reviews evidence and authorizes research")
+  System_Boundary(kairos, "Kairos") {
+    Container(web, "Web application", "Next.js and React", "Learning views and authorized research handlers")
+    ContainerDb(db, "Evidence database", "Supabase Postgres", "Immutable observations and experiment records")
+    Container(workers, "Existing local membership workers", "Official signed-in CLIs", "Return bounded council job results")
+  }
+  System_Ext(schedule, "Existing schedulers", "Invoke authenticated evaluators")
+  System_Ext(api, "LLM provider APIs", "Metered bounded inference")
+  Rel(owner, web, "Reviews reports and approves experiments", "HTTPS")
+  Rel(schedule, web, "Invokes existing evaluation handlers", "Authenticated HTTPS")
+  Rel(web, db, "Reads evidence and appends results", "Supabase server client")
+  Rel(web, api, "Requests approved frozen forecasts", "HTTPS")
+  Rel(workers, web, "Claims jobs and submits validated results", "Scoped HTTPS")
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

@@ -1,0 +1,14 @@
+C4Context
+  title Prediction Lab - Proposed System Context
+  Person(owner, "Owner", "Reviews evidence and approves experiments")
+  Person(viewer, "Permitted viewer", "Reads authorized evidence only")
+  System(kairos, "Kairos", "Trading OS with isolated research lab")
+  System_Ext(data, "Market evidence providers", "Timestamped financial observations")
+  System_Ext(models, "LLM providers and official clients", "Bounded forecasts and hypothesis proposals")
+  System_Ext(brokers, "Connected brokers", "Existing account and execution paths")
+  Rel(owner, kairos, "Reviews and authorizes research", "HTTPS")
+  Rel(viewer, kairos, "Reads permitted evidence", "HTTPS")
+  Rel(kairos, data, "Collects as-of evidence", "HTTPS")
+  Rel(kairos, models, "Requests frozen research outputs", "API or existing worker protocol")
+  Rel(kairos, brokers, "Uses existing trading paths only", "Existing broker integrations")
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
