@@ -1,8 +1,8 @@
 # Prediction Lab: evidence-led council, formula and strategy improvement
 
-**Status: PROPOSED — architecture and review only. Not approved for implementation.**
+**Status: PROPOSED — architecture reviewed by Claude 2026-10-21 (verdict: REVISE, then approve P0–P1 only). Not approved for implementation.**
 
-Version: 1.0 · Author: Codex · Requested by the owner: 2026-10-21.
+Version: 1.1 (Claude review revision; see "Review revision log" at the end of section 20 and `CLAUDE_REVIEW_FINDINGS.md`) · Author: Codex · Reviewer: Claude · Requested by the owner: 2026-10-21.
 Source baseline: `main` at `4d4e7b309e357625863deff11fc5df4cd0d678b5`.
 Implementation status of this proposal: none. No migration, inference, experiment
 registration, roster change, order, scoring change or production activation is
@@ -106,7 +106,10 @@ in section 5 are a separate dated snapshot, not inferred from these files.
 | `app/api/agents/score-variants/evaluate/route.ts` | Existing scheduled formula evaluator | Keep old declarations, samples and metric versions intact |
 | `lib/learning/dimension-diagnostics.ts`; `lib/edges/` | Dimension diagnostics, registered technical edges and OOS validation contracts | Do not assume their sample floors or manifests match council/strategy experiments |
 | `lib/strategy-replay/rule-spec.ts`, `compile.ts`, `nav-marker.ts`, `negative-control.ts` | Declarative rules, numerical compiler, NAV and controls | Already built. Validate indicator semantics, multi-asset cash handling and costs before widening scope |
-| `app/api/agents/strategy-replay/route.ts` | Existing seam/proof route | Presently a hardcoded US VOO trend demonstration; POST refuses sealing without purged OOS. GET also calls `register_trial` despite its dry-run comment |
+| `app/api/agents/strategy-replay/route.ts` | Existing seam/proof route | Presently a hardcoded US VOO trend demonstration; POST refuses sealing without purged OOS. GET also calls `register_trial` (route.ts:222) before the `persist` branch despite the header comment "GET … writes nothing" (route.ts:13). Verified: `register_trial` is idempotent per `(family, spec_fingerprint)` under an advisory lock and returned `was_new=false` on repeats, so repeated GETs do not inflate the count (ledger has 4 rows). It is a contract violation and a one-time side effect, not a runaway; severity P1 (was P0 in the draft). Fix: split registration out of the dry-run path or make GET compute the fingerprint only |
+| `lib/score-variants/core.ts` + tables `score_variant_registry` / `score_variant_eval_runs` | Already a pre-registered immutable declaration table (append-only trigger, `declared_at`) and a paired variant-vs-baseline evaluation table keyed by `variant_set`/`variant_id`/`market`/`sample`/`horizon_days`. Reused 2026-10-14 for the insider-v2 test (baseline slot carries insider v1 from the same filings), proving the pattern generalizes beyond composite weights | Primary candidate to host Prediction Lab's formula-lane manifests and paired results instead of new tables (section 14). `meetsAdoptionGate` is now hard-coded `false` (core.ts:147): this evaluator can no longer authorize adoption, only describe |
+| `insider_v2_shadow`, `llm_event_*` / `EventIcPanel`, `india_sleeve_shadow_nav`, `live_recommendation_*` (2026-10-14 shadows) | Existing measure-only producers with their own panels | The draft's reuse map omitted them. Prediction Lab's Overview should link them (formula lane: insider v2; event lane: India LLM events) rather than rebuild |
+| `llm_council_ic_runs` | Per-series IC with `series_key`, `cohort_key`, `forecast_model`, `qualifying_sessions`, `independent_windows`, `t_stat`, `classification` | Has no paired-delta or baseline columns; the council-vs-deterministic delta must be computed from its inputs or added as nullable columns, not as a new table |
 | `lib/strategy-replay/template-shadow-contract.ts` | Complete template/combination fingerprint | Parser support is not evidence of deployed storage, compiler semantics or a scheduled tournament |
 | `lib/edges/folds.ts`, `oos-experiment.ts` | Chronological folds and sealed OOS manifests | Reuse only after verifying interval purging, calendar and market contracts; do not call a full-sample replay OOS |
 | `lib/shadows/paired-portfolio-replay.ts`, `attribution-writer.ts`, `attribution.ts` | Shared simulation/NAV plumbing, immutable attribution validation/writer | A generic helper is not a program-specific producer or full production-engine parity |
@@ -125,8 +128,10 @@ not proof that the external-strategy replay engine is absent: it is the
 mandate-level book ledger. Preserve the distinction documented in
 `features/external-strategy-discovery/LEDGER_MAP.md`.
 
-The strategy route's GET/registration mismatch is an explicit P0 review item;
-do not invoke that GET as a supposedly read-only production diagnostic.
+The strategy route's GET/registration mismatch is a P1 review item (downgraded
+from P0 after verifying `register_trial` idempotency); still do not invoke that
+GET as a supposedly read-only production diagnostic, because the first call for
+any *changed* rule fingerprint permanently adds a trial to the family denominator.
 
 ## 5. Dated production evidence, not a readiness claim
 
@@ -152,6 +157,13 @@ Read-only inspection on 2026-10-21 found:
 - The inspected attribution ledger contains 19 measured rows only for US
   international-allocation, a synthetic fixed-allocation diagnostic, not an
   isolated stock-selection/council portfolio result.
+
+**Claude re-verification, 2026-10-21 (read-only SQL against production; batch `2026-10-20 23:47:54 UTC`):** every number above reproduced exactly (US DeepSeek all-research h2 +0.309/5 sessions and h5 +0.335/2; India h2 −0.108/6 and h5 −0.318/3; US availability-aligned median h2 +0.110/3 and h5 +0.219/1; registry counts 3 fixed + 1 insider-v2 + 9 mined; `strategy_template_shadow_configs` does not exist). Additional facts the original draft did not record:
+
+- **The council tracks the deterministic score almost exactly.** US all-research h2: deterministic `analyst_score_paired` +0.332, 50/50 blend +0.332, API median/DeepSeek +0.309; h5: deterministic +0.398 vs median +0.335. India h2: deterministic −0.171 vs council −0.108. Debated and independent series are identical to the digit (zero debate rounds). The prompt contains the deterministic score, so the council's *incremental* information is currently unmeasured; the paired delta against the deterministic series is the first question, and it needs no new inference (see P1).
+- **Realized subscription roster in the labelled cohort:** `claude-sonnet-4-6` and `gpt-5.6-sol` cover 103 observations and 1 session at h2; `claude-sonnet-5-5` and `gpt-5.6-luna` cover 257–258 observations and 3 sessions. The members are not covering the same names, so any head-to-head must use the intersection.
+- **All these ICs rest on 1–6 sessions.** The 3-month US composite audit (`docs/audits/2026-10-14-us-book-vs-xlk-and-score-quality.md`) found rank IC +0.03 (t≈0.4); a +0.33 over five sessions is noise-scale, not a contradiction. Never show an IC without its session count.
+- `trial_family_ledger` holds 4 rows, all family `external-strategy-discovery-us-v1`, all registered by `strategy-replay-route`.
 
 Recheck these facts during review. They are not hardcoded rollout constants.
 The daily watchdog was extended separately to monitor council/formula evidence;
@@ -248,6 +260,8 @@ excluded when chronology matters; never backdate them.
    cannot stretch a five-session horizon into six or more sessions.
 5. Label symbol return and benchmark return separately; excess return is their
    difference. Never replace a missing benchmark-neutral label with raw return.
+
+**Verified defect in the existing builder (review finding P1-2):** `availability-label.ts:12-23` hard-codes the session close at 16:00 America/New_York (15:30 Asia/Kolkata). On a US early-close session (about three per year, 13:00 ET) a forecast made between 13:00 and 16:00 is treated as available *before* that session's close, so the label starts from a close that had already printed. Intl-based conversion handles DST correctly; the early-close table does not exist. The new label builder must take the close time per session from the market calendar (and fail closed for sessions with unknown close time), and India special sessions (e.g. Muhurat trading) must be calendar entries or unsupported, never regular-hours defaults. Add a fixture test for each.
 
 This is a new prospective comparison version. Existing observation-time API and
 delayed subscription evaluations remain intact as legacy descriptive series.
@@ -371,8 +385,16 @@ search; a reviewer must not tune them after seeing which candidate wins.
 Reject future references, centred windows, insufficient warm-up, incompatible
 units and close-dependent signals filled at that same close. A DSL extension
 changes compiler/version identity and needs indicator reference tests. In
-particular, audit the existing RSI implementation against its documented
-Wilder/smoothing semantics before reusing its name for a new experiment.
+particular, the existing RSI is **verified mislabelled** (review finding P1-3):
+`lib/strategy-replay/compile.ts:65-79` is documented as "Wilder RSI, the standard
+definition" but computes the simple average of gains and losses over the last
+`period` bars (the code comment concedes "with a single window this reduces to
+the simple average"); there is no Wilder recursive smoothing, so values differ
+from charting platforms, especially early in a series. No registered rule uses
+RSI (the only live rule is the VOO 200-session SMA trend), so nothing is
+silently wrong yet. Before any RSI rule is registered, either rename it
+(`rsi_simple`) or implement Wilder smoothing as a new `ruleVersion`, with
+reference-value tests; never reuse the name "RSI" for an unvalidated variant.
 
 Check canonical syntax similarity and empirical return/error correlation on
 training data only. A new-looking formula can duplicate an existing exposure.
@@ -431,6 +453,8 @@ predeclared sensitivity check. Missing qualifying dates must not compress
 distant sessions into adjacent lags: construct calendar-indexed pairs or use
 session-distance covariance. Minimum sample and degenerate variance checks
 return insufficient, not infinite t. Preserve old evaluator records.
+
+**Verified in code (`score-variants/core.ts:51-66, 99-109, 143`):** `hacMeanT` already uses a Bartlett kernel with lag `h−1`, but the lag counts *positions in the filtered list* of qualifying sessions, so a skipped session (cross-section below 15, a missing mark) makes distant dates adjacent. The paired spread delta is HAC-tested but `meetsAdoptionGate` is hard-coded false. Two proposals on top of the draft: (a) index the series by session number and insert explicit gaps (or use a session-distance covariance) before computing lags; (b) with `h=10` the lag is 9, so a series of 20–30 qualifying sessions has bandwidth ratio `(lag+1)/n` of 0.33–0.5, where the Newey–West t is known to be biased toward over-rejection and its normal reference is unreliable (the fixed-b literature, e.g. Kiefer–Vogelsang 2005, is the standard remedy; training-knowledge citation, not re-verified here). Until a fixed-b critical value or a block bootstrap/permutation reference is implemented and calibrated on simulated serially dependent nulls, display the t as `descriptive` and label the interval method. This is a proposal, not a proven rule.
 
 Use a session/block-resampling sensitivity check for larger confirmatory
 samples, resampling common dates and all paired methods together. Do not treat
@@ -575,6 +599,18 @@ approved or a requirement to create five tables regardless of reuse findings.
 | `prediction_comparison_points` | Immutable experiment/method/observation/horizon/label-version point; canonical source refs, availability, score/outcome refs and inclusion/exclusion reason | Existing council forecasts and observations remain authoritative. Retain references/hashes and only essential derived comparison values; never copy secrets or whole prompts into a second ledger |
 | `prediction_comparison_runs` | Immutable evaluation batch, source manifest/hash, paired sample hash, statistics version, coverage, result and inference scope | Existing family evaluators remain canonical for legacy results; new paired comparisons need provenance they do not currently store |
 | `prediction_review_notes` | Structured hypothesis/proposal with evidence references and as-of lineage | Reuse an existing compatible note store if its immutability, access and temporal contracts suffice |
+
+**Reviewed disposition (Claude, 2026-10-21) — replaces the five-record plan.** Production already has an immutable declaration table (`score_variant_registry`: append-only trigger, `declared_at`, `weights` jsonb), a paired candidate-vs-baseline result table (`score_variant_eval_runs`), an append-only council IC table (`llm_council_ic_runs`), a trial denominator with an advisory-locked idempotent registrar (`register_trial` / `trial_family_ledger`), sealed experiments (`backtest_experiments`) and an attribution ledger. The five proposed records are therefore reduced as follows; none is created in P0–P1:
+
+| Draft record | Disposition | Why |
+|---|---|---|
+| `prediction_experiment_specs` | **Extend** `score_variant_registry` in P2 (nullable `kind`, `definition_hash`, `spec jsonb`, `parent_id`) for formula/council-prompt declarations; strategy specs stay in `trial_family_ledger` | Already immutable and keyed by set/id with `declared_at`. A second manifest table creates two editable truths and two declaration clocks |
+| `prediction_experiment_events` | **Drop** | Lifecycle is registry row + producer receipts (`upgrade_path_producer_runs`) + the owner permission already recorded in config. A generic event ledger has no consumer until P3 exists |
+| `prediction_comparison_points` | **Drop** (defer to evidence of need) | Points are deterministically recomputable from forecasts + labels + the frozen definition. Storing them is a cache, not authority, and doubles the storage of the largest tables. If audit replay of one cell is required, store the `sample_hash` and the source-manifest hash on the run row |
+| `prediction_comparison_runs` | **Extend** `llm_council_ic_runs` / `score_variant_eval_runs` with nullable `baseline_series_key`, `paired_delta_ic`, `paired_delta_ic_hac_t`, `common_sample_hash`, `statistics_version`; add a table only if the council and formula result shapes cannot share one view | Both already store per-cell sessions, windows, IC, t, classification, reason and a batch id. The genuinely missing facts are the pairing and the statistics version |
+| `prediction_review_notes` | **Defer to P6**; then a relational table (this one is genuinely new: no hypothesis/lesson store exists) | There is no critic until P6; creating the table earlier is speculative |
+
+Net new persistent objects through P5: **zero tables, nine nullable columns** (in the existing result/registry tables), plus a read-only projection route. Every column added must be additive and leave legacy rows readable.
 
 Forecasts continue through existing council run/forecast/turn/job/call ledgers;
 no alternate call accounting. Strategy trials stay in `trial_family_ledger`;
@@ -736,10 +772,10 @@ sequence does not authorize implementation before review/owner approval.
 
 | Phase | Deliverable | Exit gate |
 |---|---|---|
-| P0 — reconcile owners and contracts | Source/production matrix; calendar/availability, dry-run registration, replay sealing, indicator semantics and statistics audit | Verify existing schema/schedules; record exact defects and reuse owners. No inference or new trial. No unsafe legacy route invoked as read-only |
-| P1 — existing evidence visibility | Read-only Prediction Lab projection and symbol links using current evaluators | Real stored rows displayed, missing/immature vs broken distinguished, no new inference/schema unless justified; no fake cross-family ranking |
+| P0 — reconcile owners and contracts (**review: audit done, repairs pending**) | Source/production matrix is in `CLAUDE_REVIEW_FINDINGS.md`. Repairs to schedule: (1) strategy-replay GET must not register trials (P1-1), (2) per-session close times incl. early closes in the label builder (P1-2), (3) rename or re-implement the compiler RSI (P1-3), (4) session-indexed lags and a calibrated small-sample t reference (P1-4) | Each repair has a fixture test; no inference or new trial; no unsafe legacy route invoked as read-only. Items not audited by this review (simulator/constructor parity, attribution writer, lot/cost handling) are marked NOT PERFORMED in the findings and remain P0 work before P5 |
+| P1 — existing evidence visibility **(smallest useful release; recommended first and only approval now)** | Read-only Prediction Lab projection over `llm_council_ic_runs`, `score_variant_eval_runs` and `upgrade_path_attribution_runs`, with symbol links, session counts beside every IC, and the **zero-cost paired council-minus-deterministic delta** computed from stored series on the common symbols | Real stored rows displayed, missing/immature vs broken distinguished, no new inference or tables; no cross-family ranking; every IC shows its session count and a `descriptive` label until the gate in section 11 is met |
 | P2 — paired measurement foundation | Reviewed manifest/provenance storage, common labels, paired delta/HAC, legacy preservation | Calendar, pairing, missingness, multiplicity/endpoint and immutable-retry tests; migration/RLS verification and next scheduled production batch |
-| P3 — one prompt challenger | Same packet/identity, isolated experimental calls and current output contract | Owner separately approves sample/cost/quota; transport, accounting and identity verified. Prospective receipt only; no claim of accuracy before maturity |
+| P3 — one prompt challenger (**review: DEFER; do not approve now**) | Same packet/identity, isolated experimental calls and current output contract | Precondition added by review: the incumbent's paired delta against the deterministic score must first have at least 30 matured sessions at the primary horizon so its variance (the input to any power calculation) is measured rather than guessed; the challenger would double the calls of the member it challenges for a result that cannot be evaluated at h10 for roughly six months. Owner separately approves sample/cost/quota; transport, accounting and identity verified. Prospective receipt only; no claim of accuracy before maturity |
 | P4 — supported deterministic family | Existing fixed/mined/technical adapters, bounded declarative rule family, genuine purged historical validation | Freeze family; pass compiler/controls/cost/calendar/OOS manifests; seal only truthful evidence; verify a scheduled producer |
 | P5 — portfolio-impact producer | One explicit policy intervention, canonical replay parity and attribution | Both books reconcile; shared opportunity universe/versions; program-specific persisted result; enough evidence or honest collecting/blocker |
 | P6 — outcome review/proposals | Representative deterministic review sample, structured notes and bounded future proposal | Evidence/counterexamples stored; no prompt/code/settings auto-change; cost approval before any critic inference |
@@ -832,6 +868,20 @@ Attack these load-bearing points:
 If a prerequisite fails, shrink/defer that phase with a precise blocker and the
 next safe action. Do not imply all stages can be built or financially validated
 in one session. Do not lower evidence gates to satisfy a completion request.
+
+### Review revision log (Claude, 2026-10-21; document version 1.0 → 1.1)
+
+Material changes and their rationale; full evidence and sources are in `CLAUDE_REVIEW_FINDINGS.md`.
+
+1. **Persistence cut from five proposed tables to zero through P5** (nine additive nullable columns on existing registry/result tables). Rationale: section 14 disposition table; two immutable declaration clocks would be created otherwise.
+2. **Strategy-replay GET side effect downgraded P0 → P1** after verifying `register_trial` idempotency and a 4-row ledger; the contract violation stands.
+3. **Added three verified defects**: early-close handling in the label builder (P1-2), mislabelled RSI (P1-3), positional HAC lags and over-rejection risk at lag 9 (P1-4).
+4. **Added the council-vs-deterministic finding** (section 5): identical debated/independent series, council IC at or below the deterministic IC it is shown, so the first Prediction Lab question is the zero-cost paired delta.
+5. **P1 redefined as the smallest useful release** and the only phase recommended for approval now; **P3 deferred** pending a measured variance of the incumbent's paired delta (≥ 30 matured sessions).
+6. **Reuse map extended** with the 2026-10-14 shadows (insider v2, LLM events, index sleeve, live recommendations) that the draft omitted.
+7. **Unchanged on purpose**: the shared experiment contract (section 7), the common-availability label design (modulo the close-time fix), the paired portfolio replay and attribution rules, the learning-note design, the exclusions list and the cost controls.
+
+Answers to the draft's own review questions (details in the findings file): (a) cross-lane records are not necessary; (b) common-availability alignment answers the "was the forecast usable" question but excludes the intraday-latency information, so show latency separately as the draft says; (c) the actual sample cannot support an h10 prompt comparison at a useful cost today, so keep the question narrower (incumbent vs deterministic) rather than lowering any bar; (d) HAC as drafted is adequate only as a descriptive device until the session-gap and small-sample issues above are fixed; (e) compiler/simulator faithfulness beyond what is listed here was NOT audited; (f) historical scores as genuine as-of inputs was NOT audited; (g) packet improvements should be tested before more debate rounds, because debate rounds are zero and the council tracks the deterministic anchor; (h) the disproportionate burden is the challenger's doubled calls and the new-table machinery, both deferred or removed.
 
 ## 21. Research basis and limits
 
