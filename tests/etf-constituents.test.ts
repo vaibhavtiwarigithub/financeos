@@ -49,6 +49,8 @@ describe("ETF constituent coverage", () => {
     ], new Map([["TCS", "2026-10-20"]]), new Map([["XLK", 0.1], ["VOO", 0.01]]), "2026-10-20");
     expect(results.map(row => row.symbol)).toEqual(["HCL", "OTHER", "TCS"]);
     expect(results[0].context.benchmark).toBe("XLK");
+    expect(results[0].context.source_url).toBe("https://issuer.example/holdings");
+    expect(results[0].context).not.toHaveProperty("source"); // cannot overwrite discovery.source's admission tag
     expect(new Set(results.map(row => row.symbol)).size).toBe(results.length);
   });
 

@@ -127,7 +127,7 @@ export async function fetchConstituentSnapshot(benchmark: string, now = new Date
 
 export interface BenchmarkCoverageCandidate {
   symbol: string;
-  context: { benchmark: string; membership: ConstituentSnapshot["membership"]; source: string; as_of: string;
+  context: { benchmark: string; membership: ConstituentSnapshot["membership"]; source_url: string; as_of: string;
     observed_at: string; completed_session: string; benchmark_return_5_sessions: number | null };
 }
 
@@ -154,7 +154,7 @@ export function rankConstituentCoverage(snapshots: ConstituentSnapshot[], lastSc
   const add = (snapshot: ConstituentSnapshot, symbol: string | undefined) => {
     if (!symbol || seen.has(symbol)) return;
     seen.add(symbol);
-    result.push({ symbol, context: { benchmark: snapshot.benchmark, membership: snapshot.membership, source: snapshot.source,
+    result.push({ symbol, context: { benchmark: snapshot.benchmark, membership: snapshot.membership, source_url: snapshot.source,
       as_of: snapshot.asOf, observed_at: snapshot.observedAt, completed_session: completedSession,
       benchmark_return_5_sessions: returns.get(snapshot.benchmark) ?? null } });
   };
