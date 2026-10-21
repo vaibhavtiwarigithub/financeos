@@ -20,6 +20,16 @@ export function discoveryProvenanceItems(
 ): DiscoveryProvenanceItem[] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const context = raw as Record<string, unknown>;
+  if (typeof context.benchmark === "string") {
+    return [
+      { label: "Benchmark constituent", value: context.benchmark },
+      { label: "Membership basis", value: context.membership === "fund_holdings" ? "Issuer fund holdings" : "Underlying-index membership proxy" },
+      { label: "Membership observed", value: String(context.observed_at ?? "Unavailable") },
+      { label: "Source as of", value: String(context.as_of ?? "Unavailable") },
+      ...(finite(context.benchmark_return_5_sessions) == null ? [] : [{ label: "Benchmark · 5 completed sessions",
+        value: `${(Number(context.benchmark_return_5_sessions) * 100).toFixed(2)}%` }]),
+    ];
+  }
   if (source !== "edge_relative_strength") return [];
 
   const items: DiscoveryProvenanceItem[] = [];

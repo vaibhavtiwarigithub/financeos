@@ -7,6 +7,7 @@ import {
   measureCandidatePostSwapCorrelation,
   rotationTurnoverNotional,
   type RotationP1Readiness,
+  type RotationP1ReadinessInput,
   type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -226,25 +227,28 @@ export function evaluateCapitalRotationShadow(args: {
   };
 }
 
-async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbols: string[]): Promise<Map<string, { score: number; createdAt: string }>> {
-  const out = new Map<string, { score: number; createdAt: string }>();
+async function latestScoresBySymbol(supabase: any, market: "us" | "india", symbols: string[]): Promise<Map<string, { score: number; createdAt: string; isHolding: boolean }>> {
+  const out = new Map<string, { score: number; createdAt: string; isHolding: boolean }>();
   if (symbols.length === 0) return out;
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data, error } = await supabase
+  const data = await fetchAllRows<any>((from, to) => supabase
     .from("agent_signals")
-    .select("symbol, analyst_score, created_at")
+    .select("symbol, analyst_score, created_at, is_holding")
     .eq("market", market)
     .eq("session_validated", true)
+    .eq("is_holding", true)
     .in("symbol", symbols)
     .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(200);
-  if (error) throw new Error(`rotation score query failed: ${error.message}`);
+    .order("created_at", { ascending: false }).order("id", { ascending: false })
+    .range(from, to), "rotation current holding scores");
+  const seen = new Set<string>();
   for (const row of (data ?? []) as any[]) {
     const sym = String(row.symbol ?? "");
-    if (!sym || out.has(sym)) continue;
+    if (!sym || seen.has(sym)) continue;
+    seen.add(sym);
+    if (row.analyst_score == null) continue;
     const score = Number(row.analyst_score);
-    if (Number.isFinite(score) && row.created_at) out.set(sym, { score, createdAt: String(row.created_at) });
+    if (Number.isFinite(score) && row.created_at) out.set(sym, { score, createdAt: String(row.created_at), isHolding: row.is_holding === true });
   }
   return out;
 }
@@ -323,6 +327,15 @@ export interface RotationShadowRecord {
     candidateSignalId: string; candidateQty: number | null; buyNotional: number } | null;
 }
 
+/** Assess alternatives with the same evidence contract before choosing a source.
+ * A failed first source must not hide a later fully qualified replacement. */
+export function chooseRotationAlternative<T extends { evaluation: RotationEvaluation; readiness: RotationP1Readiness }>(alternatives: T[]): T | null {
+  return [...alternatives].sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready)
+    || Number(b.evaluation.eligible) - Number(a.evaluation.eligible)
+    || (a.evaluation.source?.score ?? Infinity) - (b.evaluation.source?.score ?? Infinity)
+    || String(a.evaluation.source?.symbol).localeCompare(String(b.evaluation.source?.symbol)))[0] ?? null;
+}
+
 export async function recordCapitalRotationShadow(supabase: any, args: {
   runId: string | null;
   candidate: RotationCandidate;
@@ -360,7 +373,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     const score = scores.get(String(p.symbol));
     const exitPlan = projectPaperExitPlan({
       position: p,
-      signal: score ? { analyst_score: score.score, created_at: score.createdAt } : null,
+      signal: score ? { analyst_score: score.score, created_at: score.createdAt, is_holding: score.isHolding } : null,
       entryThreshold: args.scoreThreshold,
       hysteresis: args.exitHysteresis,
       maxScoreAgeSessions: args.maxSignalAgeSessions,
@@ -376,50 +389,63 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
       currentPrice: Number(p.current_price ?? 0), openedAt: p.opened_at ?? null,
       priceTarget: p.price_target == null ? null : Number(p.price_target),
       stopLoss: p.stop_loss == null ? null : Number(p.stop_loss), exitReason: p.exit_reason ?? null,
-      score: score?.score ?? null, scoreCreatedAt: score?.createdAt ?? null, exitPlanState: exitPlan.state,
+      score: exitPlan.scoreFresh ? score?.score ?? null : null,
+      scoreCreatedAt: score?.createdAt ?? null, exitPlanState: exitPlan.state,
       priceFresh: isPaperScoreFresh(p.updated_at, now, candidate.market, 1),
     };
   });
 
-  const evaluation = evaluateCapitalRotationShadow({
+  const sizeForSource = (source: RotationHolding) => replacementCapacity({
+    book: args.book, sourceSymbol: source.symbol, sellNotional: holdingNotional(source),
+    symbol: candidate.symbol, market: candidate.market, sector: candidate.sector ?? null,
+    dailyVol: candidate.dailyVol ?? null, intendedNotional: candidate.targetNotional,
+    nav: args.portfolioNav, cash: candidate.cash, fillPrice: candidate.fillPrice ?? Number.NaN,
+    limits: args.portfolioLimits ?? DEFAULT_LIMITS, maxPerSector: args.maxPerSector ?? 4,
+  });
+  const config: RotationConfig = {
+    shadowEnabled: (cfgRow as any)?.rotation_shadow_enabled !== false,
+    marginScore: Number((cfgRow as any)?.rotation_margin_score ?? 12),
+    minHoldingDays: args.minHoldingDays, exitScoreThreshold: args.scoreThreshold - 10,
+    nearTargetPct: 0.03, nearStopPct: 0.03,
+  };
+  let evaluation = evaluateCapitalRotationShadow({
     candidate,
     holdings,
-    sizeForSource: source => replacementCapacity({
-      book: args.book, sourceSymbol: source.symbol, sellNotional: holdingNotional(source),
-      symbol: candidate.symbol, market: candidate.market, sector: candidate.sector ?? null,
-      dailyVol: candidate.dailyVol ?? null, intendedNotional: candidate.targetNotional,
-      nav: args.portfolioNav, cash: candidate.cash, fillPrice: candidate.fillPrice ?? Number.NaN,
-      limits: args.portfolioLimits ?? DEFAULT_LIMITS, maxPerSector: args.maxPerSector ?? 4,
-    }),
-    config: {
-      shadowEnabled: (cfgRow as any)?.rotation_shadow_enabled !== false,
-      marginScore: Number((cfgRow as any)?.rotation_margin_score ?? 12),
-      minHoldingDays: args.minHoldingDays,
-      exitScoreThreshold: args.scoreThreshold - 10,
-      nearTargetPct: 0.03,
-      nearStopPct: 0.03,
-    },
+    sizeForSource,
+    config,
   });
 
   const limits = args.portfolioLimits ?? DEFAULT_LIMITS;
-  const sourceSymbol = evaluation.source?.symbol ?? null;
+  let sourceSymbol = evaluation.source?.symbol ?? null;
   const postSwapBook = sourceSymbol
-    ? args.book.filter(position => position.symbol.toUpperCase() !== sourceSymbol.toUpperCase())
+    ? args.book.filter(position => position.symbol.toUpperCase() !== sourceSymbol!.toUpperCase())
     : args.book;
   // Capacity sizing already applied the stacked-sector haircut once. Repeating
   // that sizing operation would shrink the plan again; use its verified result.
-  const postSwapAllowed = sourceSymbol ? (evaluation.gates.replacement_capacity as Array<{ symbol: string; reason: string | null }> | undefined)
+  let postSwapAllowed = sourceSymbol ? (evaluation.gates.replacement_capacity as Array<{ symbol: string; reason: string | null }> | undefined)
     ?.some(row => row.symbol === sourceSymbol && row.reason == null) ?? false : null;
 
   const symbolsAfterSwap = postSwapBook.map(position => position.symbol);
   const returnCutoff = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 10);
   const returnRows = await loadRotationReturnCohort(supabase, candidate.market,
-    [...new Set([candidate.symbol, ...symbolsAfterSwap])], returnCutoff);
-  const correlation = measureCandidatePostSwapCorrelation(returnRows, candidate.symbol, symbolsAfterSwap);
-  const correlationAllowed = correlation.status === "ok" && correlation.maxAbsCorrelation != null
+    [...new Set([candidate.symbol, ...symbols])], returnCutoff);
+  let correlation = measureCandidatePostSwapCorrelation(returnRows, candidate.symbol, symbolsAfterSwap);
+  let correlationAllowed = correlation.status === "ok" && correlation.maxAbsCorrelation != null
     ? correlation.maxAbsCorrelation <= limits.maxAvgPairwiseCorr
     : null;
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const openedDates = holdings.map(holding => Date.parse(holding.openedAt ?? "")).filter(Number.isFinite);
+  const lotSince = openedDates.length ? new Date(Math.min(...openedDates) - 60_000).toISOString() : null;
+  const loadLots = async (table: "paper_order_events" | "paper_trades", select: string) => {
+    if (!lotSince || !symbols.length) return { data: [], error: null, count: 0 };
+    const data = await fetchAllRows<any>((from, to) => {
+      let query = supabase.from(table).select(select).eq("market", candidate.market).in("symbol", symbols);
+      query = table === "paper_order_events" ? query.eq("event_type", "fill").eq("side", "buy").gte("created_at", lotSince)
+        : query.eq("order_side", "buy").gte("executed_at", lotSince);
+      return query.order("id", { ascending: true }).range(from, to);
+    }, `rotation ${table} lot cohort`);
+    return { data, error: null, count: data.length };
+  };
   const [mandateResult, turnoverResult, persistenceResult, lotFillsResult, lotRowsResult, scoreEdgeEvidence] = await Promise.all([
     supabase.from("investment_mandates").select("turnover_budget_monthly, tax_sensitivity")
       .eq("market", candidate.market).eq("active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -427,16 +453,8 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
       .eq("book_type", "paper").eq("status", "paper_executed").gte("created_at", monthStart).limit(1000),
     supabase.from("rotation_events").select("audit_json").eq("market", candidate.market)
       .eq("candidate_symbol", candidate.symbol).eq("status", "planned").gte("created_at", new Date(Date.now() - 4 * 86400000).toISOString()),
-    evaluation.source?.openedAt
-      ? supabase.from("paper_order_events").select("id,symbol,created_at,qty,fill_price,fill_status", { count: "exact" })
-        .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("event_type", "fill").eq("side", "buy")
-        .gte("created_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(20)
-      : Promise.resolve({ data: [], count: 0, error: null }),
-    evaluation.source?.openedAt
-      ? supabase.from("paper_trades").select("paper_event_id,qty,fill_price,closed_at,fill_status", { count: "exact" })
-        .eq("market", candidate.market).eq("symbol", evaluation.source.symbol).eq("order_side", "buy")
-        .gte("executed_at", new Date(new Date(evaluation.source.openedAt).getTime() - 60_000).toISOString()).limit(30)
-      : Promise.resolve({ data: [], count: 0, error: null }),
+    loadLots("paper_order_events", "id,symbol,created_at,qty,fill_price,fill_status"),
+    loadLots("paper_trades", "id,symbol,executed_at,paper_event_id,qty,fill_price,closed_at,fill_status"),
     loadRotationScoreEdgeEvidence(supabase, {
       market: candidate.market,
       minScoreEdge: Number((cfgRow as any)?.rotation_margin_score ?? 12),
@@ -447,28 +465,28 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   if (turnoverResult.error) throw new Error(`rotation turnover query failed: ${turnoverResult.error.message}`);
   if ((turnoverResult.count ?? 0) > (turnoverResult.data?.length ?? 0)) throw new Error(`rotation turnover cohort truncated: ${turnoverResult.data?.length ?? 0}/${turnoverResult.count}`);
   if (persistenceResult.error) throw new Error(`rotation persistence query failed: ${persistenceResult.error.message}`);
-  if (lotFillsResult.error) throw new Error(`rotation tax-lot query failed: ${lotFillsResult.error.message}`);
   if ((lotFillsResult.count ?? 0) > (lotFillsResult.data?.length ?? 0)) throw new Error(`rotation tax-lot cohort truncated: ${lotFillsResult.data?.length ?? 0}/${lotFillsResult.count}`);
-  if (lotRowsResult.error) throw new Error(`rotation paper-lot query failed: ${lotRowsResult.error.message}`);
   if ((lotRowsResult.count ?? 0) > (lotRowsResult.data?.length ?? 0)) throw new Error(`rotation paper-lot cohort truncated: ${lotRowsResult.data?.length ?? 0}/${lotRowsResult.count}`);
   const monthlyTurnover = rotationTurnoverNotional(turnoverResult.data ?? []);
-  const proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
+  let proposedTurnover = (evaluation.sellNotional ?? 0) + evaluation.buyNotional;
   const persistenceRequiredRuns = Math.max(0, Number((cfgRow as any)?.rotation_persistence_runs ?? 2) - 1);
   const persistencePriorRuns = countDistinctPriorRotationRuns(persistenceResult.data ?? [], args.runId ?? "manual");
-  const frictionPct = evaluation.sellNotional == null ? null : estimateRotationFrictionPct(evaluation.sellNotional, evaluation.buyNotional);
-  const exactLots = hasExactPaperTaxLot(evaluation.source ? {
-    symbol: evaluation.source.symbol, openedAt: evaluation.source.openedAt,
-    qty: evaluation.source.qty, avgCost: evaluation.source.avgCost,
-  } : null, (lotFillsResult.data ?? []).map((row: any) => ({
+  let frictionPct = evaluation.sellNotional == null ? null : estimateRotationFrictionPct(evaluation.sellNotional, evaluation.buyNotional);
+  const exactLotsFor = (source: RotationHolding | null) => hasExactPaperTaxLot(source ? {
+    symbol: source.symbol, openedAt: source.openedAt, qty: source.qty, avgCost: source.avgCost,
+  } : null, (lotFillsResult.data ?? []).filter((row: any) => row.symbol === source?.symbol
+    && Date.parse(row.created_at) >= Date.parse(source?.openedAt ?? "") - 60_000).map((row: any) => ({
     id: Number(row.id), symbol: String(row.symbol ?? ""), createdAt: String(row.created_at ?? ""), qty: Number(row.qty),
     fillPrice: Number(row.fill_price), fillStatus: row.fill_status == null ? null : String(row.fill_status),
-  })), (lotRowsResult.data ?? []).map((row: any) => ({
+  })), (lotRowsResult.data ?? []).filter((row: any) => row.symbol === source?.symbol
+    && Date.parse(row.executed_at) >= Date.parse(source?.openedAt ?? "") - 60_000).map((row: any) => ({
     paperEventId: row.paper_event_id == null ? null : Number(row.paper_event_id),
     qty: Number(row.qty), fillPrice: Number(row.fill_price),
     closedAt: row.closed_at == null ? null : String(row.closed_at),
     fillStatus: row.fill_status == null ? null : String(row.fill_status),
   })));
-  const readiness = assessRotationP1Readiness({
+  let exactLots = exactLotsFor(evaluation.source);
+  const readinessInput = {
     persistencePriorRuns,
     persistenceRequiredRuns,
     turnoverBudgetMonthlyPct: (mandateResult.data as any)?.turnover_budget_monthly == null ? null : Number((mandateResult.data as any).turnover_budget_monthly),
@@ -485,11 +503,44 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     postSwapAllowed,
     correlation,
     correlationAllowed,
-  });
+  } satisfies RotationP1ReadinessInput;
+  let readiness = assessRotationP1Readiness(readinessInput);
   if (!evaluation.eligible) {
     readiness.ready = false;
     readiness.blockers.unshift(`candidate_not_eligible:${evaluation.reason}`);
   }
+  const alternatives = holdings.map(source => {
+    const alternative = evaluateCapitalRotationShadow({ candidate, holdings: [source], config, sizeForSource, now });
+    const remainingSymbols = args.book.filter(position => position.symbol.toUpperCase() !== source.symbol.toUpperCase()).map(position => position.symbol);
+    const corr = measureCandidatePostSwapCorrelation(returnRows, candidate.symbol, remainingSymbols);
+    const corrAllowed = corr.status === "ok" && corr.maxAbsCorrelation != null ? corr.maxAbsCorrelation <= limits.maxAvgPairwiseCorr : null;
+    const lots = exactLotsFor(source);
+    const friction = alternative.sellNotional == null ? null : estimateRotationFrictionPct(alternative.sellNotional, alternative.buyNotional);
+    const turnover = (alternative.sellNotional ?? 0) + alternative.buyNotional;
+    const postSwap = alternative.source != null && (alternative.gates.replacement_capacity as Array<{ symbol: string; reason: string | null }> | undefined)
+      ?.some(row => row.symbol === source.symbol && row.reason == null) === true;
+    const ready = assessRotationP1Readiness({ ...readinessInput, hasExactTaxLots: lots, frictionPct: friction,
+      proposedTurnoverPct: args.portfolioNav > 0 ? turnover / args.portfolioNav * 100 : null,
+      postSwapAllowed: postSwap, correlation: corr, correlationAllowed: corrAllowed });
+    if (!alternative.eligible) { ready.ready = false; ready.blockers.unshift(`candidate_not_eligible:${alternative.reason}`); }
+    return { evaluation: alternative, readiness: ready, correlation: corr, correlationAllowed: corrAllowed,
+      exactLots: lots, frictionPct: friction, proposedTurnover: turnover, postSwapAllowed: postSwap, sourceSymbol: source.symbol };
+  });
+  const sourceRejectCounts = evaluation.gates.source_reject_counts;
+  const sellableHoldingCount = evaluation.gates.sellable_holdings;
+  const selected = chooseRotationAlternative(alternatives);
+  if (selected?.evaluation.source) {
+    evaluation = selected.evaluation; readiness = selected.readiness; sourceSymbol = selected.sourceSymbol;
+    correlation = selected.correlation; correlationAllowed = selected.correlationAllowed;
+    exactLots = selected.exactLots; frictionPct = selected.frictionPct;
+    proposedTurnover = selected.proposedTurnover; postSwapAllowed = selected.postSwapAllowed;
+  }
+  evaluation.gates.source_reject_counts = sourceRejectCounts;
+  evaluation.gates.sellable_holdings = sellableHoldingCount;
+  evaluation.gates.source_alternatives = alternatives.map(row => ({ source_symbol: row.sourceSymbol,
+    source_score: holdings.find(holding => holding.symbol === row.sourceSymbol)?.score ?? null,
+    score_edge: row.evaluation.scoreEdge, buy_notional: row.evaluation.buyNotional,
+    eligible: row.evaluation.eligible, ready: row.readiness.ready, blockers: row.readiness.blockers }));
   evaluation.gates.p1_ready = readiness.ready;
   evaluation.gates.p1_blockers = readiness.blockers;
   evaluation.gates.persistence_prior_runs = persistencePriorRuns;

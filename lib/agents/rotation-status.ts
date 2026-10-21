@@ -51,6 +51,7 @@ export interface RotationActivityEvent {
   postSwapAllowed: boolean | null;
   candidateCorrelation: Record<string, unknown> | null;
   postSwapAdjustments: string[];
+  sourceAlternatives?: Array<{ symbol: string; score: number | null; ready: boolean; blockers: string[] }>;
 }
 
 export type RotationExecutorState =
@@ -177,6 +178,10 @@ export async function loadRotationStatus(supabase: any, market: "us" | "india", 
       postSwapAllowed: typeof gate.post_swap_allowed === "boolean" ? gate.post_swap_allowed : null,
       candidateCorrelation: objectValue(gate.candidate_correlation),
       postSwapAdjustments: Array.isArray(gate.post_swap_adjustments) ? gate.post_swap_adjustments.map(String) : [],
+      sourceAlternatives: Array.isArray(gate.source_alternatives) ? gate.source_alternatives.map((row: any) => ({
+        symbol: String(row.source_symbol ?? ""), score: numberValue(row.source_score), ready: row.ready === true,
+        blockers: Array.isArray(row.blockers) ? row.blockers.map(String) : [],
+      })) : [],
     };
   }) : [];
 

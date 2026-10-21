@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCapitalRotationShadow, type RotationHolding } from "@/lib/trading/capital-rotation";
+import { chooseRotationAlternative, evaluateCapitalRotationShadow, type RotationHolding } from "@/lib/trading/capital-rotation";
 import { DEFAULT_LIMITS } from "@/lib/portfolio/constructor";
 import { replacementCapacity } from "@/lib/trading/rotation-capacity";
 
@@ -39,6 +39,24 @@ const candidate = {
 };
 
 describe("evaluateCapitalRotationShadow", () => {
+  it("considers a fully qualified alternative when the weakest funding source fails a P1 gate", () => {
+    const weakest = evaluateCapitalRotationShadow({ candidate, config, holdings: [baseHolding()] });
+    const next = evaluateCapitalRotationShadow({ candidate, config, holdings: [baseHolding({ symbol: "NEXT", score: 65 })] });
+    const readiness = { ready: true, blockers: [] as string[], netExpectedEdgePct: 1, turnoverAfterPct: 20 };
+    const choice = chooseRotationAlternative([
+      { evaluation: weakest, readiness: { ...readiness, ready: false, blockers: ["exact_tax_lots_unavailable"] } },
+      { evaluation: next, readiness },
+    ]);
+    expect(choice?.evaluation.source?.symbol).toBe("NEXT");
+  });
+
+  it("keeps the weakest feasible diagnostic when no alternative passes, without inventing readiness", () => {
+    const readiness = { ready: false, blockers: ["score_to_return_mapping_unvalidated"], netExpectedEdgePct: null, turnoverAfterPct: 20 };
+    const choices = [65, 61].map(score => ({ evaluation: evaluateCapitalRotationShadow({ candidate, config,
+      holdings: [baseHolding({ symbol: `STOCK${score}`, score })] }), readiness }));
+    expect(chooseRotationAlternative(choices)?.evaluation.source?.score).toBe(61);
+    expect(chooseRotationAlternative(choices)?.readiness.ready).toBe(false);
+  });
   it("reports a pre-rotation cash shortfall without claiming cash is the only blocker", () => {
     const shortfall = evaluateCapitalRotationShadow({ candidate, config, holdings: [] });
     expect(shortfall.gates.cash_shortfall_before_rotation).toBe(true);

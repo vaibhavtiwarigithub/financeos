@@ -118,6 +118,16 @@ function EventDetails({ event, market }: { event: RotationActivityEvent; market:
           </ul>
         </div>
       )}
+      {Boolean(event.sourceAlternatives?.length) && (
+        <div>
+          <div style={{ color: T.text, fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>Funding holdings checked</div>
+          <div style={{ display: "grid", gap: "6px" }}>
+            {event.sourceAlternatives!.map(row => <div key={row.symbol} style={{ color: row.ready ? T.green : T.textSub, fontSize: "11px", lineHeight: 1.5 }}>
+              <strong>{row.symbol}</strong> · score {row.score ?? "unavailable"} · {row.ready ? "All recorded P1 gates passed" : row.blockers.map(reason => reason.replaceAll("_", " ")).join("; ") || "Evidence unavailable"}
+            </div>)}
+          </div>
+        </div>
+      )}
       <div style={{ color: T.muted, fontSize: "10px", lineHeight: 1.5 }}>
         Proposed amounts are not fills. This ledger does not claim realized or missed P&amp;L; later price-path comparisons must be labeled counterfactual.
       </div>

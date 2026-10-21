@@ -25,7 +25,7 @@ function parseCsvRow(line: string): string[] {
 }
 
 /** Parse the official NSE Indices NIFTY-50 constituent CSV fail-closed. */
-export function parseNifty50ConstituentsCsv(text: string): string[] | null {
+export function parseNiftyConstituentsCsv(text: string, minCount: number, maxCount = minCount): string[] | null {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim().length > 0);
   const header = lines[0] ? parseCsvRow(lines[0]).map((cell) => cell.trim().toUpperCase()) : [];
   const symbolIndex = header.indexOf("SYMBOL");
@@ -44,7 +44,11 @@ export function parseNifty50ConstituentsCsv(text: string): string[] | null {
 
   const unique = [...new Set(symbols)];
   // Exactly 50 unique EQ rows rejects duplicate rows, block pages and partial files.
-  return unique.length === 50 && symbols.length === 50 ? unique : null;
+  return unique.length >= minCount && unique.length <= maxCount && symbols.length === unique.length ? unique : null;
+}
+
+export function parseNifty50ConstituentsCsv(text: string): string[] | null {
+  return parseNiftyConstituentsCsv(text, 50);
 }
 
 /**

@@ -11,6 +11,7 @@ import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data
 import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
 import { buildIndiaCandidateOrder, NIFTY_50, niftyCandidates } from "@/lib/india-universe";
 import { fetchNifty50Constituents } from "@/lib/nifty50-constituents";
+import { benchmarkConstituentCandidates, type BenchmarkCoverageCandidate } from "@/lib/research/etf-constituents";
 import { getKiteHoldings } from "@/lib/kite";
 import { computeRegimeFeatures, type RegimeFeatures } from "@/lib/validation/regime";
 import { computeWeightedAnalystScore, isThinEvidence, SCORE_DIMENSIONS, type ScoreDimension, type DimensionRecord } from "@/lib/scoring/weighted-score";
@@ -240,7 +241,7 @@ export type SymbolEntry = {
   fundamentalMaxAgeDays?: number;
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
-  discoveryContext?: RelativeStrengthDiscoveryContext; // provenance only; never a score input
+  discoveryContext?: RelativeStrengthDiscoveryContext | BenchmarkCoverageCandidate["context"]; // provenance only; never a score input
   listingCandidateIds?: number[]; // internal pointer(s) for fair, research-only listing rotation
 };
 
@@ -770,6 +771,27 @@ export async function gatherSymbols(
   // never starves behind the screener carry-forward backlog.
   for (const sym of watchlist.usManual) addCandidate(sym, "watchlist");
 
+  // A benchmark quote is not coverage of its underlying companies. Reserve a
+  // bounded part of the existing discovery quota for current, source-verified
+  // constituents, rotating oldest research first within each benchmark basket.
+  const loadBenchmarkCoverage = async (market: "us" | "india") => {
+    try {
+      const candidates = await benchmarkConstituentCandidates(supabase, market);
+      await resolveIssue(`benchmark-constituents:${market}:pipeline`, supabase).catch(() => {});
+      return candidates;
+    } catch (error) {
+      await reportIssue({ issueKey: `benchmark-constituents:${market}:pipeline`, severity: "warn", category: "data",
+        title: `${market} benchmark constituent research unavailable`,
+        detail: error instanceof Error ? error.message : String(error) }, supabase).catch(() => {});
+      return [];
+    }
+  };
+  const usCoverage = includeUs ? await loadBenchmarkCoverage("us") : [];
+  for (const item of usCoverage.filter(item => !holdingSet.has(item.symbol) && !candidateMap.has(item.symbol)).slice(0, 4)) {
+    addCandidate(item.symbol, "screener_momentum");
+    candidateMap.get(item.symbol)!.discoveryContext = item.context;
+  }
+
   // PRIORITY 2 — carry-forward (migration 172): candidates that missed a prior
   // run's cap come back with raised priority so the pool rotates fairly.
   // Carry-forward returns each symbol with the source that DISCOVERED it. This
@@ -1002,7 +1024,10 @@ export async function gatherSymbols(
         detail: "The official NSE Indices constituent CSV could not be verified. Research is rotating through the repository's static NIFTY-50 snapshot; current index additions/removals may be missed until the official source recovers.",
       }, supabase).catch(() => {});
     }
-    const indexRotation = await orderHoldingsByLastScored(supabase, indexUniverse, "india");
+    const indiaCoverage = await loadBenchmarkCoverage("india");
+    const coverageBySymbol = new Map(indiaCoverage.map(item => [item.symbol, item.context]));
+    const sectorCoverage = indiaCoverage.filter(item => !seenAll.has(item.symbol)).slice(0, 3).map(item => item.symbol);
+    const indexRotation = [...new Set([...sectorCoverage, ...await orderHoldingsByLastScored(supabase, indexUniverse, "india")])];
     const orderedIndia = buildIndiaCandidateOrder({
       manual: watchlist.indiaManual,
       // Reserve up to half of the candidate budget for core benchmark coverage;
@@ -1031,7 +1056,9 @@ export async function gatherSymbols(
     for (const sym of indiaBatch) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
-      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india", discovery_source: "india_screener" });
+      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india",
+        discovery_source: (indiaSourceOf.get(sym) as DiscoverySource) ?? "india_screener",
+        discoveryContext: coverageBySymbol.get(sym) });
     }
   }
 

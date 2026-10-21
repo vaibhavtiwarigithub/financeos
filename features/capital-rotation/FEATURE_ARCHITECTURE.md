@@ -1,5 +1,18 @@
 # Feature Architecture - Capital Rotation
 
+## Complete funding-source assessment
+
+The owner-requested ETF/rotation correction assesses P1 for every holding, rather
+than stopping after the weakest holding passes constructor sizing. A source with
+unreconciled lots or a blocked post-sale correlation result cannot hide another
+fully qualified source. Score, return and lot reads paginate; each source uses
+its own opening timestamp and matching lots. Stale holding scores are unavailable,
+not usable merely because they appeared within a seven-day query window. The
+existing rotation ledger stores `source_alternatives`; the Paper Portfolio panel
+shows the source score and blockers for each assessed holding. Selection still
+requires the same positive economic evidence and execution keys. See
+`features/etf-constituent-coverage/FEATURE_ARCHITECTURE.md` for shared scope.
+
 > Status: **P0 shadow and gated P1 paper executor built; execution readiness remains unproven.** Live rotation is unbuilt. Historical rollout notes below do not supersede this status.
 
 > **Diagnostic wording repair (2026-10-11):** `cash_shortfall_before_rotation` means only that idle cash is below the candidate's target notional before selling a source position. It is not a claim that cash is the sole P1 blocker. The former `candidate_blocked_only_by_cash` key was semantically false whenever turnover, persistence, tax-lot, score-edge, or evidence gates also failed. Existing append-only rows retain their historical key; new rows use the explicit name. This does not change sizing, eligibility, or execution.

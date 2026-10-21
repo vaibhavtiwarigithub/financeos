@@ -1,5 +1,23 @@
 # Kairos — Agents
 
+## Benchmark constituent coverage and rotation alternatives
+
+Research expands the enabled US and India benchmarks into their verified current
+company baskets. QQQ and sector SPDR funds use issuer holdings; VOO uses the
+S&P 500 basket through SPY as a labelled proxy; India uses official NIFTY index
+membership. Company research carries source/as-of provenance. Four US discovery
+seats and up to three of India's existing five index seats prioritize these
+names, rotating stale coverage and measured benchmark leaders without increasing
+the existing research caps or changing scores. A benchmark's price history alone
+never establishes coverage of its underlying companies.
+
+Capital rotation checks every funding holding under the existing P1 contract and
+records its reasons in the same rotation ledger. The Paper Portfolio activity
+panel shows those alternatives for both markets. A failed weakest source no
+longer hides a qualified alternative. Membership admission does not guarantee a
+buy, and a missing/negative economic edge remains blocked. Implementation details:
+`features/etf-constituent-coverage/FEATURE_ARCHITECTURE.md`.
+
 ## Post-close price-prewarm failure visibility (2026-10-20)
 
 The market-local `/api/agents/price-prewarm` route reports explicit query errors,
