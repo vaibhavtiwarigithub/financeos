@@ -1,6 +1,8 @@
 # Prediction measurement completion and QA
 
-Date: 2026-10-21. Scope: approved P0/P1 measurement work, not a complete audit
+Date: 2026-10-21. Release: `e30afb05`, Vercel production READY
+(`dpl_4Pnp3ToFKVeAK57BEADhsAoyDgMG`, aliases assigned).
+Scope: approved P0/P1 measurement work, not a complete audit
 of every FinanceOS feature. Standard feature QA, not public-site SEO or a
 cross-browser certification. Production verification is recorded after release.
 
@@ -58,8 +60,8 @@ distance-kernel extension rather than claiming statsmodels supports that input.
   owner/anonymous access checks are required before release is called complete.
 - Latest local result: 4,093 passed / 8 skipped; 36 focused tests and TypeScript
   passed. The initial 78-page Next production build passed; generated build-path
-  config was restored. The follow-up must independently pass its production
-  build. The JSON regression report is local-only, outside the repository.
+  config was restored. The follow-up independently passed its Vercel production
+  build. Staged secret scans passed. The JSON report is local-only, outside repo.
 - Standard live QA exercises the Show selector, horizon/cohort/symbol controls,
   empty paired evidence and 375/768/1440px contained table scrolling.
 - Initial production release `fb56f96f` passed eight US/India feature/horizon
@@ -67,9 +69,30 @@ distance-kernel extension rather than claiming statsmodels supports that input.
   price reads to actual forecast dates and memoizes only deterministic calendar
   day states, not prices or availability decisions; the performance regression
   checks at most 245 calendar evaluations for 100 forecasts over 240 daily marks.
-  A deployed follow-up must pass the main council requests before sign-off.
+  Deployed `e30afb05` passed all main requests; US h10 took 4.25 seconds.
 - Marketing SEO, other pages, Lighthouse and Safari/Firefox are outside this
   scoped feature verification; do not infer they were audited.
+
+### Final live checks
+
+- All 16 main/feature requests returned 200 (US and India, h2/5/10/20).
+- Main h2 matched 600 US / 250 India runs; h5 290 / 65. h10/h20 council
+  outcomes remain unmatured, not a producer failure or a reason to fabricate IC.
+- Feature matched rows for US h2/5/10/20: 876/937/726/552; India:
+  579/571/475/296. Four known crypto rows were excluded at US h2 and h5.
+- Recorded dimension rows and RSI/MACD rows displayed independently via Show.
+  The paired view explicitly states that new v2/v1 future labels are not mature.
+- INFY.NS holding h2 returned 26 matched rows, non-overlapping time-series mode,
+  no single-symbol t and no cross-sectional paired comparison.
+- Owner form submissions, both market selectors and symbol/cohort/series
+  controls worked. At 375px, the 1,050px table stays in a 300px region;
+  ArrowRight moved its focused scroller by 40px without page overflow.
+  768px and 1440px layout checks passed; mobile screenshot inspected.
+- After a fresh post-cutover navigation, main automatic GET returned 200 and
+  there were zero browser console errors. Anonymous feature GET returned 401.
+
+Sign-off: approved for this scoped release. No data were promoted to trading.
+This final verification commit changes documentation only.
 
 ## Remaining queue and exact gates
 
