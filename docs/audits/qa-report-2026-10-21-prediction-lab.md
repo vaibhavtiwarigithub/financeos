@@ -20,6 +20,8 @@ cross-browser certification. Production verification is recorded after release.
   bounded and fail closed on oversized or failed scopes.
 - Council comparisons separate frozen instrument families and reject blank
   baselines/invalid decision timestamps. Historical unknown identity stays unknown.
+- Known crypto rows are excluded from the regular-market calendar rather than
+  silently using equity-session labels for a 24/7 asset. Native crypto unchanged.
 - Shared statistics owner; independent Bartlett quadratic-form reference tests.
 
 The production read-only check independently verified 60 US observations with
@@ -54,11 +56,18 @@ distance-kernel extension rather than claiming statsmodels supports that input.
   score alignment, strict sample floors and horizon-aware lookbacks.
 - Full regression, TypeScript, production build, staged secret scan and live
   owner/anonymous access checks are required before release is called complete.
-- Local result: 4,092 passed / 8 skipped; 29 focused tests passed. TypeScript
-  and the 78-page Next production build passed. Generated build-path config was
-  restored. The JSON regression report is local-only, outside the repository.
+- Latest local result: 4,093 passed / 8 skipped; 36 focused tests and TypeScript
+  passed. The initial 78-page Next production build passed; generated build-path
+  config was restored. The follow-up must independently pass its production
+  build. The JSON regression report is local-only, outside the repository.
 - Standard live QA exercises the Show selector, horizon/cohort/symbol controls,
   empty paired evidence and 375/768/1440px contained table scrolling.
+- Initial production release `fb56f96f` passed eight US/India feature/horizon
+  requests but exposed a main US council GET timeout. The follow-up bounds
+  price reads to actual forecast dates and memoizes only deterministic calendar
+  day states, not prices or availability decisions; the performance regression
+  checks at most 245 calendar evaluations for 100 forecasts over 240 daily marks.
+  A deployed follow-up must pass the main council requests before sign-off.
 - Marketing SEO, other pages, Lighthouse and Safari/Firefox are outside this
   scoped feature verification; do not infer they were audited.
 

@@ -32,8 +32,13 @@ latest observation slots before testing feature availability. The existing
 feature reader exposes recorded dimension/composite scores under their own
 method IDs; availability masks prevent missing dimension values becoming
 zeros. Different methods can still have different samples; no cross-method
-winner verdict is added. Council read-time comparisons use a new v2 identity
-for instrument-stratified samples and reject blank baselines/invalid timestamps.
+winner verdict is added. Council read-time comparisons use a new v3 identity
+for regular-market, instrument-stratified samples and reject blank baselines/
+invalid timestamps. Recorded crypto is excluded, not assigned equity sessions.
+Live QA found a US council-read timeout after widening history: price reads now
+start at the earliest actual forecast (one-day timezone margin), and the shared
+label owner privately memoizes deterministic calendar day states. Price,
+availability and maturity decisions are NOT memoized or numerically changed.
 
 The statistics audit adds an independent Bartlett quadratic-form reference
 and a seeded 1,000-replication null check per scenario. False-positive rates

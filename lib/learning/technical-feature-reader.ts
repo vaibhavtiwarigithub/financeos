@@ -35,6 +35,7 @@ export async function readTechnicalFeatureDiagnostics(svc: any, market: "us" | "
     return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
   };
   const lineageCounts: Record<string, number> = {};
+  let unsupportedFamilyRows = 0;
   for (const row of rows) {
     const o = decision(row), source = o ? sources.get(String(o.signal_id)) : null;
     if (!o || source?.market !== market || !source.sessionValidated || row.benchmark_neutral_return == null || !Number.isFinite(Number(row.benchmark_neutral_return))) continue;
@@ -48,11 +49,12 @@ export async function readTechnicalFeatureDiagnostics(svc: any, market: "us" | "
     const versions = o.formula_versions ?? o.features?.formula_lineage?.versions;
     const formula = technical.formula_version ?? versions?.technical ?? "legacy/unknown";
     const lineage = o.features?.formula_lineage;
-    const lineageKey = o.configuration_hash ?? lineage?.configurationHash ?? "legacy/unknown";
-    lineageCounts[lineageKey] = (lineageCounts[lineageKey] ?? 0) + 1;
     // Frozen instrument identity only: today's taxonomy cannot relabel history.
     const storedFamily = o.instrument_family ?? o.features?.instrument?.family;
     const family = typeof storedFamily === "string" && storedFamily.trim() ? storedFamily : "legacy/unknown";
+    if (family === "crypto") { unsupportedFamilyRows++; continue; } // 24/7 labels cannot use an equity-session calendar.
+    const lineageKey = o.configuration_hash ?? lineage?.configurationHash ?? "legacy/unknown";
+    lineageCounts[lineageKey] = (lineageCounts[lineageKey] ?? 0) + 1;
     const base = { id: Number(o.id), symbol: String(o.symbol), day, ts: o.ts, family, outcome: Number(row.benchmark_neutral_return) };
     const technicalUsable = o.availability_mask?.technical !== false && !["missing", "inapplicable", "not_enabled", "degraded"].includes(o.technical_quality ?? o.features?.quality?.technical?.state);
     points.push({ ...base, formula: String(formula), technical: technicalUsable ? technical : {} });
@@ -81,7 +83,7 @@ export async function readTechnicalFeatureDiagnostics(svc: any, market: "us" | "
     view: "features", market, horizon, symbol, cohort, asOf, since, lookbackDays, readOnly: true,
     currentFormulaVersions: FORMULA_VERSIONS,
     planVersion: TECHNICAL_DIAGNOSTIC_VERSION, predeclaredFeatures: TECHNICAL_FEATURES.length,
-    matchedPoints: points.length, excludedRows: rows.length - points.length,
+    matchedPoints: points.length, excludedRows: rows.length - points.length, unsupportedFamilyRows,
     lineages: lineageCounts,
     cells: technicalFeatureDiagnostics(points, market, horizon, Boolean(symbol)),
     dimensionCells: dimensions.flatMap((dimension) => technicalFeatureDiagnostics(dimensionPoints.get(dimension)!, market, horizon, Boolean(symbol), [{
@@ -90,6 +92,6 @@ export async function readTechnicalFeatureDiagnostics(svc: any, market: "us" | "
     // One stock cannot have cross-sectional IC. The formula pair also retains
     // the existing, stricter 15-name formula floor, not the council's five.
     pairedMacd: symbol ? [] : matchedScoreComparisons([...pairedMacdSlots.values()].flatMap((slot) => slot.point ? [slot.point] : []), market, horizon, MIN_FORMULA_CROSS_SECTION),
-    caveat: "Exploratory stored-score and fixed-feature diagnostics partitioned by frozen instrument family and formula, not leveraged intraday validation, strategy P&L or a parameter optimizer. Different rows can have different available samples: they are not a paired winner leaderboard. Missing dimension availability is excluded, never neutral-filled. Market IC uses >=5 symbols/date. A selected symbol uses non-overlapping time-series observations; its correlation t is withheld pending calibrated inference. Binary return contrasts are descriptive, unadjusted for selection or confounding. All variants/horizons/cohorts count toward multiplicity. Missing old formula/family/crossover provenance remains unknown. No automatic rule changes.",
+    caveat: "Exploratory regular-market stored-score and fixed-feature diagnostics partitioned by frozen instrument family and formula, not leveraged intraday validation, strategy P&L or a parameter optimizer. Recorded crypto rows are excluded: their 24/7 labels require a native crypto evaluation, not this stock-session calendar. Different rows can have different available samples: they are not a paired winner leaderboard. Missing dimension availability is excluded, never neutral-filled. Market IC uses >=5 symbols/date. A selected symbol uses non-overlapping time-series observations; its correlation t is withheld pending calibrated inference. Binary return contrasts are descriptive, unadjusted for selection or confounding. All variants/horizons/cohorts count toward multiplicity. Missing old formula/family/crossover provenance remains unknown. No automatic rule changes.",
   };
 }

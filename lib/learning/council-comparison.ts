@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
 import { sessionDistanceT } from "@/lib/score-variants/core";
 
-export const COUNCIL_COMPARISON_VERSION = "matched-council-v2-instrument-stratified-descriptive";
+export const COUNCIL_COMPARISON_VERSION = "matched-council-v3-regular-market-descriptive";
 export type CouncilComparisonPoint = {
   method: string; symbol: string; session: string; observationId: string;
   decisionTs: string; score: number; baseline: number; outcome: number;

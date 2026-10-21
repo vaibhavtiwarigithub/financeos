@@ -82,6 +82,10 @@ describe("Prediction Lab read-only projection", () => {
     mocks.tables.llm_council_runs[1].decision_ts = "invalid";
     const invalid = await (await GET(request(`market=${market}&horizon=2`))).json();
     expect(invalid.coverage.missingAvailability).toBe(1);
+    mocks.tables.llm_council_runs[4].instrument = { family: "crypto" };
+    const crypto = await (await GET(request(`market=${market}&horizon=2`))).json();
+    expect(crypto.coverage.unsupportedFamilyRuns).toBe(1);
+    expect(crypto.cells.every((c: any) => !c.method.includes("family crypto"))).toBe(true);
   });
   it("never silently substitutes another India benchmark when exact identity is absent", async () => {
     mocks.tables.benchmarks = [{ id: "other", market: "india", symbol: "OTHER", provider_symbol: "OTHER", enabled: true, currency: "INR" }];
@@ -129,6 +133,11 @@ describe("Prediction Lab read-only projection", () => {
     const projected = await (await GET(request("view=features&market=us&horizon=2&cohort=entry"))).json();
     expect(projected.dimensionCells).toEqual(missing.dimensionCells);
     expect(projected.cells).toEqual(missing.cells);
+    mocks.tables.observation_labels[3].decision_observations.instrument_family = "crypto";
+    const noCrypto = await (await GET(request("view=features&market=us&horizon=2&cohort=entry"))).json();
+    expect(noCrypto.unsupportedFamilyRows).toBe(1);
+    expect(noCrypto.matchedPoints).toBe(3);
+    expect(noCrypto.cells.every((c: any) => c.family !== "crypto")).toBe(true);
     const longWindow = await (await GET(request("view=features&market=us&horizon=20&cohort=entry"))).json();
     expect(longWindow.lookbackDays).toBe(480);
   });

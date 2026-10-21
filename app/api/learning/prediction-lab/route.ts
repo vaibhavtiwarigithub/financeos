@@ -43,7 +43,8 @@ export async function GET(req: NextRequest) {
       .in("status", ["completed", "partial"]).order("id").range(from, to);
     }, "Prediction Lab runs");
     if (runs.length > 60000) throw new Error("Comparison scope exceeds bounded read; refusing partial analysis");
-    const eligible = runs.filter((r) => r.config_snapshot?.cohort_key === "all_research_v1");
+    const cohortRuns = runs.filter((r) => r.config_snapshot?.cohort_key === "all_research_v1");
+    const eligible = cohortRuns.filter((r) => r.instrument?.family !== "crypto");
     const forecasts: any[] = [];
     for (let i = 0; i < eligible.length; i += 100) {
       const ids = eligible.slice(i, i + 100).map((r) => r.id);
@@ -52,16 +53,22 @@ export async function GET(req: NextRequest) {
         .in("run_id", ids).eq("status", "completed").lte("created_at", cutoff).order("id").range(from, to), "Prediction Lab forecasts"));
     }
     const benchmark = benchmarkSymbolFor(market, "research");
+    // Price bars before the earliest actual decision cannot label any selected
+    // forecast. Keep a one-day timezone margin, rather than scanning a full
+    // 480-day price history for a council that only began collecting last week.
+    const decisionTimes = eligible.map((r) => Date.parse(r.decision_ts)).filter(Number.isFinite);
+    const firstDecision = decisionTimes.length ? Math.min(...decisionTimes) : Date.parse(cutoff);
+    const priceSince = new Date(Math.max(Date.parse(since), firstDecision - 86_400_000)).toISOString().slice(0, 10);
     const symbols = [...new Set(eligible.map((r) => String(r.symbol).toUpperCase()))];
     const marks = new Map<string, Array<{ date: string; close: number | null }>>();
     for (let i = 0; i < symbols.length; i += 40) {
       const chunk = symbols.slice(i, i + 40);
       const rows: any[] = await fetchAllRows((from, to) => svc.from("price_cache").select("symbol,date,close")
-        .in("symbol", chunk).gte("date", since.slice(0, 10)).lte("date", cutoff.slice(0, 10))
+        .in("symbol", chunk).gte("date", priceSince).lte("date", cutoff.slice(0, 10))
         .order("symbol").order("date").range(from, to), "Prediction Lab marks");
       for (const r of rows) { const list = marks.get(r.symbol) ?? []; list.push({ date: r.date, close: r.close == null ? null : Number(r.close) }); marks.set(r.symbol, list); }
     }
-    const benchmarkMarks = await loadStoredResearchBenchmark(svc, market, since.slice(0, 10), cutoff.slice(0, 10));
+    const benchmarkMarks = await loadStoredResearchBenchmark(svc, market, priceSince, cutoff.slice(0, 10));
     const byRun = new Map<string, any[]>();
     for (const f of forecasts) { const list = byRun.get(f.run_id) ?? []; list.push(f); byRun.set(f.run_id, list); }
     const points: CouncilComparisonPoint[] = [];
@@ -92,13 +99,13 @@ export async function GET(req: NextRequest) {
       if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}${baselineIdentity}` });
     }
     return NextResponse.json({
-      market, horizon, asOf: cutoff, since, lookbackDays, shadowOnly: true, cohort: "all_research_v1",
+      market, horizon, asOf: cutoff, since, lookbackDays, priceWindowStart: priceSince, shadowOnly: true, cohort: "all_research_v1",
       benchmark, benchmarkVersion: BENCHMARK_REGISTRY_VERSION, labelVersion: AVAILABILITY_LABEL_VERSION,
       benchmarkSource: market === "india" ? "benchmark_price_observations" : "price_cache",
       convention: "Gross price excess return from common forecast-availability close; not execution P&L. Initial scores only. Effort not available in this projection; no cross-model winner verdict.",
-      coverage: { runs: eligible.length, forecasts: forecasts.length, benchmarkMarks: benchmarkMarks.length, labelledRuns, missingBaseline, missingAvailability, unlabelled },
+      coverage: { runs: eligible.length, forecasts: forecasts.length, benchmarkMarks: benchmarkMarks.length, labelledRuns, missingBaseline, missingAvailability, unlabelled, unsupportedFamilyRuns: cohortRuns.length - eligible.length },
       cells: councilComparisons(points, market, horizon),
-      caveat: "Read-time descriptive reconstruction from current cached marks, not a sealed prospective experiment. Frozen instrument families are separated; unknown history is not reclassified. Different method rows can have different samples; each baseline is paired only within its own row. No significance, promotion or future-gain claim.",
+      caveat: "Read-time regular-market descriptive reconstruction from current cached marks, not a sealed prospective experiment. Recorded crypto is excluded because its 24/7 calendar is incompatible with these labels. Frozen instrument families are separated; unknown history is not reclassified. Different method rows can have different samples; each baseline is paired only within its own row. No significance, promotion or future-gain claim.",
     });
   } catch {
     return NextResponse.json({ error: "Prediction Lab comparison unavailable; complete source reads required" }, { status: 503 });

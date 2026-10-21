@@ -28,6 +28,20 @@ indicator's availability; older complete data does not replace a missing latest
 feature. Only labels matured by the read cutoff are included. All calculations
 are read-only and cannot promote a method or change a trade.
 
+These regular-market diagnostics explicitly exclude recorded crypto, whose
+24/7 label calendar belongs to the native crypto pipeline. Observation-label
+returns in the dimension/rule view and forecast-availability-close returns in
+the council view have different start conventions; do not subtract cells across
+those views as though they were paired. The current/v1 technical pair uses only
+its identical stored observation-label outcomes and current research cohort,
+not a counterfactual universe of names either trading policy might have selected.
+
+Council price reads are limited to dates that can label actual selected
+forecasts. A bounded private calendar-state memo avoids reconstructing timezone
+state for every forecast times every historic bar, without caching prices or
+availability/maturity verdicts. Missing expected entry/interior/end marks and
+unmatured windows still fail closed.
+
 Numerical reference and seeded serial-null tests verify the HAC arithmetic,
 but show why its t is still descriptive. Even 120 overlapping h10 observations
 produced a 16% false-positive rate at the inappropriate normal |t|>1.96 cutoff

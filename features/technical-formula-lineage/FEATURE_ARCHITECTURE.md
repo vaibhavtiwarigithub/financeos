@@ -67,6 +67,11 @@ historical families stay unknown; do not classify them with today's taxonomy.
 Council comparisons also separate frozen families. New read-time identities
 do not rewrite any stored evaluator result.
 
+Live-QA follow-up: v3 excludes rows explicitly recorded as crypto from these
+regular-market diagnostics. Crypto requires a native 24/7 session/label owner;
+it must not acquire stock-session inference merely because settlement is USD.
+Unknown historical families remain unknown, not reclassified today.
+
 The same reader offers a paired technical-current versus frozen-v1 diagnostic
 only when BOTH scores were recorded together in the decision-time score trace
 and its current score equals the observation's technical score. It reuses the
@@ -84,6 +89,13 @@ label/run rows, then explicit refusal, never a silently clipped result).
 The feature query projects only required JSON paths and score/session fields,
 not full research packets. Wider capacity is not an inference pass: calendars,
 actual qualifying dates, mature outcomes and sample validity must still pass.
+
+The council price read starts no earlier than the earliest actual forecast
+decision (with a one-day timezone margin), not the whole potential read span.
+The shared availability-label owner memoizes only deterministic daily calendar
+states in a private 2,048-entry cache; availability/cutoff/price decisions are
+not cached. Numerical label semantics and version stay unchanged. A regression
+checks calendar work scales with unique dates, not forecasts multiplied by bars.
 
 Reuse the Prediction Lab read-only endpoint and panel. Predeclare RSI level
 and bands, MACD/ATR histogram, signal relation, zero relation, and confirmed

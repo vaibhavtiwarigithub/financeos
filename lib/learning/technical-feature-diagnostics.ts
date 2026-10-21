@@ -22,7 +22,7 @@ const bullCross = (t: Record<string, unknown>, above: boolean) => {
  * Crossovers require explicitly recorded consecutive-candle state, not an
  * inference from sparse daily research observations.
  */
-export const TECHNICAL_DIAGNOSTIC_VERSION = "rsi-macd-fixed-family-v2-stratified";
+export const TECHNICAL_DIAGNOSTIC_VERSION = "rsi-macd-fixed-family-v3-regular-market";
 export const TECHNICAL_FEATURES: readonly DiagnosticDefinition[] = [
   { id: "rsi14_level", binary: false, value: (t) => number(t.rsi14) },
   { id: "rsi14_below30", binary: true, value: (t) => flag(number(t.rsi14), (v) => v < 30) },

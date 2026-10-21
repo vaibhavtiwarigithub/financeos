@@ -11,6 +11,21 @@ export type AvailabilityAlignedLabel = {
   benchmarkNeutralReturn: number;
 };
 
+// Every forecast repeatedly inspects the same stored daily dates. The canonical
+// calendar is deterministic for a deployed version; avoid rebuilding Intl/time
+// zone state for each forecast x bar. Private, bounded and never returned for
+// mutation. No quote/provider data or availability decisions are cached here.
+const dayStates = new Map<string, ReturnType<typeof getMarketDayStatus>>();
+function labelDayStatus(market: "us" | "india", date: Date) {
+  const key = `${market}:${date.getTime()}`;
+  const existing = dayStates.get(key);
+  if (existing) return existing;
+  const value = getMarketDayStatus(market, date);
+  if (dayStates.size >= 2048) dayStates.clear();
+  dayStates.set(key, value);
+  return value;
+}
+
 /**
  * Labels a subscription forecast only from a complete regular-session close
  * strictly after the client reported the forecast available. Returns are
@@ -43,14 +58,14 @@ export function availabilityAlignedLabel(args: {
   let expectedEntry: string | null = null;
   for (let i = 0; i < 15; i++, cursor.setUTCDate(cursor.getUTCDate() + 1)) {
     const date = cursor.toISOString().slice(0, 10);
-    const state = getMarketDayStatus(args.market, cursor);
+    const state = labelDayStatus(args.market, cursor);
     if (!state.calendarSupported || state.kind === "special_session") return null;
     const close = researchSessionCloseAt(args.market, date);
     if (close != null && close > availableAt) { expectedEntry = date; break; }
   }
   if (!expectedEntry) return null;
   const alignedDates = [...symbol.keys()].filter((date) => {
-    const state = getMarketDayStatus(args.market, new Date(`${date}T12:00:00Z`));
+    const state = labelDayStatus(args.market, new Date(`${date}T12:00:00Z`));
     const symbolClose = symbol.get(date), benchmarkClose = benchmark.get(date);
     return state.calendarSupported && state.kind === "trading_day"
       && (researchSessionCloseAt(args.market, date) ?? -Infinity) > availableAt
@@ -66,7 +81,7 @@ export function availabilityAlignedLabel(args: {
   const endSession = alignedDates[endIndex];
   const windowCursor = new Date(`${entrySession}T12:00:00Z`);
   while (windowCursor.toISOString().slice(0, 10) <= endSession) {
-    if (getMarketDayStatus(args.market, windowCursor).kind === "special_session") return null;
+    if (labelDayStatus(args.market, windowCursor).kind === "special_session") return null;
     windowCursor.setUTCDate(windowCursor.getUTCDate() + 1);
   }
   let expected: string[];
