@@ -1,5 +1,21 @@
 # Prediction Lab: evidence-led council, formula and strategy improvement
 
+## Learning presentation repair — owner requested 2026-10-21
+
+Reuse the existing Learning panels, not a second dashboard or evidence pipeline.
+Keep Prediction Lab first; provide named jump links and keyboard-operable native
+disclosures for dimension health, council coverage, formula experiments, strategy
+governance, market context and learning history. Existing council/formula/strategy
+fragment URLs must open their containing disclosure, including initial page loads
+and browser back/forward. Preserve panel state and market scoping. Long comparison
+tables scroll within a labelled, focusable region; no rows are silently removed.
+Methods and limitations remain available in an expandable explanation. A failed
+JSON/non-JSON read must display a safe actionable message and offer retry rather
+than exposing a parser error or claiming zero observations. Remove obsolete
+hardcoded schedules/threshold and automatic-unlock claims from the old guide.
+This is presentation and read-error recovery only; no new collection, inference,
+schema, scoring, promotion or execution authority is granted.
+
 ## 2026-10-21 owner-requested MACD and lineage extension
 
 The subsequent owner instruction explicitly authorizes direct MACD and forward

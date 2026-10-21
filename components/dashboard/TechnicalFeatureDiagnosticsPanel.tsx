@@ -21,8 +21,13 @@ export default function TechnicalFeatureDiagnosticsPanel({ horizon }: { horizon:
     const controller = new AbortController(); setData(null); setError("");
     if (query == null) return () => controller.abort();
     fetch(`/api/learning/prediction-lab?view=features&market=${market}&horizon=${horizon}&cohort=${cohort}&symbol=${encodeURIComponent(query)}`, { cache: "no-store", signal: controller.signal })
-      .then(async (r) => { const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Feature diagnostics unavailable"); return b; })
-      .then(setData).catch((e) => { if (!controller.signal.aborted) setError(e.message); });
+      .then(async (r) => {
+        const b = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(typeof b?.error === "string" ? b.error : `Feature diagnostics unavailable (HTTP ${r.status}). Use Evaluate stored data to retry.`);
+        if (!b || !Array.isArray(b.cells) || !b.currentFormulaVersions) throw new Error("Feature diagnostics returned an incomplete response. Use Evaluate stored data to retry.");
+        return b;
+      })
+      .then((body) => { if (!controller.signal.aborted) setData(body); }).catch((e) => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Feature diagnostics unavailable. Please retry."); });
     return () => controller.abort();
   }, [market, horizon, cohort, query, request]);
   return <section aria-label="Technical feature diagnostics" style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}`, color: T.text }}>
@@ -37,15 +42,15 @@ export default function TechnicalFeatureDiagnosticsPanel({ horizon }: { horizon:
     {error && <p role="alert" style={{ color: "#F87171", fontSize: 12 }}>{error}</p>}
     {query != null && !data && !error && <p style={{ color: T.muted, fontSize: 12 }}>Reading complete stored labels and validated source sessions…</p>}
     {data && <>
-      <p style={{ color: T.sub, fontSize: 11, overflowWrap: "anywhere", lineHeight: 1.6 }}>Current definitions: {Object.entries(data.currentFormulaVersions).map(([dim, v]) => `${dim}: ${v}`).join(" · ")}. These names apply to new observations only; the measured rows below retain their recorded identity.</p>
+      <details style={{ color: T.sub, fontSize: 12, marginTop: 12 }}><summary style={{ cursor: "pointer" }}>Current formula versions & indicator definitions</summary><p style={{ fontSize: 11, overflowWrap: "anywhere", lineHeight: 1.6 }}>Current definitions: {Object.entries(data.currentFormulaVersions).map(([dim, v]) => `${dim}: ${v}`).join(" · ")}. These names apply to new observations only; the measured rows below retain their recorded identity. RSI = Relative Strength Index. MACD = Moving Average Convergence Divergence. ATR = Average True Range.</p></details>
       <p style={{ color: T.sub, fontSize: 11 }}>{data.matchedPoints} matched source rows · {data.excludedRows} excluded · {data.predeclaredFeatures} predeclared features · h{horizon}. Single-symbol t is withheld, not inferred from an IID correlation formula.</p>
       {series === "paired" && <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6 }}>Current and frozen-v1 technical scores must have been recorded together and match the stored score trace. Both use identical symbols and outcomes, with at least 15 names per session and instrument family. This measures score-rank lift, not portfolio P&L. A single selected symbol cannot have this cross-sectional comparison.</p>}
-      <div role="region" aria-label="Technical feature results" tabIndex={0} style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse", fontSize: 11 }}>
+      <div role="region" aria-label="Technical feature results" tabIndex={0} style={{ overflow: "auto", maxHeight: 440 }}><table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse", fontSize: 11 }}>
         {series === "paired" ? <>
-          <thead><tr style={{ textAlign: "left", color: T.sub }}>{["Paired technical methods", "Observations", "Dates / rough windows", "Current IC", "Frozen v1 IC", "Paired IC lift", "Descriptive t", "State"].map((s) => <th key={s} scope="col" style={{ padding: "8px 10px 8px 0" }}>{s}</th>)}</tr></thead>
+          <thead style={{ position: "sticky", top: 0, background: T.bg, zIndex: 1 }}><tr style={{ textAlign: "left", color: T.sub }}>{["Paired technical methods", "Observations", "Dates / rough windows", "Current IC", "Frozen v1 IC", "Paired IC lift", "Descriptive t", "State"].map((s) => <th key={s} scope="col" style={{ padding: "8px 10px 8px 0" }}>{s}</th>)}</tr></thead>
           <tbody>{(data.pairedMacd ?? []).map((c) => <tr key={c.method} style={{ borderTop: `1px solid ${T.border}` }}>{[c.method, c.observations, `${c.sessions} / ${c.roughWindows.toFixed(1)}`, num(c.ic), num(c.baselineIc), num(c.deltaIc), num(c.descriptiveHacT), c.state.replaceAll("_", " ")].map((v, i) => <td key={i} style={{ padding: "10px 10px 10px 0", overflowWrap: "anywhere" }}>{v}</td>)}</tr>)}</tbody>
         </> : <>
-        <thead><tr style={{ textAlign: "left", color: T.sub }}>{["Score / indicator", "Recorded formula", "Instrument family", "Sample / available", "Dates", "Rank IC", "Descriptive t", "Triggered / control", "Return contrast", "State"].map((s) => <th key={s} style={{ padding: "8px 10px 8px 0" }}>{s}</th>)}</tr></thead>
+        <thead style={{ position: "sticky", top: 0, background: T.bg, zIndex: 1 }}><tr style={{ textAlign: "left", color: T.sub }}>{["Score / indicator", "Recorded formula", "Instrument family", "Sample / available", "Dates", "Rank IC", "Descriptive t", "Triggered / control", "Return contrast", "State"].map((s) => <th key={s} scope="col" style={{ padding: "8px 10px 8px 0" }}>{s}</th>)}</tr></thead>
         <tbody>{(series === "dimensions" ? data.dimensionCells ?? [] : data.cells).map((c) => <tr key={`${c.family}:${c.formula}:${c.feature}`} style={{ borderTop: `1px solid ${T.border}` }}>{[c.feature.replaceAll("_", " "), c.formula, c.family.replaceAll("_", " "), `${c.observations} / ${c.availablePoints}`, c.qualifyingDates, num(c.rankIc), num(c.descriptiveT), c.binary ? `${c.triggered} / ${c.control}` : "—", c.contrast == null ? "—" : `${(c.contrast * 100).toFixed(2)} pp`, c.state.replaceAll("_", " ")].map((v, i) => <td key={i} style={{ padding: "10px 10px 10px 0", overflowWrap: "anywhere" }}>{v}</td>)}</tr>)}</tbody>
         </>}
       </table></div>

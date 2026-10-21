@@ -1,5 +1,27 @@
 # Kairos — Learning Loop
 
+## Finding the right evidence on Learning
+
+Prediction Lab stays at the top. The navigation below the page heading opens
+six groups: **Dimension health & regressions**, **LLM council · scores & coverage**,
+**Formula experiments & historical fits**, **Strategy governance**,
+**Market context & event studies**, and **Portfolio outcomes & learning history**.
+Groups use keyboard-operable disclosures rather than an uninterrupted stack of
+large tables. Existing section links still work on initial load and back/forward;
+they reveal the containing group. Panels remain mounted to preserve filters.
+
+Comparison tables retain every returned row in bounded, keyboard-scrollable
+regions with sticky column headings. Formula identities and method limitations
+remain accessible in expandable explanations. A temporary failed read offers a
+manual retry; it never becomes a zero-observation result or an automatic retry
+loop. US/India selection still scopes the existing evidence owners. The learning
+log is explicitly global; paper outcomes and champion weights are market-local.
+Loaded weight-history records are not represented as a lifetime mutation count.
+
+The former static diagram's fixed schedules, three-candidate limit and automatic
+ten-trade unlock descriptions were removed because they no longer represented
+the running system. Evidence maturity and approval remain separate gates.
+
 ## Prediction Lab: compare forecasts without changing trades
 
 The formula/feature drill-down can display the five stored dimension scores
