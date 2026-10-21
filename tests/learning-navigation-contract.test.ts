@@ -20,6 +20,9 @@ describe("Learning presentation contracts", () => {
     expect(learning).toContain("ref.current.open = true");
     expect(learning).toContain('window.addEventListener("hashchange", reveal)');
     expect(learning).toContain('window.removeEventListener("hashchange", reveal)');
+    expect(learning).toContain('document.addEventListener("click", followFragment)');
+    expect(learning).toContain('document.removeEventListener("click", followFragment)');
+    expect(learning).toContain("if (anchor?.hash) revealTarget(anchor.hash)");
     expect(learning).toContain("reveal();");
     expect(learning).toContain("{children}</div>");
   });

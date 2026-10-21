@@ -92,7 +92,9 @@ related but different objectives.
   remain owner-only.
 - **Expected value:** faster diagnosis, fewer duplicate experiments and lower
   wasted inference cost; financial benefit is an untested hypothesis.
-- **Shipped at:** not shipped.
+- **Shipped at:** scoped P0 repairs and P1 read-only measurement shipped
+  2026-10-21; release evidence is in WORK_LOG.md and the Prediction Lab QA report.
+  This does not mark the broader P0 audit or P2–P6 programs shipped.
 - **Approval boundary:** approval to review/edit this architecture is not
   approval to collect paid challengers or change trading.
 

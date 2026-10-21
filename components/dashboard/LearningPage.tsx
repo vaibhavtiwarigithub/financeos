@@ -44,16 +44,28 @@ function Empty({ msg }: { msg: string }) {
 function LearningSection({ id, title, description, children }: { id: string; title: string; description: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
-    const reveal = () => {
-      const target = document.getElementById(window.location.hash.slice(1));
+    const revealTarget = (hash: string) => {
+      const target = document.getElementById(hash.slice(1));
       if (target && ref.current?.contains(target)) {
         ref.current.open = true;
         requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
       }
     };
+    const reveal = () => revealTarget(window.location.hash);
+    // Clicking the current fragment does not emit hashchange. Open before the
+    // browser follows the anchor so manually closed groups still reveal.
+    const followFragment = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href^="#"]') : null;
+      if (anchor?.hash) revealTarget(anchor.hash);
+    };
     reveal();
     window.addEventListener("hashchange", reveal);
-    return () => window.removeEventListener("hashchange", reveal);
+    document.addEventListener("click", followFragment);
+    return () => {
+      window.removeEventListener("hashchange", reveal);
+      document.removeEventListener("click", followFragment);
+    };
   }, []);
   return <details ref={ref} id={id} data-learning-section style={{ marginBottom: 16, border: `1px solid ${T.border}`, borderRadius: 12, background: T.surface, scrollMarginTop: 24 }}>
     <summary style={{ cursor: "pointer", padding: "18px 20px", color: T.text }}>

@@ -26,8 +26,20 @@ Date: 2026-10-21. Scope: owner-requested arrangement repair, no scoring/trading 
   browser interaction checks; source assertions alone are not end-to-end proof.
 - Full suite: 4,098 passed, eight skipped, zero failures (local JSON report outside
   the repository). TypeScript, diff check and staged secret scan passed.
-- Production build, deployment and US/India/mobile interactions: pending final
-  verification below; passing unit tests alone do not establish deployed behavior.
+- Local production build passed all 78 pages; generated scratch config restored.
+- Initial release `5fda31fd` is READY in production (`dpl_EFUYMWP6if9mF4DKGUT618fQVswc`).
+  Default desktop height was 1,463px versus the earlier approximately 13,403px;
+  every existing evidence owner remains accessible. All six jump links opened
+  their groups. Initial deep links, back navigation and keyboard Enter worked.
+- Real interaction exposed a same-fragment edge case: manually closing a group
+  then clicking its existing URL fragment did not re-open it. The follow-up listens
+  to unmodified fragment clicks as well as hashchange, with symmetric cleanup;
+  its final deployed verification remains below.
+- Synthetic non-JSON HTTP 504 displayed a safe error; manual Retry recovered
+  with HTTP 200 and cleared the error. No database write or inference was used.
+- Populated US h2 retained 94 comparison rows inside a <=440px region with no
+  page overflow at 375/768/1440px. Weight and equity history tabs remained usable.
+- Final follow-up deployment, India and feature-control checks are pending below.
 
 ## Remaining work is not silently completed
 
