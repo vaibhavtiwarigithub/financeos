@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { parseInvescoHoldings, parseSpdrHoldings, rankConstituentCoverage, fetchConstituentSnapshot, type ConstituentSnapshot } from "@/lib/research/etf-constituents";
+import { constituentBenchmarkReturn, parseInvescoHoldings, parseSpdrHoldings, rankConstituentCoverage, fetchConstituentSnapshot, type ConstituentSnapshot } from "@/lib/research/etf-constituents";
 import { parseNiftyConstituentsCsv } from "@/lib/nifty50-constituents";
 
 const snapshot = (benchmark: string, symbols: string[]): ConstituentSnapshot => ({ benchmark, symbols,
   source: "https://issuer.example/holdings", asOf: "2026-10-20", observedAt: "2026-10-21T10:00:00Z", membership: "fund_holdings" });
 
 describe("ETF constituent coverage", () => {
+  it("does not bridge missing or stale benchmark sessions when prioritizing a sector", () => {
+    const dates = ["2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20"];
+    const prices = new Map(dates.map((date, i) => [date, 100 + i]));
+    expect(constituentBenchmarkReturn("us", prices, "2026-10-20")).toBeCloseTo(0.05);
+    prices.delete("2026-10-14"); prices.set("2026-10-12", 95);
+    expect(constituentBenchmarkReturn("us", prices, "2026-10-20")).toBeNull();
+    prices.set("2026-10-14", 101); prices.delete("2026-10-20");
+    expect(constituentBenchmarkReturn("us", prices, "2026-10-20")).toBeNull();
+  });
   it("validates small sector baskets without weakening the NIFTY-50 count contract", () => {
     const csv = ["Company Name,Industry,Symbol,Series,ISIN Code", ...Array.from({ length: 10 }, (_, i) => `Name,IT,STOCK${i},EQ,IN${i}`)].join("\n");
     expect(parseNiftyConstituentsCsv(csv, 10)).toHaveLength(10);

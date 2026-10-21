@@ -1,13 +1,13 @@
 # ETF constituent coverage and complete rotation source assessment
 
-Status: owner requested implementation on 2026-10-21; implementation and source contracts verified, production release pending.
+Status: implemented on owner request, 2026-10-21. Source release `5229c1a9` is on main and Vercel READY. Public source and composed rotation contracts verified; next naturally scheduled producer evidence remains to be observed.
 
 ## Why, who, expected benefit
 
 Kairos's owner needs benchmark-leading companies to enter research and capital
 rotation to consider every legitimate funding holding. Expected benefit is better
 coverage and fewer false rejections; no return advantage is presumed. ShippedAt:
-pending production verification.
+2026-10-21 (first production source release verified).
 
 ## Existing owners and extension
 
@@ -39,7 +39,8 @@ Membership is researched, never an automatic buy. Oldest research first within
 each basket, with two stale constituents from the strongest measured five-session
 basket first, then round-robin across all baskets. Freshness uses only completed
 market sessions. A stale or missing benchmark return produces no leadership
-claim. Downloaded holdings must be dated, non-future, no older than ten calendar
+claim. Every expected close must exist in the exact five-session return window;
+six available prices with an interior gap do not qualify. Downloaded holdings must be dated, non-future, no older than ten calendar
 days; NSE's undated current file is stamped observed-current, not historical.
 Duplicate, malformed and incomplete lists fail visibly through System Health.
 Source responses are cached for one day. No new cron, table, API route or package.

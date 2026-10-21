@@ -2,6 +2,7 @@ import { inflateRawSync } from "node:zlib";
 import { XMLParser } from "fast-xml-parser";
 import { parseNiftyConstituentsCsv } from "@/lib/nifty50-constituents";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
+import { expectedMarketSessionsBetween } from "@/lib/trading/market-calendar";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 
@@ -90,7 +91,8 @@ export function parseInvescoHoldings(raw: any): { asOf: string; symbols: string[
 
 export async function fetchConstituentSnapshot(benchmark: string, now = new Date()): Promise<ConstituentSnapshot | null> {
   const cached = cache.get(benchmark);
-  if (cached && now.getTime() - Date.parse(cached.observedAt) < 86_400_000) return cached;
+  const cachedAge = cached ? now.getTime() - Date.parse(cached.observedAt) : Infinity;
+  if (cached && cachedAge >= 0 && cachedAge < 86_400_000) return cached;
   const nse = NSE[benchmark];
   const spdrSymbol = benchmark === "VOO" ? "SPY" : benchmark;
   let source: string;
@@ -127,6 +129,16 @@ export interface BenchmarkCoverageCandidate {
   symbol: string;
   context: { benchmark: string; membership: ConstituentSnapshot["membership"]; source: string; as_of: string;
     observed_at: string; completed_session: string; benchmark_return_5_sessions: number | null };
+}
+
+/** Require every close in the exact five-session window; six available prices
+ * with an interior hole are not a five-session return. */
+export function constituentBenchmarkReturn(market: "us" | "india", prices: Map<string, number>, completedSession: string): number | null {
+  const start = new Date(`${completedSession}T12:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 30);
+  const sessions = expectedMarketSessionsBetween(market, start.toISOString().slice(0, 10), completedSession).slice(-6);
+  if (sessions.length !== 6 || sessions.some(date => !Number.isFinite(prices.get(date)) || Number(prices.get(date)) <= 0)) return null;
+  return prices.get(sessions[5])! / prices.get(sessions[0])! - 1;
 }
 
 /** Round-robin across benchmark baskets, with the strongest completed-session
@@ -187,9 +199,10 @@ export async function benchmarkConstituentCandidates(supabase: any, market: "us"
   if (barsError) throw new Error(`benchmark_constituent_leadership:${barsError.message}`);
   const returns = new Map<string, number>();
   for (const snapshot of snapshots) {
-    const prices = [...new Map<string, number>((bars ?? []).filter((bar: any) => bar.component_symbol === snapshot.benchmark && Number(bar.close) > 0)
-      .map((bar: any) => [String(bar.date), Number(bar.close)] as [string, number])).entries()];
-    if (prices.length >= 6 && prices[0][0] === completed) returns.set(snapshot.benchmark, prices[0][1] / prices[5][1] - 1);
+    const prices = new Map<string, number>((bars ?? []).filter((bar: any) => bar.component_symbol === snapshot.benchmark && Number(bar.close) > 0)
+      .map((bar: any) => [String(bar.date), Number(bar.close)] as [string, number]));
+    const measured = constituentBenchmarkReturn(market, prices, completed);
+    if (measured != null) returns.set(snapshot.benchmark, measured);
   }
   return rankConstituentCoverage(snapshots, lastScores, returns, completed);
 }
