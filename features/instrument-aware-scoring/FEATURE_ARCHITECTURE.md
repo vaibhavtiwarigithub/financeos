@@ -1,6 +1,6 @@
 # Instrument-Aware Research and Scoring
 
-**Status:** Approved; P0/P1 measurement implemented; owner-approved dimension-applicability correction implemented locally on 2026-10-20; production release pending verification
+**Status:** Approved; P0/P1 measurement implemented; owner-approved dimension-applicability correction deployed on `main` as `ba81cb8e` on 2026-10-20; Vercel production `READY`
 **Owner:** Vaibhav
 **Architect/Builder:** Codex / GPT-5
 **Date:** 2026-08-24

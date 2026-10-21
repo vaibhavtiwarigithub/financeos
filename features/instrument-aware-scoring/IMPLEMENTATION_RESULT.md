@@ -68,7 +68,11 @@ for affected instruments; it does not change base weights, thresholds, sizing,
 exits, order controls, or live flags. India funds with only one applicable
 dimension still abstain under the existing minimum-two-dimension rule.
 
-Code and docs are local pending release. Focused verification and production
-deployment must be recorded here and in `WORK_LOG.md` before calling this
-change shipped. Pre-correction and post-correction score observations must be
-kept separate by code version.
+Shipped to `main` in commit `ba81cb8e`. Vercel production deployment
+`dpl_EHbZoDnMbgYKL9LErb5Gr88dkY2t` completed `READY` and owns the main
+FinanceOS production aliases. Focused tests: 27/27; full suite: 4,047 passed,
+7 skipped. Source-only TypeScript check passed with stale `.next/types` excluded;
+Vercel's production build also completed type checking and prerendered all 78
+static pages. GitGuardian staged secret scan found no secrets. No migration was
+needed. Pre-correction and post-correction score observations must remain
+separate by code version.
