@@ -6,6 +6,7 @@ import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-
 import { benchmarkSymbolFor, BENCHMARK_REGISTRY_VERSION } from "@/lib/data/benchmark-registry";
 import { councilComparisons, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
 import { medianScore } from "@/lib/llm-council/core";
+import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
         .in("run_id", ids).eq("status", "completed").lte("created_at", cutoff).order("id").range(from, to), "Prediction Lab forecasts"));
     }
     const benchmark = benchmarkSymbolFor(market, "research");
-    const symbols = [...new Set([benchmark, ...eligible.map((r) => String(r.symbol).toUpperCase())])];
+    const symbols = [...new Set(eligible.map((r) => String(r.symbol).toUpperCase()))];
     const marks = new Map<string, Array<{ date: string; close: number | null }>>();
     for (let i = 0; i < symbols.length; i += 40) {
       const chunk = symbols.slice(i, i + 40);
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
         .order("symbol").order("date").range(from, to), "Prediction Lab marks");
       for (const r of rows) { const list = marks.get(r.symbol) ?? []; list.push({ date: r.date, close: r.close == null ? null : Number(r.close) }); marks.set(r.symbol, list); }
     }
+    const benchmarkMarks = await loadStoredResearchBenchmark(svc, market, since.slice(0, 10), cutoff.slice(0, 10));
     const byRun = new Map<string, any[]>();
     for (const f of forecasts) { const list = byRun.get(f.run_id) ?? []; list.push(f); byRun.set(f.run_id, list); }
     const points: CouncilComparisonPoint[] = [];
@@ -61,7 +63,7 @@ export async function GET(req: NextRequest) {
       const times = members.map((f) => Date.parse(f.available_at ?? (f.execution_source === "api" ? f.created_at : "")));
       if (times.some((t) => !Number.isFinite(t) || t < Date.parse(r.decision_ts) || t > Date.parse(cutoff))) { missingAvailability++; continue; }
       const availableAt = new Date(Math.max(...times)).toISOString();
-      const label = availabilityAlignedLabel({ market, availableAt, asOf: cutoff, horizonDays: horizon, symbolMarks: marks.get(r.symbol) ?? [], benchmarkMarks: marks.get(benchmark) ?? [] });
+      const label = availabilityAlignedLabel({ market, availableAt, asOf: cutoff, horizonDays: horizon, symbolMarks: marks.get(r.symbol) ?? [], benchmarkMarks });
       if (!label) { unlabelled++; continue; }
       labelledRuns++;
       const roster = members.map((f) => `${f.model_requested}>${f.model_used ?? "unknown"}/${f.execution_source}`).sort().join(" + ");
@@ -76,8 +78,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       market, horizon, asOf: cutoff, since, shadowOnly: true, cohort: "all_research_v1",
       benchmark, benchmarkVersion: BENCHMARK_REGISTRY_VERSION, labelVersion: AVAILABILITY_LABEL_VERSION,
+      benchmarkSource: market === "india" ? "benchmark_price_observations" : "price_cache",
       convention: "Gross price excess return from common forecast-availability close; not execution P&L. Initial scores only. Effort not available in this projection; no cross-model winner verdict.",
-      coverage: { runs: eligible.length, forecasts: forecasts.length, labelledRuns, missingBaseline, missingAvailability, unlabelled },
+      coverage: { runs: eligible.length, forecasts: forecasts.length, benchmarkMarks: benchmarkMarks.length, labelledRuns, missingBaseline, missingAvailability, unlabelled },
       cells: councilComparisons(points, market, horizon),
       caveat: "Read-time descriptive reconstruction from current cached marks, not a sealed prospective experiment. Different method rows can have different samples; each baseline is paired only within its own row. No significance, promotion or future-gain claim.",
     });

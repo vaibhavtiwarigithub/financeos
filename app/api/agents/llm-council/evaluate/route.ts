@@ -6,6 +6,7 @@ import { buildCouncilIcCell, COUNCIL_HORIZONS, equalWeightCouncilBlend, medianSc
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_KEY, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
 import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
       const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
       return run?.market === market && delayedRuns.has(run.id) ? [{ forecast: row, run }] : [];
     });
-    const symbols = [...new Set([benchmarkSymbolFor(market, "research"), ...marketRows.map(({ run }) => String(run.symbol).toUpperCase())])];
+    const symbols = [...new Set(marketRows.map(({ run }) => String(run.symbol).toUpperCase()))];
     const earliest = marketRows.reduce((min, row) => Math.min(min, Date.parse(row.forecast.available_at)), Date.now());
     const fromDate = new Date(earliest - 4 * 86_400_000).toISOString().slice(0, 10);
     const markMap = new Map<string, Array<{ date: string; close: number | null }>>();
@@ -197,6 +198,11 @@ export async function POST(req: NextRequest) {
         }
         if (!data || data.length < PAGE) break;
       }
+    }
+    try {
+      markMap.set(benchmarkSymbolFor(market, "research"), await loadStoredResearchBenchmark(svc, market, fromDate, new Date().toISOString().slice(0, 10)));
+    } catch {
+      return NextResponse.json({ error: `Could not load ${market} stored research benchmark` }, { status: 500 });
     }
     for (const horizon of COUNCIL_HORIZONS) {
       const pointMap = new Map<string, CouncilLabelPoint[]>();

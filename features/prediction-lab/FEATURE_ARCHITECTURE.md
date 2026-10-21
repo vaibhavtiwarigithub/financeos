@@ -901,6 +901,15 @@ Different rows are not a head-to-head leaderboard. Exact realized roster is part
 of the median identity. It uses a complete paginated trailing-90-day read; a
 bounded-scope overflow fails rather than publishing partial evidence.
 
+Production verification found a further India producer defect: the index
+`^NSEI` has stored rows in `benchmark_price_observations`, not `price_cache`.
+The shared `benchmark-history` reader now supplies its exact enabled INR
+identity to both the read-only projection and nightly availability evaluator;
+US keeps stored SPY. The UI exposes source and mark count. No alternative ETF,
+NAV proxy, provider fetch or registry-purpose change is used. Early-close
+timestamp memoization is calendar-derived only, bounded by supported dates,
+and does not change close semantics.
+
 The projection has no writes, paid calls, trial registration, sealed evidence
 claim or winner verdict. Current cached marks can be revised, so the read-time
 sample hash is diagnostic only. No source/prospective record is overwritten.

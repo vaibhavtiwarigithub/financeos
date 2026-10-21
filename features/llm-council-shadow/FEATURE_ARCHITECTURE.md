@@ -20,6 +20,13 @@ distances and is descriptive only. Older Council tables retain explicitly
 labelled legacy descriptive t values. Full P0/P1 boundaries and later gates:
 `features/prediction-lab/FEATURE_ARCHITECTURE.md` version 1.2.
 
+India availability labels read the existing NIFTY (`^NSEI`) INR benchmark
+observations through the shared benchmark-history reader, not `price_cache`
+(which contains no such index rows in production). US retains stored SPY.
+Both the read-only comparison and scheduled evaluator use this exact identity,
+with no provider call or substitute benchmark. Missing identity/read errors
+fail the request rather than publishing an empty successful comparison.
+
 ## 2026-10-16 operational repair
 
 The hybrid council's Claude/Codex subscription scores were absent because the

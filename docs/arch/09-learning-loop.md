@@ -24,6 +24,13 @@ official 2026 US early closes and DST; unmodelled India special sessions and
 unsupported calendar years fail closed. Corrected scheduled subscription labels
 use `forecast_available_close_v2`, leaving older result rows untouched.
 
+Stored benchmark routing is explicit: US research SPY uses `price_cache`;
+India research `^NSEI` uses the exact enabled INR index identity and its
+`source_status=ok` component rows in `benchmark_price_observations`. The shared
+benchmark-history reader supplies both this panel and the nightly availability
+evaluator. The panel reports source and stored-mark count. An absent/ambiguous
+identity fails closed; no ETF, portfolio NAV or live provider fallback is used.
+
 The view reconstructs from stored forecasts and current cached prices, not a
 sealed prospective dataset or executable P&L. Its sample hash identifies the
 returned reconstruction only. Missing data/immaturity are reported together,

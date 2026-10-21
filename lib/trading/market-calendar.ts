@@ -55,11 +55,15 @@ export type MarketDayStatus = {
  * Source: https://www.nyse.com/trade/hours-calendars
  * Does not change the existing order/session-open gate.
  */
+const researchCloseTimestamps = new Map<string, number>();
 export function researchSessionCloseAt(market: "us" | "india", session: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(session)) return null;
   const date = new Date(`${session}T12:00:00Z`);
   if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== session) return null;
   if (getMarketDayStatus(market, date).kind !== "trading_day") return null;
+  const cacheKey = `${market}:${session}`;
+  const cached = researchCloseTimestamps.get(cacheKey);
+  if (cached != null) return cached;
   const [year, month, day] = session.split("-").map(Number);
   const early = market === "us" && ["2026-11-27", "2026-12-24"].includes(session);
   const hour = market === "india" ? 15 : early ? 13 : 16;
@@ -70,7 +74,9 @@ export function researchSessionCloseAt(market: "us" | "india", session: string):
     hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   }).formatToParts(new Date(guess));
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
-  return guess - (Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute")) - guess);
+  const close = guess - (Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute")) - guess);
+  researchCloseTimestamps.set(cacheKey, close);
+  return close;
 }
 
 function marketKey(market: string): "us" | "india" {
