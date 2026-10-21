@@ -26,6 +26,24 @@ for traceability.
 
 ## 1. The user-facing objective
 
+P0/P1 completion amendment (2026-10-21): read-only score/feature comparisons
+now stratify frozen instrument families, reject future label writes, and fix
+latest observation slots before testing feature availability. The existing
+feature reader exposes recorded dimension/composite scores under their own
+method IDs; availability masks prevent missing dimension values becoming
+zeros. Different methods can still have different samples; no cross-method
+winner verdict is added. Council read-time comparisons use a new v2 identity
+for instrument-stratified samples and reject blank baselines/invalid timestamps.
+
+The statistics audit adds an independent Bartlett quadratic-form reference
+and a seeded 1,000-replication null check per scenario. False-positive rates
+under the INAPPROPRIATE normal |t|>1.96 threshold are 4.3% at n=120/h1,
+36.8% at n=24/h10 and 16.0% at n=120/h10 for overlapping Gaussian innovations.
+This verifies arithmetic and demonstrates miscalibration; it does NOT calibrate
+a universal replacement reference. No p-values, confidence intervals or new
+promotion gate are introduced. Simulation/constructor parity, sealed manifests,
+declared confirmatory inference and later paid experiments remain gated.
+
 For each market and forecast horizon, explain whether our research dimensions,
 composite formulas, individual LLMs, council combination or trading strategies
 actually help predict later price movements **and** improve a realizable

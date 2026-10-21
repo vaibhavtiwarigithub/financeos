@@ -74,4 +74,20 @@ describe("fixed feature diagnostics", () => {
     expect(r.filter((c) => c.feature === "rsi14_level")).toHaveLength(2);
     expect(r.find((c) => c.formula === "test-v2" && c.feature === "rsi14_level")?.rankIc).toBeNull();
   });
+  it("separates frozen instrument families rather than making five symbols by pooling them", () => {
+    const p = points(["2026-10-01"]).map((row, index) => ({ ...row, family: index < 3 ? "operating_company" : "leveraged_or_inverse_etf" }));
+    const cells = technicalFeatureDiagnostics(p, "us", 2, false).filter((c) => c.feature === "rsi14_level");
+    expect(cells).toHaveLength(2);
+    expect(cells.every((c) => c.rankIc == null && c.qualifyingDates === 0)).toBe(true);
+    expect(cells.map((c) => c.observations).sort()).toEqual([2, 3]);
+  });
+  it("does not replace a missing latest feature with an older, available observation", () => {
+    const p = points(["2026-10-01"]);
+    const missing = { ...p[0], id: 100, ts: "2026-10-01T14:00:00Z", technical: { rsi14: null } };
+    const cells = technicalFeatureDiagnostics([...p, missing], "us", 2, false);
+    expect(cells.find((c) => c.feature === "rsi14_level")?.observations).toBe(4);
+    expect(cells.find((c) => c.feature === "rsi14_level")?.rankIc).toBeNull();
+    const overflow = p.map((r) => ({ ...r, technical: { macdHistogram: 1e308, atr14: 1e-308 } }));
+    expect(technicalFeatureDiagnostics(overflow, "us", 2, false).find((c) => c.feature === "macd_histogram_atr")?.observations).toBe(0);
+  });
 });

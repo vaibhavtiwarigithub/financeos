@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor, BENCHMARK_REGISTRY_VERSION } from "@/lib/data/benchmark-registry";
-import { councilComparisons, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
+import { councilComparisons, predictionLookbackDays, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
 import { medianScore } from "@/lib/llm-council/core";
 import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
 import { readTechnicalFeatureDiagnostics } from "@/lib/learning/technical-feature-reader";
@@ -32,13 +32,17 @@ export async function GET(req: NextRequest) {
     catch { return NextResponse.json({ error: "Feature comparison unavailable; complete source/session evidence required" }, { status: 503 }); }
   }
   const cutoff = new Date().toISOString();
-  const since = new Date(Date.parse(cutoff) - 90 * 86_400_000).toISOString();
+  const lookbackDays = predictionLookbackDays(horizon);
+  const since = new Date(Date.parse(cutoff) - lookbackDays * 86_400_000).toISOString();
   try {
-    const runs: any[] = await fetchAllRows((from, to) => svc.from("llm_council_runs")
-      .select("id,observation_id,symbol,decision_ts,status,prompt_version,completed_at,config_snapshot,deterministic:input_snapshot->deterministic_score,lineage:input_snapshot->source_formula_lineage")
+    const runs: any[] = await fetchAllRows((from, to) => {
+      if (from > 60000) throw new Error("Comparison scope exceeds bounded read");
+      return svc.from("llm_council_runs")
+      .select("id,observation_id,symbol,decision_ts,status,prompt_version,completed_at,config_snapshot,deterministic:input_snapshot->deterministic_score,lineage:input_snapshot->source_formula_lineage,instrument:input_snapshot->features->instrument")
       .eq("market", market).gte("decision_ts", since).lte("created_at", cutoff)
-      .in("status", ["completed", "partial"]).order("id").range(from, to), "Prediction Lab runs");
-    if (runs.length > 12000) throw new Error("Comparison scope exceeds bounded read; refusing partial analysis");
+      .in("status", ["completed", "partial"]).order("id").range(from, to);
+    }, "Prediction Lab runs");
+    if (runs.length > 60000) throw new Error("Comparison scope exceeds bounded read; refusing partial analysis");
     const eligible = runs.filter((r) => r.config_snapshot?.cohort_key === "all_research_v1");
     const forecasts: any[] = [];
     for (let i = 0; i < eligible.length; i += 100) {
@@ -64,19 +68,20 @@ export async function GET(req: NextRequest) {
     let missingBaseline = 0, missingAvailability = 0, unlabelled = 0, labelledRuns = 0;
     for (const r of eligible) {
       const baseline = r.deterministic?.composite;
-      if (baseline == null || !Number.isFinite(Number(baseline)) || Number(baseline) < 0 || Number(baseline) > 100) { missingBaseline++; continue; }
-      const members = (byRun.get(r.id) ?? []).filter((f) => f.initial_score != null && Number.isFinite(Number(f.initial_score)) && Number(f.initial_score) >= 0 && Number(f.initial_score) <= 100);
+      if ((typeof baseline !== "number" && typeof baseline !== "string") || String(baseline).trim() === "" || !Number.isFinite(Number(baseline)) || Number(baseline) < 0 || Number(baseline) > 100) { missingBaseline++; continue; }
+      const members = (byRun.get(r.id) ?? []).filter((f) => (typeof f.initial_score === "number" || typeof f.initial_score === "string") && String(f.initial_score).trim() !== "" && Number.isFinite(Number(f.initial_score)) && Number(f.initial_score) >= 0 && Number(f.initial_score) <= 100);
       if (!members.length) continue;
       // All members and their deterministic comparator share a single start.
       const times = members.map((f) => Date.parse(f.available_at ?? (f.execution_source === "api" ? f.created_at : "")));
-      if (times.some((t) => !Number.isFinite(t) || t < Date.parse(r.decision_ts) || t > Date.parse(cutoff))) { missingAvailability++; continue; }
+      if (!Number.isFinite(Date.parse(r.decision_ts)) || times.some((t) => !Number.isFinite(t) || t < Date.parse(r.decision_ts) || t > Date.parse(cutoff))) { missingAvailability++; continue; }
       const availableAt = new Date(Math.max(...times)).toISOString();
       const label = availabilityAlignedLabel({ market, availableAt, asOf: cutoff, horizonDays: horizon, symbolMarks: marks.get(r.symbol) ?? [], benchmarkMarks });
       if (!label) { unlabelled++; continue; }
       labelledRuns++;
       const baselineFormula = r.lineage?.versions
         ? Object.entries(r.lineage.versions).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("/") : "legacy/unknown";
-      const baselineIdentity = ` · baseline ${baselineFormula}`;
+      const family = typeof r.instrument?.family === "string" && r.instrument.family.trim() ? r.instrument.family : "legacy/unknown";
+      const baselineIdentity = ` · family ${family} · baseline ${baselineFormula}`;
       const roster = members.map((f) => `${f.model_requested}>${f.model_used ?? "unknown"}/${f.execution_source}`).sort().join(" + ");
       const common = { symbol: r.symbol, session: label.entrySession, observationId: String(r.observation_id), decisionTs: r.decision_ts, baseline: Number(baseline), outcome: label.benchmarkNeutralReturn };
       for (const f of members) {
@@ -87,13 +92,13 @@ export async function GET(req: NextRequest) {
       if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}${baselineIdentity}` });
     }
     return NextResponse.json({
-      market, horizon, asOf: cutoff, since, shadowOnly: true, cohort: "all_research_v1",
+      market, horizon, asOf: cutoff, since, lookbackDays, shadowOnly: true, cohort: "all_research_v1",
       benchmark, benchmarkVersion: BENCHMARK_REGISTRY_VERSION, labelVersion: AVAILABILITY_LABEL_VERSION,
       benchmarkSource: market === "india" ? "benchmark_price_observations" : "price_cache",
       convention: "Gross price excess return from common forecast-availability close; not execution P&L. Initial scores only. Effort not available in this projection; no cross-model winner verdict.",
       coverage: { runs: eligible.length, forecasts: forecasts.length, benchmarkMarks: benchmarkMarks.length, labelledRuns, missingBaseline, missingAvailability, unlabelled },
       cells: councilComparisons(points, market, horizon),
-      caveat: "Read-time descriptive reconstruction from current cached marks, not a sealed prospective experiment. Different method rows can have different samples; each baseline is paired only within its own row. No significance, promotion or future-gain claim.",
+      caveat: "Read-time descriptive reconstruction from current cached marks, not a sealed prospective experiment. Frozen instrument families are separated; unknown history is not reclassified. Different method rows can have different samples; each baseline is paired only within its own row. No significance, promotion or future-gain claim.",
     });
   } catch {
     return NextResponse.json({ error: "Prediction Lab comparison unavailable; complete source reads required" }, { status: 503 });

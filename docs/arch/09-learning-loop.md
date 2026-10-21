@@ -2,6 +2,38 @@
 
 ## Prediction Lab: compare forecasts without changing trades
 
+The formula/feature drill-down can display the five stored dimension scores
+and composite, or switch to nine fixed RSI/MACD indicator rules. It partitions
+each by recorded formula identity, frozen instrument family, entry/holding
+cohort and horizon. Missing dimension availability is not filled with zero.
+For a single symbol it uses non-overlapping time-series observations and
+withholds t; a single symbol cannot have cross-sectional IC. Unknown old
+identities stay unknown. Different rows can have different samples and cannot
+be ranked as a paired formula contest.
+
+The paired technical view is an exception to the different-sample comparison:
+it requires current and frozen-v1 technical scores stored together, with a
+matching score trace, identical observations/outcomes and at least 15 symbols
+per family/session. It reuses the matched-score statistics owner. This isolates
+the score-rank effect of the active MACD addition, not portfolio P&L.
+
+Horizon-aware read windows are 90/120/240/480 calendar days for h2/5/10/20;
+the old fixed 90-day ceiling could never reach the long-horizon session floors.
+Reads remain complete and bounded; oversized scopes fail rather than silently
+truncating. Required feature JSON paths are projected without full packets.
+
+Both council comparisons and feature diagnostics separate frozen instrument
+families. The latest eligible observation slot is fixed before checking each
+indicator's availability; older complete data does not replace a missing latest
+feature. Only labels matured by the read cutoff are included. All calculations
+are read-only and cannot promote a method or change a trade.
+
+Numerical reference and seeded serial-null tests verify the HAC arithmetic,
+but show why its t is still descriptive. Even 120 overlapping h10 observations
+produced a 16% false-positive rate at the inappropriate normal |t|>1.96 cutoff
+in the declared synthetic test. This is a warning, not a replacement calibrated
+critical value or an estimate of the app's trading error rate.
+
 ### Active MACD and forward formula lineage
 
 The owner explicitly authorized direct daily MACD scoring for US/India research.

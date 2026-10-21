@@ -3,7 +3,7 @@ import { availabilityAlignedLabel } from "@/lib/llm-council/availability-label";
 import { researchSessionCloseAt } from "@/lib/trading/market-calendar";
 import { hacMeanT, sessionDistanceT } from "@/lib/score-variants/core";
 import { wilderRsi, evaluate } from "@/lib/strategy-replay/compile";
-import { councilComparisons, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
+import { councilComparisons, predictionLookbackDays, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
 
 describe("expected close and data-independent entry", () => {
   it("uses official 2026 early closes and DST without altering ordinary July 2", () => {
@@ -57,6 +57,11 @@ describe("explicit RSI semantics", () => {
 });
 
 describe("session-distance descriptive statistics", () => {
+  it("allows long horizons to eventually exceed their window floor", () => {
+    expect([2, 5, 10, 20].map(predictionLookbackDays)).toEqual([90, 120, 240, 480]);
+    expect(predictionLookbackDays(20) * 5 / 7 - 20).toBeGreaterThan(12 * 20);
+    expect(() => predictionLookbackDays(3)).toThrow("Unsupported");
+  });
   it("equals ordinary Bartlett HAC at consecutive positions, not across gaps", () => {
     const xs = [1,2,4,3,7,5];
     expect(hacMeanT(xs, 2, [0,1,2,3,4,5])).toBeCloseTo(hacMeanT(xs, 2)!, 12);
@@ -74,5 +79,7 @@ describe("session-distance descriptive statistics", () => {
     expect(councilComparisons(points.slice(1), "us", 2)[0].sessions).toBe(0);
     expect(councilComparisons(points.map((p) => ({ ...p, score: 50 })), "us", 2)[0].ic).toBeNull();
     expect(councilComparisons([...points].reverse(), "us", 2)[0].commonSampleHash).toBe(cell.commonSampleHash);
+    expect(councilComparisons(points, "us", 2, 15)[0].sessions).toBe(0);
+    expect(() => councilComparisons(points, "us", 2, 4)).toThrow("Cannot weaken");
   });
 });

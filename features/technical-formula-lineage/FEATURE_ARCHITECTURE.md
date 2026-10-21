@@ -52,6 +52,39 @@ rosters, inference volume, consensus math or trading influence.
 
 ## Feature diagnostics and use
 
+Completion amendment (2026-10-21): the same read-only reader also exposes the
+five recorded dimension scores and recorded composite, partitioned by their
+own frozen method identity and instrument family. Missing/inapplicable dimension
+availability is excluded, not converted to a neutral score. These rows can have
+different available samples and are NOT a paired winner leaderboard. A Show
+selector switches between score formulas and the nine fixed RSI/MACD rules
+without another data request. No score formula changes in this amendment.
+
+Diagnostic plan v2 fixes the latest symbol/session observation before checking
+each indicator's availability; a missing latest value cannot select an earlier
+complete observation. Labels must have matured by the read cutoff. Unknown
+historical families stay unknown; do not classify them with today's taxonomy.
+Council comparisons also separate frozen families. New read-time identities
+do not rewrite any stored evaluator result.
+
+The same reader offers a paired technical-current versus frozen-v1 diagnostic
+only when BOTH scores were recorded together in the decision-time score trace
+and its current score equals the observation's technical score. It reuses the
+matched-score statistics owner and retains the stricter 15-name formula floor,
+not the council's five. It compares identical outcomes/observations within each
+recorded family and reports descriptive paired IC lift, never P&L or adoption.
+Missing latest traces remove their slots, not resurrect older complete scores.
+Single-symbol cross-sectional comparisons remain undefined; old v1 traces are
+never reconstructed from current provider data. No new inference or collector.
+
+Read windows are horizon-aware: h2/5/10/20 use 90/120/240/480 calendar days.
+A fixed 90-day window could never satisfy the existing h10/h20 descriptive
+session floors. Pagination reads the complete selected scope (up to 60,000
+label/run rows, then explicit refusal, never a silently clipped result).
+The feature query projects only required JSON paths and score/session fields,
+not full research packets. Wider capacity is not an inference pass: calendars,
+actual qualifying dates, mature outcomes and sample validity must still pass.
+
 Reuse the Prediction Lab read-only endpoint and panel. Predeclare RSI level
 and bands, MACD/ATR histogram, signal relation, zero relation, and confirmed
 bullish cross above/below zero. Do not search unlimited periods/thresholds.
