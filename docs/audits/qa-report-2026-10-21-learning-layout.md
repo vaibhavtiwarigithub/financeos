@@ -39,7 +39,27 @@ Date: 2026-10-21. Scope: owner-requested arrangement repair, no scoring/trading 
   with HTTP 200 and cleared the error. No database write or inference was used.
 - Populated US h2 retained 94 comparison rows inside a <=440px region with no
   page overflow at 375/768/1440px. Weight and equity history tabs remained usable.
-- Final follow-up deployment, India and feature-control checks are pending below.
+- Final runtime `80c16409` is on origin/main and Vercel production READY,
+  deployment `dpl_48HiXT2QtFoZLo3uJhm2fYjW1gae`, aliases assigned. All six
+  same-fragment re-open cases passed after a real page reload. Changing only the
+  fragment can retain the previous deployment's document/bundle; this is not a
+  reliable way to verify new runtime code.
+- India main and feature requests returned 200. INFY.NS holding h2, all three
+  series selections, the honest immature-pair state and India equity history
+  worked. Each of the six open India groups had no page overflow at 375px.
+- Both synthetic transport failures recovered to HTTP 200: main plain-text 504
+  via Retry comparison, and feature HTML 502 via Evaluate stored data.
+- Final US h2 read returned 200 and retained 94 rows. Its 296px-wide mobile
+  table region remained <=440px high; ArrowRight moved horizontal scroll and
+  the page did not overflow. Restored desktop/US view. Fresh-page console has
+  zero errors; the two earlier synthetic network errors were expected QA inputs.
+- Final full-suite rerun: 4,098 passed, eight skipped, zero failures. Follow-up
+  TypeScript, focused five navigation contracts and staged secret scan passed.
+  Mobile screenshot inspected. No cross-browser or public-site SEO certification
+  is claimed for this private dashboard repair.
+
+Sign-off: Learning presentation and read-error recovery complete. The completion
+record changes documentation only; it does not change the verified runtime.
 
 ## Remaining work is not silently completed
 
