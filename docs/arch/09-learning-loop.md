@@ -2,6 +2,36 @@
 
 ## Prediction Lab: compare forecasts without changing trades
 
+### Active MACD and forward formula lineage
+
+The owner explicitly authorized direct daily MACD scoring for US/India research.
+`technical_dimension_v2_macd` preserves the old score, then adds
+`5*tanh(MACD histogram / ATR14)` before rounding and clamping. It requires
+fully seeded 12/26/9 MACD (34 completed closes) and valid positive ATR; missing
+inputs contribute zero. The existing crash veto wins, and the outer dimension
+weights do not change. Five points is a conservative policy prior, not a fitted
+optimum or demonstrated profit improvement. Native crypto keeps its own scorer.
+
+`scoreTechnicalsV1` retains the frozen V1 Edge trial. New research packets,
+signals, observation features and score-history breakdowns record formula IDs,
+actual applied/base weights, mask, ETF cap, strategy version and configuration
+fingerprint. Unchanged dimension IDs name a new recorded baseline beginning
+with this release, not a claim about the entire past. Missing historical IDs
+remain legacy/unknown. The deterministic execution-authority string is separate
+from these formula versions. Council snapshots retain model/prompt provenance
+and now also name the scoring contract and median aggregation version.
+
+Prediction Lab → RSI & MACD evaluates nine fixed features/rules by formula,
+market, horizon and entry/holding cohort using existing matured labels. Enter
+a symbol for non-overlapping time-series evidence rather than single-symbol
+cross-sectional IC. Rule-trigger/control counts and return contrasts accompany
+correlation. Missing historic crossover states are not invented. The table is
+exploratory with explicit multiplicity and uncertainty limits; it does not fit
+or activate a stock-specific formula. Pooled rules and subsequently validated
+sector/industry adjustments take priority over sparse per-stock optimization.
+
+Implementation: `features/technical-formula-lineage/FEATURE_ARCHITECTURE.md`.
+
 Learning → Prediction Lab is the read-only entry point for council, formula and
 strategy evidence. Select US or India and a 2-, 5-, 10- or 20-session outcome.
 Each model's **initial** score and an initial-median council are compared with

@@ -1,5 +1,15 @@
 # Feature-Pack Validation Architecture
 
+## Direct MACD exception explicitly requested by owner (2026-10-21)
+
+MACD alone is now an active bounded technical-v2 input, with preserved V1,
+forward formula lineage, finite/warmup checks and the existing crash veto.
+See `features/technical-formula-lineage/FEATURE_ARCHITECTURE.md`. This supersedes
+the historical MACD-only measure annotation below, not the other feature gates.
+No historical formula IDs are backfilled and no per-stock fitted rule is
+promoted automatically. The feature catalogue distinguishes `active_v2` from
+legacy active inputs and measure-only alternate crossover rules.
+
 > Status: P0 built; P1 technical measurement already collecting; feature-registry
 > lifecycle hardened to measure-only. P2-P5 remain design-gated.
 >

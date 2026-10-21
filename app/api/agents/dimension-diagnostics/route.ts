@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { signalProvenance } from "@/lib/learning/signal-provenance";
 import {
   buildAgentFindings,
   buildDimensionFindings,
@@ -19,24 +20,6 @@ type Market = "us" | "india";
 function marketFrom(request: NextRequest): Market | null {
   const value = new URL(request.url).searchParams.get("market");
   return value === "us" || value === "india" ? value : null;
-}
-
-type SignalProvenance = { label: string; market: Market; sessionValidated: boolean; asOfSession: string | null };
-
-async function signalProvenance(svc: any, ids: string[]): Promise<Map<string, SignalProvenance>> {
-  const result = new Map<string, SignalProvenance>();
-  for (let index = 0; index < ids.length; index += 500) {
-    const { data, error } = await svc.from("agent_signals")
-      .select("id,agent_label,market,session_validated,as_of_session").in("id", ids.slice(index, index + 500));
-    if (error) throw new Error(`signal provenance query failed: ${error.message}`);
-    for (const row of data ?? []) result.set(String((row as any).id), {
-      label: String((row as any).agent_label ?? "research"),
-      market: (row as any).market,
-      sessionValidated: (row as any).session_validated === true,
-      asOfSession: (row as any).as_of_session ?? null,
-    });
-  }
-  return result;
 }
 
 async function loadObservations(svc: any, market: Market, horizonDays: number): Promise<DiagnosticObservation[]> {

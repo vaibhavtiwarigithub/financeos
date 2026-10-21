@@ -7,6 +7,7 @@ import { benchmarkSymbolFor, BENCHMARK_REGISTRY_VERSION } from "@/lib/data/bench
 import { councilComparisons, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
 import { medianScore } from "@/lib/llm-council/core";
 import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
+import { readTechnicalFeatureDiagnostics } from "@/lib/learning/technical-feature-reader";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,11 +24,18 @@ export async function GET(req: NextRequest) {
   const horizon = Number(req.nextUrl.searchParams.get("horizon") ?? "10");
   if ((market !== "us" && market !== "india") || ![2, 5, 10, 20].includes(horizon)) return NextResponse.json({ error: "Invalid market or horizon" }, { status: 400 });
   const svc = createServiceClient();
+  if (req.nextUrl.searchParams.get("view") === "features") {
+    const symbol = req.nextUrl.searchParams.get("symbol")?.trim().toUpperCase() || null;
+    const cohort = req.nextUrl.searchParams.get("cohort") ?? "entry";
+    if ((symbol && !/^[A-Z0-9.^-]{1,24}$/.test(symbol)) || !["entry", "holding"].includes(cohort)) return NextResponse.json({ error: "Invalid symbol or cohort" }, { status: 400 });
+    try { return NextResponse.json(await readTechnicalFeatureDiagnostics(svc, market, horizon, symbol, cohort as "entry" | "holding")); }
+    catch { return NextResponse.json({ error: "Feature comparison unavailable; complete source/session evidence required" }, { status: 503 }); }
+  }
   const cutoff = new Date().toISOString();
   const since = new Date(Date.parse(cutoff) - 90 * 86_400_000).toISOString();
   try {
     const runs: any[] = await fetchAllRows((from, to) => svc.from("llm_council_runs")
-      .select("id,observation_id,symbol,decision_ts,status,prompt_version,completed_at,config_snapshot,deterministic:input_snapshot->deterministic_score")
+      .select("id,observation_id,symbol,decision_ts,status,prompt_version,completed_at,config_snapshot,deterministic:input_snapshot->deterministic_score,lineage:input_snapshot->source_formula_lineage")
       .eq("market", market).gte("decision_ts", since).lte("created_at", cutoff)
       .in("status", ["completed", "partial"]).order("id").range(from, to), "Prediction Lab runs");
     if (runs.length > 12000) throw new Error("Comparison scope exceeds bounded read; refusing partial analysis");
@@ -66,14 +74,17 @@ export async function GET(req: NextRequest) {
       const label = availabilityAlignedLabel({ market, availableAt, asOf: cutoff, horizonDays: horizon, symbolMarks: marks.get(r.symbol) ?? [], benchmarkMarks });
       if (!label) { unlabelled++; continue; }
       labelledRuns++;
+      const baselineFormula = r.lineage?.versions
+        ? Object.entries(r.lineage.versions).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("/") : "legacy/unknown";
+      const baselineIdentity = ` · baseline ${baselineFormula}`;
       const roster = members.map((f) => `${f.model_requested}>${f.model_used ?? "unknown"}/${f.execution_source}`).sort().join(" + ");
       const common = { symbol: r.symbol, session: label.entrySession, observationId: String(r.observation_id), decisionTs: r.decision_ts, baseline: Number(baseline), outcome: label.benchmarkNeutralReturn };
       for (const f of members) {
         if (!f.model_used) continue; // do not invent actual model identity
-        points.push({ ...common, score: Number(f.initial_score), method: `${f.model_requested} → ${f.model_used} · ${f.execution_source} · ${r.prompt_version} · initial` });
+        points.push({ ...common, score: Number(f.initial_score), method: `${f.model_requested} → ${f.model_used} · ${f.execution_source} · ${r.prompt_version} · initial${baselineIdentity}` });
       }
       const median = medianScore(members.map((f) => Number(f.initial_score)));
-      if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}` });
+      if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}${baselineIdentity}` });
     }
     return NextResponse.json({
       market, horizon, asOf: cutoff, since, shadowOnly: true, cohort: "all_research_v1",

@@ -3,7 +3,7 @@
 // fundamentals). Returns null on insufficient data. Cross-sectional z-scoring is
 // applied later (standardize.ts); these return RAW values.
 import type { EdgeDef, EdgeContext } from "@/lib/edges/types";
-import { computeTechnicals, scoreTechnicals } from "@/lib/data/technicals";
+import { computeTechnicals, scoreTechnicalsV1 } from "@/lib/data/technicals";
 
 const closesOf = (ctx: EdgeContext) => ctx.candles.map(c => c.close);
 const last = <T,>(a: T[]) => a[a.length - 1];
@@ -135,7 +135,7 @@ export const EDGES: EdgeDef[] = [
     rationale: "The exact production technical composite as a measure-only edge: RSI(14), EMA20/50 position, 20-day trend, directional volume confirmation, and the breakdown veto.",
     dataSource: "daily adjusted candles",
     references: ["Kairos Decision 51; lib/data/technicals.ts"],
-    compute: (ctx) => scoreTechnicals(computeTechnicals(ctx.candles)),
+    compute: (ctx) => scoreTechnicalsV1(computeTechnicals(ctx.candles)),
   },
   {
     id: "macd_atr_12_26_9",

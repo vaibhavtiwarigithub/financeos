@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreTechnicals, type TechnicalResult } from "@/lib/data/technicals";
+import { scoreTechnicals, scoreTechnicalsV1, type TechnicalResult } from "@/lib/data/technicals";
 
 function t(over: Partial<TechnicalResult>): TechnicalResult {
   return {
@@ -45,8 +45,8 @@ describe("scoreTechnicals", () => {
   });
 
   it("keeps unpromoted technical challengers out of deterministic_v1", () => {
-    const baseline = scoreTechnicals(t({ rsi14: 52, trend20d: "flat" }));
-    const challengers = scoreTechnicals(t({
+    const baseline = scoreTechnicalsV1(t({ rsi14: 52, trend20d: "flat" }));
+    const challengers = scoreTechnicalsV1(t({
       rsi14: 52,
       trend20d: "flat",
       ema200: 50,

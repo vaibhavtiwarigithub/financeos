@@ -1,6 +1,6 @@
 import type { AlgoStrategy, StrategyConditions } from "@/lib/strategy-definitions";
 
-export type FeatureLifecycle = "active_v1" | "measure_only" | "observed_only" | "manual_only" | "unsupported";
+export type FeatureLifecycle = "active_v1" | "active_v2" | "measure_only" | "observed_only" | "manual_only" | "unsupported";
 export type InstrumentFamily = "operating_company" | "adr" | "etf" | "leveraged_etf" | "bank" | "reit" | "unknown";
 
 export interface FeatureCatalogEntry {
@@ -26,7 +26,7 @@ export const FEATURE_CATALOG: readonly FeatureCatalogEntry[] = [
   { id: "eps_sign", label: "EPS sign", family: "quality", lifecycle: "active_v1", applicableTo: ["operating_company", "adr", "bank", "reit"], detail: "Current reported-fundamental input." },
   { id: "revenue_growth_yoy", label: "Revenue growth YoY", family: "growth", lifecycle: "active_v1", applicableTo: ["operating_company", "adr", "bank", "reit"], detail: "Current reported-fundamental input." },
   { id: "relative_strength_60d", label: "60-day relative strength", family: "trend", lifecycle: "measure_only", applicableTo: ["operating_company", "adr", "etf", "leveraged_etf", "bank", "reit"], detail: "Measured in the Edge lab; it does not change the live score." },
-  { id: "macd_atr", label: "MACD histogram / ATR", family: "trend", lifecycle: "measure_only", applicableTo: ["operating_company", "adr", "etf", "leveraged_etf", "bank", "reit"], detail: "Technical challenger in the predeclared calibration trial family." },
+  { id: "macd_atr", label: "MACD histogram / ATR", family: "trend", lifecycle: "active_v2", applicableTo: ["operating_company", "adr", "etf", "leveraged_etf", "bank", "reit"], detail: "Owner-authorized technical v2 input: 5*tanh(histogram/ATR14), bounded to ±5 points; existing veto retained. No automatic crossover trading." },
   { id: "signed_adx", label: "Signed ADX(14)", family: "trend", lifecycle: "measure_only", applicableTo: ["operating_company", "adr", "etf", "leveraged_etf", "bank", "reit"], detail: "Technical challenger in the predeclared calibration trial family." },
   { id: "gross_profitability", label: "Gross profitability", family: "quality", lifecycle: "measure_only", applicableTo: ["operating_company", "adr"], detail: "Awaiting a qualified point-in-time fundamental contract." },
   { id: "debt_to_equity", label: "Debt to equity", family: "quality", lifecycle: "measure_only", applicableTo: ["operating_company", "adr"], detail: "Awaiting a qualified point-in-time fundamental contract." },
@@ -117,8 +117,8 @@ export function featureAuditForInstrument(input: { assetClass?: string | null; i
   // decisions written before instrument capture existed carry no kind at all;
   // claiming their inputs were inapplicable would misstate the audit trail.
   if (family === "unknown") return { family, active: [], inapplicable: [], measured: [] };
-  const active = FEATURE_CATALOG.filter(feature => feature.lifecycle === "active_v1" && feature.applicableTo.includes(family));
-  const inapplicable = FEATURE_CATALOG.filter(feature => feature.lifecycle === "active_v1" && !feature.applicableTo.includes(family));
+  const active = FEATURE_CATALOG.filter(feature => feature.lifecycle.startsWith("active_") && feature.applicableTo.includes(family));
+  const inapplicable = FEATURE_CATALOG.filter(feature => feature.lifecycle.startsWith("active_") && !feature.applicableTo.includes(family));
   const measured = FEATURE_CATALOG.filter(feature => feature.lifecycle === "measure_only" && feature.applicableTo.includes(family));
   return { family, active, inapplicable, measured };
 }

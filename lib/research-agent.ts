@@ -6,6 +6,7 @@ import { retrieveSimilarTrades, summarizeMemories } from "@/lib/rag/trade-memory
 import { fetchSocialSentiment, SocialSentiment } from "@/lib/social-sentiment";
 import { computeScores, type ComputedScores } from "@/lib/data/scores";
 import type { Candle } from "@/lib/data/technicals";
+import { buildFormulaLineage } from "@/lib/scoring/formula-lineage";
 import { completedSessionCandles } from "@/lib/data/completed-candles";
 import { isIndia, fetchIndiaOverview, fetchYahooCandles } from "@/lib/india-data";
 import { fetchFiiDiiFlows, fiiDiiMacroLine } from "@/lib/india-macro";
@@ -1902,6 +1903,13 @@ export async function processSymbol(
   // ponytail: ETFs score high technically (no fundamental/insider drag after renorm) but
   // have no single-name upside; cap so they can't displace equity alpha candidates in rotation.
   const analystScore = isEtf ? Math.min(rawAnalystScore, ETF_SCORE_CAP) : rawAnalystScore;
+  const formulaLineage = buildFormulaLineage({
+    market, instrumentFamily: instrumentPolicy.family,
+    baseWeights: weightOf, appliedWeights: effWeights, included,
+    etfCap: isEtf ? ETF_SCORE_CAP : null,
+    strategyVersionId: (champion as any)?.id ?? null,
+    technicalParameters: (scores.evidence.technical.score_trace as any)?.macd_parameters ?? null,
+  });
   const thinEvidence = isThinEvidence(includedDims);
 
   // System Health (data category): accumulate this symbol's evidence
@@ -2177,6 +2185,7 @@ export async function processSymbol(
       catalysts:  thesis.catalysts ?? [],
       is_held_position: isHeld,
       raw_data: {
+        _formula_lineage: formulaLineage,
         _scores: scores,
         _analyst_score: analystScore,
         _profile_weights: { fw, tw, sw, mw, iw },
@@ -2228,7 +2237,7 @@ export async function processSymbol(
     rationale: (thesis.summary ?? deterministicNarrative) + directionNote,
     stop_loss_pct: stopLossPct,
     take_profit_pct: targetPct,
-    signal_breakdown: { trade_plan: tradePlan, earnings_repricing: earningsRepricing },
+    signal_breakdown: { trade_plan: tradePlan, earnings_repricing: earningsRepricing, formula_lineage: formulaLineage },
     // NOTE: no price_target / stop_loss here — those columns don't exist on
     // agent_signals (only stop_loss_pct / take_profit_pct do). Including them made
     // every PostgREST insert fail with PGRST204, and the undefined-column recovery
@@ -2329,12 +2338,20 @@ export async function processSymbol(
     return {
       status: (scores.dataQuality?.technicalDataPoints ?? 0) >= 15 ? "available" : "unavailable",
       rsi14: t.rsi14 ?? null,
+      formula_version: t.formula_version ?? null,
+      formula_lineage: formulaLineage,
+      score_trace: t.score_trace ?? null,
       ema20: t.ema20 ?? null,
       ema50: t.ema50 ?? null,
       ema200: t.ema200 ?? null,
       ema20_above_ema50: t.ema20 != null && t.ema50 != null ? t.ema20 > t.ema50 : null,
       ema50_above_ema200: t.ema50 != null && t.ema200 != null ? t.ema50 > t.ema200 : null,
       macd_histogram: t.macdHistogram ?? null,
+      macd_line: t.macdLine ?? null,
+      macd_signal: t.macdSignal ?? null,
+      macd_histogram_atr: t.macdHistogramAtr ?? null,
+      macd_previous_histogram: t.macdPreviousHistogram ?? null,
+      macd_signal_cross: t.macdSignalCross ?? null,
       adx14: t.adx14 ?? null,
       rs_vs_benchmark: t.rsVsSpy ?? null,
       price: t.price ?? null,
@@ -2365,6 +2382,7 @@ export async function processSymbol(
     const bull = s.bullish_pct ?? raw.stocktwits_bullish_pct ?? raw.bullish_pct ?? null;
     const bear = s.bearish_pct ?? raw.stocktwits_bearish_pct ?? raw.bearish_pct ?? null;
     return {
+      formula_version: s.formula_version ?? null,
       status: market === "india" ? "inapplicable" : (scores.dataQuality?.sentimentDataAvailable ? "available" : "unavailable"),
       bullish_pct: bull,
       bearish_pct: bear,
@@ -2384,6 +2402,7 @@ export async function processSymbol(
     // signals_triggered at all (it is selected from macro_regime but never surfaced),
     // so the previous week_of/signals_triggered mapping was always null.
     return {
+      formula_version: m.formula_version ?? null,
       status: scores.dataQuality?.macroDataAvailable ? "available" : (market === "india" ? "inapplicable" : "unavailable"),
       regime: m.regime ?? null,
       danger_score: m.danger_score ?? null,
@@ -2397,6 +2416,7 @@ export async function processSymbol(
     const f = scores.evidence?.fundamental as Record<string, unknown> | undefined;
     if (!f) return null;
     return {
+      formula_version: f.formula_version ?? null,
       status: scoredApplicability.fundamental.state === "not_applicable" ? "inapplicable"
         : scoredApplicability.fundamental.state === "not_enabled" ? "not_enabled"
         : (scores.dataQuality?.fundamentalDataAvailable ? "available" : "unavailable"),
@@ -2560,6 +2580,7 @@ export async function processSymbol(
       used_champion: usingChampion,
       features: {
         schemaVersion: "v1",             // P1: version tag for PIT replay and feature-schema migration
+        formula_lineage: formulaLineage,
         decisionTs: new Date().toISOString(), // P1: precise timestamp this observation was written
         instrument: {
           kind: instrument.instrumentKind,

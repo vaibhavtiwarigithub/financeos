@@ -132,9 +132,9 @@ neutral 55 baseline with low confidence, not a computed score.`,
   technical_score: {
     title: "Technical Score (T-Score)",
     text: `Base: 50 pts
-ACTIVE: continuous RSI(14), price vs EMA20, price vs EMA50, 20-session trend, and direction-confirming volume.
+ACTIVE: technical_dimension_v2_macd retains RSI(14), price vs EMA20/50, 20-session trend and directional volume, then adds 5*tanh(MACD histogram/ATR14), bounded ±5 technical points before rounding/clamping. Uses 12/26/9 MACD after 34 completed candles. Missing/invalid MACD or ATR contributes zero, never fabricated evidence. Earlier rows are legacy/unknown unless their stored formula says otherwise.
 BREAKDOWN VETO: a >=2.5 ATR down move, or a <=-7% drop on >=1.5x volume, caps the score at 20.
-MEASURE-ONLY: EMA200, MACD, ADX, and relative strength vs SPY/NIFTY are recorded but contribute zero points until a market-local challenger passes replay and forward-shadow gates.
+MEASURE-ONLY: EMA200, ADX, relative strength and alternate crossover/threshold strategies. Owner explicitly authorized direct bounded MACD; it is not a proven return improvement.
 Score clamped to [0, 100].`,
   },
   sentiment_score: {
@@ -245,8 +245,10 @@ const ALL_COLS: ColDef[] = [
     tooltip: "EMA50 above EMA200 = long-term bullish trend (golden cross, +10). Below = death cross (−10).",
     breakdownSource: "technical", breakdownField: "ema50_above_ema200" },
   { key: "macd_hist",       label: "MACD",    csvLabel: "MACD Histogram",          width: 58, defaultHidden: true,
-    tooltip: "MACD histogram. Measure-only: it does not affect the active technical score.",
+    tooltip: "MACD histogram. New technical v2 rows use its ATR-normalized value for a bounded ±5 point contribution. Check stored formula; historical rows are not relabelled.",
     breakdownSource: "technical", breakdownField: "macd_histogram" },
+  { key: "technical_formula", label: "T formula", csvLabel: "Technical formula version", width: 150, defaultHidden: false,
+    tooltip: "Recorded formula identity for this row. Missing means legacy/unknown, not current v2.", breakdownSource: "technical", breakdownField: "formula_version" },
   { key: "adx14",           label: "ADX",     csvLabel: "ADX (14-day)",            width: 50, defaultHidden: true,
     tooltip: "ADX (14) trend strength. Measure-only: it does not affect the active technical score.",
     breakdownSource: "technical", breakdownField: "adx14" },
@@ -459,7 +461,7 @@ function indicatorGrade(key: string, raw: string | number | null | undefined, se
     }
     case "macd_hist": {
       if (n == null) return gm("MACD Hist: no data");
-      const tip = `MACD histogram: ${n.toFixed(4)}\nPositive = bullish momentum, Negative = bearish momentum\n${MEASURE}`;
+      const tip = `MACD histogram: ${n.toFixed(4)}\nNew technical v2 uses 5*tanh(histogram/ATR14), bounded ±5 points. Check this row's stored T formula; older evidence-only rows are unchanged. Not a crossover by itself.`;
       return n > 0 ? ga(tip) : n < 0 ? gr(tip) : gn(tip);
     }
     case "adx14": {

@@ -33,6 +33,9 @@ export interface TechnicalResult {
   macdLine: number | null;         // EMA12 - EMA26
   macdSignal: number | null;       // EMA9 of macdLine series
   macdHistogram: number | null;    // macdLine - macdSignal
+  macdPreviousHistogram?: number | null;
+  macdSignalCross?: "bullish" | "bearish" | "none" | null;
+  macdHistogramAtr?: number | null;
   adx14: number | null;            // Average Directional Index (14), null if <28 candles
   rsVsSpy: number | null;          // stock 12M return / benchmark 12M return ratio
 }
@@ -100,10 +103,10 @@ function computeATR14(candles: Candle[]): number | null {
   return parseFloat(atr.toFixed(4));
 }
 
-/** Compute MACD (12/26/9) from close prices. Null if <27 closes. */
+/** SMA-seeded MACD (12/26/9). Full signal requires at least 34 closes. */
 function computeMACD(closes: number[]): { macdLine: number | null; macdSignal: number | null; macdHistogram: number | null } {
   const nil = { macdLine: null, macdSignal: null, macdHistogram: null };
-  if (closes.length < 27) return nil;
+  if (closes.length < 34 || !closes.every((v) => Number.isFinite(v) && v > 0)) return nil;
   const ema12arr = computeEMA(closes, 12);
   const ema26arr = computeEMA(closes, 26);
   // ema12arr starts at index 11, ema26arr at index 25 — align by taking the tail
@@ -214,6 +217,11 @@ export function computeTechnicals(candles: Candle[], benchmarkCloses?: number[])
 
   // MACD (12/26/9)
   const { macdLine, macdSignal, macdHistogram } = computeMACD(closes);
+  const previous = closes.length >= 35 ? computeMACD(closes.slice(0, -1)).macdHistogram : null;
+  const macdSignalCross = previous == null || macdHistogram == null ? null
+    : previous <= 0 && macdHistogram > 0 ? "bullish"
+    : previous >= 0 && macdHistogram < 0 ? "bearish" : "none";
+  const macdHistogramAtr = macdHistogram != null && atr14 != null && atr14 > 0 ? macdHistogram / atr14 : null;
 
   // ADX(14)
   const adx14 = computeADX14(candles);
@@ -238,7 +246,7 @@ export function computeTechnicals(candles: Candle[], benchmarkCloses?: number[])
     }
   }
 
-  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length, atr14, lastReturnPct, lastRangeLocation, atrMultipleMove, ema200, macdLine, macdSignal, macdHistogram, adx14, rsVsSpy };
+  return { rsi14, ema20, ema50, priceVsEma20, priceVsEma50, volumeVsAvg20, trend20d, dataPoints: candles.length, atr14, lastReturnPct, lastRangeLocation, atrMultipleMove, ema200, macdLine, macdSignal, macdHistogram, macdPreviousHistogram: previous, macdSignalCross, macdHistogramAtr, adx14, rsVsSpy };
 }
 
 // Piecewise-linear interpolation over (x, y) anchor points (x ascending).
@@ -321,7 +329,7 @@ const BREAKDOWN_VETO_SCORE_CAP = 20;
  * Score technicals 0-100 deterministically.
  * No LLM involved. Based on RSI, EMA position, trend, and volume confirmation.
  */
-export function scoreTechnicals(t: TechnicalResult): number {
+export function scoreTechnicalsV1(t: TechnicalResult): number {
   if (t.dataPoints < 15) return 50; // insufficient data → neutral
 
   // Crash / meme-breakdown veto — runs FIRST, before any momentum math. After a
@@ -370,9 +378,36 @@ export function scoreTechnicals(t: TechnicalResult): number {
     }
   }
 
-  // EMA-200, MACD, relative strength and ADX remain measure-only evidence.
-  // They cannot affect deterministic_v1 until a separately approved,
-  // market-local challenger clears replay and forward-shadow gates.
+  // Frozen legacy semantics. Never add a new contribution under this identity.
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
+
+export const TECHNICAL_FORMULA_VERSION = "technical_dimension_v2_macd";
+export const MACD_MAX_POINTS = 5;
+
+/** Owner-authorized bounded policy prior; not an empirically optimal weight. */
+export function technicalScoreTrace(t: TechnicalResult) {
+  const legacyScore = scoreTechnicalsV1(t);
+  const veto = detectBreakdownVeto(t).vetoed;
+  const valid = t.dataPoints >= 34
+    && [t.macdLine, t.macdSignal, t.macdHistogram, t.atr14].every((v) => typeof v === "number" && Number.isFinite(v))
+    && t.atr14! > 0;
+  const ratio = valid ? t.macdHistogram! / t.atr14! : null;
+  const normalized = ratio != null && Number.isFinite(ratio) ? ratio : null;
+  const suppressed = t.dataPoints < 15 || veto;
+  const contribution = normalized != null && !suppressed ? MACD_MAX_POINTS * Math.tanh(normalized) : 0;
+  const score = suppressed ? legacyScore : Math.max(0, Math.min(100, Math.round(legacyScore + contribution)));
+  return {
+    formula_version: TECHNICAL_FORMULA_VERSION,
+    legacy_formula_version: "technical_dimension_v1",
+    legacy_score: legacyScore, macd_histogram_atr: normalized,
+    macd_status: normalized == null ? "unavailable" : suppressed ? "suppressed_by_guard" : "active",
+    macd_contribution: contribution, macd_max_points: MACD_MAX_POINTS,
+    macd_parameters: { fast: 12, slow: 26, signal: 9, atr: 14, ema_seed: "sma" },
+    score,
+  };
+}
+
+/** Current production technical formula; frozen trials must call V1 explicitly. */
+export function scoreTechnicals(t: TechnicalResult): number { return technicalScoreTrace(t).score; }

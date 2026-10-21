@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMarket } from "@/lib/market-context";
+import TechnicalFeatureDiagnosticsPanel from "@/components/dashboard/TechnicalFeatureDiagnosticsPanel";
 
 const T = { card: "#1A1D27", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#6366F1", amber: "#FBBF24" };
 type Cell = { method: string; observations: number; returnedPoints: number; sessions: number; roughWindows: number; ic: number | null; baselineIc: number | null; deltaIc: number | null; scoreRankCorrelation: number | null; descriptiveHacT: number | null; state: string; commonSampleHash: string };
@@ -38,5 +39,6 @@ export default function PredictionLabPanel() {
       {!data.cells.length && <p style={{ color: T.sub, fontSize: 12 }}>No comparable completed forecasts with valid availability and matured labels yet. No supported winner.</p>}
       <p style={{ color: T.muted, fontSize: 11, lineHeight: 1.6 }}>{data.convention}<br />IC = score rank versus later excess return, not win probability. Score rank correlation measures similarity to the baseline, not proof of copying. Windows = dates ÷ horizon, not estimated effective sample size. t is withheld below 20 dates and 12 rough windows; even above those floors it is descriptive, not calibrated significance.<br />{data.caveat}</p>
     </>}
+    <TechnicalFeatureDiagnosticsPanel horizon={horizon} />
   </section>;
 }

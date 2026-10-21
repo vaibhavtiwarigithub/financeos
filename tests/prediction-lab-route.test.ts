@@ -16,12 +16,14 @@ describe("Prediction Lab read-only projection", () => {
     mocks.from.mockImplementation((table: string) => {
       let rows = [...(mocks.tables[table] ?? [])];
       const q: any = {};
+      const get = (row: any, key: string) => key.split(".").reduce((value, part) => value?.[part], row);
       q.select = q.order = () => q;
-      q.eq = (key: string, value: unknown) => { rows = rows.filter((r) => r[key] === value); return q; };
+      q.eq = (key: string, value: unknown) => { rows = rows.filter((r) => get(r, key) === value); return q; };
       q.in = (key: string, values: unknown[]) => { rows = rows.filter((r) => values.includes(r[key])); return q; };
-      q.gte = (key: string, value: string) => { rows = rows.filter((r) => r[key] >= value); return q; };
-      q.lte = (key: string, value: string) => { rows = rows.filter((r) => r[key] <= value); return q; };
+      q.gte = (key: string, value: string) => { rows = rows.filter((r) => get(r, key) >= value); return q; };
+      q.lte = (key: string, value: string) => { rows = rows.filter((r) => get(r, key) <= value); return q; };
       q.range = async (from: number, to: number) => ({ data: rows.slice(from, to + 1), error: mocks.fail === table ? { message: "internal read failure" } : null });
+      q.then = (resolve: any, reject: any) => Promise.resolve({ data: rows, error: mocks.fail === table ? { message: "internal read failure" } : null }).then(resolve, reject);
       // Intentionally no insert/update/delete/rpc: any write fails this test.
       return q;
     });
@@ -72,6 +74,22 @@ describe("Prediction Lab read-only projection", () => {
   it("never silently substitutes another India benchmark when exact identity is absent", async () => {
     mocks.tables.benchmarks = [{ id: "other", market: "india", symbol: "OTHER", provider_symbol: "OTHER", enabled: true, currency: "INR" }];
     expect((await GET(request("market=india&horizon=2"))).status).toBe(503);
+  });
+  it("separates feature cohorts and rejects missing source-session proof", async () => {
+    mocks.tables.observation_labels = Array.from({ length: 7 }, (_, i) => ({
+      id: i, horizon_days: 2, benchmark_neutral_return: i / 100,
+      decision_observations: { id: i + 1, ts: "2026-10-01T13:00:00Z", symbol: `S${i}`, market: "us", signal_id: `signal${i}`, entry_eligible: true, direction: "long", decision_context: i === 5 ? "holding_review" : "entry_candidate", features: { technical: { rsi14: 20 + i * 10, formula_version: "test-v2" } } },
+    }));
+    mocks.tables.agent_signals = Array.from({ length: 7 }, (_, i) => ({ id: `signal${i}`, market: "us", session_validated: i !== 6, as_of_session: "2026-10-01" }));
+    const entry = await GET(request("view=features&market=us&horizon=2&cohort=entry"));
+    expect(entry.status).toBe(200);
+    const b = await entry.json();
+    expect({ matched: b.matchedPoints, excluded: b.excludedRows }).toEqual({ matched: 5, excluded: 2 });
+    expect(b.cells.find((c: any) => c.feature === "rsi14_level").rankIc).toBeCloseTo(1);
+    const holding = await (await GET(request("view=features&market=us&horizon=2&cohort=holding"))).json();
+    expect(holding.matchedPoints).toBe(1);
+    expect(holding.cells.every((c: any) => c.rankIc == null)).toBe(true);
+    expect((await GET(request("view=features&market=us&horizon=2&cohort=bad"))).status).toBe(400);
   });
   it("fails closed on a source read failure, not an empty successful result", async () => {
     mocks.fail = "llm_council_runs";

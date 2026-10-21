@@ -1,5 +1,15 @@
 # Technical Factor Calibration
 
+## Owner-authorized production MACD amendment (2026-10-21)
+
+The owner explicitly requested direct MACD, not another shadow. Production
+technical scoring now has the separate `technical_dimension_v2_macd` identity
+described in `features/technical-formula-lineage/FEATURE_ARCHITECTURE.md`.
+The `kairos_technical_score_v1` edge is pinned to `scoreTechnicalsV1`; its
+historical meaning is unchanged. Existing MACD/ADX trial evidence remains
+measure-only and is not declared validated by this policy decision. ADX,
+EMA200, relative strength and alternative crossover strategies are not activated.
+
 > Status: **APPROVED FOR MEASURE-ONLY IMPLEMENTATION**
 > Approved by owner: 2026-07-21
 > Decision authority: `PROJECT_DECISIONS.md` Decision 51

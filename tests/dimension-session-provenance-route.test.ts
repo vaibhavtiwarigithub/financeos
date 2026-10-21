@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 const route = readFileSync("app/api/agents/dimension-diagnostics/route.ts", "utf8");
+const provenance = readFileSync("lib/learning/signal-provenance.ts", "utf8");
 const diagnostic = readFileSync("lib/learning/dimension-diagnostics.ts", "utf8");
 const codeVersion = readFileSync("lib/learning/code-version-ic.ts", "utf8");
 
 describe("dimension IC source-session contract", () => {
   it("loads the market-local signal session and its validation proof", () => {
-    expect(route).toContain('select("id,agent_label,market,session_validated,as_of_session")');
+    expect(route).toContain('from "@/lib/learning/signal-provenance"');
+    expect(provenance).toContain('select("id,agent_label,market,session_validated,as_of_session")');
     expect(route).toContain("source?.market === market && source.sessionValidated === true");
     expect(route).toContain("source?.market === market ? source.asOfSession : null");
   });

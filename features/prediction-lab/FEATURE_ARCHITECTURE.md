@@ -1,5 +1,16 @@
 # Prediction Lab: evidence-led council, formula and strategy improvement
 
+## 2026-10-21 owner-requested MACD and lineage extension
+
+The subsequent owner instruction explicitly authorizes direct MACD and forward
+dimension/composite/council method tracking. Its bounded implementation and
+read-only nine-feature RSI/MACD diagnostics are specified in
+`features/technical-formula-lineage/FEATURE_ARCHITECTURE.md`. This is a targeted
+production technical-v2 policy change, not validation of MACD trials or
+approval of the remaining paid, sealed-replay, stock-specific fitting or
+automatic-promotion phases. Council comparisons partition recorded baseline
+formula identities; old input snapshots remain legacy/unknown.
+
 **Status: owner-approved P0 correctness repairs and P1 read-only comparison implemented and locally verified on 2026-10-21. Broader P0 audit/calibration prerequisites, P2+ and extra inference remain gated. Production status must be checked against the release Git SHA, not inferred from this document.**
 
 Version: 1.2 (implementation reconciliation supersedes review assumptions; see section 20 and `CLAUDE_REVIEW_FINDINGS.md`) · Author: Codex · Reviewer: Claude · Requested by the owner: 2026-10-21.

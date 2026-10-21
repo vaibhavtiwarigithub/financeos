@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EDGE_BY_ID, EDGES } from "@/lib/edges/registry";
 import { normalizeSectorSegment } from "@/lib/edges/ic";
-import { computeTechnicals, scoreTechnicals, type Candle } from "@/lib/data/technicals";
+import { computeTechnicals, scoreTechnicalsV1, type Candle } from "@/lib/data/technicals";
 import { knownSectorForSymbol } from "@/lib/portfolio-risk";
 
 function candles(count: number, closeAt: (index: number) => number): Candle[] {
@@ -25,10 +25,10 @@ function context(series: Candle[]) {
 }
 
 describe("technical factor calibration", () => {
-  it("represents the exact production technical score without a replica formula", () => {
+  it("preserves the frozen technical V1 trial without borrowing the current scorer", () => {
     const series = candles(90, i => 100 + i * 0.4 + Math.sin(i / 4));
     const edgeValue = EDGE_BY_ID.kairos_technical_score_v1.compute(context(series));
-    expect(edgeValue).toBe(scoreTechnicals(computeTechnicals(series)));
+    expect(edgeValue).toBe(scoreTechnicalsV1(computeTechnicals(series)));
   });
 
   it("computes finite ATR-normalized MACD and signed ADX on sufficient OHLCV", () => {

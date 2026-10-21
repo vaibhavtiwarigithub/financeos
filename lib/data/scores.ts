@@ -4,7 +4,8 @@
  * LLM only receives computed scores + evidence to write thesis and direction.
  */
 
-import { computeTechnicals, detectBreakdownVeto, scoreTechnicals } from "./technicals";
+import { computeTechnicals, detectBreakdownVeto, technicalScoreTrace } from "./technicals";
+import { FORMULA_VERSIONS } from "@/lib/scoring/formula-lineage";
 import type { DeterministicQuote } from "./quotes";
 import { writeEvidence, writeBatchEvidence, type SourceName } from "./evidence";
 import { isIndia } from "@/lib/india-data";
@@ -628,7 +629,8 @@ export async function computeScores(opts: {
   const { score: fundamental_score, evidence: fundEvidence } = scoreFundamentals(avOverview, isEtf, latestClose);
 
   const technicals = computeTechnicals(candles, opts.benchmarkCloses);
-  const technical_score = scoreTechnicals(technicals);
+  const technicalTrace = technicalScoreTrace(technicals);
+  const technical_score = technicalTrace.score;
   // Keep the exact price and completed candle date beside the derived indicators.
   // The score is still computed solely from `technicals`; these two fields make a
   // later Journal / Score Tracker review auditable without refetching a quote.
@@ -638,6 +640,8 @@ export async function computeScores(opts: {
     as_of: candles[candles.length - 1]?.date ?? null,
     dataPoints: candles.length,
     breakdown_veto: detectBreakdownVeto(technicals),
+    formula_version: technicalTrace.formula_version,
+    score_trace: technicalTrace,
   };
 
   const { score: sentiment_score, evidence: sentEvidence } = scoreSentiment(socialResult);
@@ -654,11 +658,11 @@ export async function computeScores(opts: {
     macro_score,
     insider_score,
     evidence: {
-      fundamental: { ...fundEvidence, symbol, is_etf: isEtf },
+      fundamental: { ...fundEvidence, symbol, is_etf: isEtf, formula_version: FORMULA_VERSIONS.fundamental },
       technical: techEvidence,
-      sentiment: sentEvidence,
-      macro: macroEvidence,
-      insider: insiderEvidence,
+      sentiment: { ...sentEvidence, formula_version: FORMULA_VERSIONS.sentiment },
+      macro: { ...macroEvidence, formula_version: FORMULA_VERSIONS.macro },
+      insider: { ...insiderEvidence, formula_version: FORMULA_VERSIONS.insider },
     },
     dataQuality: {
       // isEtf is INAPPLICABLE (structural), not merely unavailable — kept

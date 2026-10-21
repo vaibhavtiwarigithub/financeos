@@ -6,6 +6,21 @@ Records approved product, architecture, UX, technical, and business decisions.
 
 Only approved decisions belong here. Proposed decisions live in PROJECT_BUILD_LOG.md until approved.
 
+### 2026-10-21: Direct MACD and forward-only formula lineage
+
+Status: Approved by owner request in this task (direct MACD, not another shadow).
+Scope: US/India equity/ETF research technical dimension; native crypto unchanged.
+Implementation: preserve frozen technical V1; technical V2 adds a bounded
+`5*tanh(MACD(12,26,9) histogram / ATR14)` contribution, after warmup, while
+retaining the breakdown veto. Five points is a policy prior, not a measured optimum.
+Record dimension/composite method identities, actual weights/availability and
+configuration fingerprints in existing JSON evidence; record council method
+identity separately. Historical unknown versions stay unknown.
+Read-only Prediction Lab diagnostics compare a fixed RSI/MACD rule family by
+market, horizon, cohort and recorded formula; no per-symbol auto-fit, automatic
+promotion, outer-weight change, or broker/live-control change is authorized here.
+Architecture: `features/technical-formula-lineage/FEATURE_ARCHITECTURE.md`.
+
 ## Decision Template
 
 ```

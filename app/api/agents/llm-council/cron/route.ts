@@ -10,6 +10,7 @@ import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThres
 import { selectCouncilCandidates } from "@/lib/llm-council/selection";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
+import { COUNCIL_FORMULA_VERSIONS } from "@/lib/scoring/formula-lineage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -43,6 +44,8 @@ function estimateWorstCaseTurnCost(model: string, prompt: string, parsed: boolea
 
 function asSnapshot(row: any) {
   return {
+    council_formula_versions: COUNCIL_FORMULA_VERSIONS,
+    source_formula_lineage: row.features?.formula_lineage ?? null,
     symbol: row.symbol,
     market: row.market,
     observed_at: row.ts,
