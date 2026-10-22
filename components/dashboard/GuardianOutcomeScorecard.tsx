@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { GuardianOutcomeHorizon, GuardianOutcomePayload } from "@/types";
 
-const T = { surface: "#13151C", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#818CF8" };
+const T = { surface: "#13151C", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#969BA8", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#818CF8" };
 const pct = (v: number | null | undefined) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 const color = (v: number | null | undefined) => v == null ? T.muted : v >= 0 ? T.green : T.red;
 export default function GuardianOutcomeScorecard({ data }: { data: GuardianOutcomePayload }) {

@@ -13,7 +13,7 @@ type Mark = {
   symbol_return_pct: number | null; benchmark_return_pct: number | null; excess_pct: number | null; pnl_pct: number | null; pnl_basis: "actual" | "hypothetical" | null;
   level_touched: boolean | null; level_touched_on: string | null; pnl_if_level_pct: number | null;
 };
-type Row = { id: number; kind: string; account_id: string; symbol: string; issued_at: string; reference_price: number | null; level_price: number | null; rationale: string | null; mark: Mark | null };
+type Row = { id: number; kind: string; account_id: string; symbol: string; issued_at: string; reference_price: number | null; level_price: number | null; rationale: string | null; mark: Mark | null; guardian_contract?: { version?: string } | null };
 type Arm = { id: string; label: string; n: number; meanRetPct: number | null; stoppedShare: number | null; savedPts: number; costPts: number };
 type Payload = { error?: string; asOf: string; rows: Row[]; revision: { revised_on: string; sample: number; distinct_symbols: number; arms: Arm[]; note: string } | null; guardianPlanEvents: number; guardianOutcomes?: GuardianOutcomePayload };
 
@@ -82,10 +82,11 @@ export default function RecommendationsPanel() {
     const ideas = all.filter((r) => r.kind === "buy_idea");
     const by = (s: string[]) => ideas.filter((r) => s.includes(r.mark?.status ?? ""));
     const taken = by(["taken"]); const notTaken = by(["not_taken", "expired_unanswered"]);
-    const stops = all.filter((r) => r.kind === "guardian_stop");
+    const allStops = all.filter((r) => r.kind === "guardian_stop");
+    const stops = allStops.filter(r => !r.guardian_contract);
     return { total: all.length, ideas: ideas.length, taken: taken.length, notTaken: by(["not_taken"]).length, expired: by(["expired_unanswered"]).length, open: by(["pending"]).length,
       takenExcess: avg(taken.map((r) => r.mark?.excess_pct)), notTakenExcess: avg(notTaken.map((r) => r.mark?.excess_pct)),
-      alerts: stops.length, stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length };
+      alerts: allStops.length, stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length };
   }, [data]);
 
   const head = (c: (typeof COLS)[number]) => (
@@ -122,6 +123,7 @@ export default function RecommendationsPanel() {
       {!data && !error && <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Loading recommendations…</div>}
       {data && open && (
         <>
+          {data.guardianOutcomes && <GuardianOutcomeScorecard data={data.guardianOutcomes} />}
           <div className="rec-grid" style={{ marginTop: 14 }}>
             {kpiCell("Buy ideas issued", String(kpi.ideas), `${kpi.exits} exit signals · ${kpi.stops.length} Guardian stops`)}
             {kpiCell("Taken", String(kpi.taken), kpi.takenExcess == null ? "no result yet" : `avg ${pct(kpi.takenExcess)} vs SPY`, tone(kpi.takenExcess))}
@@ -184,10 +186,9 @@ export default function RecommendationsPanel() {
             </>
           )}
 
-          {data.guardianOutcomes && <GuardianOutcomeScorecard data={data.guardianOutcomes} />}
           <div style={{ marginTop: 22, color: T.text, fontWeight: 700, fontSize: 13 }}>Legacy Guardian references (not exact-stop performance)</div>
           {kpi.stops.length === 0 ? (
-            <div style={{ color: T.sub, fontSize: 12, marginTop: 6 }}>The Guardian has suggested no stops yet. It only acts on manual buys in the agentic account, and it has alerted {kpi.alerts} time(s) so far.</div>
+            <div style={{ color: T.sub, fontSize: 12, marginTop: 6 }}>No legacy/unversioned stop references. Frozen suggestions and their exact-stop outcomes appear above.</div>
           ) : (
             <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
               {kpi.stops.map((r) => {
