@@ -54,7 +54,22 @@ an honest empty launch state; invalid market returned 400. Paper Portfolio
 renders Candidates waiting with no desktop page overflow. Source follow-up
 retains intermediate blocked attempts after later research (rather than joining
 only first/latest signal IDs); four API tests cover authorization, validation,
-history continuity and missing admission evidence. Final UI/release checks follow.
+history continuity and missing admission evidence.
+
+Authenticated canonical UI checks found the panel on all four US/India paper/live
+views with no desktop page overflow. Anonymous API access returned 401. Browser-only
+two-candidate fixtures (never written to the database) verified original/latest
+score downgrade, stale-refresh state and blocker text at 375/768/1440px. The table
+scrolls within its region at 375px without page overflow. Injected API failure
+displayed an alert and manual retry recovered; handlers were removed and the real
+zero-row state restored. Symbol links use the existing symbol-detail route rather
+than an unsupported Fundamentals query parameter. Cleanly separated from this
+feature: India Guardian returned its existing 503; no claim to repair that service.
+
+The local main branch and origin/main include the implementation and follow-up
+history fix; final shipping checks require a READY deployment, canonical API/UI
+confirmation and a clean checkout. No extra research or trade call is needed just
+to populate a demonstration row. Secret-pattern scans found zero staged matches.
 
 ## Evidence boundaries
 

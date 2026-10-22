@@ -36,7 +36,7 @@ export default function RecentCandidatesPanel({ market, book }: { market: "us" |
             <table style={{ width: "100%", minWidth: 650, borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr>{["Rank / symbol", "Original → latest score", "Last assessed", "Sessions left", "Current state / last attempt"].map(label => <th key={label} style={{ textAlign: "left", color: T.textSub, padding: 8, borderBottom: `1px solid ${T.border}` }}>{label}</th>)}</tr></thead>
               <tbody>{data.candidates.map((row: any) => <tr key={row.id}>
-                <td style={{ padding: 8, borderBottom: `1px solid ${T.border}` }}>{row.rank}. <a href={`/dashboard/research?symbol=${encodeURIComponent(row.symbol)}`} style={{ color: T.text }}>{row.symbol}</a></td>
+                <td style={{ padding: 8, borderBottom: `1px solid ${T.border}` }}>{row.rank}. <a href={`/dashboard/symbol/${encodeURIComponent(row.symbol)}`} style={{ color: T.text }}>{row.symbol}</a></td>
                 <td style={{ padding: 8 }}>{row.first_score} → {row.latest_score}</td>
                 <td style={{ padding: 8 }}>{new Date(row.latest_at).toLocaleString()}<br /><span style={{ color: T.textSub }}>First: {row.first_session}</span></td>
                 <td style={{ padding: 8 }}>{row.sessions_remaining}</td>

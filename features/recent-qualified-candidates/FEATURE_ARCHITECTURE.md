@@ -1,6 +1,6 @@
 # Recent qualified candidates
 
-Status: owner approved the five-session / 20-name plan on 2026-10-21; implementation and local/database verification complete, production deployment verification pending.
+Status: owner-approved 2026-10-21; implemented. Schema, lifecycle, regression and production panel/API verification are recorded in `docs/audits/qa-report-2026-10-21-recent-candidates.md`. New research starts collection; forward policy performance remains unproven.
 
 ## Why and scope
 

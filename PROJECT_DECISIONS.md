@@ -1858,4 +1858,4 @@ and explicit owner switch.
 - who: the existing owner US/India paper and live portfolios.
 - roi: reduce forgotten qualified opportunities using bounded, reused research; performance gain remains unproven.
 - decision: five regular sessions including admission, 20 active names per market, fresh reassessment, shared shortlist and existing execution gates. Additive migration and owner-only visibility approved as part of the plan; no live enablement or risk relaxation.
-- shippedAt: pending verification.
+- shippedAt: 2026-10-22T03:23:03Z (initial production runtime READY; Chicago date 2026-10-21).

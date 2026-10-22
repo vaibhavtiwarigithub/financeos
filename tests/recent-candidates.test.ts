@@ -116,6 +116,7 @@ describe("shortlist wiring and authorization contracts", () => {
     expect(api.indexOf('await requireOwner()')).toBeLessThan(api.indexOf('createServiceClient();'));
     expect(api).not.toContain('export async function POST');
     for (const file of ["PortfolioPage", "LivePortfolioPage", "IndiaLivePanel"]) expect(read(`components/dashboard/${file}.tsx`)).toContain('<RecentCandidatesPanel');
+    expect(read("components/dashboard/RecentCandidatesPanel.tsx")).toContain('/dashboard/symbol/${encodeURIComponent(row.symbol)}');
   });
   it("RPCs serialize cap/lease writes, preserve expiry, and are not public", () => {
     const sql = read("supabase/migrations/20261022030420_recent_qualified_candidates.sql");
