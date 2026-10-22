@@ -6,7 +6,10 @@ Owner approved the preceding discussion with “go”. Why: measure whether the
 actual suggested stop adds value, including premature exits, instead of showing
 generic buy-idea stop arms as Guardian evidence. Who: the owner, both market
 views. ROI: trustworthy incremental outcome evidence without new inference or
-trading authority. ShippedAt: recorded after deployment verification.
+trading authority. ShippedAt: 2026-10-22; measurement runtime `0242a4d4`
+verified production READY. The same release includes the shared display and
+nightly persisted evidence; the older buy-idea stop experiment is explicitly
+labelled separately and does not revise an actual Guardian stop.
 
 Reuse `live_recommendations`, `live_recommendation_marks` and the existing
 22:30 UTC nightly job. Add `market` and nullable `guardian_contract` to the

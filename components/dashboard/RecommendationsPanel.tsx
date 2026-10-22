@@ -207,7 +207,8 @@ export default function RecommendationsPanel() {
 
           {data.revision && (
             <div style={{ marginTop: 18 }}>
-              <div style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>Daily Guardian revision <span style={{ color: T.muted, fontWeight: 400, fontSize: 11 }}>({data.revision.revised_on}, shadow only)</span></div>
+              <div style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>Generic buy-idea stop-rule experiment <span style={{ color: T.sub, fontWeight: 400, fontSize: 11 }}>({data.revision.revised_on}, shadow only—not actual Guardian suggestions)</span></div>
+              <div style={{ color: T.sub, fontSize: 11, marginTop: 6 }}>Hypothetical proposal-price entries, separate from the exact frozen advice above. This experiment does not establish that a Guardian stop helped, and never revises an active stop.</div>
               <div style={{ color: T.sub, fontSize: 12, marginTop: 6, lineHeight: 1.55 }}>{data.revision.note}</div>
               {data.revision.sample > 0 && (
                 <div style={{ overflowX: "auto", marginTop: 8 }}>
