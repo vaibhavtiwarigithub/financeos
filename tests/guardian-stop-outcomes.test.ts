@@ -52,7 +52,7 @@ describe("Guardian paired stop accounting", () => {
     expect(evaluateGuardianStop(rec(), [...bars(), bar(dates[0])], 2, asOf).state).toBe("missing_data");
     const malformed = bars(); malformed[0].high = 0;
     expect(evaluateGuardianStop(rec(), malformed, 2, asOf).state).toBe("missing_data");
-    expect(evaluateGuardianStop(rec(), bars(), 2, asOf, undefined, [dates[0]]).state).toBe("missing_data");
+    expect(evaluateGuardianStop(rec(), bars(), 2, asOf, undefined, [dates[0]]).state).toBe("excluded_corporate_action");
     expect(evaluateGuardianStop(rec({ guardian_contract: null }), bars(), 2, asOf).state).toBe("legacy");
     const r = rec(); r.guardian_contract!.captured_at = "2026-09-01T00:00:00Z";
     expect(evaluateGuardianStop(r, bars(), 2, asOf).state).toBe("missing_data");

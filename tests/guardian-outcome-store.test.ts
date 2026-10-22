@@ -31,8 +31,8 @@ describe("scheduled Guardian outcome persistence", () => {
     expect(write.mock.calls[0][1]).toEqual({ onConflict: "rec_id,marked_on", ignoreDuplicates: true });
     expect(svc.from.mock.calls.every(([table]) => table === "live_recommendation_marks")).toBe(true);
   });
-  it("preserves the first matured price window even when a later source changes", async () => {
-    const frozen = [2, 5, 10, 20].map(horizon => ({ horizon, state: "ready", reason: "frozen fixture", netDeltaPct: 7, priceWindow: [{ close: 123 }] }));
+  it.each(["ready", "excluded_corporate_action"])("preserves the first matured %s result even when a later source changes", async state => {
+    const frozen = [2, 5, 10, 20].map(horizon => ({ horizon, state, reason: "frozen fixture", netDeltaPct: state === "ready" ? 7 : undefined, priceWindow: [{ close: 123 }] }));
     const { svc, write } = setup([{ rec_id: 1, guardian_outcomes: { version: "guardian_exact_stop_v1", outcomes: frozen } }]);
     await collectGuardianOutcomeMarks(svc, new Date("2026-11-11T23:00:00Z"));
     expect(mocks.raw).not.toHaveBeenCalled();
@@ -52,7 +52,7 @@ describe("scheduled Guardian outcome persistence", () => {
   it("excludes local corporate-action evidence even if the price provider omitted the event", async () => {
     const { svc } = setup([], false, [{ symbol: rec.symbol, ex_date: "2026-10-02", effective_date: null }]);
     const result = await collectGuardianOutcomeMarks(svc, new Date("2026-11-10T23:00:00Z"));
-    expect(result.us.ready).toBe(0); expect(result.us.unavailable).toBe(4);
+    expect(result.us.ready).toBe(0); expect(result.us.unavailable).toBe(0);
   });
   it("does not spend a price fetch before any horizon has matured", async () => {
     const { svc, write } = setup();

@@ -57,7 +57,10 @@ oldest-attempt first, with a 45-second shared and 22-second per-market allowance
 reserving time for database writes; deferred coverage surfaces in health. First matured outcomes retain their complete price window
 and are reused rather than restated. Known split/dividend/action windows from
 both the existing corporate-action ledger and price provider are unavailable
-until share/cash treatment is verified. Stop-formula lineage not supplied by
+until share/cash treatment is verified: persist `excluded_corporate_action`,
+not a zero return or a failing producer, and do not repeatedly fetch a completed
+excluded window. Source failures and genuinely missing matured bars still raise
+health alerts. Stop-formula lineage not supplied by
 the source is explicitly `unrecorded`; evaluation lineage is v1, not a claimed
 new stop formula. Historical dates/levels are not retrospectively frozen.
 

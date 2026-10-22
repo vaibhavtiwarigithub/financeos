@@ -33,7 +33,7 @@ export async function collectGuardianOutcomeMarks(svc: any, asOf = new Date()) {
     const frozen = new Map<string, any>();
     const attemptedAt = new Map<string, string>();
     for (const row of priorRows) if (row.guardian_outcomes?.version === GUARDIAN_VERSION)
-      { for (const o of row.guardian_outcomes.outcomes ?? []) if (o.state === "ready" && !frozen.has(`${row.rec_id}:${o.horizon}`)) frozen.set(`${row.rec_id}:${o.horizon}`, o);
+      { for (const o of row.guardian_outcomes.outcomes ?? []) if (["ready", "excluded_corporate_action"].includes(o.state) && !frozen.has(`${row.rec_id}:${o.horizon}`)) frozen.set(`${row.rec_id}:${o.horizon}`, o);
         const symbol = recs.find(r => r.id === Number(row.rec_id))?.symbol;
         const stamp = row.guardian_outcomes.source_attempted_at;
         if (symbol && typeof stamp === "string" && stamp > (attemptedAt.get(symbol) ?? "")) attemptedAt.set(symbol, stamp); }

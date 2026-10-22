@@ -215,7 +215,7 @@ export interface GuardianStopContract {
 }
 export interface GuardianStopOutcome {
   horizon: GuardianOutcomeHorizon;
-  state: "ready" | "immature" | "missing_data" | "legacy" | "excluded_overlap";
+  state: "ready" | "immature" | "missing_data" | "legacy" | "excluded_overlap" | "excluded_corporate_action";
   reason: string;
   startSession?: string;
   endSession?: string;

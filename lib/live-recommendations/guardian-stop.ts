@@ -61,7 +61,7 @@ export function evaluateGuardianStop(rec: StopRecommendation, bars: Bar[], horiz
   if (endAt == null) return fail("missing_data", "Unknown horizon close.");
   if (endAt > asOf.getTime()) return fail("immature", "The full horizon has not closed.");
   const issueDate = guardianIssueDate(rec.market, rec.issued_at)!;
-  if (corporateActionDates.some(d => d >= issueDate && d <= dates.at(-1)!)) return fail("missing_data", "Corporate-action window: cash/share adjustment is not verified.");
+  if (corporateActionDates.some(d => d >= issueDate && d <= dates.at(-1)!)) return fail("excluded_corporate_action", "Corporate-action window: cash/share adjustment is not verified; excluded by this fixed contract, not a failed collector.");
   const used: Bar[] = [];
   for (const date of dates) {
     const matches = bars.filter(b => b.date === date);
