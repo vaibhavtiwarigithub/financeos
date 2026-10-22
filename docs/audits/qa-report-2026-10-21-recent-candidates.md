@@ -26,7 +26,7 @@ Owner approved the five-session / 20-name plan on October 21, 2026 (Chicago).
 
 ## Verified locally and in database
 
-- Full regression: 4,127 passed, eight skipped across 509 test files (508 passed,
+- Full regression: 4,131 passed, eight skipped across 510 test files (509 passed,
   one skipped). Focused lifecycle/freshness tests passed, including rank-policy
   read failure, newest-score downgrade and positive session-validation contracts.
 - Production migration `20261022030420_recent_qualified_candidates` applied and
@@ -47,7 +47,14 @@ Owner approved the five-session / 20-name plan on October 21, 2026 (Chicago).
 
 ## Release and UI
 
-Pending push/deployment and authenticated production UI/API verification.
+Initial runtime `43a48138` is on origin/main and deployment
+`dpl_FyxDRZdUE1NHbB6awawVabPmf5Lx` is READY. Canonical authenticated API checks
+returned 200 for US/India × paper/live, with the five-session/20-name policy and
+an honest empty launch state; invalid market returned 400. Paper Portfolio
+renders Candidates waiting with no desktop page overflow. Source follow-up
+retains intermediate blocked attempts after later research (rather than joining
+only first/latest signal IDs); four API tests cover authorization, validation,
+history continuity and missing admission evidence. Final UI/release checks follow.
 
 ## Evidence boundaries
 

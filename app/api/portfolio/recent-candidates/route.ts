@@ -21,17 +21,24 @@ export async function GET(req: NextRequest) {
     const day = getMarketDayStatus(market, now);
     const rows = await readRecentCandidates(svc, market, now);
     // Display-only per-book evidence. No broker call, paid research or mutation.
-    const ids = [...new Set(rows.flatMap(row => [row.first_signal_id, row.latest_signal_id]))];
-    const events = ids.length && book === "paper" ? await fetchAllRows<any>((from, to) => svc.from("pipeline_stage_events")
-      .select("id,signal_id,symbol,reason,outcome,stage,created_at").eq("market", market).in("signal_id", ids)
+    const symbols = rows.map(row => row.symbol);
+    const { data: firstSignals, error: firstError } = rows.length ? await svc.from("agent_signals")
+      .select("id,created_at").in("id", rows.map(row => row.first_signal_id)) : { data: [], error: null };
+    if (firstError || firstSignals?.length !== rows.length) throw new Error("Candidate admission timestamps unavailable");
+    const firstAt = new Map<string, string>((firstSignals ?? []).map((signal: any) => [String(signal.id), String(signal.created_at)]));
+    const since = [...firstAt.values()].sort()[0];
+    // Include intermediate assessments too: a refresh today must not hide
+    // yesterday's blocked attempt just because it has another signal ID.
+    const events = rows.length && book === "paper" ? await fetchAllRows<any>((from, to) => svc.from("pipeline_stage_events")
+      .select("id,signal_id,symbol,reason,outcome,stage,created_at").eq("market", market).in("symbol", symbols).gte("created_at", since)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to), "shortlist paper decisions") : [];
     const { data: positions, error: positionsError } = book === "paper"
       ? await svc.from("paper_positions").select("symbol").eq("market", market).gt("qty", 0)
       : { data: null, error: null };
     if (positionsError) throw new Error(positionsError.message);
     const held = new Set((positions ?? []).map((row: any) => row.symbol));
-    const proposals = ids.length && book === "live" ? await fetchAllRows<any>((from, to) => svc.from("trade_proposals")
-      .select("id,symbol,status,rejection_reason,risk_check_reasons,created_at").eq("market", market).in("signal_id", ids)
+    const proposals = rows.length && book === "live" ? await fetchAllRows<any>((from, to) => svc.from("trade_proposals")
+      .select("id,symbol,status,rejection_reason,risk_check_reasons,created_at").eq("market", market).in("symbol", symbols).gte("created_at", since)
       .or(EXCLUDE_SHADOW_FILTER)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to), "shortlist live proposals") : [];
     return NextResponse.json({ market, book, as_of: now.toISOString(), retention_sessions: 5, capacity: 20,
@@ -39,8 +46,9 @@ export async function GET(req: NextRequest) {
         const previous = new Date(`${row.first_session}T12:00:00Z`); previous.setUTCDate(previous.getUTCDate() - 1);
         const sessions = expectedMarketSessionsBetween(market, previous.toISOString().slice(0, 10), row.expires_session);
         const lastDecision = events.find((event: any) => event.symbol === row.symbol
+          && event.created_at >= firstAt.get(row.first_signal_id)!
           && ["execution", "portfolio_constructor", "sector_gate", "reentry_gate", "liquidity_gate", "pricing", "existing_position_gate", "trade_plan", "sizing", "risk_gate"].includes(event.stage));
-        const proposal = proposals.find((item: any) => item.symbol === row.symbol);
+        const proposal = proposals.find((item: any) => item.symbol === row.symbol && item.created_at >= firstAt.get(row.first_signal_id)!);
         return { ...row, rank: i + 1,
           sessions_remaining: sessions.filter(session => session >= day.localYmd).length,
           research_state: held.has(row.symbol) ? "already_held" : row.latest_session < day.localYmd ? "needs_refresh" : "research_qualified",
