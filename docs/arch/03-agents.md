@@ -1,5 +1,21 @@
 # Kairos — Agents
 
+## Quantum/robotics ETF coverage and manual research fairness
+
+The owner-approved US thematic research basket includes QTUM, BOTZ, ARKQ, ROBO
+and ROBT through normal manual watchlist entries, not a cap-exempt special lane.
+Their shared ETF classification excludes company-only fundamentals and insider
+inputs through existing applicability logic. The entries grant no broker bypass
+or automatic position reservation; scoring, liquidity, overlap, cash and portfolio
+risk checks remain authoritative. Global ETF holdings are not automatically
+promoted into the US research universe.
+
+Within the US manual watchlist pool, reuse the same never-scored/oldest-scored
+ordering already used by holdings. This prevents a larger-than-cap manual pool
+from researching the same newest-created names indefinitely. Holdings and the
+leveraged sleeve keep priority, and the discovery quota/cap do not increase.
+Missing score-history reads fall back to the existing order, not invented scores.
+
 ## Benchmark constituent coverage and rotation alternatives
 
 Research expands the enabled US and India benchmarks into their verified current

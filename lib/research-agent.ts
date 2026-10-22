@@ -352,7 +352,7 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
   }
 }
 
-// Least-recently-scored-first ordering for holdings. Reads this market's own
+// Least-recently-scored-first ordering for holdings and the manual US pool. Reads this market's own
 // agent_signals (our own rows — never an external fetch) to find each holding's
 // last score time, so the wall-clock budget's cut ROTATES across the book
 // instead of decapitating the same stable tail every run. Fail-soft: if the
@@ -727,7 +727,8 @@ export async function gatherSymbols(
   // Split watchlist by source: an OWNER MANUAL add is an explicit "research this"
   // intent and must beat the machine-generated screener carry-forward backlog —
   // otherwise a hand-picked ticker starves behind dozens of queued screener names.
-  // Newest manual adds first (most recent intent).
+  // Within the US manual pool, never/oldest researched first below prevents
+  // enabled older entries from starving behind the same newest-created names.
   const watchlist = partitionWatchlistByMarket((watchlistResult.data ?? []) as any[]);
 
   const rawFocus: string = (profileResult.data as any)?.market_focus ?? "US";
@@ -770,7 +771,7 @@ export async function gatherSymbols(
   // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
   // beats everything except holdings, so a hand-picked ticker (e.g. SK Hynix)
   // never starves behind the screener carry-forward backlog.
-  for (const sym of watchlist.usManual) addCandidate(sym, "watchlist");
+  for (const sym of await orderHoldingsByLastScored(supabase, watchlist.usManual, "us")) addCandidate(sym, "watchlist");
 
   // A benchmark quote is not coverage of its underlying companies. Reserve a
   // bounded part of the existing discovery quota for current, source-verified

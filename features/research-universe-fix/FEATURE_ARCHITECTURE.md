@@ -1,5 +1,34 @@
 # Research Universe Fix — Feature Architecture
 
+## Owner-requested quantum/robotics ETF correction — 2026-10-21
+
+Research-enable QTUM, BOTZ and ARKQ and add ROBO/ROBT to the owner's US manual
+watchlist, with no expiration. Verify US listings against the issuer's own fund
+page. These are research candidates, not five orders or five new position slots.
+Complete canonical ETF membership before activation so company-only fundamental
+ratios and insider data cannot masquerade as applicable dimensions. Existing ETF
+weights, score cap, availability handling, duplicate-exposure/risk construction,
+broker eligibility, cash limits and live controls remain unchanged.
+
+An enabled symbol must have a path to research, not just a true watchlist flag.
+The manual US pool exceeds its reserved cap; fixed newest-created-first ordering
+can starve old entries (QTUM/BOTZ/ARKQ were created in June and never researched).
+Reuse the existing internal score-history reader and staleness ordering for this
+manual pool: never-researched first, then oldest researched. Holdings and the
+leveraged priority remain first, manual names still precede carry-forward and
+machine watchlists, and discovery retains its reserved slots. No new service,
+cron, source, package, budget or cap exemption. Missing score history falls back
+to the existing input order and existing diagnostics; no historical score is
+manufactured. Confirm deterministic ordering/caps and ETF applicability in tests,
+then verify the deployed owner watchlist and a bounded five-symbol research pass.
+
+Issuer references: https://www.defianceetfs.com/qtum/ ;
+https://www.globalxetfs.com/funds/botz/ ; https://www.ark-funds.com/funds/arkq ;
+https://www.roboglobaletfs.com/robo ;
+https://www.ftportfolios.com/Retail/Etf/EtfSummary.aspx?Ticker=ROBT .
+Global fund holdings do not imply all foreign constituents are US-tradeable;
+automatic full constituent admission is outside this bounded correction.
+
 **Status:** APPROVED → IMPLEMENTING  
 **Date:** 2026-07-09  
 **Author:** Claude / Opus 4.8

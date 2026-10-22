@@ -3,7 +3,7 @@ import { classifyJournalAsset, isEquityFundamentalsApplicable, isEtfSymbol } fro
 
 describe("asset classification", () => {
   it("recognizes researched funds that were previously misclassified", () => {
-    for (const symbol of ["EUAD", "DXJ", "TEM", "DBA", "SCHD", "VTV", "SPHQ", "ASHR", "EMXC", "XAR"]) {
+    for (const symbol of ["EUAD", "DXJ", "TEM", "DBA", "SCHD", "VTV", "SPHQ", "ASHR", "EMXC", "XAR", "QTUM", "BOTZ", "ARKQ", "ROBO", "ROBT"]) {
       expect(isEtfSymbol(symbol), symbol).toBe(true);
       expect(classifyJournalAsset(symbol, "us_equity"), symbol).toBe("etf");
     }
@@ -16,7 +16,7 @@ describe("asset classification", () => {
   });
 
   it("marks funds and crypto as outside equity-only fundamental providers", () => {
-    for (const symbol of ["DBA", "GLD", "SOXL", "SOXS", "SOXX", "SQQQ", "TQQQ", "BTC-USD", "ETH-USDT", "SOL-USD"]) {
+    for (const symbol of ["DBA", "GLD", "SOXL", "SOXS", "SOXX", "SQQQ", "TQQQ", "BTC-USD", "ETH-USDT", "SOL-USD", "QTUM", "BOTZ", "ARKQ", "ROBO", "ROBT"]) {
       expect(isEquityFundamentalsApplicable(symbol), symbol).toBe(false);
     }
     expect(isEquityFundamentalsApplicable("AAPL")).toBe(true);
