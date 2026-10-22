@@ -54,9 +54,25 @@ independently triaged partial weekly review. This is not a full application audi
 
 ## Release and smoke checks
 
-Pending final push/deployment identity and canonical smoke verification. Keep
-runtime status distinct from local verification; do not declare this deployed
-until the exact runtime commit is READY with the canonical aliases assigned.
+Runtime **e45983c2a30def8679c554cccaaedaf4a31a9118** is on origin/main.
+Deployment **dpl_8pkCuLb698iZXspNb7UYA87iZzBN** is READY with aliases assigned,
+including financeos-vaibhavtiwarigithubs-projects.vercel.app and financeos-phi.vercel.app.
+This final deployed build includes the small follow-ups after the local build.
+
+Canonical browser smoke: US and India paper/live views render Candidates waiting
+without shortlist errors or horizontal page overflow. Both live markets retain
+Guardian sections. The owner Vault finishes loading 19 rows, no extra PIN prompt,
+no access/load error and no console errors; no key values were read or printed.
+Anonymous Vault and shortlist GETs returned 401. No credential edits/toggles or
+trading actions were performed as a test. Same-origin mutation success/rejection
+is covered by handler tests, not a production credential mutation.
+
+An existing Chrome tab failed to attach twice; the documented fresh-tab recovery
+worked. Restored the original US market selection after parity checks. Existing
+heading semantics (two paper H1s, no native Vault H1) are not a new regression or
+a claim of full SEO/accessibility QA. The System Health badge still shows six
+other actionable issues plus four notices; this repair does not claim zero global
+system issues. No unrelated alert was resolved to make the badge look healthy.
 
 ## Remaining boundaries
 
