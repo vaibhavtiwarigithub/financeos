@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import GuardianOutcomeScorecard from "./GuardianOutcomeScorecard";
+import type { GuardianOutcomePayload } from "@/types";
 
 // Live Portfolio: every recommendation shown for the live book, what was done about it, and how it fared against the symbol and SPY, plus
 // the Guardian scorecard and the daily stop-rule revision note. Owner-only stored rows (/api/live-portfolio/recommendations). Display only:
@@ -13,12 +15,12 @@ type Mark = {
 };
 type Row = { id: number; kind: string; account_id: string; symbol: string; issued_at: string; reference_price: number | null; level_price: number | null; rationale: string | null; mark: Mark | null };
 type Arm = { id: string; label: string; n: number; meanRetPct: number | null; stoppedShare: number | null; savedPts: number; costPts: number };
-type Payload = { error?: string; asOf: string; rows: Row[]; revision: { revised_on: string; sample: number; distinct_symbols: number; arms: Arm[]; note: string } | null; guardianPlanEvents: number };
+type Payload = { error?: string; asOf: string; rows: Row[]; revision: { revised_on: string; sample: number; distinct_symbols: number; arms: Arm[]; note: string } | null; guardianPlanEvents: number; guardianOutcomes?: GuardianOutcomePayload };
 
 const T = { card: "#1A1D27", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#818CF8" };
 const KIND: Record<string, string> = { buy_idea: "Buy idea", guardian_stop: "Guardian stop", exit_signal: "Exit signal" };
 const STATUS: Record<string, { label: string; color: string }> = {
-  taken: { label: "Taken", color: T.green }, followed: { label: "Followed", color: T.green }, not_taken: { label: "Not taken", color: T.sub }, ignored: { label: "Ignored", color: T.amber },
+  taken: { label: "Taken / inferred", color: T.green }, followed: { label: "Reduction inferred", color: T.green }, not_taken: { label: "Not observed", color: T.sub }, ignored: { label: "No reduction observed", color: T.amber },
   expired_unanswered: { label: "Expired, no decision", color: T.amber }, pending: { label: "Open", color: T.accent }, watching: { label: "Watching", color: T.accent },
 };
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
@@ -83,7 +85,7 @@ export default function RecommendationsPanel() {
     const stops = all.filter((r) => r.kind === "guardian_stop");
     return { total: all.length, ideas: ideas.length, taken: taken.length, notTaken: by(["not_taken"]).length, expired: by(["expired_unanswered"]).length, open: by(["pending"]).length,
       takenExcess: avg(taken.map((r) => r.mark?.excess_pct)), notTakenExcess: avg(notTaken.map((r) => r.mark?.excess_pct)),
-      alerts: stops.length + (data?.guardianPlanEvents ?? 0), stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length };
+      alerts: stops.length, stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length };
   }, [data]);
 
   const head = (c: (typeof COLS)[number]) => (
@@ -93,7 +95,7 @@ export default function RecommendationsPanel() {
     </th>
   );
   const status = (r: Row) => { const s = r.mark ? STATUS[r.mark.status] : null; return <span title={r.mark?.response_detail ?? ""} style={{ color: s?.color ?? T.muted, fontWeight: 600 }}>{s?.label ?? "Not marked yet"}</span>; };
-  const plTag = (m: Mark | null) => (m?.pnl_basis === "actual" ? "actual" : m?.pnl_basis === "hypothetical" ? "if bought" : "");
+  const plTag = (m: Mark | null) => (m?.pnl_basis === "actual" ? "unrealized estimate" : m?.pnl_basis === "hypothetical" ? "if bought" : "");
 
   const kpiCell = (label: string, value: string, sub?: string, color: string = T.text) => (
     <div style={{ background: "#13151C", border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", minWidth: 0 }}>
@@ -125,7 +127,7 @@ export default function RecommendationsPanel() {
             {kpiCell("Taken", String(kpi.taken), kpi.takenExcess == null ? "no result yet" : `avg ${pct(kpi.takenExcess)} vs SPY`, tone(kpi.takenExcess))}
             {kpiCell("Not taken", String(kpi.notTaken + kpi.expired), kpi.notTakenExcess == null ? "no result yet" : `avg ${pct(kpi.notTakenExcess)} vs SPY if bought`, tone(kpi.notTakenExcess))}
             {kpiCell("Expired, no decision", String(kpi.expired), `${kpi.open} still open`, kpi.expired ? T.amber : T.text)}
-            {kpiCell("Guardian alerts", String(kpi.alerts), `${kpi.touched} stop levels touched`)}
+            {kpiCell("Guardian stop records", String(kpi.alerts), `${kpi.touched} legacy levels touched · ${data.guardianPlanEvents} plan events (not alerts)`)}
           </div>
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 16 }}>
@@ -182,7 +184,8 @@ export default function RecommendationsPanel() {
             </>
           )}
 
-          <div style={{ marginTop: 22, color: T.text, fontWeight: 700, fontSize: 13 }}>Guardian</div>
+          {data.guardianOutcomes && <GuardianOutcomeScorecard data={data.guardianOutcomes} />}
+          <div style={{ marginTop: 22, color: T.text, fontWeight: 700, fontSize: 13 }}>Legacy Guardian references (not exact-stop performance)</div>
           {kpi.stops.length === 0 ? (
             <div style={{ color: T.sub, fontSize: 12, marginTop: 6 }}>The Guardian has suggested no stops yet. It only acts on manual buys in the agentic account, and it has alerted {kpi.alerts} time(s) so far.</div>
           ) : (
@@ -193,7 +196,7 @@ export default function RecommendationsPanel() {
                   <div key={r.id} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, fontSize: 12, color: T.sub, lineHeight: 1.6 }}>
                     <span style={{ color: T.text, fontWeight: 750 }}>{r.symbol}</span>: sell at <b style={{ color: T.text }}>{px(r.level_price)}</b> (suggested {r.issued_at.slice(0, 10)}, cost {px(r.reference_price)}).
                     {" "}Now {px(m?.last_price)}{dist != null ? `, ${dist.toFixed(1)}% above the stop` : ""}.
-                    {" "}{m?.level_touched ? `Stop was touched on ${m.level_touched_on}; selling there would have been ${pct(m.pnl_if_level_pct)}.` : "Stop not touched."}
+                    {" "}{m?.level_touched ? `Level touched on ${m.level_touched_on}; level-only return ${pct(m.pnl_if_level_pct)} (not a modeled or confirmed fill).` : "No stop touch verified in this mark."}
                     {" "}You: {m ? (STATUS[m.status]?.label ?? m.status) : "—"}. Current P/L {pct(m?.pnl_pct)} {plTag(m)}.
                   </div>
                 );
@@ -221,7 +224,7 @@ export default function RecommendationsPanel() {
             </div>
           )}
           <div style={{ marginTop: 16, color: T.muted, fontSize: 11, lineHeight: 1.6 }}>
-            “Taken” is inferred from daily holdings snapshots, so intraday round trips are invisible. “If bought” P/L is hypothetical: it uses the price shown when the idea was issued and ignores slippage and liquidity. Actual P/L uses your average cost. Buy ideas appear as “Expired, no decision” because their approval window is 30 minutes and none was answered in time.
+            Legacy “taken”/reduction states can be inferred from daily snapshots and cannot see intraday round trips. “If bought” is hypothetical and ignores execution costs. Holdings-based P/L is an unrealized estimate from average cost, not realized profit. Exact Guardian results and linked fill evidence are reported separately above.
           </div>
         </>
       )}

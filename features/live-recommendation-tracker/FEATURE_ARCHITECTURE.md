@@ -1,5 +1,66 @@
 # Feature Architecture: Live Recommendation Tracker and Guardian Scorecard
 
+## Approved exact-stop measurement extension — 2026-10-22
+
+Owner approved the preceding discussion with “go”. Why: measure whether the
+actual suggested stop adds value, including premature exits, instead of showing
+generic buy-idea stop arms as Guardian evidence. Who: the owner, both market
+views. ROI: trustworthy incremental outcome evidence without new inference or
+trading authority. ShippedAt: recorded after deployment verification.
+
+Reuse `live_recommendations`, `live_recommendation_marks` and the existing
+22:30 UTC nightly job. Add `market` and nullable `guardian_contract` to the
+recommendation and nullable `guardian_outcomes` to marks. No new table, route,
+model or order mechanism. Existing rows retain null contracts (legacy/ungraded).
+Service-only invoker triggers capture actual future stop suggestions from the
+position ledger and plans, with stop, quantity, capture timestamp, source,
+episode identity and fixed evaluation version. Plan/ledger revisions are all
+retained; earliest-first, non-overlapping 20-session windows per market/account/
+symbol supply the descriptive aggregate. Do not imply statistical independence.
+
+Daily OHLC cannot know the intraday path following a suggestion. Predeclare
+next regular-session open after its market-local capture date as the common
+starting mark for stop and unchanged-holding arms. Evaluate exact market-calendar
+sessions at h2/5/10/20 only after all required closes mature; missing, malformed,
+duplicate or unsupported-calendar data is unavailable, not a zero outcome.
+Stop-market simulation sells at the worse of the daily open and frozen stop,
+less an explicitly disclosed 10-basis-point incremental sell-cost assumption.
+Report gross and modeled-net differences separately; costs are illustrative,
+not observed broker fees. Sale proceeds remain cash, with no reinvestment or
+interest. Never call this portfolio attribution or actual realized P/L.
+
+Store stop and hold returns, delta, loss avoided/upside sacrificed, maximum
+drawdown estimates, stop-touch date, sample/data coverage and monetary delta only
+when frozen quantity is known. Aggregate each horizon separately: mean/median,
+notional-weighted delta, counts and coverage; never sum overlapping horizons.
+Confirmed response requires a linked Guardian plan/proposal and an unambiguous,
+same-account/market/symbol SELL broker fill after suggestion. Arming, submission,
+holdings changes or stop touches alone are not proof. Partial fills stay partial;
+unlinked exits stay unknown. Confirmed exit proceeds are not lot-level realized
+profit or proof the recommendation caused the sale.
+
+One shared display inside both existing Recommendations & Guardian scorecards.
+Show exact-stop metrics separately from generic buy-idea rule experiments.
+India remains empty until actual app suggestions exist; do not fabricate a stop
+from existing Kite GTTs or enable India's unbuilt execution workflow. US legacy
+snapshot-derived P/L/response labels must say inferred/unrealized, not actual
+realized/followed evidence. Owner-only APIs, no-store responses, service-only
+append-only evidence, existing read-only source permissions. Tests must reject
+gap-at-stop optimism, intraday lookahead, missing sessions, duplicate/revised
+episode inflation, unmatched/partial fills, mixed currencies and fake zeroes.
+
+Implementation detail: the existing raw Yahoo replay reader is reused only by
+the nightly producer for versioned suggestions; chart cache rows with mixed
+adjustment bases are not used. No raw-history call occurs before a horizon
+matures. Daily symbol fetches are bounded to 20/market in three-request batches,
+oldest-attempt first, with a 45-second shared and 22-second per-market allowance
+reserving time for database writes; deferred coverage surfaces in health. First matured outcomes retain their complete price window
+and are reused rather than restated. Known split/dividend/action windows from
+both the existing corporate-action ledger and price provider are unavailable
+until share/cash treatment is verified. Stop-formula lineage not supplied by
+the source is explicitly `unrecorded`; evaluation lineage is v1, not a claimed
+new stop formula. Historical dates/levels are not retrospectively frozen.
+
 ## Status
 **IMPLEMENTED 2026-10-14** (owner: "go with recommendations", i.e. the recommended defaults below). Measure-only and display-only: it never places, arms or cancels an order, never changes a stop, and never activates the Guardian.
 

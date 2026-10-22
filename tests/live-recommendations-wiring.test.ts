@@ -10,7 +10,9 @@ const migration = readFileSync("supabase/migrations/20261014162931_live_recommen
 
 describe("live recommendation tracker wiring", () => {
   it("never touches orders, stops or Guardian settings", () => {
-    for (const forbidden of ["broker_orders", "guardian_protection_plans", "place_order", "submitOrder", "robinhood"]) expect(job).not.toContain(forbidden);
+    for (const forbidden of ["place_order", "submitOrder", "robinhood"]) expect(job).not.toContain(forbidden);
+    const store = readFileSync("lib/live-recommendations/guardian-store.ts", "utf8");
+    expect(store).not.toMatch(/from\("(?:broker_orders|guardian_protection_plans)"\)\s*\.(?:insert|upsert|update|delete)/);
     expect(job).toContain("behavior changed=false");
   });
   it("only inserts into its own three tables", () => {
@@ -30,6 +32,26 @@ describe("live recommendation tracker wiring", () => {
   });
   it("keeps the client panel free of server-only imports", () => {
     const imports = [...panel.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
-    expect(imports.every((i) => ["react"].includes(i))).toBe(true);
+    expect(imports.every((i) => ["react", "@/types", "./GuardianOutcomeScorecard"].includes(i))).toBe(true);
+  });
+  it("uses one market-scoped, owner-only exact-stop display in both pipelines", () => {
+    const indiaRead = readFileSync("app/api/live-portfolio/india-recommendations/route.ts", "utf8");
+    const indiaPanel = readFileSync("components/dashboard/IndiaLiveGuardianPanels.tsx", "utf8");
+    expect(read).toContain('loadGuardianOutcomeScorecard(svc, "us")');
+    expect(indiaRead).toContain('loadGuardianOutcomeScorecard(svc, "india")');
+    expect(indiaRead).toContain("requireOwner");
+    for (const source of [read, indiaRead]) expect(source).toContain('"private, no-store"');
+    for (const source of [panel, indiaPanel]) expect(source).toContain("<GuardianOutcomeScorecard");
+    expect(panel).toContain("unrealized estimate");
+  });
+  it("freezes new advice without granting client access or fabricating history", () => {
+    const extension = readFileSync("supabase/migrations/20261022214835_guardian_exact_stop_outcomes.sql", "utf8");
+    expect(extension).toContain("security invoker set search_path=public,pg_temp");
+    expect(extension).toContain("from public,anon,authenticated");
+    expect(extension).not.toMatch(/disable row level security|disable trigger|security definer|update public.live_recommendations/i);
+    expect(extension).toContain("One advice record, not a duplicate");
+    expect(extension).toContain("No historical backfill");
+    expect(job).toContain("row.unavailable > 0");
+    expect(job).toContain('market: "india"');
   });
 });

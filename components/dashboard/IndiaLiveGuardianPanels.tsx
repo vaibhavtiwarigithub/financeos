@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import GuardianOutcomeScorecard from "./GuardianOutcomeScorecard";
+import type { GuardianOutcomePayload } from "@/types";
 
 const T = { card: "#1A1D27", surface: "#13151C", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", red: "#F87171", amber: "#FBBF24", accent: "#818CF8" };
 
@@ -75,7 +77,7 @@ export function IndiaManualTradeGuardianPanel() {
 
 type IndiaLabel = { horizon: number; symbolReturnPct: number | null; niftyReturnPct: number | null; excessPct: number | null; maturedAt: string };
 type Recommendation = { id: number; symbol: string; researchedAt: string; score: number | null; direction: string; referencePrice: number | null; dimensions: Record<string, number | null>; action: string; scoringVersion: string | null; labels: IndiaLabel[] };
-type Scorecard = { error?: string; asOf: string; lookbackDays: number; observationCount: number; truncated: boolean; summary: Array<{ horizon: number; n: number; meanExcessPct: number | null; hitRatePct: number | null }>; rows: Recommendation[]; semantics: string };
+type Scorecard = { error?: string; asOf: string; lookbackDays: number; observationCount: number; truncated: boolean; summary: Array<{ horizon: number; n: number; meanExcessPct: number | null; hitRatePct: number | null }>; rows: Recommendation[]; semantics: string; guardianOutcomes?: GuardianOutcomePayload };
 
 export function IndiaRecommendationsGuardianScorecard({ holdings, holdingsKnown }: { holdings: Holding[]; holdingsKnown: boolean }) {
   const [data, setData] = useState<Scorecard | null>(null);
@@ -139,6 +141,7 @@ export function IndiaRecommendationsGuardianScorecard({ holdings, holdingsKnown 
     {error && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 12 }}>{error}</div>}
     {!data && !error && <div style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Loading India research outcomes…</div>}
     {data && open && <>
+      {data.guardianOutcomes && <GuardianOutcomeScorecard data={data.guardianOutcomes} />}
       <div className="india-rec-grid" style={{ marginTop: 14 }}>
         {metric("Eligible observations", data.observationCount.toLocaleString("en-IN"), `last ${data.lookbackDays} days`)}
         {metric("Latest symbols shown", String(latestBySymbol.length), holdingsKnown ? `${latestBySymbol.filter((row) => heldSymbols.has(row.symbol.replace(/\.(NS|BO)$/i, "").toUpperCase())).length} held now` : "holding status unavailable")}

@@ -35,6 +35,23 @@ The India Live Portfolio did not show the Manual Trade Guardian or the Recommend
 
 ## Security and execution boundaries
 
+### Exact-stop measurement extension (approved 2026-10-22)
+
+Both markets now reuse `GuardianOutcomeScorecard` and the same market-scoped
+persisted exact-stop evaluator described in
+`features/live-recommendation-tracker/FEATURE_ARCHITECTURE.md`. It compares a
+frozen suggested stop with holding over 2/5/10/20 regular sessions. This adds
+nullable measurement columns to the existing recommendation tables and extends
+the existing nightly job; it does not add an India stop producer or broker path.
+India currently has no app-generated suggestions, so this section says so rather
+than evaluating Kite GTTs as app advice. The existing India research-label table
+and current-holding semantics remain unchanged. The earlier P0 statement that
+India does not read recommendation rows applies to that research-label table;
+the new exact-stop subsection reads only `market='india'` recommendation rows.
+US data is never substituted. The no-schema-change statement below describes
+the original P0 only; the approved extension migration is
+`20261022214835_guardian_exact_stop_outcomes`.
+
 - Both routes require the owner; the service-role database client remains server-only.
 - No schema, cron, API-key, feature-flag, paper-trading, or broker-order changes.
 - No scores, weights, gates, stops, targets, portfolio positions, or live-trading settings are changed.

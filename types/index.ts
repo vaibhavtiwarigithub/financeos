@@ -202,3 +202,61 @@ export interface RecentQualifiedCandidate {
   state: "active" | "invalidated" | "expired" | "displaced";
   refresh_lease_until: string | null;
 }
+
+export type GuardianOutcomeHorizon = 2 | 5 | 10 | 20;
+export interface GuardianStopContract {
+  version: "guardian_exact_stop_v1";
+  reference_basis: "next_session_open";
+  captured_at: string;
+  episode_key: string;
+  source_version: string;
+  stop_formula_version?: string;
+  extra_sell_cost_bps: 10;
+}
+export interface GuardianStopOutcome {
+  horizon: GuardianOutcomeHorizon;
+  state: "ready" | "immature" | "missing_data" | "legacy" | "excluded_overlap";
+  reason: string;
+  startSession?: string;
+  endSession?: string;
+  referencePrice?: number;
+  holdPrice?: number;
+  stopFillPrice?: number | null;
+  touchedOn?: string | null;
+  holdReturnPct?: number;
+  stopReturnPct?: number;
+  grossDeltaPct?: number;
+  netDeltaPct?: number;
+  monetaryDelta?: number | null;
+  notional?: number | null;
+  holdDrawdownPct?: number;
+  stopDrawdownPct?: number;
+  priceWindow?: Array<{ date: string; open: number; high: number; low: number; close: number }>;
+  confirmedSaleVsHoldMoney?: number | null;
+}
+export interface GuardianResponseEvidence {
+  state: "confirmed_exit" | "partial_exit" | "declined" | "armed_only" | "unknown";
+  reason: string;
+  fillQty?: number;
+  fillPrice?: number;
+  filledAt?: string;
+}
+export interface GuardianOutcomeRow {
+  id: number; symbol: string; issuedAt: string; stop: number | null; qty: number | null;
+  source: string; version: string | null; outcomes: GuardianStopOutcome[];
+  stopFormulaVersion?: string;
+  response: GuardianResponseEvidence;
+}
+export interface GuardianOutcomeSummary {
+  horizon: GuardianOutcomeHorizon; evaluated: number; total: number;
+  meanDeltaPct: number | null; medianDeltaPct: number | null; weightedDeltaPct: number | null;
+  savedPctPoints: number; sacrificedPctPoints: number; monetaryDelta: number | null;
+  pricedQuantityCount: number; touched: number;
+  meanHoldDrawdownPct: number | null; meanStopDrawdownPct: number | null;
+}
+export interface GuardianOutcomePayload {
+  market: "us" | "india"; currency: "USD" | "INR"; evaluatedAt: string | null;
+  suggestions: number; legacy: number; rows: GuardianOutcomeRow[];
+  rowsTruncated?: boolean;
+  summary: GuardianOutcomeSummary[];
+}

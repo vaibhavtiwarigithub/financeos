@@ -124,6 +124,23 @@ Display-only. Nightly `/api/agents/live-recommendations` (22:30 UTC) records eve
 
 ## Live-exit ladder collection health (2026-10-14)
 
+### Exact Guardian advice measurement
+
+The existing 22:30 UTC recommendation job additionally evaluates genuine frozen
+stop suggestions in US and India separately. Capture triggers preserve advice
+at issue time; no old mutable suggestion is reconstructed. The shared Live
+Portfolio scorecard compares that exact stop with holding from the next regular
+session's open over 2/5/10/20 sessions, charges an explicit illustrative 10 bps
+extra sell cost and records losses avoided as well as rebound upside sacrificed.
+Raw coherent OHLC is used; missing bars, unsupported calendars and known
+corporate-action windows are not graded. First matured windows remain frozen.
+The legacy average-cost figure described above is an **unrealized estimate**,
+not realized profit; snapshot responses are now explicitly labelled inferred.
+Only an unambiguous same-account linked broker SELL fill confirms an exit.
+Modelled performance, actual sale proceeds and generic buy-idea stop arms remain
+separate. India has the identical measurement component but no app stop producer;
+Kite GTT coverage must not be relabelled advice. No trading behavior changes.
+
 `/api/agents/live-exit-monitor/cron` writes one best-effort operational run
 record per market to the already-applied `upgrade_path_producer_runs` ledger
 after the protective monitor completes. These records are separate from

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { loadGuardianOutcomeScorecard } from "@/lib/live-recommendations/guardian-store";
 
 export const dynamic = "force-dynamic";
 const HORIZONS = [2, 5, 10, 20] as const;
@@ -62,12 +63,13 @@ export async function GET() {
         maturedAt: label.matured_at,
       })),
     }));
+    const guardianOutcomes = await loadGuardianOutcomeScorecard(svc, "india");
     return NextResponse.json({
       market: "india", benchmark: "NIFTY 50", asOf: new Date().toISOString(), lookbackDays: LOOKBACK_DAYS,
       observationCount: eligible.length, truncated: observations.length > eligible.length,
-      summary, rows,
+      summary, rows, guardianOutcomes,
       semantics: "These are deterministic, entry-eligible ResearchAgent observations, not broker orders. Outcome summaries use only matured labels. Daily observations overlap, so summaries are descriptive and are not inferential IC/t-stat estimates. Current holdings do not prove whether a recommendation was bought and later sold.",
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "India recommendations unavailable" }, { status: 500 });
   }

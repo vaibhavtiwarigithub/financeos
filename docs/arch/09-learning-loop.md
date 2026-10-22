@@ -1,5 +1,20 @@
 # Kairos — Learning Loop
 
+## Guardian suggestion outcomes
+
+Live Portfolio → Recommendations & Guardian scorecard measures actual frozen
+stop advice against continuing to hold, separately at 2/5/10/20 sessions in each
+market. Its average/median/net notional-weighted differences are descriptive
+scenario results, not IC, causal portfolio attribution or realized profit.
+Only confirmed linked broker fills supply execution evidence. A daily holdings
+reduction, an armed plan or a touched level is not a confirmed sale. The existing
+nightly producer freezes the first matured raw-price window and surfaces failed
+collection in System Health. Legacy suggestions, unknown data and repeated
+overlapping advice do not become zero-return observations. No automatic stop
+formula mutation or money-path promotion consumes these measurements. India
+currently has no app-generated stop advice; shared measurement readiness does
+not imply a Kite stop producer or execution workflow exists.
+
 ## Finding the right evidence on Learning
 
 Prediction Lab stays at the top. The navigation below the page heading opens
