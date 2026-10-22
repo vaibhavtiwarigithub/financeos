@@ -59,8 +59,10 @@ describe("routed design wiring (contract)", () => {
     expect(research).toContain("for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate");
     // Must be admitted BEFORE the 186-name watchlist: the wall-clock budget cuts the tail, and the four doors
     // need a same-weekday session-validated signal (weekend-staged signals are never validated).
+    const manualPool = research.search(/for \(const sym of [^\n]*watchlist\.usManual/);
+    expect(manualPool).toBeGreaterThan(-1);
     expect(research.indexOf("for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate"))
-      .toBeLessThan(research.indexOf("for (const sym of watchlist.usManual) addCandidate"));
+      .toBeLessThan(manualPool);
     expect(readFileSync("app/api/agents/paper-trade/route.ts", "utf8")).toContain("routed_to_leveraged_door");
   });
 });
