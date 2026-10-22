@@ -4,6 +4,21 @@
 
 ## API Vault access (owner-session only)
 
+Vault responses use an explicit masked-field allowlist and private/no-store
+caching. Mutations require the confirmed owner session, the browser's exact
+same Origin and JSON content type; malformed or cross-origin requests do not
+reach the service client. No redundant PIN is reintroduced.
+
+### Exit cancellation and health visibility
+
+Unconfirmed protective cancellation blocks another SELL. Cancellation has a
+compare-and-swap owner; unknown/canceling rows require reconciliation. After a
+confirmed cancellation, an uncompleted sell is an unprotected-exit audit/health
+condition, not restored protection. Preserve the canceled broker-order status
+and reconcile actual fills/held quantity before replacement. No worker or live
+trading flag is enabled by this hardening. Broker failures count as health
+failures; explicit reconnect/login/PC actions remain in the owner-action area.
+
 The API Vault uses the app's authenticated, confirmed canonical owner session as its access gate; there is no separate Vault PIN/password, PIN-recovery flow, or change-PIN flow. Both Vault reads and writes call the server-side `requireOwner()` guard before using the service-role client. Viewer/non-owner sessions are denied, service-role credentials stay server-side, and the UI masks stored key values. Webull OpenAPI token verification uses the same owner-session gate. The account login password remains the single interactive password; removing the redundant Vault PIN does not weaken owner authorization or expose keys to other accounts. Any obsolete `app_settings.vault_pin` hash is deleted after deployment; no schema migration is required.
 
 ## Alpaca credentials and market-data boundary

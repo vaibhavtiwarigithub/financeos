@@ -1,3 +1,5 @@
+import { latestEntryAssessments } from "@/lib/trading/fresh-entry-signals";
+
 export interface PaperSignalCandidate {
   id: string;
   symbol: string;
@@ -27,14 +29,6 @@ function candidateMarket(signal: PaperSignalCandidate): "us" | "india" {
   return "us";
 }
 
-function isBetter(candidate: PaperSignalCandidate, incumbent: PaperSignalCandidate): boolean {
-  const candidateScore = Number(candidate.analyst_score);
-  const incumbentScore = Number(incumbent.analyst_score);
-  if (candidateScore !== incumbentScore) return candidateScore > incumbentScore;
-  if (candidate.created_at !== incumbent.created_at) return candidate.created_at > incumbent.created_at;
-  return candidate.id > incumbent.id;
-}
-
 export function selectBestPaperSignals<T extends PaperSignalCandidate>(
   rows: T[],
   market: "us" | "india",
@@ -46,7 +40,9 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
   const duplicateIds: string[] = [];
   const excludedIds: string[] = [];
 
-  for (const row of rows) {
+  const marketRows = rows.filter(row => !isCryptoPaperSignal(row) && candidateMarket(row) === market);
+  const latestIds = new Set(latestEntryAssessments(marketRows).map(row => row.id));
+  for (const row of marketRows) {
     if (isCryptoPaperSignal(row)) continue;
     if (candidateMarket(row) !== market) continue;
     const symbol = String(row.symbol ?? "").trim().toUpperCase();
@@ -55,13 +51,9 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
       excludedIds.push(row.id);
       continue;
     }
+    if (!latestIds.has(row.id)) { duplicateIds.push(row.id); continue; }
     const target = options.heldSymbols?.has(symbol) ? heldBest : best;
-    const incumbent = target.get(symbol);
-    if (!incumbent) target.set(symbol, row);
-    else if (isBetter(row, incumbent)) {
-      duplicateIds.push(incumbent.id);
-      target.set(symbol, row);
-    } else duplicateIds.push(row.id);
+    target.set(symbol, row);
   }
 
   const selected = [...best.values()]

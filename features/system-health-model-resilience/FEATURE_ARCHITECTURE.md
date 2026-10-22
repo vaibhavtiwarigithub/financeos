@@ -36,6 +36,12 @@ Implementation allowed: Yes
 
 ## Why this feature exists
 
+Confirmed-review repair (owner go, 2026-10-22): broker category alone is never an
+owner-action exemption. Explicit reconnect/login/quota/PC actions remain separate,
+but reconciliation, order, cancellation and exposure faults take precedence and
+remain actionable, including when a remediation mentions reconnect. A critical
+alert cannot become an informational notice merely from a success emoji/title.
+
 Tonight's session exposed the core risk of an autonomous-ish trading system:
 **silent failures.** Every real problem was invisible until stumbled upon —
 DeepSeek models deprecated (agents would've errored on next call), the vault

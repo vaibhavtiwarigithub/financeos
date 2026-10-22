@@ -10,8 +10,8 @@ import { getQuote } from "@/lib/data/quotes";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { TRADE_PROPOSAL_STATUS, SHADOW_EXECUTION_MODE } from "@/lib/trading/proposal-status";
+import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
 
-const SIGNAL_LOOKBACK_HOURS = 24;
 // Robinhood agentic account — read-only NAV for US shadow.
 const US_NAV_ACCOUNT_ID = "605420660";
 
@@ -185,22 +185,8 @@ export async function runAutonomousShadow(
   const openPositions = Object.values(netQty).filter((v) => v > 1e-9).length;
 
   // 7. Query qualifying signals for this market.
-  const lookbackCutoff = new Date(
-    Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000,
-  ).toISOString();
-
-  const { data: signals, error: signalErr } = await svc
-    .from("agent_signals")
-    .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
-    .eq("score_source", "deterministic_v1")
-    .eq("session_validated", true)
-    .eq("direction", "long")
-    .eq("market", market)
-    .gte("analyst_score", scoreThreshold)
-    .gte("created_at", lookbackCutoff)
-    .order("analyst_score", { ascending: false })
-    .limit(policy.live_auto_max_orders_per_day ?? 10);
-  if (signalErr) throw new Error(`shadow signal query failed: ${signalErr.message}`);
+  const signals = (await loadFreshEntrySignals(svc, market as "us" | "india", scoreThreshold))
+    .slice(0, policy.live_auto_max_orders_per_day ?? 10);
 
   const results: ShadowRunResult["results"] = [];
   let shadowOrdersThisRun = 0;

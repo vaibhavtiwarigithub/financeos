@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
 import { createClient } from "@/lib/supabase/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { loadTradingMandate } from "@/lib/trading-mandate";
@@ -189,19 +190,8 @@ async function buildProposals(supabase: any, isCron: boolean) {
     const alreadyProposed = new Set((existingProposals ?? []).map((p: any) => p.signal_id));
 
     // Qualify: long, high score, not yet paper or live traded
-    const { data: signals } = await supabase
-      .from("agent_signals")
-      .select("*")
-      .eq("market", "us")
-      .eq("direction", "long")
-      .eq("status", "pending")
-      .eq("session_validated", true)
-      .gte("analyst_score", scoreThreshold)
-      // Positive allowlist: ONLY the versioned deterministic source is trade-eligible.
-      // The prior negative filter admitted null/unknown score_source (fail-open).
-      .eq("score_source", "deterministic_v1")
-      .order("analyst_score", { ascending: false })
-      .limit(3); // max 3 proposals per run
+    const signals = (await loadFreshEntrySignals(supabase, "us", scoreThreshold))
+      .filter(row => row.status === "pending").slice(0, 3);
 
     const created: any[] = [];
     const skipped: any[] = [];

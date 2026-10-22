@@ -71,7 +71,7 @@ describe("candidate persistence and bounded refresh", () => {
     expect(await refreshRecentCandidatesForCapacity({ rpc }, "us", { hasCapacity: true, heldSymbols: ["NVDA"], now, refresh }))
       .toEqual({ refreshed: 1, failed: 0 });
     expect(rpc).toHaveBeenCalledWith("claim_recent_candidate_refresh", { p_market: "us", p_session: "2026-10-21", p_excluded: ["NVDA"] });
-    expect(refresh).toHaveBeenCalledWith(row()); expect(resolveIssue).toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(row(), expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) })); expect(resolveIssue).toHaveBeenCalled();
   });
   it("leaves failed work untradeable and reports it without throwing away other candidates", async () => {
     const svc = { rpc: vi.fn().mockResolvedValue({ data: [row("AMD"), row("MELI")], error: null }) };
@@ -97,6 +97,29 @@ describe("candidate persistence and bounded refresh", () => {
       .toEqual({ refreshed: 0, failed: 1 });
     expect(rpc).not.toHaveBeenCalled(); expect(reportIssue).toHaveBeenCalled();
   });
+  it("aborts a hung refresh, starts no remaining names and reports incompleteness", async () => {
+    vi.useFakeTimers();
+    try {
+      const svc = { rpc: vi.fn().mockResolvedValue({ data: [row("A"), row("B"), row("C")], error: null }) };
+      const refresh = vi.fn((_row: unknown, execution: { signal: AbortSignal }) => new Promise<void>((_resolve, reject) => {
+        execution.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }));
+      const result = refreshRecentCandidatesForCapacity(svc, "us", { hasCapacity: true, heldSymbols: [], now, refresh });
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await result).toEqual({ refreshed: 0, failed: 3 });
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(refresh.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(resolveIssue).not.toHaveBeenCalled();
+      expect(reportIssue).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("does not claim work after the shared caller deadline", async () => {
+    const rpc = vi.fn(), refresh = vi.fn();
+    expect(await refreshRecentCandidatesForCapacity({ rpc }, "us", {
+      hasCapacity: true, heldSymbols: [], now, refresh, deadlineAt: Date.now() - 1,
+    })).toEqual({ refreshed: 0, failed: 0 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
 });
 
 describe("shortlist wiring and authorization contracts", () => {
@@ -104,7 +127,8 @@ describe("shortlist wiring and authorization contracts", () => {
   it("keeps signal expiry, levered priority and normal entry controls", () => {
     const paper = read("app/api/agents/paper-trade/route.ts");
     expect(paper.indexOf("refreshRecentCandidatesForCapacity(supabase")).toBeLessThan(paper.indexOf('let expiredTotal'));
-    expect(paper).toContain('.gte("analyst_score", entryThreshold).gte("created_at", cutoff)');
+    expect(paper).toContain('loadFreshEntrySignals(supabase, m as "us" | "india", entryThreshold)');
+    expect(read("lib/trading/fresh-entry-signals.ts")).toContain('.gte("created_at", cutoff)');
     const live = read("lib/trading/autonomous-live.ts");
     expect(live.indexOf('if (!cfg.live_auto_enabled)')).toBeLessThan(live.indexOf('refreshRecentCandidatesForCapacity(svc'));
     const research = read("lib/research-agent.ts");

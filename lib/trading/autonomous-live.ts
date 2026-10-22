@@ -372,10 +372,11 @@ export async function runAutonomousLive(
 
   // Disabled/closed/unprotected books have already returned above. Research
   // memory grants no permission and never bypasses the execution kernel.
+  const capacityRefreshDeadline = Date.now() + 20_000;
   for (const market of autonomousMarkets) {
     await refreshRecentCandidatesForCapacity(svc, market as "us" | "india", {
       hasCapacity: (openByMarket[market] ?? 0) < mandateByMarket[market].max_open_positions,
-      heldSymbols: managedPositions.filter(row => row.market === market).map(row => row.symbol),
+      heldSymbols: managedPositions.filter(row => row.market === market).map(row => row.symbol), deadlineAt: capacityRefreshDeadline,
     });
   }
 

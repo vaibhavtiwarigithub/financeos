@@ -35,6 +35,8 @@ const h = vi.hoisted(() => ({
   quoteMock: vi.fn(),
   indiaQuoteMock: vi.fn(),
   marketOpenMock: vi.fn(),
+  cancelStopMock: vi.fn(),
+  unresolvedExitMock: vi.fn(),
 }));
 
 vi.mock("@/lib/kill-switches", () => ({ checkKillSwitches: (...a: any[]) => h.ksMock(...a) }));
@@ -49,6 +51,10 @@ vi.mock("@/lib/auth/cron", () => ({ verifyCronSecret: (...a: any[]) => h.verifyC
 vi.mock("@/lib/alerts/emit", () => ({ emitAlert: (...a: any[]) => h.emitAlertMock(...a) }));
 vi.mock("@/lib/system-health", () => ({ reportIssue: vi.fn(), resolveIssue: vi.fn() }));
 vi.mock("@/lib/trading/execute-order", () => ({ executeApprovedOrder: (...a: any[]) => h.execMock(...a) }));
+vi.mock("@/lib/protective/placement-worker", () => ({
+  cancelProtectiveStop: (...args: any[]) => h.cancelStopMock(...args),
+  markProtectiveExitUnresolved: (...args: any[]) => h.unresolvedExitMock(...args),
+}));
 vi.mock("@/lib/data/quotes", () => ({ getQuote: (...a: any[]) => h.quoteMock(...a) }));
 vi.mock("@/lib/india-data", () => ({
   fetchIndiaQuote: (...a: any[]) => h.indiaQuoteMock(...a),
@@ -166,12 +172,14 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
     };
   }
 
-  async function runMonitor(opts: { activeSell?: any; pendingSell?: any; insertErr?: any; shadowInsertErr?: any; liveAuto?: boolean } = {}) {
+  async function runMonitor(opts: { activeSell?: any; pendingSell?: any; insertErr?: any; shadowInsertErr?: any; liveAuto?: boolean; cancelFailure?: boolean; execResult?: any } = {}) {
     vi.resetModules();
     vi.stubEnv("AUTONOMOUS_LIVE_ENABLED", "true"); // read at module-eval in @/lib/autonomy
     h.quoteMock.mockResolvedValue({ price: 50, stale: false }); // below the 8% stop band
     h.marketOpenMock.mockImplementation((m: string) => ({ open: m === "us" }));
-    h.execMock.mockResolvedValue({ ok: true });
+    h.execMock.mockResolvedValue(opts.execResult ?? { ok: true });
+    h.cancelStopMock.mockResolvedValue(opts.cancelFailure ? { ok: false, reason: "cancel not confirmed" } : { ok: true, protectiveOrderId: 7 });
+    h.unresolvedExitMock.mockResolvedValue(undefined);
     const { runLiveExitMonitor } = await import("@/lib/trading/live-exit-monitor");
     const svc = makeClient(exitResolver(opts)) as any;
     return runLiveExitMonitor(svc, "run-test-8");
@@ -208,6 +216,23 @@ describe("Test 8 — exit monitor is idempotent: a partial fill + rerun cannot o
     expect(h.execMock).not.toHaveBeenCalled();
     expect(r.results[0].status).toBe("skipped_duplicate");
     expect(r.results[0].error).toContain("DB constraint");
+  });
+
+  it("submits no sell when protective cancellation is unproven", async () => {
+    const r = await runMonitor({ cancelFailure: true });
+    expect(h.execMock).not.toHaveBeenCalled();
+    expect(r.results[0]).toMatchObject({ status: "blocked", error: "cancel not confirmed" });
+    expect(h.unresolvedExitMock).not.toHaveBeenCalled();
+  });
+  it("records the protection gap after a sell rejection without blindly replacing a stop", async () => {
+    const r = await runMonitor({ execResult: { ok: false, error: "broker rejected" } });
+    expect(h.execMock).toHaveBeenCalledTimes(1);
+    expect(h.unresolvedExitMock).toHaveBeenCalledWith(expect.anything(), 7);
+    expect(r.results[0].status).toBe("blocked");
+  });
+  it("does not equate an acknowledged sell with restored protection", async () => {
+    await runMonitor();
+    expect(h.unresolvedExitMock).toHaveBeenCalledWith(expect.anything(), 7);
   });
 
   it("fails visibly and submits no order when the append-only shadow ledger rejects an action", async () => {

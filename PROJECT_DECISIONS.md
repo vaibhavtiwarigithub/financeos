@@ -1859,3 +1859,12 @@ and explicit owner switch.
 - roi: reduce forgotten qualified opportunities using bounded, reused research; performance gain remains unproven.
 - decision: five regular sessions including admission, 20 active names per market, fresh reassessment, shared shortlist and existing execution gates. Additive migration and owner-only visibility approved as part of the plan; no live enablement or risk relaxation.
 - shippedAt: 2026-10-22T03:23:03Z (initial production runtime READY; Chicago date 2026-10-21).
+
+# Confirmed weekly-review repairs — approved 2026-10-22
+
+- why: independent review reproduced inconsistent assessment recency, unsafe cancellation continuation and misleading failure visibility.
+- who: existing US/India research and paper/live control paths.
+- roi: preserve current safety/data contracts and make failures visible; no return improvement claim.
+- decision: owner's "go" approves the bounded confirmed repairs in the local weekly triage. Reuse one newest-assessment reader, add a service-only atomic research-publication RPC (symbol lock, supersession+insert, optional deadline; no historical score rewrite), bound inline refresh to 20 seconds shared across markets, fail closed on unconfirmed stop cancellation, preserve canceled-stop truth with reconciliation audit, allowlist masked Vault responses and require same-origin JSON mutations, and include rotation decisions in the existing shortlist explanation. No new routes/packages, risk relaxation, model selection or live enablement.
+- migration plan: apply additive publish_research_signal before runtime; prove invoker/service-only grants and rollback-only synthetic publish/downgrade/deadline/rollback behavior. Existing writer remains active until code deploy; retained old readers are not called a deployed repair.
+- shippedAt: pending runtime verification.

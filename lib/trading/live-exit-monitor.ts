@@ -14,7 +14,7 @@ import { executeApprovedOrder } from "@/lib/trading/execute-order";
 import { isMarketOpenLive } from "@/lib/trading/market-calendar";
 import { loadTradingMandateStrict, tradingWeekdaysBetween } from "@/lib/trading-mandate";
 import { reconstructAccountLivePositions } from "@/lib/trading/live-position-ledger";
-import { cancelProtectiveStop } from "@/lib/protective/placement-worker";
+import { cancelProtectiveStop, markProtectiveExitUnresolved } from "@/lib/protective/placement-worker";
 import { managedLivePositionId } from "@/lib/protective/coverage";
 import { decideExitLadder } from "@/lib/trading/exit-ladder";
 import { isHoldingExitSignal, isPaperScoreFresh, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
@@ -385,8 +385,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       // Cancel any resting broker-side protective stop BEFORE submitting the SELL.
       // Without this, the GTC stop (RH) or GTT (Kite) can trigger AFTER the exit
       // SELL settles — selling a position we no longer own (naked short risk).
-      // Best-effort: a cancel failure is logged but does NOT abort the SELL (the
-      // protective-orders row is moved to needs_reconcile for manual follow-up).
+      // Fail closed: an unproven cancel must never race a second SELL.
       const positionId = managedLivePositionId({
         market,
         broker: MARKET_CFG[market].brokers[0],
@@ -394,7 +393,20 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         symbol,
         qty,
       });
-      await cancelProtectiveStop({ supabase: svc, positionId, market, brokerAccountId: account }).catch(() => {});
+      const cancel = await cancelProtectiveStop({ supabase: svc, positionId, market, brokerAccountId: account })
+        .catch(() => ({ ok: false as const, reason: "Protective cancellation threw; broker state unknown" }));
+      if (!cancel.ok) {
+        await reportIssue({ issueKey: `live-exit-cancel:${positionId}`, severity: "critical", category: "risk",
+          title: `Protective stop cancel failed for ${symbol}`, detail: `${cancel.reason}. No additional SELL submitted; reconcile broker stop and holdings.` }, svc);
+        results.push({ market, symbol, qty, reason, status: "blocked", error: cancel.reason });
+        continue;
+      }
+      await markProtectiveExitUnresolved(svc, cancel.protectiveOrderId);
+      const unresolvedExit = async () => {
+        await reportIssue({ issueKey: `live-exit-unprotected:${positionId}`, severity: "critical", category: "risk",
+          title: `Unprotected exit needs reconciliation for ${symbol}`,
+          detail: "Stop cancellation was confirmed but the exit was not completed. Reconcile broker sell/fills and actual holdings before replacing protection or retrying; no replacement is inferred." }, svc);
+      };
 
       const { data: prop, error: propErr } = await svc.from("trade_proposals").insert({
         symbol, market, side: "sell", order_type: "market", qty,
@@ -411,6 +423,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         },
       }).select("id").single();
       if (propErr) {
+        await unresolvedExit();
         // 23505 = unique_violation from trade_proposals_active_sell_uniq partial index.
         // A concurrent monitor run already inserted an active SELL — treat as duplicate.
         if (propErr.code === "23505") {
@@ -421,10 +434,14 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         continue;
       }
       if (!prop) {
+        await unresolvedExit();
         results.push({ market, symbol, qty, reason, status: "proposal_failed", error: "insert returned no row" });
         continue;
       }
-      const exec = await executeApprovedOrder(svc, { proposalId: (prop as any).id, env: "live" }, { kind: "autonomous_worker", runId });
+      const exec = await executeApprovedOrder(svc, { proposalId: (prop as any).id, env: "live" }, { kind: "autonomous_worker", runId })
+        .catch(async error => { await unresolvedExit(); throw error; });
+      // A submission acknowledgement is not a confirmed fill or runner stop.
+      await unresolvedExit();
       const status = exec.ok ? "submitted" : (exec.needs_reconcile ? "needs_reconcile" : "blocked");
       if (exec.ok) exitsSubmitted++;
       await svc.from("trade_proposals").update({ status: exec.ok ? "queued_auto" : "manual_review_required" }).eq("id", (prop as any).id);

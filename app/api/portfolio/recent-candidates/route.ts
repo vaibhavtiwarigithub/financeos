@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
         const sessions = expectedMarketSessionsBetween(market, previous.toISOString().slice(0, 10), row.expires_session);
         const lastDecision = events.find((event: any) => event.symbol === row.symbol
           && event.created_at >= firstAt.get(row.first_signal_id)!
-          && ["execution", "portfolio_constructor", "sector_gate", "reentry_gate", "liquidity_gate", "pricing", "existing_position_gate", "trade_plan", "sizing", "risk_gate"].includes(event.stage));
+          && ["execution", "capital_rotation", "portfolio_constructor", "sector_gate", "reentry_gate", "liquidity_gate", "pricing", "existing_position_gate", "trade_plan", "sizing", "risk_gate"].includes(event.stage));
         const proposal = proposals.find((item: any) => item.symbol === row.symbol && item.created_at >= firstAt.get(row.first_signal_id)!);
         return { ...row, rank: i + 1,
           sessions_remaining: sessions.filter(session => session >= day.localYmd).length,

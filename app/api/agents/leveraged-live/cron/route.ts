@@ -26,7 +26,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { LEVERAGED_LIVE_ENABLED } from "@/lib/autonomy";
 import { PROTECTIVE_PLACEMENT_WORKER_AVAILABLE } from "@/lib/protective/coverage";
-import { placeProtectiveStop, cancelProtectiveStop } from "@/lib/protective/placement-worker";
+import { placeProtectiveStop, cancelProtectiveStop, markProtectiveExitUnresolved } from "@/lib/protective/placement-worker";
 import { managedLivePositionId } from "@/lib/protective/coverage";
 import { robinhoodAdapter } from "@/lib/brokers/adapters/robinhood";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -295,6 +295,9 @@ async function runSymbol(
       return { status: "error", reason: `protective_cancel_failed: ${cancel.reason}` };
     }
     const exitQty = Number(existing.qty);
+    // Persist the gap BEFORE contacting the broker. A throw, reject, unknown
+    // fill or restart cannot leave a canceled stop looking safe to retry.
+    await markProtectiveExitUnresolved(supabase, cancel.protectiveOrderId);
     const sell = await robinhoodAdapter().submitOrder({ symbol, side: "sell", qty: exitQty, type: "market", env: "live" });
     if (!sell.ok) {
       await reportIssue({

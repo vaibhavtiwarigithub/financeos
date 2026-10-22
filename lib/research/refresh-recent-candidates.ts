@@ -4,20 +4,31 @@ import type { RecentQualifiedCandidate } from "@/types";
 
 /** Research only. Caller runs this AFTER its controls and before reading fresh signals. */
 export async function refreshRecentCandidatesForCapacity(svc: any, market: "us" | "india", args: {
-  hasCapacity: boolean; heldSymbols: string[]; now?: Date;
+  hasCapacity: boolean; heldSymbols: string[]; now?: Date; deadlineAt?: number;
   // Injection keeps lifecycle tests deterministic and avoids invoking paid research.
-  refresh?: (row: RecentQualifiedCandidate) => Promise<unknown>;
+  refresh?: (row: RecentQualifiedCandidate, execution: { signal: AbortSignal; deadlineAt: number }) => Promise<unknown>;
 }): Promise<{ refreshed: number; failed: number }> {
   const now = args.now ?? new Date();
   if (!args.hasCapacity || !isMarketSessionOpen(market, now)) return { refreshed: 0, failed: 0 };
   const day = getMarketDayStatus(market, now);
   if (day.kind !== "trading_day") return { refreshed: 0, failed: 0 };
   const issueKey = `recent-candidates:${market}:refresh`;
+  // Reserve the caller's remaining time for normal risk/order evaluation. Share
+  // one deadline across both markets, not a new allowance per symbol/market.
+  const deadlineAt = args.deadlineAt ?? Date.now() + 20_000;
+  if (deadlineAt <= Date.now()) return { refreshed: 0, failed: 0 };
+  const controller = new AbortController();
+  const execution = { signal: controller.signal, deadlineAt };
+  let timer: ReturnType<typeof setTimeout>;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { controller.abort(); reject(new Error("Candidate refresh time budget exhausted")); }, deadlineAt - Date.now());
+  });
+  const bounded = <T>(work: PromiseLike<T>): Promise<T> => Promise.race([Promise.resolve(work), expired]);
   try {
     if (!args.refresh) {
       // Isolated research cannot certify a batch-relative rank percentile.
-      const { data: champions, error: championError } = await svc.from("strategy_versions")
-        .select("market,genome").eq("is_champion", true).order("promoted_at", { ascending: false });
+      const { data: champions, error: championError } = await bounded<any>(svc.from("strategy_versions")
+        .select("market,genome").eq("is_champion", true).order("promoted_at", { ascending: false }));
       if (championError) throw new Error("Cannot certify candidate refresh rank policy");
       const champion = (champions ?? []).find((row: any) => row.market === market) ?? champions?.[0];
       const rankFloor = champion?.genome?.entry?.rank_pct_min;
@@ -26,17 +37,20 @@ export async function refreshRecentCandidatesForCapacity(svc: any, market: "us" 
       }
       if (rankFloor > 0) return { refreshed: 0, failed: 0 };
     }
-    const { data, error } = await svc.rpc("claim_recent_candidate_refresh", {
+    execution.signal.throwIfAborted();
+    const { data, error } = await bounded<any>(svc.rpc("claim_recent_candidate_refresh", {
       p_market: market, p_session: day.localYmd, p_excluded: args.heldSymbols,
-    });
+    }));
     if (error) throw new Error(error.message);
     const claimed: RecentQualifiedCandidate[] = data ?? [];
     if (claimed.length === 0) return { refreshed: 0, failed: 0 };
-    const refresh = args.refresh ?? (async row => {
+    const refresh = args.refresh ?? (async (row, execution) => {
       const { processSymbol, isEtfSymbol, classifyResearchAssetClass } = await import("@/lib/research-agent");
       await processSymbol({ symbol: row.symbol, isHeld: false, isEtf: isEtfSymbol(row.symbol),
         assetClass: classifyResearchAssetClass(row.symbol),
-        discovery_source: (row.discovery_source ?? "watchlist") as Parameters<typeof processSymbol>[0]["discovery_source"] }, svc);
+        discovery_source: (row.discovery_source ?? "watchlist") as Parameters<typeof processSymbol>[0]["discovery_source"] }, svc,
+        undefined, undefined, undefined, execution);
+      execution.signal.throwIfAborted();
       const { data: updated, error } = await svc.from("recent_qualified_candidates")
         .select("state,latest_session").eq("id", row.id).maybeSingle();
       if (error || !updated || updated.latest_session < day.localYmd) {
@@ -49,7 +63,8 @@ export async function refreshRecentCandidatesForCapacity(svc: any, market: "us" 
     await Promise.all(Array.from({ length: Math.min(2, claimed.length) }, async () => {
       while (cursor < claimed.length) {
         const row = claimed[cursor++];
-        try { await refresh(row); refreshed++; }
+        if (execution.signal.aborted) { failed++; failures.push(row.symbol); continue; }
+        try { await bounded(refresh(row, execution)); execution.signal.throwIfAborted(); refreshed++; }
         catch { failed++; failures.push(row.symbol); }
       }
     }));
@@ -62,5 +77,7 @@ export async function refreshRecentCandidatesForCapacity(svc: any, market: "us" 
     await reportIssue({ issueKey, severity: "warn", category: "data", title: `${market.toUpperCase()} candidate refresh unavailable`,
       detail: error instanceof Error ? error.message : "Could not claim shortlist refresh work" }, svc).catch(() => {});
     return { refreshed: 0, failed: 1 };
+  } finally {
+    clearTimeout(timer!);
   }
 }

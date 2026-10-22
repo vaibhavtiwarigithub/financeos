@@ -22,7 +22,6 @@ import { persistObservedResearchEvidence } from "@/lib/evidence/observed-cache";
 import type { Market } from "@/lib/evidence/contracts";
 import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signal-direction";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
-import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
 import { recentCandidatesForResearch, recordRecentCandidate } from "@/lib/research/recent-candidates";
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
@@ -1570,8 +1569,10 @@ export async function processSymbol(
   universeSnapshotId?: number | null,
   evidenceRunId?: string | null,
   writeContext?: ResearchSignalWriteContext,
+  execution?: { signal: AbortSignal; deadlineAt: number },
 ): Promise<{ symbol: string; analystScore: number; direction: string; conviction: number; source: string; tokensIn: number; tokensOut: number; currentPrice: number | null; priceTarget: number | null; stopLoss: number | null; scoreThreshold: number; obsId: number | null }> {
   const { symbol, isHeld, assetClass = "us_equity" } = entry;
+  execution?.signal.throwIfAborted();
   const isEtf = entry.isEtf || canonicalIsEtfSymbol(symbol);
   const source: string = isHeld ? "holding" : "screener";
   const avKey = process.env.ALPHA_VANTAGE_API_KEY ?? "";
@@ -1645,6 +1646,7 @@ export async function processSymbol(
     // the US/global backdrop. NEVER fabricates a flow number.
     india ? fetchFiiDiiFlows().catch(() => null) : Promise.resolve(null),
   ]);
+  execution?.signal.throwIfAborted();
   const avOverview = fundamentalResult.overview;
   const candles: Candle[] = isCrypto
     // Crypto session: CRYPTO_SESSION_CUTOFF_UTC (midnight UTC), not NYSE/BSE close.
@@ -1982,6 +1984,7 @@ export async function processSymbol(
   const webullLine = !india
     ? [webullAnalystLine(webullAnalyst), webullExtendedLine(webullExtended)].filter(Boolean).join(" | ") || null
     : null;
+  execution?.signal.throwIfAborted();
   const thesisPrompt = isHeld ? "" : buildThesisOnlyPrompt(symbol, false, scores, analystScore, scoreThreshold, marketFocus, indiaMacroLine, webullLine) + trendNote + memoryNote;
   const deterministicHoldingThesis = {
     text: JSON.stringify({
@@ -2019,7 +2022,9 @@ export async function processSymbol(
     ? deterministicHoldingThesis
     : await Promise.race([
       getConfiguredModel(supabase, "research", "deepseek-flash")
-        .then(model => callLLM({
+        .then(model => {
+          execution?.signal.throwIfAborted();
+          return callLLM({
           task: "screen",
           model,
           prompt: thesisPrompt,
@@ -2028,7 +2033,9 @@ export async function processSymbol(
           // The configured production model is a reasoner. Declare its real
           // budget here so the router floor is a safety net, not normal control flow.
           maxTokens: REASONING_MIN_TOKENS,
-        }))
+          timeoutMs: Math.max(1, Math.min(thesisTimeoutMs, (execution?.deadlineAt ?? (Date.now() + thesisTimeoutMs)) - Date.now())),
+          });
+        })
         // A provider error is not a timeout. Labelling both "narrative-timeout"
         // would make an outage read as latency in the LLM cost/why ledger.
         .catch(() => ({ ...narrativeFallback, model: "narrative-error", durationMs: 0 })),
@@ -2180,6 +2187,7 @@ export async function processSymbol(
     isHeld,
   });
 
+  execution?.signal.throwIfAborted();
   const { data: packet } = await supabase
     .from("research_packets")
     .insert({
@@ -2266,56 +2274,17 @@ export async function processSymbol(
   // decision_observations -> pipeline_stage_events -> trade_proposals ->
   // paper_trades by a shared signal_id, instead of null throughout).
   let insertedSignalId: string | null = null;
-  let signalInsertError: string | null = null;
   {
-    // Only one active staged decision per market/symbol. Superseding preserves
-    // history while satisfying the partial unique index under normal retries.
-    if (!sessionValidated) {
-      const { error: stagedSupersessionError } = await supabase.from("agent_signals").update({ status: "superseded" })
-        .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
-      if (stagedSupersessionError) {
-        throw new Error(`agent_signals weekend-staged supersession failed for ${market}:${symbol}: ${stagedSupersessionError.message}`);
-      }
-    }
-    // ponytail: expire stale pending signals for this symbol so paper-trade can't
-    // pick an older higher-scored row over the fresh capped one (score ordering, not recency).
-    const { error: pendingSupersessionError } = await withSupabaseRetry(
-      () => supabase.from("agent_signals").update({ status: "superseded" })
-        .eq("market", market).eq("symbol", symbol).eq("status", "pending"),
-    );
-    if (pendingSupersessionError) {
-      throw new Error(`agent_signals pending supersession failed for ${market}:${symbol}: ${pendingSupersessionError.message}`);
-    }
-    const { data, error } = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
-    // Strip `market` ONLY when the column is genuinely undefined (pre-057) — never
-    // on a transient/constraint error, which would silently drop the market tag.
-    const undefinedCol = error && (["42703", "PGRST204"].includes(String(error.code ?? "")) ||
-      /column .* does not exist|could not find the '.*' column/i.test(String(error.message ?? "")));
-    if (undefinedCol) {
-      delete signalRow.market;
-      delete signalRow.score_source;   // strip P0 cols on pre-136 schema
-      delete signalRow.scoring_version;
-      delete signalRow.session_validated;
-      delete signalRow.as_of_session;
-      delete signalRow.staged_at;
-      const retry = await supabase.from("agent_signals").insert(signalRow).select("id").maybeSingle();
-      insertedSignalId = retry.data?.id ?? null;
-      signalInsertError = retry.error?.message ?? null;
-    } else if (error) {
-      console.error("[research-agent] agent_signals insert failed:", error.message);
-      signalInsertError = error.message;
-    } else {
-      insertedSignalId = data?.id ?? null;
-    }
-    if (!insertedSignalId) {
-      throw new Error(`agent_signals insert failed for ${symbol}: ${signalInsertError ?? "insert returned no row"}`);
-    }
-    // Revalidation never mutates a staged score into an executable score. The
-    // fresh row above is the decision; the older stage becomes audit history.
-    if (insertedSignalId && sessionValidated) {
-      await supabase.from("agent_signals").update({ status: "revalidated" })
-        .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
-    }
+    // One transaction owns supersession and publication. The DB checks the
+    // deadline after taking the symbol lock, so a timed-out refresh cannot
+    // publish a late pending signal. Never fall back to untagged legacy writes.
+    execution?.signal.throwIfAborted();
+    const { data, error } = await supabase.rpc("publish_research_signal", {
+      p_signal: signalRow,
+      p_deadline: execution ? new Date(execution.deadlineAt).toISOString() : null,
+    });
+    if (error || typeof data !== "string") throw new Error(`agent_signals publication failed for ${symbol}: ${error?.message ?? "no id returned"}`);
+    insertedSignalId = data;
   }
 
   if (sessionValidated && insertedSignalId) {

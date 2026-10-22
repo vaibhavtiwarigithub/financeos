@@ -50,4 +50,16 @@ describe("owner shortlist API", () => {
     vi.mocked(createServiceClient).mockReturnValue(service({}) as any);
     expect((await GET(new NextRequest("https://example.test/api?market=us&book=paper"))).status).toBe(500);
   });
+  it.each(["us", "india"])("shows a newer rotation rejection in %s instead of an older constructor decision", async market => {
+    vi.mocked(readRecentCandidates).mockResolvedValue([{ ...candidate, market }] as any);
+    vi.mocked(createServiceClient).mockReturnValue(service({
+      agent_signals: [{ id: "first", created_at: "2026-10-19T14:00:00Z" }],
+      pipeline_stage_events: [
+        { id: 2, symbol: "AMD", stage: "capital_rotation", reason: "turnover_budget_exceeded", outcome: "rejected", created_at: "2026-10-21T15:00:00Z" },
+        { id: 1, symbol: "AMD", stage: "portfolio_constructor", reason: "cash unavailable", outcome: "rejected", created_at: "2026-10-20T15:00:00Z" },
+      ],
+    }) as any);
+    const result = await (await GET(new NextRequest(`https://example.test/api?market=${market}&book=paper`))).json();
+    expect(result.candidates[0].last_decision).toMatchObject({ stage: "capital_rotation", reason: "turnover_budget_exceeded" });
+  });
 });

@@ -1,5 +1,17 @@
 # Kairos — Agents
 
+## Assessment publication and entry freshness
+
+The research writer publishes one assessment at a time per market/symbol in a
+database transaction: supersession and successor insertion either both succeed
+or both roll back. Readers select the newest current-session deterministic,
+session-validated assessment before testing direction, score, plan and status.
+They never select a historical peak after a downgrade. Paper new entries and
+held-name top-ups remain separate ranking lanes; US and India stay isolated.
+Capacity refresh shares a 20-second allowance across markets. Already dispatched
+provider work can finish, but deadline-expired work cannot publish a new
+executable signal. Ordinary scheduled research and all execution gates remain.
+
 ## Remembering recent qualified candidates
 
 Ordinary US/India equity and ETF research can retain up to 20 recently qualified

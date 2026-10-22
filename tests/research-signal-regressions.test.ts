@@ -25,15 +25,17 @@ describe("research signal regressions", () => {
     expect(source).not.toContain("const ETF_SCORE_CAP = 65");
   });
 
-  it("fails before inserting when stale-signal supersession fails", () => {
+  it("publishes atomically and never falls back to untagged non-transactional inserts", () => {
     const source = read("lib/research-agent.ts");
-    const pendingUpdate = source.indexOf("pendingSupersessionError");
-    const pendingThrow = source.indexOf("agent_signals pending supersession failed");
-    const signalInsert = source.indexOf('from("agent_signals").insert(signalRow)');
-    expect(pendingUpdate).toBeGreaterThan(0);
-    expect(source).toContain("withSupabaseRetry(");
-    expect(pendingThrow).toBeGreaterThan(pendingUpdate);
-    expect(signalInsert).toBeGreaterThan(pendingThrow);
+    expect(source).toContain('supabase.rpc("publish_research_signal"');
+    expect(source).toContain('agent_signals publication failed');
+    expect(source).not.toContain('from("agent_signals").insert(signalRow)');
+    expect(source).not.toContain('delete signalRow.market');
+    const migration = read("supabase/migrations/20261022133418_atomic_research_signal_publish.sql");
+    expect(migration.indexOf('pg_advisory_xact_lock')).toBeLessThan(migration.indexOf('update public.agent_signals'));
+    expect(migration.indexOf('Research publication deadline expired')).toBeLessThan(migration.indexOf('update public.agent_signals'));
+    expect(migration).toContain('security invoker set search_path=pg_catalog,public');
+    expect(migration).toContain('from public,anon,authenticated');
   });
 
   it("reports held-symbol failures as next-pass retries rather than queued candidates", () => {

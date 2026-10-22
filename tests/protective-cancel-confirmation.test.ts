@@ -9,16 +9,17 @@ vi.mock("@/lib/robinhood-mcp", () => ({
   placeRobinhoodGtcStop: vi.fn(),
 }));
 
-import { cancelProtectiveStop } from "@/lib/protective/placement-worker";
+import { cancelProtectiveStop, markProtectiveExitUnresolved } from "@/lib/protective/placement-worker";
 
-function db(row: Record<string, unknown> | null) {
+function db(row: Record<string, unknown> | null, claimOk = true) {
   const statuses: string[] = [];
   const reads = {
     select: () => reads, eq: () => reads, in: () => reads, limit: async () => ({ data: row ? [row] : [], error: null }),
   };
-  const updates = {
-    eq: async () => ({ error: null }),
-  };
+  const updates: any = {};
+  updates.eq = () => updates;
+  updates.select = async () => ({ data: claimOk ? [{ id: 7 }] : [], error: null });
+  updates.then = (resolve: any) => Promise.resolve({ error: null }).then(resolve);
   const supabase = {
     from: (table: string) => table === "protective_orders" ? {
       ...reads,
@@ -56,6 +57,22 @@ describe("protective stop cancellation confirmation", () => {
   it("refuses to infer safety from a missing or id-less row", async () => {
     expect((await cancelProtectiveStop({ supabase: db(null).supabase, ...input })).ok).toBe(false);
     expect((await cancelProtectiveStop({ supabase: db({ ...active, broker_order_id: null, status: "placing" }).supabase, ...input })).ok).toBe(false);
+    expect(broker.cancelRobinhoodOrder).not.toHaveBeenCalled();
+  });
+  it.each(["canceling", "needs_reconcile"])("does not retry unresolved %s orders", async status => {
+    expect((await cancelProtectiveStop({ supabase: db({ ...active, status }).supabase, ...input })).ok).toBe(false);
+    expect(broker.cancelRobinhoodOrder).not.toHaveBeenCalled();
+  });
+  it("does not call the broker after losing the atomic cancellation claim", async () => {
+    expect((await cancelProtectiveStop({ supabase: db(active, false).supabase, ...input })).ok).toBe(false);
+    expect(broker.cancelRobinhoodOrder).not.toHaveBeenCalled();
+  });
+  it("latches an unsuccessful exit after cancellation without replacing the stop", async () => {
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn(() => ({ insert }));
+    await markProtectiveExitUnresolved({ from }, 7);
+    expect(from).toHaveBeenCalledWith("protective_order_events");
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "needs_reconcile", status_after: "canceled" }));
     expect(broker.cancelRobinhoodOrder).not.toHaveBeenCalled();
   });
 });

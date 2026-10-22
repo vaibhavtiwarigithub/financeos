@@ -50,6 +50,34 @@ projection and persistence), research-agent scheduler/writer, bounded refresh se
 paper/autonomous-live entry callers, owner shortlist API, a shared portfolio panel,
 tests and architecture chapters. No package additions or strategy/threshold changes.
 
+## Confirmed-review repair contract (owner go, 2026-10-22)
+
+All ordinary equity entry readers (paper, legacy proposal, autonomous live and
+autonomous shadow) reuse the same complete, market-local current-session reader.
+It selects the newest deterministic/session-validated assessment per symbol
+before direction, threshold, plan or status filtering. Lower scores, neutral
+assessments and completed decisions must not resurrect older pending highs.
+Held-name top-ups remain a separate ranking lane.
+
+Migration `atomic_research_signal_publish` adds one service-only SECURITY INVOKER
+RPC, `publish_research_signal(jsonb,timestamptz)`. It locks one market/symbol,
+supersedes pending/staged statuses and inserts the successor in one transaction.
+No historical score or execution row is rewritten; retired statuses remain audit
+history. Publication errors roll back supersession and never fall back to an
+untagged legacy insert. Verify grants and rollback-only synthetic lifecycle before
+deploying code that calls it. No new route, package or trade permission is added.
+
+Capacity refresh has one shared 20-second ceiling across both markets, retaining
+the five-name/two-worker and lease/attempt limits. Abort checkpoints stop later
+research phases; provider requests already dispatched may finish/cache data.
+The publisher checks the deadline after acquiring its DB lock: abandoned work
+cannot subsequently publish a late executable signal. Timeout is incomplete,
+not success, and never starts the remaining claimed names. Unused leases expire
+under the existing retry policy. Scheduled research remains the ordinary producer.
+
+The shortlist's latest decision includes capital_rotation stage events, rather
+than replacing a newer rotation blocker with an older cash/constructor reason.
+
 ## UI
 
 Both paper and live portfolio pages use the same compact "Candidates waiting"

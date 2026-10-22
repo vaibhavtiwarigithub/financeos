@@ -34,6 +34,7 @@ import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/
 import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { refreshRecentCandidatesForCapacity } from "@/lib/research/refresh-recent-candidates";
+import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
 
 export const maxDuration = 300;
 
@@ -192,6 +193,7 @@ export async function POST(req: NextRequest) {
 
     // Reconsider retained names BEFORE selecting today's signals. This refresh
     // cannot execute a trade; normal quote/geometry/cash/risk checks still follow.
+    const capacityRefreshDeadline = Date.now() + 20_000;
     for (const m of activeMarkets) {
       const { data: heldRows, error } = await supabase.from("paper_positions")
         .select("symbol,qty").eq("market", m).eq("position_role", "alpha").gt("qty", 0);
@@ -200,7 +202,7 @@ export async function POST(req: NextRequest) {
       await refreshRecentCandidatesForCapacity(supabase, m as "us" | "india", {
         hasCapacity: Number(poolByMarket.get(m)?.cash_balance) > 0
           && held.length < mandateByMarket.get(m)!.max_open_positions,
-        heldSymbols: held,
+        heldSymbols: held, deadlineAt: capacityRefreshDeadline,
       });
     }
 
@@ -212,10 +214,11 @@ export async function POST(req: NextRequest) {
     // market-local day start (America/New_York US, Asia/Kolkata India), DST-safe.
     const cutoffByMarket = new Map<string, string>();
     for (const m of activeMarkets) {
-      const { data: cut } = await supabase.rpc("market_trading_day_start", { p_market: m });
-      // Fall back to a 24h window if the helper is somehow unavailable — still
-      // freshness-guarded, just not calendar-aligned (fail-safe, not fail-open).
-      cutoffByMarket.set(m, (cut as unknown as string) ?? new Date(Date.now() - 24 * 3600_000).toISOString());
+      const { data: cut, error: cutoffError } = await supabase.rpc("market_trading_day_start", { p_market: m });
+      if (cutoffError || typeof cut !== "string" || !Number.isFinite(Date.parse(cut))) {
+        throw new Error(`Cannot certify ${m} signal freshness`);
+      }
+      cutoffByMarket.set(m, cut);
     }
 
     // ── Qualifying signals across active markets ─────────────────────────────
@@ -240,27 +243,11 @@ export async function POST(req: NextRequest) {
       expiredTotal += nExp;
       if (nExp > 0) await logStage(supabase, { signal_id: null, symbol: null, market: m, stage: "freshness", outcome: "expired", reason: `${nExp} stale pending long signal(s) expired (older than ${m}-local ${cutoff})`, detail: { cutoff, count: nExp } });
 
-      // Fetch only fresh (same-trading-day) pending long candidates.
-      let selQ = supabase.from("agent_signals").select("*", { count: "exact" })
-        .eq("status", "pending").eq("direction", "long")
-        .gte("analyst_score", entryThreshold).gte("created_at", cutoff)
-        // Positive session proof: weekend catch-up scores are useful research
-        // evidence but are never fill candidates until a fresh session run.
-        .eq("session_validated", true)
-        // Positive allowlist: ONLY the versioned deterministic source is fill-eligible.
-        // A negative filter (is.null OR neq llm_advisory) failed OPEN — it admitted
-        // null/unknown score_source, so any untagged signal could be traded.
-        .eq("score_source", "deterministic_v1")
-        .order("analyst_score", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      selQ = hasMarketCol ? selQ.eq("market", m) : selQ.neq("asset_class", "india");
-      const { data, error, count } = await selQ;
-      if (error) throw new Error(`paper signal query failed (${m}): ${error.message}`);
-      if ((count ?? 0) > (data?.length ?? 0)) {
-        throw new Error(`paper signal cohort truncated (${m}): ${data?.length ?? 0}/${count}`);
-      }
-      if (data) signals.push(...data);
+      // Read every current-session assessment before applying buy/status filters.
+      // A newer neutral, downgrade, rank rejection or completed signal retires
+      // an older pending high even if a writer overlaps this invocation.
+      const data = await loadFreshEntrySignals(supabase, m as "us" | "india", entryThreshold);
+      signals.push(...data.filter(row => row.status === "pending"));
     }
 
     const cryptoDeferred = signals.filter(isCryptoPaperSignal);
@@ -275,7 +262,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Dedup: research runs 3x/day, stacking duplicate pending rows per symbol.
-    // Keep only the highest-scoring signal per (symbol, market); ties → most recent.
+    // Keep the newest assessment per (symbol, market), then rank unique names.
     const { data: openPos } = await supabase.from("paper_positions").select("symbol, sector, qty, avg_cost, current_price, market, position_role, stop_loss, price_target");
     const openAlphaNamesByMarket = new Map<string, Set<string>>();
     const openAlphaPositionsByMarket = new Map<string, Map<string, any>>();

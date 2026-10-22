@@ -27,11 +27,11 @@ describe("closed-day research catch-up safety contract", () => {
   });
 
   it("requires positive session validation on both entry paths", () => {
-    expect(paper).toContain('.eq("session_validated", true)');
-    expect(trader).toContain('.eq("session_validated", true)');
+    expect(paper).toContain('loadFreshEntrySignals(supabase');
+    expect(trader).toContain('loadFreshEntrySignals(supabase');
     expect(autonomousLive).toContain('loadFreshEntrySignals(svc');
     expect(readFileSync("lib/trading/fresh-entry-signals.ts", "utf8")).toContain('.eq("session_validated", true)');
-    expect(autonomousShadow).toContain('.eq("session_validated", true)');
+    expect(autonomousShadow).toContain('loadFreshEntrySignals(svc');
   });
 
   it("keeps staged scores out of conviction exits", () => {

@@ -29,7 +29,7 @@ export type PlacementResult =
   | { ok: false; skipped?: boolean; needsReconcile?: boolean; reason: string };
 
 export type CancelResult =
-  | { ok: true  }
+  | { ok: true; protectiveOrderId: number }
   | { ok: false; reason: string };
 
 // ── Place ─────────────────────────────────────────────────────────────────────
@@ -212,11 +212,14 @@ export async function cancelProtectiveStop(input: {
   const { data: rows, error } = await supabase.from("protective_orders")
     .select("id, broker_order_id, kite_trigger_id, status, broker, market")
     .eq("position_id", positionId)
-    .in("status", ["placing", "active", "needs_reconcile"])
+    .in("status", ["placing", "active", "canceling", "needs_reconcile"])
     .limit(2);
   if (error) return { ok: false, reason: `protective_orders read failed: ${error.message}` };
   if ((rows ?? []).length !== 1) return { ok: false, reason: `expected one protective order, found ${(rows ?? []).length}; manual reconciliation required` };
   const row = rows[0];
+  if (row.status === "canceling" || row.status === "needs_reconcile") {
+    return { ok: false, reason: "protective state is unresolved; reconcile order and holdings before another exit" };
+  }
 
   const brokerId = market === "india" ? (row as any).kite_trigger_id : (row as any).broker_order_id;
   if (!brokerId) {
@@ -224,7 +227,9 @@ export async function cancelProtectiveStop(input: {
   }
 
   // Mark as canceling first.
-  await supabase.from("protective_orders").update({ status: "canceling" }).eq("id", (row as any).id);
+  const { data: claimed, error: claimError } = await supabase.from("protective_orders")
+    .update({ status: "canceling" }).eq("id", row.id).eq("status", row.status).select("id");
+  if (claimError || claimed?.length !== 1) return { ok: false, reason: "protective cancellation ownership could not be acquired" };
 
   // Cancel at broker.
   let cancelOk: boolean;
@@ -269,5 +274,20 @@ export async function cancelProtectiveStop(input: {
     detail: `Protective stop canceled at broker (${market === "india" ? "GTT" : "RH GTC"}: ${brokerId}) before explicit SELL`,
     broker_snapshot: { canceled_broker_order_id: brokerId },
   });
-  return { ok: true };
+  return { ok: true, protectiveOrderId: Number(row.id) };
+}
+
+/** An unsuccessful/unknown exit after stop cancellation is not protection.
+ * Never replace blindly: a sell may have filled and replacement can oversell. */
+export async function markProtectiveExitUnresolved(supabase: any, protectiveOrderId: number): Promise<void> {
+  // Preserve the true terminal broker-stop status: canceled is not unknown.
+  // The residual EXIT lifecycle needs reconciliation, not a resurrection of
+  // the canceled order. Subsequent exit attempts fail the active-stop gate.
+  const { error } = await supabase.from("protective_order_events").insert({
+    protective_order_id: protectiveOrderId, event_type: "needs_reconcile",
+    status_before: "canceled", status_after: "canceled",
+    detail: "Protection canceled; explicit exit/remaining holdings require reconciliation before any retry or replacement",
+    broker_snapshot: {},
+  });
+  if (error) throw new Error("Could not persist unprotected exit reconciliation state");
 }

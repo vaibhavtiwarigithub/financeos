@@ -15,8 +15,8 @@ describe("paper signal selection", () => {
       row("c", "CCC", 95, "2026-07-22T10:00:00Z"),
     ];
     const result = selectBestPaperSignals(rows, "us", 3);
-    expect(result.selected.map(signal => signal.id)).toEqual(["a1", "b", "c"]);
-    expect(result.duplicateIds.sort()).toEqual(["a2", "a3"]);
+    expect(result.selected.map(signal => signal.id)).toEqual(["a3", "b", "c"]);
+    expect(result.duplicateIds.sort()).toEqual(["a1", "a2"]);
   });
 
   it("uses newest creation time and then id as deterministic score tie-breaks", () => {

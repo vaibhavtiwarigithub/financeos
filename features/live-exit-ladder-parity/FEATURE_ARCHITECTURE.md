@@ -186,6 +186,21 @@ account identifier, symbol, or raw provider error. The write is best-effort and
 occurs after the exit monitor, so a health-ledger outage cannot prevent, repeat,
 or change an exit action.
 
+### Confirmed-review safety repair (owner go, 2026-10-22)
+
+Cancellation is never best-effort before another SELL. Acquire the protective
+row with compare-and-swap; unresolved/canceling state, failed read/claim, broker
+failure or unproven final cancellation blocks the new sell and raises a critical
+risk issue. A canceled stop followed by a rejected/unknown sell is recorded as
+a needs_reconcile audit event and critical health issue, not active protection
+or automatic replacement. Preserve the true terminal canceled broker-stop status;
+the residual exit lifecycle, not the canceled broker order, needs reconciliation.
+Reconcile actual broker sells/fills and held quantity before any replacement:
+blind restoration can oversell after an ambiguous fill. Submission acknowledgement
+does not establish runner protection. This hardening does NOT establish live
+readiness, enable a worker or authorize any broker lifecycle test. The leveraged
+live door shares the same canceled-stop reconciliation latch; paper is unchanged.
+
 Each row explicitly persists the invocation's start time and a finish time no
 earlier than that start time; the database default is not used for `started_at`.
 This keeps producer-run duration and ordering trustworthy even if wall-clock
