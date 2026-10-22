@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchCryptoCandles, fetchCryptoQuote, parseCoinbaseDailyCandles, parseKrakenDailyCandles } from "./crypto-quotes";
 
 const DAY = 86_400;
-const start = 1_700_000_000;
+const start = Date.UTC(2026, 8, 1) / 1000;
 const coinbaseRows = (count: number) => Array.from({ length: count }, (_, index) => [start + index * DAY, 99, 105, 100, 102, 12]);
 const krakenRows = (count: number) => Array.from({ length: count }, (_, index) => [start + index * DAY, "100", "105", "99", "102", "101", "12", 3]);
 
 describe("crypto public candle adapters", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-22T12:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
   it("normalizes Coinbase's reverse-order OHLC layout into valid daily candles", () => {
     const candles = parseCoinbaseDailyCandles([coinbaseRows(1)[0]]);
     expect(candles).toEqual([{ date: new Date(start * 1000).toISOString().slice(0, 10), open: 100, high: 105, low: 99, close: 102, volume: 12 }]);
@@ -51,5 +53,39 @@ describe("crypto public candle adapters", () => {
   it("uses an independent public two-sided quote for paper evidence", async () => {
     const result = await fetchCryptoQuote("BTC-USD", async () => new Response(JSON.stringify({ bid: "99", ask: "101" }), { status: 200 }));
     expect(result).toMatchObject({ source: "coinbase_exchange", quote: { bid: 99, ask: 101, source: "coinbase_exchange" } });
+  });
+
+  it("falls through a long but obsolete Coinbase history to an exact Kraken USD market", async () => {
+    const requests: string[] = [];
+    const result = await fetchCryptoCandles("LIT-USD", "", async (url) => {
+      requests.push(url);
+      return new Response(JSON.stringify(url.includes("coinbase")
+        ? coinbaseRows(51).map(row => [Number(row[0]) - DAY * 365, ...row.slice(1)])
+        : { error: [], result: { LITUSD: krakenRows(51), last: start } }), { status: 200 });
+    });
+    expect(result.source).toBe("kraken");
+    expect(requests[1]).toContain("pair=LITUSD&interval=1440");
+  });
+
+  it("rejects stale histories even when they contain enough bars", async () => {
+    const result = await fetchCryptoCandles("CC-USD", "", async (url) => new Response(JSON.stringify(
+      url.includes("coinbase") ? coinbaseRows(51).slice(0, -1)
+        : { error: [], result: { CCUSD: krakenRows(51).map(row => [Number(row[0]) - DAY, ...row.slice(1)]) } },
+    ), { status: 200 }));
+    expect(result.source).toBe("unavailable");
+  });
+
+  it("tries an exact non-core Kraken quote and refuses unknown or crossed markets", async () => {
+    const requests: string[] = [];
+    const result = await fetchCryptoQuote("CC-USD", async url => {
+      requests.push(url);
+      return new Response(JSON.stringify(url.includes("coinbase") ? { message: "NotFound" }
+        : { error: [], result: { CCUSD: { b: ["1"], a: ["1.01"] } } }), { status: 200 });
+    });
+    expect(result.source).toBe("kraken");
+    expect(requests[1]).toContain("pair=CCUSD");
+    const unavailable = await fetchCryptoQuote("CASHCAT-USD", async () =>
+      new Response(JSON.stringify({ error: ["EQuery:Unknown asset pair"] }), { status: 200 }));
+    expect(unavailable.quote).toBeNull();
   });
 });

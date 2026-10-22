@@ -123,9 +123,10 @@ export async function fetchUsCandles(
   // post-close prewarm) needs a real call: the day-cache otherwise returns the
   // pre-close payload fetched by the morning research run, which can never
   // contain the session that just closed.
-  opts: { forceRefresh?: boolean } = {},
+  opts: { forceRefresh?: boolean; requiredSession?: string } = {},
 ): Promise<{ candles: Candle[]; source: string }> {
-  const accept = (c: Candle[]) => c.length >= minCandles && !newestBarIsStale(c);
+  const accept = (c: Candle[]) => c.length >= minCandles && !newestBarIsStale(c)
+    && (!opts.requiredSession || c.some((bar) => bar.date === opts.requiredSession));
   const force = opts.forceRefresh === true;
 
   const y = await fetchYahooCandles(symbol, force);

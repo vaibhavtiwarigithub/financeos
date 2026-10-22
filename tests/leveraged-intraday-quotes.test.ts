@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLeveragedIntradayQuote, parseLeveragedIntradayQuote, parseRobinhoodLeveragedQuote } from "@/lib/data/leveraged-intraday-quotes";
 
 vi.mock("@/lib/data/provider-fetch", () => ({ providerCachedFetch: vi.fn() }));
+vi.mock("@/lib/robinhood-mcp", () => ({ readRobinhoodLeveragedQuoteRows: vi.fn().mockResolvedValue([]) }));
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
+import { readRobinhoodLeveragedQuoteRows } from "@/lib/robinhood-mcp";
 
 const now = new Date("2026-10-16T15:05:00.000Z");
 const row = {
@@ -42,6 +44,7 @@ describe("leveraged quote source", () => {
     if (originalKey == null) delete process.env.TWELVEDATA_API_KEY;
     else process.env.TWELVEDATA_API_KEY = originalKey;
     vi.mocked(providerCachedFetch).mockReset();
+    vi.mocked(readRobinhoodLeveragedQuoteRows).mockReset().mockResolvedValue([]);
   });
 
   it("bypasses the day cache while retaining provider budget enforcement", async () => {
@@ -58,6 +61,32 @@ describe("leveraged quote source", () => {
     delete process.env.TWELVEDATA_API_KEY;
     expect((await getLeveragedIntradayQuote("SOXL")).source).toBe("unavailable");
     expect(providerCachedFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses the existing validated broker quote when the research feed fails", async () => {
+    process.env.TWELVEDATA_API_KEY = "test-key";
+    vi.mocked(providerCachedFetch).mockRejectedValue(new Error("provider unavailable"));
+    const observedAt = new Date(Date.now() - 1000).toISOString();
+    vi.mocked(readRobinhoodLeveragedQuoteRows).mockResolvedValue([{
+      symbol: "SQQQ", bid_price: "39", ask_price: "39.02",
+      venue_bid_time: observedAt, venue_ask_time: observedAt,
+    }]);
+    const quote = await getLeveragedIntradayQuote("SQQQ");
+    expect(quote.price).toBeCloseTo(39.01);
+    expect(quote).toMatchObject({
+      source: "robinhood_mcp", bid: 39, ask: 39.02,
+      observedAt, stale: false, dayLow: null, dayHigh: null,
+    });
+  });
+
+  it("does not relabel a stale broker quote as fresh when both providers fail", async () => {
+    delete process.env.TWELVEDATA_API_KEY;
+    const observedAt = new Date(Date.now() - 16 * 60_000).toISOString();
+    vi.mocked(readRobinhoodLeveragedQuoteRows).mockResolvedValue([{
+      symbol: "SQQQ", bid_price: "39", ask_price: "39.02",
+      venue_bid_time: observedAt, venue_ask_time: observedAt,
+    }]);
+    expect((await getLeveragedIntradayQuote("SQQQ")).source).toBe("unavailable");
   });
 });
 

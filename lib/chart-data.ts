@@ -283,7 +283,7 @@ export async function prewarmPriceCache(
           sym,
           () => fetchAvDailyCandles(sym),
           1,
-          { forceRefresh: true },
+          { forceRefresh: true, requiredSession: freshCutoff },
         );
         // `fetchUsCandles` rejects materially stale feeds, but its recency
         // guard deliberately allows a long weekend. Prewarm has a stronger

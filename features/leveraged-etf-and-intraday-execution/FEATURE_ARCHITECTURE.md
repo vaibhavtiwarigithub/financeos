@@ -1,5 +1,14 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Paper quote recovery — 2026-10-22
+
+The paper intraday reader retains Twelve Data's validated quote and daily range
+first. If unavailable, missing-key, stale or failed, it reuses the existing
+Robinhood bid/ask reader with unchanged 15-minute venue age and 60-second side
+skew. Broker fallback has no session high/low; these remain null. A current
+point-in-time check cannot prove no stop crossed during an unobserved interval.
+No live protective-order readiness, entry-window, stop/target or policy changes.
+
 ## 2026-10-16 live-order safety correction (code hardened, NOT enabled)
 
 The earlier L4 assertion that an order ID proves an active broker-native stop

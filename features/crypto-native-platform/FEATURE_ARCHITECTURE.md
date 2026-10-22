@@ -224,6 +224,15 @@ the descriptive policy name stays in the snapshot, not in the integer argument.
 
 ### Research-feed health follow-up — 2026-10-20
 
+Daily fallback repair (2026-10-22): a provider must supply at least 51 completed
+UTC candles through the expected session. Obsolete histories continue to the
+independent fallback. Kraken now receives exact base/USD requests for discovered
+names, retaining BTC's XBT alias; unknown pairs fail closed, with no fuzzy ticker
+or cross-currency substitution. Public quotes use the same pair rule. CC/USD
+and LIT/USD were observed available; CASHCAT/USD was unknown. The executable
+paper basket and live gates do not change. Same-ticker cross-venue asset identity
+for newly discovered research names remains a limitation, not execution proof.
+
 The daily collector now raises the stable System Health issue
 `crypto-native-daily-candle-freshness` whenever one or more selected research
 targets lack a completed candle for the expected UTC session. Its detail lists

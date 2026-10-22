@@ -55,4 +55,13 @@ describe("market-local benchmark collector", () => {
   it("keeps the owner-triggered UI on the same market-local contract", () => {
     expect(scorecard).toContain("benchmark-scorecard?market=${market}&attempt=initial");
   });
+
+  it("moves the bounded India retry after its EOD NAV producer with a matching local slot", () => {
+    const fix = readFileSync("supabase/migrations/20261022154455_post_nav_benchmark_retry.sql", "utf8");
+    expect(fix).toContain("kairos-benchmark-scorecard-india-retry");
+    expect(fix).toContain("35 11 * * 1-5");
+    expect(fix).toContain("local_slot=17:05");
+    expect(fix).toContain("raise exception");
+    expect(fix).not.toContain("cron.unschedule");
+  });
 });

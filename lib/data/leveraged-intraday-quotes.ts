@@ -108,7 +108,7 @@ export async function getLeveragedIntradayQuote(symbol: LeveragedQuoteSymbol): P
     source: "unavailable", retrievedAt: new Date().toISOString(), stale: true,
   };
   const key = process.env.TWELVEDATA_API_KEY;
-  if (!key) return unavailable;
+  if (!key) return await getLeveragedExecutableQuote(symbol) ?? unavailable;
   // forceRefresh is essential: the generic provider cache is day-granular.
   // Budget reservation still happens before every external request. Any stale
   // fallback is rejected by parseLeveragedIntradayQuote's source-time test.
@@ -120,8 +120,10 @@ export async function getLeveragedIntradayQuote(symbol: LeveragedQuoteSymbol): P
       forceRefresh: true, maxStaleAgeDays: 0, timeoutMs: 8000,
       isThrottled: (value) => !value || value.status === "error" || !value.close || !value.last_quote_at,
     });
-    return parseLeveragedIntradayQuote(symbol, payload) ?? unavailable;
+    const quote = parseLeveragedIntradayQuote(symbol, payload);
+    if (quote) return quote;
   } catch {
-    return unavailable;
+    // An exhausted research feed must not hide an independently fresh broker quote.
   }
+  return await getLeveragedExecutableQuote(symbol) ?? unavailable;
 }

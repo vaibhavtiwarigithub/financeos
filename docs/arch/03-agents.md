@@ -1,5 +1,16 @@
 # Kairos — Agents
 
+## Data-feed recovery boundaries
+
+Crypto daily history tries independent sources until one has 51 completed UTC
+bars through the expected session; exact Kraken USD pairs are no longer limited
+to three core coins. Unknown pairs remain refused; paper execution stays limited
+to its approved basket. Leveraged paper quotes retain Twelve Data first and use
+the existing validated Robinhood bid/ask reader on failure. This fallback has no
+session range and cannot prove an unobserved stop touch or live protection.
+Post-close price prewarm passes its required market session into the shared
+candle resolver, so a recent-but-behind first provider cannot block fallback.
+
 ## Assessment publication and entry freshness
 
 The research writer publishes one assessment at a time per market/symbol in a

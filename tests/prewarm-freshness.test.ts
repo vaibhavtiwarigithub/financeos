@@ -220,6 +220,8 @@ describe("the prewarm bypasses the same-day provider cache for symbols it knows 
     await prewarmPriceCache(["AAPL"], supabase, { market: "us" });
 
     expect(h.fetchUsCandles).toHaveBeenCalledTimes(1);
-    expect((h.fetchUsCandles.mock.calls[0] as unknown[])[3]).toEqual({ forceRefresh: true });
+    expect((h.fetchUsCandles.mock.calls[0] as unknown[])[3]).toEqual({
+      forceRefresh: true, requiredSession: expectedNewestSession("us", new Date()),
+    });
   });
 });

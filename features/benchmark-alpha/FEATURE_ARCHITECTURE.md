@@ -1,5 +1,14 @@
 # Feature Architecture - Benchmark Alpha Scorecard
 
+## Post-NAV retry correction — 2026-10-22
+
+India's initial collector stays at 10:15 UTC. Its bounded retry now runs at
+11:35 UTC (17:05 IST), after the 11:15 EOD portfolio producer. Migration
+20261022154455 verifies the previous job/slot before updating it; no extra daily
+provider pass is added. Missing live balances and immature horizons remain
+unavailable. This fixes stale materialized paper comparisons despite current
+benchmark and EOD NAV source rows.
+
 > Status: **P1 BUILT 2026-07-13; P1E DISPLAY COMPARATORS BUILT 2026-08-24.** Phase 1 measurement is implemented; Phase 2 learner/promotion wiring remains unbuilt.
 > Scope: deterministic measurement first; no order path, no paper fills, no learner mutation in Phase 1.
 > Build gate: Phase 2 learner/promotion wiring requires a separate owner approval after Phase 1 has accumulated evidence.

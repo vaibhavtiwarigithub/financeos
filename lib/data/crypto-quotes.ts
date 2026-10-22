@@ -1,5 +1,6 @@
 import type { Candle } from "@/lib/data/technicals";
 import { avCachedFetch } from "@/lib/av-cache";
+import { cryptoCompletedCandles, cryptoSessionDate } from "@/lib/data/crypto-session";
 
 export type CryptoCandleSource = "coinbase_exchange" | "kraken" | "alpha_vantage" | "unavailable";
 export type CryptoCandleResult = { candles: Candle[]; source: CryptoCandleSource; attempted: CryptoCandleSource[] };
@@ -9,6 +10,11 @@ export type CryptoQuoteResult = { quote: CryptoQuote | null; source: CryptoQuote
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const KRAKEN_PAIR: Record<string, string> = { BTC: "XBTUSD", ETH: "ETHUSD", SOL: "SOLUSD" };
+
+function krakenPair(coin: string): string {
+  // Exact USD market only: no fuzzy name, stablecoin, or cross-currency substitution.
+  return coin ? KRAKEN_PAIR[coin] ?? `${coin}USD` : "";
+}
 
 function coinFor(symbol: string): string {
   const coin = symbol.trim().toUpperCase().replace(/(?:-|\/)?USD$/, "");
@@ -73,7 +79,7 @@ async function coinbaseCandles(coin: string, fetcher: FetchLike): Promise<Candle
 }
 
 async function krakenCandles(coin: string, fetcher: FetchLike): Promise<Candle[]> {
-  const pair = KRAKEN_PAIR[coin];
+  const pair = krakenPair(coin);
   return pair ? parseKrakenDailyCandles(await fetchJson(`https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=1440`, fetcher)) : [];
 }
 
@@ -99,9 +105,9 @@ export async function fetchCryptoQuote(symbol: string, fetcher: FetchLike = fetc
   const coin = coinFor(symbol); const attempted: CryptoQuoteSource[] = [];
   for (const [source, url, parse] of [
     ["coinbase_exchange", `https://api.exchange.coinbase.com/products/${coin}-USD/ticker`, parseCoinbaseQuote],
-    ["kraken", `https://api.kraken.com/0/public/Ticker?pair=${KRAKEN_PAIR[coin] ?? ""}`, parseKrakenQuote],
+    ["kraken", `https://api.kraken.com/0/public/Ticker?pair=${krakenPair(coin)}`, parseKrakenQuote],
   ] as const) {
-    if (!coin || (source === "kraken" && !KRAKEN_PAIR[coin])) continue;
+    if (!coin) continue;
     attempted.push(source);
     try {
       const quote = parse(await fetchJson(url, fetcher));
@@ -140,7 +146,10 @@ export async function fetchCryptoCandles(symbol: string, avKey = "", fetcher: Fe
     try {
       const candles = await load();
       // A short/malformed payload must not block the independent fallback.
-      if (candles.length >= 51) return { candles, source, attempted };
+      const completed = cryptoCompletedCandles(candles);
+      if (completed.length >= 51 && completed.at(-1)?.date === cryptoSessionDate()) {
+        return { candles, source, attempted };
+      }
     } catch { /* source failure is contained; next provider is independent */ }
   }
   return { candles: [], source: "unavailable", attempted };

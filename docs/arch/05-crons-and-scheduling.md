@@ -1,5 +1,13 @@
 # Kairos — Crons & Scheduling
 
+## India benchmark retry after EOD NAV
+
+The benchmark initial pass remains 10:15 UTC. The bounded retry is 11:35 UTC
+(17:05 IST), after PositionMonitor's 11:15 EOD NAV snapshot. Migration
+`20261022154455_post_nav_benchmark_retry` updates the existing retry and matching
+market-local slot instead of adding another provider pass. Current benchmark
+prices alone do not prove the materialized portfolio comparison is current.
+
 ## Leveraged ETF pre-entry research (2026-10-16)
 
 `kairos-research-leveraged-us` calls
