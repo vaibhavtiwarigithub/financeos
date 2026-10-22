@@ -5,6 +5,7 @@ describe("shared alert classification", () => {
   it("keeps broker reconnect and owner actions out of the failure count", () => {
     expect(isOwnerActionAlert({ category: "broker", severity: "critical", title: "Reconnect required" })).toBe(true);
     expect(isOwnerActionAlert({ category: "cron", title: "Reconnect required" })).toBe(true);
+    expect(isOwnerActionAlert({ category: "broker", severity: "warn", title: "Kite session expired (daily) — re-login required" })).toBe(true);
     expect(isOwnerActionAlert({ category: "cron", detail: "Claude and Codex members run on your PC; the local machine may be off or asleep." })).toBe(true);
     expect(isActionableHealthAlert({ category: "broker", severity: "critical", title: "Reconnect required" })).toBe(false);
   });
@@ -14,6 +15,7 @@ describe("shared alert classification", () => {
       expect(isActionableHealthAlert({ category: "broker", severity: "critical", title })).toBe(true);
     }
     expect(isActionableHealthAlert({ category: "broker", severity: "critical", title: "Position mismatch", detail: "Reconnect and reconcile before retrying" })).toBe(true);
+    expect(isActionableHealthAlert({ category: "broker", severity: "critical", title: "Position mismatch", detail: "Re-login required" })).toBe(true);
     expect(isActionableHealthAlert({ severity: "critical", title: "✅ Evidence is ready but ledger mismatch detected" })).toBe(true);
   });
 

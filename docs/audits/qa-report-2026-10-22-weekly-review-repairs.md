@@ -70,9 +70,13 @@ is covered by handler tests, not a production credential mutation.
 An existing Chrome tab failed to attach twice; the documented fresh-tab recovery
 worked. Restored the original US market selection after parity checks. Existing
 heading semantics (two paper H1s, no native Vault H1) are not a new regression or
-a claim of full SEO/accessibility QA. The System Health badge still shows six
-other actionable issues plus four notices; this repair does not claim zero global
-system issues. No unrelated alert was resolved to make the badge look healthy.
+a claim of full SEO/accessibility QA. The initial smoke showed six warnings plus
+four notices. A read-only title audit then found Kite's daily "re-login" wording
+was not recognized by the owner-action matcher. Added that exact regression
+without exempting a broker mismatch that mentions re-login as remediation.
+Focused classification tests pass; full-suite evidence above precedes this tiny
+wording follow-up. Candle-coverage, SQQQ run/quote, prewarm and council-disagreement
+warnings remain separate. No unrelated alert was resolved to make the badge look healthy.
 
 ## Remaining boundaries
 

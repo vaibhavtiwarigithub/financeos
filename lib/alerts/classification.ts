@@ -11,7 +11,7 @@ export function isOwnerActionAlert(alert: AlertClassificationInput): boolean {
   // Broker is a subsystem, not an action class. Reconciliation/order failures
   // must remain visible even when their remediation mentions reconnecting.
   if (/\b(mismatch|oversell|double.sell|unprotected|unconfirmed|needs.reconcile|reconciliation failed|cancel failed|ledger.*failed|order.*(?:failed|unknown))\b/i.test(text)) return false;
-  return /\b(reconnect|re-auth|owner action|manual login)\b|(?:claude|codex).*?(?:run on your pc|signed out|usage limit)|(?:pc|local machine).*?(?:off|asleep)|cli.*?signed out/i.test(text);
+  return /\b(reconnect|re-auth|re-login|owner action|manual login)\b|(?:claude|codex).*?(?:run on your pc|signed out|usage limit)|(?:pc|local machine).*?(?:off|asleep)|cli.*?signed out/i.test(text);
 }
 
 export function isInformationalNoticeAlert(alert: AlertClassificationInput): boolean {
