@@ -231,6 +231,10 @@ describe("Upgrade Path liveness contracts", () => {
     expect(migration).toContain("revoke all on function public.get_shadow_cron_health() from public, anon, authenticated");
     expect(migration).toContain("grant execute on function public.get_shadow_cron_health() to service_role");
     expect(route).toContain('rpc("get_shadow_cron_health")');
+    expect(route).toContain('const sb = createServiceClient()');
+    expect(route.indexOf("if (denied) return denied")).toBeLessThan(route.indexOf("const sb = createServiceClient()"));
+    expect(route).not.toContain("createServerClient");
+    expect(route).not.toContain("cookieStore");
     expect(route).toContain("cron_jobs: scheduledJobsForMarket(program, market)");
   });
 });

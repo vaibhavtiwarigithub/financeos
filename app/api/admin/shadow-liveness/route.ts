@@ -1,8 +1,7 @@
 // Owner-only collection-health audit for every Upgrade Path registry entry.
 // This endpoint reports evidence liveness only; it never asserts P&L readiness.
 import { NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { createServiceClient } from "@/lib/supabase/service";
 import { SHADOW_PROGRAMS } from "@/lib/shadows/registry";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { ARCHETYPES } from "@/lib/scoring/archetypes";
@@ -55,12 +54,10 @@ export async function GET() {
   const denied = await requireOwner();
   if (denied) return denied;
 
-  const cookieStore = await cookies();
-  const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll() } },
-  );
+  // Authorize the caller above, then keep privileged reads cookie-free. An SSR
+  // client can replace the service-role JWT with the signed-in owner's session,
+  // which correctly has no permission to execute the service-only cron RPC.
+  const sb = createServiceClient();
 
   const now = Date.now();
   const cronResult = await sb.rpc("get_shadow_cron_health");
@@ -90,8 +87,9 @@ export async function GET() {
         for (const [column, values] of Object.entries(probe.in ?? {})) headQuery = headQuery.in(column, values);
         const head = await headQuery;
         if (head.error) return { ...base, verdict: "unknown", note: `Evidence query failed: ${head.error.message}` };
-        count = head.count ?? 0;
-        if (count > 0) {
+        if (typeof head.count !== "number" || !Number.isFinite(head.count) || head.count < 0) return { ...base, verdict: "unknown", note: "Evidence count unavailable." };
+        count = head.count;
+        if (head.count > 0) {
           let latestQuery = sb.from(probe.table)
             .select(probe.tsCol)
             .not(probe.tsCol, "is", null)

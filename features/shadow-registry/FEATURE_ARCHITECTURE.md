@@ -149,6 +149,12 @@ Future provider-consuming shadows should write to the existing
 
 ## Read API
 
+The owner-only shadow-liveness audit also uses the existing cookie-free service
+client after its confirmed-owner gate. Never bind the service RPC client to SSR
+session cookies: the signed-in user's JWT can replace the service role and make
+the intentionally restricted cron-health RPC fail. Do not broaden RPC grants to
+authenticated/anon to work around this; unauthorized callers remain denied.
+
 `GET /api/upgrade-path`
 
 - confirmed-owner only via `requireOwner()`;
