@@ -185,3 +185,20 @@ export const SUBSCRIPTION_PLANS = [
     cta: "Go Elite",
   },
 ];
+/** Research-priority memory only; never an executable order or forecast label. */
+export interface RecentQualifiedCandidate {
+  id: string;
+  market: "us" | "india";
+  symbol: string;
+  first_signal_id: string;
+  latest_signal_id: string;
+  first_score: number;
+  latest_score: number;
+  first_session: string;
+  latest_session: string;
+  expires_session: string;
+  latest_at: string;
+  discovery_source: string | null;
+  state: "active" | "invalidated" | "expired" | "displaced";
+  refresh_lease_until: string | null;
+}

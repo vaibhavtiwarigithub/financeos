@@ -14,6 +14,7 @@ import type { InternationalAllocationPolicyRead } from "@/lib/allocation/interna
 import type { RotationStatus } from "@/lib/agents/rotation-status";
 import { PAPER_BOOK_T, pnlColor, fmtSignedMoney, fmtSignedPct, PaperBookHeader } from "@/components/dashboard/PaperBookHeader";
 import CapitalRotationActivityPanel from "@/components/dashboard/CapitalRotationActivityPanel";
+import RecentCandidatesPanel from "@/components/dashboard/RecentCandidatesPanel";
 import PositionHistorySparkline from "@/components/dashboard/PositionHistorySparkline";
 import PositionActivityChart from "@/components/dashboard/PositionActivityChart";
 import type { PositionActivitySeries, PositionHistorySeries } from "@/lib/portfolio/position-history";
@@ -758,6 +759,7 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
       />
 
       <InternationalExposurePanel market={activeMarket} positions={positions} policy={internationalAllocationPolicy} />
+      {!viewerMode && <RecentCandidatesPanel market={activeMarket} book="paper" />}
 
       {/* Charts row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: "16px", marginBottom: "20px" }}>

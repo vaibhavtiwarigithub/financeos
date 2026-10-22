@@ -9,6 +9,8 @@ import {
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 import { isPaused } from "@/lib/market-controls";
 import { getQuote } from "@/lib/data/quotes";
+import { refreshRecentCandidatesForCapacity } from "@/lib/research/refresh-recent-candidates";
+import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
 import { getKiteMargins, getKiteHoldings } from "@/lib/kite";
 import { checkKillSwitches } from "@/lib/kill-switches";
 import { executeApprovedOrder } from "@/lib/trading/execute-order";
@@ -26,8 +28,6 @@ import {
   type ManagedLivePosition,
   type ProtectiveOrderCoverageRow,
 } from "@/lib/protective/coverage";
-
-const SIGNAL_LOOKBACK_HOURS = 24;
 
 export interface LiveRunResult {
   run_id: string;
@@ -215,7 +215,6 @@ export async function runAutonomousLive(
       }),
     };
   }
-  const minimumScoreThreshold = Math.min(...mandates.map(([, mandate]) => mandate.score_threshold));
 
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
@@ -371,27 +370,25 @@ export async function runAutonomousLive(
     return { ...earlyExit(`protective_entry_interlock:${protectionGate.reason}`), run_id: runId };
   }
 
-  // Query qualifying signals for autonomous markets only
-  const lookbackCutoff = new Date(Date.now() - SIGNAL_LOOKBACK_HOURS * 3_600_000).toISOString();
+  // Disabled/closed/unprotected books have already returned above. Research
+  // memory grants no permission and never bypasses the execution kernel.
+  for (const market of autonomousMarkets) {
+    await refreshRecentCandidatesForCapacity(svc, market as "us" | "india", {
+      hasCapacity: (openByMarket[market] ?? 0) < mandateByMarket[market].max_open_positions,
+      heldSymbols: managedPositions.filter(row => row.market === market).map(row => row.symbol),
+    });
+  }
 
-  const { data: signals, error: sigErr } = await svc
-    .from("agent_signals")
-    // NOTE: the confidence column on agent_signals is `confidence` (aliased to
-    // evidence_confidence for the kernel). A previous build selected a
-    // nonexistent `evidence_confidence` column and SWALLOWED the resulting
-    // PostgREST error, so this path silently processed zero signals every run.
-    .select("id, symbol, market, direction, analyst_score, conviction, score_source, rationale")
-    .eq("score_source", "deterministic_v1")
-    .eq("session_validated", true)
-    .eq("direction", "long")
-    .gte("analyst_score", minimumScoreThreshold)
-    .gte("created_at", lookbackCutoff)
-    .in("market", autonomousMarkets)
-    .order("analyst_score", { ascending: false })
-    // Fetch enough rows to apply each market's own threshold before the global
-    // daily cap. A lower-threshold market must not crowd the result window with
-    // rows that are ineligible under its own mandate.
-    .limit(Math.max(10, (policy.live_auto_max_orders_per_day ?? 3) * autonomousMarkets.length * 4));
+  // Query qualifying signals for autonomous markets only
+  // Never let an old high-scoring long outrank today's newer downgrade/neutral
+  // assessment. Market-local day, complete pagination, newest-per-symbol first.
+  let signals: any[] = [];
+  let sigErr: { message: string } | null = null;
+  try {
+    signals = (await Promise.all(autonomousMarkets.map(market => loadFreshEntrySignals(svc,
+      market as "us" | "india", mandateByMarket[market].score_threshold))))
+      .flat().sort((a, b) => Number(b.analyst_score) - Number(a.analyst_score) || a.symbol.localeCompare(b.symbol));
+  } catch (error) { sigErr = { message: error instanceof Error ? error.message : "Fresh signal read failed" }; }
 
   // Fail LOUDLY on a query error — never silently no-op the whole autonomous run.
   if (sigErr) {

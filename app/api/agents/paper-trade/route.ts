@@ -33,6 +33,9 @@ import { paperAllocationSpend, paperDailyCapQuantity, paperIntendedSpend, paperE
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
+import { refreshRecentCandidatesForCapacity } from "@/lib/research/refresh-recent-candidates";
+
+export const maxDuration = 300;
 
 // Research Journal — one stage event per signal per pipeline stage. Fail-soft:
 // never blocks the actual trading decision it's describing.
@@ -185,6 +188,20 @@ export async function POST(req: NextRequest) {
     const mandateByMarket = new Map<string, TradingMandate>();
     for (const m of activeMarkets) {
       mandateByMarket.set(m, await loadTradingMandate(supabase, m as "us" | "india"));
+    }
+
+    // Reconsider retained names BEFORE selecting today's signals. This refresh
+    // cannot execute a trade; normal quote/geometry/cash/risk checks still follow.
+    for (const m of activeMarkets) {
+      const { data: heldRows, error } = await supabase.from("paper_positions")
+        .select("symbol,qty").eq("market", m).eq("position_role", "alpha").gt("qty", 0);
+      if (error) throw new Error(`Shortlist capacity read failed: ${error.message}`);
+      const held = [...new Set<string>((heldRows ?? []).map((row: any) => String(row.symbol)))];
+      await refreshRecentCandidatesForCapacity(supabase, m as "us" | "india", {
+        hasCapacity: Number(poolByMarket.get(m)?.cash_balance) > 0
+          && held.length < mandateByMarket.get(m)!.max_open_positions,
+        heldSymbols: held,
+      });
     }
 
     // ── Market-local trading-day freshness ───────────────────────────────────

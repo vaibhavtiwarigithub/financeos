@@ -1487,3 +1487,13 @@ explicit Data API grants, service-role insert only, and update/delete/truncate
 guards. No scoring, eligibility, sizing, exit, order, or broker path reads them.
 See `features/score-price-divergence/FEATURE_ARCHITECTURE.md`.
 
+# Recent qualified candidate episodes
+
+`recent_qualified_candidates` preserves first/latest deterministic signal links,
+scores, discovery provenance, fixed market-session expiry and bounded refresh
+leases. Service-only invoker RPCs serialize market admission/eviction/claim writes.
+An active-market cap of 20 and one-active-symbol index prevent duplicate inventory.
+Owner-only RLS reads; no anonymous access or authenticated writes/RPC execution.
+Closed episodes remain linked to immutable signal/decision history for later
+forward policy comparisons; this is not an order, label or performance ledger.
+

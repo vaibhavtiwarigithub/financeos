@@ -24,6 +24,7 @@ import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signa
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { readDeferredCandidates, applyCandidateCarryForward } from "@/lib/research-queue";
+import { recentCandidatesForResearch, recordRecentCandidate } from "@/lib/research/recent-candidates";
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
 import { classifyInstrument, persistInstrumentClassification } from "@/lib/scoring/instrument-registry";
@@ -768,6 +769,11 @@ export async function gatherSymbols(
   // them, re-checking this signal, its own trend/liquidity/stop geometry and the 5% combined sleeve cap.
   if (includeUs) for (const sym of LEVERAGED_SLEEVE_SYMBOLS) addCandidate(sym, "watchlist");
 
+  // A retained candidate is research priority, never an old executable signal.
+  // Five stale names share the existing candidate cap; preserve discovery source.
+  const recentUs = includeUs ? await recentCandidatesForResearch(supabase, "us") : [];
+  for (const candidate of recentUs) addCandidate(candidate.symbol, (candidate.discovery_source as DiscoverySource) ?? "watchlist");
+
   // PRIORITY 1 — owner MANUAL watchlist adds. Explicit "research this now" intent
   // beats everything except holdings, so a hand-picked ticker (e.g. SK Hynix)
   // never starves behind the screener carry-forward backlog.
@@ -1030,7 +1036,8 @@ export async function gatherSymbols(
     const coverageBySymbol = new Map(indiaCoverage.map(item => [item.symbol, item.context]));
     const sectorCoverage = indiaCoverage.filter(item => !seenAll.has(item.symbol)).slice(0, 3).map(item => item.symbol);
     const indexRotation = [...new Set([...sectorCoverage, ...await orderHoldingsByLastScored(supabase, indexUniverse, "india")])];
-    const orderedIndia = buildIndiaCandidateOrder({
+    const recentIndia = await recentCandidatesForResearch(supabase, "india");
+    const orderedIndia = [...new Set([...recentIndia.map(row => row.symbol), ...buildIndiaCandidateOrder({
       manual: watchlist.indiaManual,
       // Reserve up to half of the candidate budget for core benchmark coverage;
       // manual names still retain explicit priority.
@@ -1039,7 +1046,7 @@ export async function gatherSymbols(
       deferred: deferredIndia.map(q => q.symbol),
       watchlist: watchlist.indiaOther,
       screened: rawList,
-    }).filter((symbol) => !seenAll.has(symbol));
+    })])].filter((symbol) => !seenAll.has(symbol));
     const indiaSourceOf = new Map<string, string | null | undefined>();
     const rememberIndiaSource = (raw: string, source: string | null | undefined) => {
       const upper = String(raw).trim().toUpperCase();
@@ -1049,6 +1056,7 @@ export async function gatherSymbols(
       if (upper && !indiaSourceOf.has(upper)) indiaSourceOf.set(upper, source);
       if (normalized && !indiaSourceOf.has(normalized)) indiaSourceOf.set(normalized, source);
     };
+    for (const row of recentIndia) rememberIndiaSource(row.symbol, row.discovery_source);
     for (const symbol of watchlist.indiaManual) rememberIndiaSource(symbol, "watchlist");
     for (const symbol of indexRotation) rememberIndiaSource(symbol, "india_screener");
     for (const queued of deferredIndia) rememberIndiaSource(queued.symbol, queued.source ?? "india_screener");
@@ -2308,6 +2316,11 @@ export async function processSymbol(
       await supabase.from("agent_signals").update({ status: "revalidated" })
         .eq("market", market).eq("symbol", symbol).eq("status", "weekend_staged");
     }
+  }
+
+  if (sessionValidated && insertedSignalId) {
+    await recordRecentCandidate(supabase, { signalId: insertedSignalId, symbol, market,
+      assetClass, eligible: entryEligible && !isHeld, source: entry.discovery_source });
   }
 
   // Append-only score history — the durable per-symbol score trajectory that

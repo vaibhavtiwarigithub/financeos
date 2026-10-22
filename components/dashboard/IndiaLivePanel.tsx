@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
+import RecentCandidatesPanel from "@/components/dashboard/RecentCandidatesPanel";
 import { fmtMoney } from "@/lib/format-money";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
@@ -358,6 +359,7 @@ export default function IndiaLivePanel() {
             broker connection, account summary, performance, holdings. */}
         <IndiaManualTradeGuardianPanel />
         <IndiaRecommendationsGuardianScorecard holdings={holdings} holdingsKnown={portfolio?.connected === true} />
+        <RecentCandidatesPanel market="india" book="live" />
 
         {/* ── a) Connection status bar ── */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "14px 18px", marginBottom: "16px" }}>

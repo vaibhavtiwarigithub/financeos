@@ -1,0 +1,58 @@
+# Recent qualified candidates — implementation and release verification
+
+Owner approved the five-session / 20-name plan on October 21, 2026 (Chicago).
+
+## Implemented
+
+- Shared US/India research shortlist, original/latest signal lineage and scores,
+  fixed five-regular-session retention, 20 active names per market, serialized
+  admission/eviction and shared bounded refresh leases.
+- Research scheduler prioritizes up to five stale retained names without raising
+  candidate caps. Paper and enabled autonomous-live entry runs can refresh five
+  stale candidates with available slots before reading fresh signals. Two attempts
+  per candidate/session; ordinary provider and research budgets still apply.
+- No stale-signal revival. Fresh live selection uses latest assessment first,
+  market-local day boundaries, complete pagination and current indicative entry
+  plan. Downgrades, neutral decisions, missing plans and rank rejection defeat old
+  highs. Active batch-relative rank gates defer isolated refresh to full-cohort
+  scheduled research, not a gate bypass.
+- One owner-only Candidates waiting panel on paper and both live market pages:
+  original/latest scores, last research time, sessions remaining, refresh state
+  and book-specific attempts. Visible-page one-minute read-only refresh; manual
+  retry; shared responsive table. No Buy button, inference or broker calls in GET.
+- Leveraged/inverse ETFs and crypto excluded through existing instrument policy.
+  Existing holding top-ups, discovery provenance, risk, eight-name/cash controls,
+  broker eligibility, live arming and protective-order requirements unchanged.
+
+## Verified locally and in database
+
+- Full regression: 4,127 passed, eight skipped across 509 test files (508 passed,
+  one skipped). Focused lifecycle/freshness tests passed, including rank-policy
+  read failure, newest-score downgrade and positive session-validation contracts.
+- Production migration `20261022030420_recent_qualified_candidates` applied and
+  verified in the tracker. RLS enabled; one owner read policy; RPCs SECURITY
+  INVOKER with fixed search_path, service-role execute only. Neither anonymous
+  nor authenticated users can execute either RPC. Security advisor counts are
+  unchanged from baseline; no new shortlist finding.
+- Rollback-only integration transaction exercised admission, score decrease,
+  immutable expiry, stale-write rejection, duplicate lease denial, invalidation,
+  renewed episode history, non-renewal after expiry, 20-name cap, weakest-name
+  eviction, NULL eligibility rejection and independent India namespace.
+  Follow-up reads found zero shortlist rows and zero synthetic agent signals.
+- Initial ordinary local build failed with OneDrive EINVAL/readlink against an
+  existing .next artifact. Fresh isolated .next/shortlist-build-20261021 completed
+  successfully, generated all 78 static pages and exited zero. Only existing
+  webpack cache and Supabase Edge Runtime warnings. Restored generated source
+  references in next-env.d.ts/tsconfig.json; do not commit scratch configuration.
+
+## Release and UI
+
+Pending push/deployment and authenticated production UI/API verification.
+
+## Evidence boundaries
+
+Collection starts with new research after deployment. No historical membership,
+score or P&L backfill, broker order, risk relaxation or live enablement was used
+for verification. Actual next-session refresh/fill and paired forward performance
+remain natural-run evidence, not established by these synthetic lifecycle tests.
+This release does not promise higher returns or claim all other app issues fixed.

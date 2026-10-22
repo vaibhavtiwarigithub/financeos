@@ -1852,3 +1852,10 @@ and explicit owner switch.
 **Decision.** Remove the redundant Vault PIN/password and its recovery/change flows. The API Vault and Webull OpenAPI verification use the existing confirmed canonical owner session enforced server-side by `requireOwner()`. Keep viewer denial, service-role isolation, masked key values, and all broker/API-key protections. The account login password remains the single interactive password.
 
 **Cleanup.** Delete any obsolete `app_settings.vault_pin` hash after the new owner-session-only deployment is verified. No schema migration is needed.
+# Recent qualified candidates — approved 2026-10-21
+
+- why: capacity-rejected research candidates must be reconsidered without trading stale signals.
+- who: the existing owner US/India paper and live portfolios.
+- roi: reduce forgotten qualified opportunities using bounded, reused research; performance gain remains unproven.
+- decision: five regular sessions including admission, 20 active names per market, fresh reassessment, shared shortlist and existing execution gates. Additive migration and owner-only visibility approved as part of the plan; no live enablement or risk relaxation.
+- shippedAt: pending verification.

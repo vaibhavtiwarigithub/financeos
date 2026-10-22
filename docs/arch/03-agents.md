@@ -1,5 +1,36 @@
 # Kairos — Agents
 
+## Remembering recent qualified candidates
+
+Ordinary US/India equity and ETF research can retain up to 20 recently qualified
+names per market for five regular sessions, including the original session.
+This is research memory, not a second strategy or an order queue. The research
+writer records original/latest signal IDs and scores while keeping expiry fixed;
+a newer failed entry assessment invalidates the episode. Expiry or cap eviction
+alone never restarts it. Leveraged funds and crypto retain their separate rules.
+
+Scheduled research gives a bounded five-name stale shortlist lane priority after
+holdings and the leveraged sleeve, before the large manual candidate pool. It
+preserves discovery source and consumes existing caps/budgets. Paper and enabled
+autonomous-live entry runs with a spare slot can also refresh up to five stale
+names before reading today's signals. Service-only market-serialized leases
+prevent competing paper/live refresh claims; two attempts per name/session bound
+failures. This uses the normal research/scoring writer, not cached score maxima.
+When batch-relative rank gating is active, isolated refresh defers to scheduled
+full-cohort research rather than bypassing that percentile gate.
+
+The live signal reader selects the newest assessment per symbol before checking
+direction, score and a candidate research plan, using current market-local day
+boundaries and complete pagination. Old highs cannot survive a newer downgrade.
+Existing live-enable, broker/quote, risk, protective-order and portfolio gates
+remain authoritative. The shared "Candidates waiting" panel on paper and both
+live markets displays original/latest scores, age, refresh need and book-specific
+attempt evidence. The read-only owner endpoint cannot trigger research or orders.
+
+Collection begins with new research after deployment; no historical records are
+relabelled as if this policy had existed earlier. Forward performance is not
+proven merely because the lifecycle is operational.
+
 ## Quantum/robotics ETF coverage and manual research fairness
 
 The owner-approved US thematic research basket includes QTUM, BOTZ, ARKQ, ROBO
