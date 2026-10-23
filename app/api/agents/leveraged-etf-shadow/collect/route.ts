@@ -106,6 +106,7 @@ async function collectOne(
     observation_window: observation.window, measurement_status: observation.measurementStatus, missing: observation.missing,
     features: observation.features,
     quote: { ...observation.quote, etf_source: brokerQuote?.source ?? quote.source,
+      bid_observed_at: brokerQuote?.bidObservedAt ?? null, ask_observed_at: brokerQuote?.askObservedAt ?? null,
       bid_ask_source: brokerQuote ? "robinhood_mcp" : null, underlying_source: underlyingQuote.source },
     decision: observation.decision,
   });

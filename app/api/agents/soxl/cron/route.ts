@@ -267,8 +267,9 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
   // only a symbol with no row here AND not in KNOWN_SEMICONDUCTOR stays
   // null and correctly fails closed in semiconductorCapacity.
   const bookSymbols = [...new Set((positions ?? []).map((p: any) => String(p.symbol).toUpperCase()))];
-  const { data: sectorRows } = await supabase
+  const { data: sectorRows, error: sectorError } = await supabase
     .from("symbol_profiles").select("symbol, sector").eq("market", "us").in("symbol", bookSymbols);
+  if (sectorError) return fail({ status: "error", reason: `sector_classification_query_failed: ${sectorError.message}` });
   const sectorBySymbol = new Map((sectorRows ?? []).map((r: any) => [String(r.symbol).toUpperCase(), String(r.sector ?? "")]));
   const holdings: SemiconductorHolding[] = (positions ?? []).map((p: any) => {
     const sym = String(p.symbol).toUpperCase();
@@ -335,7 +336,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     p_bid: quote.bid, p_ask: quote.ask, p_spread: quote.bid && quote.ask ? quote.ask - quote.bid : null,
     p_stop_loss: plan.stop, p_price_target: plan.target,
     p_policy_version: plan.version,
-    p_rationale: `SOXL paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}] [setup ${JSON.stringify(intraday.evidence)}]${doorQuoteNote(doorQuote, quote.source)}`,
+    p_rationale: `SOXL paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}] [risk ${plan.riskVersion}; full-notional fund bounds ${plan.conservativeFundUpperBounds.join(",") || "none"}] [setup ${JSON.stringify(intraday.evidence)}]${doorQuoteNote(doorQuote, quote.source)}`,
   });
   if (rpcErr) {
     await reportIssue({ issueKey: "soxl-entry-cron-failed", severity: "warn", category: "execution", title: "SOXL paper entry RPC failed", detail: rpcErr.message }, supabase);

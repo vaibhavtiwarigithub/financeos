@@ -50,7 +50,7 @@ export function planSoxlEntry(input: {
   holdings: SemiconductorHolding[];
   /** Open SOXL/TQQQ/SQQQ/SOXS positions: the 5%-of-NAV cap is COMBINED across the four (owner rule 2026-09-23). */
   leveragedSleevePositions: LeveragedSleevePosition[];
-}): { ok: false; reason: string } | { ok: true; version: string; entry: number; stop: number; target: number; maxNotional: number; signalAt: number } {
+}): { ok: false; reason: string } | { ok: true; version: string; entry: number; stop: number; target: number; maxNotional: number; signalAt: number; riskVersion: string; conservativeFundUpperBounds: string[] } {
   const p = input.policy;
   if (!p.version || ![p.maxQuoteAgeMs, p.maxSpreadBps, p.maxMonitorAgeMs, p.atrStopMultiple,
     p.maxStopPct, p.targetAtrMultiple, p.riskBudgetPct, p.semiconductorCapPct].every(v => Number.isFinite(v) && v > 0))
@@ -90,7 +90,8 @@ export function planSoxlEntry(input: {
   const maxNotional = Math.min(capacity.maxNotional, headroom.headroom);
   const size = leveragedPaperEntrySize(input.nav, maxNotional);
   if (!size.ok) return size;
-  return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };
+  return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt,
+    riskVersion: capacity.version, conservativeFundUpperBounds: capacity.conservativeFundUpperBounds };
 }
 
 export function monitorSoxl(input: {

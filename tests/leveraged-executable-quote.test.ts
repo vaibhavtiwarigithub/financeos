@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 vi.mock("@/lib/robinhood-mcp", () => ({ readRobinhoodLeveragedQuoteRows: vi.fn() }));
 
@@ -20,7 +21,9 @@ describe("leveraged broker quote transport", () => {
     const result = await getLeveragedExecutableQuotes(["SOXL", "SOXS", "TQQQ"]);
     expect(readRobinhoodLeveragedQuoteRows).toHaveBeenCalledOnce();
     expect(readRobinhoodLeveragedQuoteRows).toHaveBeenCalledWith(["SOXL", "SOXS", "TQQQ"]);
-    expect(result.get("SOXL")).toMatchObject({ bid: 40, ask: 40.04, source: "robinhood_mcp" });
+    expect(result.get("SOXL")).toMatchObject({ bid: 40, ask: 40.04, source: "robinhood_mcp",
+      bidObservedAt: "2026-10-16T15:04:30.000Z", askObservedAt: "2026-10-16T15:04:31.000Z",
+      observedAt: "2026-10-16T15:04:30.000Z" });
     expect(result.get("SOXS")).toBeDefined();
     expect(result.has("TQQQ")).toBe(false);
   });
@@ -33,5 +36,10 @@ describe("leveraged broker quote transport", () => {
   it("refuses symbols outside the approved leveraged quote universe", async () => {
     await expect(getLeveragedExecutableQuotes(["AAPL" as never])).rejects.toThrow("allowlist");
     expect(readRobinhoodLeveragedQuoteRows).not.toHaveBeenCalled();
+  });
+  it("persists both validated venue times in new collection evidence without inventing legacy values", () => {
+    const route = readFileSync("app/api/agents/leveraged-etf-shadow/collect/route.ts", "utf8");
+    expect(route).toContain("bid_observed_at: brokerQuote?.bidObservedAt ?? null");
+    expect(route).toContain("ask_observed_at: brokerQuote?.askObservedAt ?? null");
   });
 });

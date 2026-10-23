@@ -8,6 +8,14 @@ Only approved decisions belong here. Proposed decisions live in PROJECT_BUILD_LO
 
 ### 2026-10-23: Repair leveraged signal-read latency without changing admission
 
+Owner's standing repair authorization also covers a bounded accounting
+correction: a recognized fund with missing sector evidence is conservatively
+counted at full gross notional (3x for approved leveraged funds), not zero.
+Unknown companies remain denied. JQUA's fund identity is issuer-verified and
+added to the canonical ETF list. This does not estimate its actual constituent
+weight or raise a sector/sleeve cap. SOXL fills retain the risk version and
+bounded-fund identifiers; sector query failures remain errors.
+
 Owner's approved all-four leveraged repair includes an additive index on
 `agent_signals(market, symbol, created_at desc)`. Three natural paper attempts
 timed out reading the latest signal; EXPLAIN showed a full scan of 15,716 rows

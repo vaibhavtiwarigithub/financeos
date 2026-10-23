@@ -46,6 +46,7 @@ export function parseRobinhoodLeveragedQuote(
     changePct: previousClose == null ? null : ((mid - previousClose) / previousClose) * 100,
     source: "robinhood_mcp", retrievedAt: now.toISOString(),
     observedAt: new Date(Math.min(bidTime, askTime)).toISOString(), stale: false,
+    bidObservedAt: new Date(bidTime).toISOString(), askObservedAt: new Date(askTime).toISOString(),
     dayLow: null, dayHigh: null,
   };
 }

@@ -37,6 +37,26 @@ No new table, route, provider, dependency, schedule or inference loop was
 created. The existing four doors, setup evaluator, ladder, risk helper and
 signal-read ownership are reused. A read-only index is the only schema change.
 
+A final provenance audit found that the broker parser validated each venue
+side's time but discarded them after computing the conservative older-side
+`observedAt`. The adapter now retains both event times, and the existing L1
+collector persists them as additive quote JSON fields. Age/skew qualification
+is unchanged. Existing rows cannot establish their lost per-side times and
+are not backfilled; next-window persistence still needs a natural collection.
+
+The first post-release SOXL natural check reached
+`unclassified_portfolio_exposure`: JQUA and the legacy SQQQ holding have no
+profile sector. JQUA's issuer confirms it is a US quality-factor equity ETF,
+not an operating company. The canonical ETF registry now includes it. The
+semiconductor risk owner bounds missing-sector recognized funds at their full
+notional, multiplied by three for approved leveraged funds, never offset by
+inverse direction. Unknown companies still fail closed. This conservative
+upper bound is labelled/versioned on SOXL fills and can still exhaust capacity;
+it is not measured fund look-through or permission to exceed the existing cap.
+Profile-query failures now return an error rather than masquerading as absent
+sector metadata. No existing position or profile row was rewritten.
+[J.P. Morgan's JQUA description](https://am.jpmorgan.com/us/en/asset-management/adv/investment-strategies/etf-investing/investment-ideas/jqua-why-invest-in-quality-factor-etfs/).
+
 ## Natural production evidence, not manually triggered trading
 
 Before this release, at the October 23 17:32 UTC checkpoint, SOXL had 47
@@ -95,8 +115,25 @@ They exercise every fund's decimal target, tight trail, legacy default,
 stop-first/non-loosening/no-retroactive stop and complete summary persistence.
 Production index readback and EXPLAIN were real read-only checks. No manual
 money-path cron, paid inference, credential action or broker order was used.
-Final full suite: 4,363 passed, eight skipped, zero failed. Focused final
+Final full suite including the provenance/fund-accounting follow-up: 4,368
+passed, eight skipped, zero failed. Focused target/trail/signal
 policy/route/signal suite: 142 passed. TypeScript passed and the exact-final-source
 isolated Next build generated all 78 pages, exit zero. Generated scratch-build
 TypeScript references were restored. Staged GitGuardian scan found no secrets.
 Production deployment verification follows the push; pending items above remain open.
+
+### First release proof
+
+Runtime `4793508b` is on main and Vercel
+`dpl_FDpjPrNRimRmUKf2sahoi2zuS29U` is production READY with canonical aliases.
+All four anonymous paper-door GETs returned 401. Subsequent scheduled SOXS and
+TQQQ runs persisted complete 853- and 783-character JSON summaries, including
+explicit conditions and same-time relative volume; SQQQ continued healthy
+monitoring. No manual money-path invocation was used. Following the index
+migration, the first ten observed scheduled runs through 17:46 UTC were all
+`done`, without the earlier latest-signal timeouts. This is observed recovery,
+not a guarantee that a provider/database can never fail again.
+
+The later quote-provenance/fund-accounting follow-up is separately tested and
+published. Per-side timestamp persistence awaits the next natural L1 window;
+today's earlier observations retained only the qualified combined timestamp.

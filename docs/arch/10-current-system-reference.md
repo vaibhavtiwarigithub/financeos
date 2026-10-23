@@ -62,6 +62,11 @@ Setup evidence names each failed condition (ETF opening range, ETF VWAP,
 directional proxy, or same-time volume) rather than a generic confirmation label.
 The 2R entry target applies to the shares sold there, not guaranteed whole-lot
 profit: selling half at 2R and the rest at entry produces 1R before costs.
+For SOXL's semiconductor cap, recognized funds lacking sector data receive a
+conservative full-notional exposure bound (3x for the four approved leveraged
+funds), never a guessed zero or an inverse offset. Unknown companies and
+unsupported leveraged exposures still block. The fill records this accounting
+version and bounded symbols; it is not measured constituent look-through.
 
 ## 2. Runtime and ownership
 

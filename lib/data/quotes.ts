@@ -22,6 +22,9 @@ export interface DeterministicQuote {
   retrievedAt: string;
   /** Timestamp supplied by the price provider; absent if provenance is unknown. */
   observedAt?: string;
+  /** Separate venue event times when the source actually supplies executable sides. */
+  bidObservedAt?: string;
+  askObservedAt?: string;
   stale: boolean;       // true if > 15 min old during market hours
   /** Session low (day.l from Massive snapshot). Used by PositionMonitor to check
    *  intraday stop touches — a stop hit during the session is real even if price

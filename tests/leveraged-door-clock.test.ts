@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   heldPolicy: null as string | null,
   tightRisk: false,
   setupState: "ready",
+  sectorError: false,
   liveHeld: false,
   allowLiveEntryForTest: false,
   liveBook: [] as Array<{ symbol: string; qty: unknown; current_price: unknown }>,
@@ -93,7 +94,7 @@ vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({
       : table === "protective_orders" ? { status: "active", broker_order_id: "test-stop", protected_qty: 1, trigger_price: 90 }
       : table === "strategy_config" ? { active_account_us: "test-account", leveraged_sleeve_live_lease_usd: 50 }
       : null;
-    const result = () => ({ data: data(), error: null });
+    const result = () => ({ data: data(), error: table === "symbol_profiles" && mocks.sectorError ? { message: "test sector read failed" } : null });
     const chain: any = {
       select: () => chain, eq: () => chain, in: () => chain, not: () => chain,
       is: () => chain, like: () => chain,
@@ -137,6 +138,7 @@ beforeEach(() => {
   mocks.heldPolicy = null;
   mocks.tightRisk = false;
   mocks.setupState = "ready";
+  mocks.sectorError = false;
   mocks.liveHeld = false;
   mocks.allowLiveEntryForTest = false;
   mocks.liveBook = [];
@@ -181,6 +183,14 @@ describe.each(doors)("$symbol recorded paper trail routing", ({ symbol, handler 
 });
 
 describe("dormant live leveraged clock and health", () => {
+  it("does not mistake a SOXL sector-query error for missing classification", async () => {
+    mocks.held = false;
+    mocks.sectorError = true;
+    const body = await (await soxl(request)).json();
+    expect(body).toMatchObject({ status: "error", reason: "sector_classification_query_failed: test sector read failed" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.brokerSubmit).not.toHaveBeenCalled();
+  });
   it.each([null, undefined, 0, -1, NaN, "not-a-price"])("refuses an unknown or invalid live holding price (%s) instead of using quantity", async (price) => {
     mocks.allowLiveEntryForTest = true;
     mocks.liveBook = [{ symbol: "TQQQ", qty: 1, current_price: price }];

@@ -2,7 +2,7 @@
 // Guessing from missing fundamentals caused ETFs to be shown as companies and
 // wasted provider calls on structurally inapplicable dimensions.
 export const KNOWN_US_ETFS = new Set([
-  "SPY","VOO","QQQ","IWM","VTI","DIA","RSP","IVV","SCHD","VTV","VONG","SPHQ","SPMO","SGOV","DBA","XAR",
+  "SPY","VOO","QQQ","IWM","VTI","DIA","RSP","IVV","SCHD","VTV","VONG","SPHQ","SPMO","SGOV","DBA","XAR","JQUA",
   "XLK","XLF","XLE","XLI","XLV","XLU","XLRE","XLB","XLC","XLP","XLY","SMH","SOXX","IBB","KRE","KBE","ITB","XME",
   "QTUM","BOTZ","ROBO","ROBT","ARKQ","AIQ","ICLN","NLR","ARKK","ARKG","ARKW","ARKF","ARKX","CIBR","SKYY","WCLD","BUG","REMX","TEM",
   "TQQQ","SOXL","SPXL","UPRO","TECL","FAS","DUSL","DRN","UGL","FNGU","LABU","HIBL","MSTU","NVDL",

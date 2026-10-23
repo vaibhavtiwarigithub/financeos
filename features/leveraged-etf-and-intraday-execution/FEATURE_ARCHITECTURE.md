@@ -32,6 +32,22 @@ payloads retain bounded status/reason/liveness and explicitly mark truncation;
 never cut serialized JSON at 500 characters. Store explicit unmet setup
 conditions. This changes observability, not admission or historical rows.
 
+Keep the independently qualified broker bid and ask event timestamps in the
+quote adapter and new L1 observation JSON (`bid_observed_at`, `ask_observed_at`).
+The conservative combined `observedAt` stays the older side; no age/skew rule is
+relaxed. Older rows that retained only this combined time are not backfilled
+with guessed per-side times. No schema migration is needed for additive JSON.
+
+SOXL semiconductor accounting v3 handles a recognized fund whose sector is
+missing by bounding its semiconductor exposure at its full notional, or three
+times notional for an approved daily-3x fund, without inverse offsets. This is
+a deliberately conservative upper bound, not measured constituent exposure;
+unknown companies still fail closed. Do not replace missing fund look-through
+with zero. Record the risk version and bounded symbols on admitted fills. JQUA
+is added to the existing canonical ETF list, verified against its issuer, not
+classified as an operating company due to missing issuer fundamentals. Profile
+query errors must remain errors, not be mistaken for absent sector evidence.
+
 ## Shared intraday correction — owner approved 2026-10-22
 
 Scope is all four paper funds, not a hindsight SOXS exception. Reuse the existing

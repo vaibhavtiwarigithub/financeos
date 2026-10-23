@@ -20,7 +20,28 @@ describe("SOXL paper risk capacity", () => {
     expect(semiconductorCapacity({ ...base, holdings: [{ symbol: "UNKNOWN", marketValue: 100, semiconductor: null }] })).toMatchObject({ ok: false });
     expect(semiconductorCapacity({ ...base, holdings: [{ symbol: "ARM", marketValue: NaN, semiconductor: true }] })).toMatchObject({ ok: false });
   });
+  it("bounds unknown fund exposure instead of treating it as zero or an unknown company", () => {
+    expect(semiconductorCapacity({ ...base, riskBudgetPct: 1, holdings: [
+      { symbol: "JQUA", marketValue: 1500, semiconductor: null },
+      { symbol: "SQQQ", marketValue: 50, semiconductor: null },
+    ] })).toMatchObject({ ok: true, exposureBefore: 1650,
+      conservativeFundUpperBounds: ["JQUA", "SQQQ"], maxNotional: 350 / 3 });
+    expect(semiconductorCapacity({ ...base, holdings: [
+      { symbol: "NEW-COMPANY", marketValue: 100, semiconductor: null },
+    ] })).toMatchObject({ ok: false, reason: "unclassified_portfolio_exposure" });
+  });
+  it("a conservative known-fund bound can exhaust the cap and inverse notional never offsets it", () => {
+    expect(semiconductorCapacity({ ...base, holdings: [
+      { symbol: "JQUA", marketValue: 1800, semiconductor: null },
+      { symbol: "SQQQ", marketValue: 100, semiconductor: null },
+    ] })).toMatchObject({ ok: true, exposureBefore: 2100, maxNotional: 0 });
+  });
   it("blocks adding to existing SOXL", () => {
     expect(semiconductorCapacity({ ...base, holdings: [{ symbol: "SOXL", marketValue: 1, semiconductor: true }] })).toMatchObject({ ok: false, reason: "existing_soxl_position" });
+  });
+  it("never treats an unsupported leveraged fund as an ordinary 1x fund", () => {
+    expect(semiconductorCapacity({ ...base, holdings: [
+      { symbol: "UPRO", marketValue: 100, semiconductor: null },
+    ] })).toMatchObject({ ok: false, reason: "unclassified_leveraged_exposure" });
   });
 });
