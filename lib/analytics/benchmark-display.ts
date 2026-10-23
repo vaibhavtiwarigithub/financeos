@@ -7,6 +7,47 @@ export type DisplayBenchmark = {
 };
 
 export type PortfolioLevel = { date: string; nav: number | null };
+export type LiveEquityRow = {
+  account_id: string; date: string; equity: number | string | null;
+  market: string | null; currency: string | null; created_at?: string | null;
+};
+
+/** Account equity changes include cash flows. This must never be labelled TWR or alpha. */
+export function canonicalLiveEquitySnapshots(
+  rows: readonly LiveEquityRow[], market: "us" | "india", requestedAccounts?: readonly string[],
+) {
+  const scoped = rows.filter(row => (row.market === market || (market === "us" && row.market == null))
+    && (row.currency === (market === "us" ? "USD" : "INR") || (market === "us" && row.currency == null))
+    && typeof row.account_id === "string" && !!row.account_id
+    && /^\d{4}-\d{2}-\d{2}$/.test(row.date));
+  const accounts = [...new Set(requestedAccounts ?? scoped.map(row => row.account_id))].sort();
+  const wanted = new Set(accounts);
+  const byDate = new Map<string, Map<string, LiveEquityRow>>();
+  let invalidRows = 0;
+  for (const row of scoped) {
+    if (!wanted.has(row.account_id)) continue;
+    const day = byDate.get(row.date) ?? new Map<string, LiveEquityRow>();
+    const prior = day.get(row.account_id);
+    if (!prior || String(row.created_at ?? "") > String(prior.created_at ?? "")) day.set(row.account_id, row);
+    byDate.set(row.date, day);
+  }
+  let incompleteSessions = 0;
+  const series: PortfolioLevel[] = [];
+  for (const [date, day] of [...byDate].sort(([a], [b]) => a.localeCompare(b))) {
+    let nav = 0;
+    let complete = accounts.length > 0;
+    for (const account of accounts) {
+      const value = day.get(account)?.equity;
+      if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) {
+        complete = false;
+        if (day.has(account)) invalidRows += 1;
+      } else nav += Number(value);
+    }
+    if (!complete || !Number.isFinite(nav) || nav <= 0) incompleteSessions += 1;
+    series.push({ date, nav: complete && Number.isFinite(nav) && nav > 0 ? nav : null });
+  }
+  return { series, accountCount: accounts.length, incompleteSessions, invalidRows };
+}
 export type BenchmarkLevel = { date: string; close: number | null };
 export type PortfolioSnapshotLevel = PortfolioLevel & {
   bench_nav?: number | null;

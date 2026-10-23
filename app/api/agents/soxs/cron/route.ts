@@ -56,7 +56,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 const NO_AV_FALLBACK = async () => [];
 
 const SOXS_POLICY: SoxsPolicy = {
-  version: "soxs-paper-entry-v1",
+  version: "soxs-paper-entry-v2",
   maxQuoteAgeMs: 30 * 60 * 1000,
   maxSpreadBps: 50,
   maxMonitorAgeMs: 24 * 60 * 60 * 1000,

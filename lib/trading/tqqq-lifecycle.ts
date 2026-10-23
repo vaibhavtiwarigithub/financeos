@@ -1,5 +1,5 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
-import { leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
+import { leveragedPaperEntrySize, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Explicit paper experiment contract; thresholds are policy, not learned alpha.
  * Mirrors soxl-lifecycle.ts exactly — same money-path shape, same pure-module
@@ -73,7 +73,8 @@ export function planTqqqEntry(input: {
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };
   const riskCapacity = input.nav * p.riskBudgetPct / stopPct;
   const maxNotional = Math.min(input.cash, headroom.headroom, riskCapacity);
-  if (maxNotional <= 0) return { ok: false, reason: "no_capacity" };
+  const size = leveragedPaperEntrySize(input.nav, maxNotional);
+  if (!size.ok) return size;
   return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };
 }
 

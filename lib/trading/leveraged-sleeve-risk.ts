@@ -7,6 +7,19 @@
  * same combined ceiling, no separate inverse-only allowance.
  */
 export const LEVERAGED_SLEEVE_MAX_NAV_FRACTION = 0.05;
+// Paper entry policy v2: match the core constructor's 0.5%-NAV minimum
+// viable position. A ceiling is not a mandate to spend the last fraction of a cent.
+export const LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION = 0.005;
+
+export function leveragedPaperEntrySize(nav: number, availableNotional: number):
+  { ok: true; maxNotional: number } | { ok: false; reason: string } {
+  if (!Number.isFinite(nav) || nav <= 0 || !Number.isFinite(availableNotional))
+    return { ok: false, reason: "invalid_capacity" };
+  if (availableNotional <= 0) return { ok: false, reason: "no_capacity" };
+  if (availableNotional < nav * LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION)
+    return { ok: false, reason: "below_minimum_entry" };
+  return { ok: true, maxNotional: availableNotional };
+}
 export const LEVERAGED_SLEEVE_SYMBOLS = new Set(["SOXL", "TQQQ", "SQQQ", "SOXS"]);
 
 export interface LeveragedSleevePosition {

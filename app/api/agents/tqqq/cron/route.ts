@@ -73,7 +73,7 @@ const NO_AV_FALLBACK = async () => [];
 // beta; same 30-min quote age, 2x ATR stop / 3x ATR target geometry as SOXL.
 // No semiconductorCapPct equivalent — capacity is the shared sleeve headroom.
 const TQQQ_POLICY: TqqqPolicy = {
-  version: "tqqq-paper-entry-v1",
+  version: "tqqq-paper-entry-v2",
   maxQuoteAgeMs: 30 * 60 * 1000,
   maxSpreadBps: 50,
   maxMonitorAgeMs: 24 * 60 * 60 * 1000,

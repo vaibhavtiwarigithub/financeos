@@ -26,8 +26,8 @@ describe("SQQQ lifecycle contract", () => {
     expect(planSqqqEntry({ ...entry, structuralStop: 70 })).toMatchObject({ ok: false, reason: "stop_risk_exceeded" });
   });
   it("clamps size to the shared 4-way sleeve headroom, not just its own cap", () => {
-    expect(planSqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 480 }] }))
-      .toMatchObject({ ok: true, maxNotional: 20 });
+    expect(planSqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 450 }] }))
+      .toMatchObject({ ok: true, maxNotional: 50 });
   });
   it("denies entry when the sleeve is already full (across any of the four symbols)", () => {
     expect(planSqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "TQQQ", marketValue: 500 }] }))

@@ -1,5 +1,5 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
-import { leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
+import { leveragedPaperEntrySize, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Mirrors tqqq-lifecycle.ts exactly. Buying shares of SQQQ (inverse 3x
  * Nasdaq-100) is an ordinary LONG position in that instrument -- not a
@@ -70,7 +70,8 @@ export function planSqqqEntry(input: {
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };
   const riskCapacity = input.nav * p.riskBudgetPct / stopPct;
   const maxNotional = Math.min(input.cash, headroom.headroom, riskCapacity);
-  if (maxNotional <= 0) return { ok: false, reason: "no_capacity" };
+  const size = leveragedPaperEntrySize(input.nav, maxNotional);
+  if (!size.ok) return size;
   return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };
 }
 

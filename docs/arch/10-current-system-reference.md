@@ -162,6 +162,15 @@ count is evidence to change buy policy.
 
 ## 6. Benchmarks and performance truth
 
+US and India live pages now use the paper chart's market-local benchmark choices
+and exact-session arithmetic, but read only recorded live account equity. They
+hold account membership fixed, mark missing observations as gaps and state real
+coverage/staleness. No paper proxy or backcast from current holdings fills missing
+live history. Deposits, withdrawals and transfers are not recorded sufficiently
+to compute investment return: the live line is explicitly unadjusted account-
+value change and no live outperformance badge is shown. Cash-flow-adjusted live
+performance requires a separate verified cash-flow/valuation contract.
+
 Benchmarks are market-local and session-labelled. US and India collectors run at
 their own post-close times with bounded retries. A run is complete only when every
 enabled benchmark reaches that market's expected session; otherwise it is partial

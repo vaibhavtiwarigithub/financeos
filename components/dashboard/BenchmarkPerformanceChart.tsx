@@ -15,7 +15,7 @@ const T = {
 const COLORS = { portfolio: "#6366F1", bench: "#9B9EA8" };
 
 type Market = "us" | "india";
-type Timeframe = "1W" | "1M" | "YTD" | "1Y" | "All";
+type Timeframe = "1D" | "1W" | "1M" | "3M" | "YTD" | "1Y" | "All";
 const TIMEFRAMES: Timeframe[] = ["1W", "1M", "YTD", "1Y", "All"];
 
 interface SeriesRow { date: string; nav: number | null; bench_nav: number | null }
@@ -58,8 +58,10 @@ const DAY = 86_400_000;
 function cutoffFor(tf: Timeframe): number | null {
   const now = Date.now();
   switch (tf) {
+    case "1D":  return now - 2 * DAY;
     case "1W":  return now - 7 * DAY;
     case "1M":  return now - 30 * DAY;
+    case "3M":  return now - 90 * DAY;
     case "1Y":  return now - 365 * DAY;
     case "YTD": return new Date(new Date().getFullYear(), 0, 1).getTime();
     case "All": return null;
@@ -90,7 +92,12 @@ const CARD: React.CSSProperties = {
 // the first point inside the selected window, so every timeframe reads "how am I
 // doing vs the comparator over THIS period". Display selection is persisted by
 // the server but never changes the governed primary benchmark used by learning.
-export default function BenchmarkPerformanceChart({ market = "us" }: { market?: Market }) {
+export default function BenchmarkPerformanceChart({ market = "us", book = "paper", accounts, refreshKey = 0 }: {
+  market?: Market; book?: "paper" | "live"; accounts?: string[]; refreshKey?: number;
+}) {
+  const isLive = book === "live";
+  const accountKey = accounts == null ? null : [...accounts].sort().join(",");
+  const [liveCoverage, setLiveCoverage] = useState<{ accountCount: number; incompleteSessions: number; invalidRows: number } | null>(null);
   const [series, setSeries] = useState<SeriesRow[]>([]);
   const [benchmarks, setBenchmarks] = useState<BenchmarkOption[]>([]);
   const [selectedBenchmark, setSelectedBenchmark] = useState<BenchmarkOption | null>(null);
@@ -108,14 +115,18 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     setErr(null);
     try {
       const suffix = benchmarkId ? `&benchmarkId=${encodeURIComponent(benchmarkId)}` : "";
-      const response = await fetch(`/api/portfolio/performance-series?market=${market}${suffix}`, { cache: "no-store" });
+      const accountSuffix = isLive && accountKey != null ? `&accounts=${encodeURIComponent(accountKey)}` : "";
+      const response = await fetch(`/api/portfolio/performance-series?market=${market}&book=${book}${accountSuffix}${suffix}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || data?.error) throw new Error(data?.error ?? "performance_series_failed");
+      if (isLive && (data?.book !== "live" || data?.metric_kind !== "unadjusted_account_equity_change"))
+        throw new Error("Live chart refused an incompatible portfolio history contract.");
       if (seq !== requestSeq.current) return;
       setSeries(Array.isArray(data?.series) ? data.series : []);
       setBenchmarks(Array.isArray(data?.benchmarks) ? data.benchmarks : []);
       setSelectedBenchmark(data?.selected_benchmark ?? null);
       setFreshness(data?.benchmark_freshness ?? null);
+      setLiveCoverage(data?.live_coverage ?? null);
     } catch (e: any) {
       if (seq !== requestSeq.current) return;
       setErr(e?.message ?? "Failed to load performance history.");
@@ -128,7 +139,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
   useEffect(() => {
     void load();
     return () => { requestSeq.current += 1; };
-  }, [market]);
+  }, [market, book, accountKey, refreshKey]);
 
   async function chooseBenchmark(option: BenchmarkOption) {
     if (option.id === selectedBenchmark?.id || savingDefault) return;
@@ -140,7 +151,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       const response = await fetch("/api/portfolio/performance-series", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market, benchmarkId: option.id }),
+        body: JSON.stringify({ market, book, benchmarkId: option.id }),
       });
       const data = await response.json();
       if (!response.ok || !data?.ok) throw new Error(data?.error ?? "benchmark_preference_failed");
@@ -168,7 +179,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     // Arithmetic lives in lib/analytics/benchmark-window.ts so the
     // benchmark-independence rule is unit-testable. See that file for the
     // measured bug it prevents.
-    const w = buildBenchmarkWindow(series, cutoffFor(tf));
+    const w = buildBenchmarkWindow(series, cutoffFor(tf), { preservePortfolioGaps: isLive });
     return {
       chartData: w.points,
       portfolioFullWindow: w.portfolioReturnPct,
@@ -181,13 +192,13 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       comparisonStartDate: w.comparisonStartDate,
       comparisonEndDate: w.comparisonEndDate,
     };
-  }, [series, tf]);
+  }, [series, tf, isLive]);
 
   const hasBench = chartData.some(d => d.bench != null);
 
   const toggle = (
     <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-      {TIMEFRAMES.map(t => {
+      {(isLive ? ["1D", "1W", "1M", "3M", "YTD", "1Y", "All"] as Timeframe[] : TIMEFRAMES).map(t => {
         const active = t === tf;
         return (
           <button
@@ -226,8 +237,19 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
     <div style={{ marginBottom: "14px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
         <div>
-          <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>Portfolio vs {benchLabel}</div>
-          <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>Cumulative % return, rebased to each window · selection is your saved default</div>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: T.text }}>{isLive ? "Live account equity" : "Portfolio"} vs {benchLabel}</div>
+          <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{isLive
+            ? "Recorded account-value change and benchmark price change · rebased over matching dates"
+            : "Cumulative % return, rebased to each window · selection is your saved default"}</div>
+          {isLive && (
+            <div style={{ fontSize: "12px", color: T.yellow, marginTop: "8px", maxWidth: "740px", lineHeight: 1.5 }}>
+              Not cash-flow-adjusted: deposits, withdrawals and transfers can change account equity.
+              Trading return and outperformance are unavailable without verified cash-flow history.
+              Only recorded live snapshots are shown—no paper proxy or reconstruction from today’s holdings.
+              Gaps are not filled. Snapshots are not verified end-of-day valuations.
+              {liveCoverage && ` ${liveCoverage.accountCount} selected account(s); ${liveCoverage.incompleteSessions} incomplete session(s) excluded; ${liveCoverage.invalidRows} invalid observation(s).`}
+            </div>
+          )}
           {/*
             Always state the as-of session. Silence on a correct chart is what
             makes a closed market indistinguishable from a dead collector.
@@ -242,7 +264,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           )}
           {partialYtd && windowStartDate && (
             <div style={{ fontSize: "11px", color: T.yellow, marginTop: "5px" }}>
-              Paper history starts {formatSessionDate(windowStartDate)}; YTD shows available history only, not the full calendar year.
+              {isLive ? "Live" : "Paper"} history starts {formatSessionDate(windowStartDate)}; YTD shows available history only, not the full calendar year.
             </div>
           )}
           {freshness?.status === "stale" && (
@@ -307,7 +329,9 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       <div style={CARD}>
         {header}
         <div style={{ color: T.muted, fontSize: "13px", textAlign: "center", padding: "48px 0" }}>
-          No matched daily Portfolio/{benchLabel} history yet. Run the benchmark scorecard once or check back after its next daily run.
+          {isLive
+            ? `Not enough recorded live equity history for this window and account selection. Two complete observations are required. Broker sync builds history forward; it cannot recover missing historical account values.`
+            : `No matched daily Portfolio/${benchLabel} history yet. Run the benchmark scorecard once or check back after its next daily run.`}
         </div>
       </div>
     );
@@ -319,7 +343,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
 
       {/* The relative headline and both plotted returns use one exact shared interval. */}
       <div style={{ display: "flex", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "12px" }}>
-        {delta != null ? (
+        {!isLive && delta != null ? (
           <div style={{
             fontSize: "20px", fontWeight: 800, letterSpacing: "-0.01em",
             color: delta >= 0 ? T.green : T.red,
@@ -329,12 +353,12 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
             {delta >= 0 ? "+" : ""}{delta.toFixed(2)}% vs {benchLabel}
           </div>
         ) : (
-          <div style={{ fontSize: "12px", color: T.muted }}>{benchLabel} benchmark not recorded for this window yet.</div>
+          <div style={{ fontSize: "12px", color: T.muted }}>{isLive ? "Trading outperformance not calculated" : `${benchLabel} benchmark not recorded for this window yet.`}</div>
         )}
         <div style={{ fontSize: "12px", color: T.textSub }}>
           {portfolioMatched != null && benchLast != null ? (
             <>
-              Matched {formatSessionDate(comparisonStartDate) ?? "—"}–{formatSessionDate(comparisonEndDate) ?? "—"}: Portfolio <span style={{ color: portfolioMatched >= 0 ? T.green : T.red, fontWeight: 600 }}>
+              Matched {formatSessionDate(comparisonStartDate) ?? "—"}–{formatSessionDate(comparisonEndDate) ?? "—"}: {isLive ? "Account equity change" : "Portfolio"} <span style={{ color: isLive ? T.text : portfolioMatched >= 0 ? T.green : T.red, fontWeight: 600 }}>
                 {portfolioMatched >= 0 ? "+" : ""}{portfolioMatched.toFixed(2)}%
               </span>
               {"  ·  "}{benchLabel} <span style={{ color: benchLast >= 0 ? T.green : T.red, fontWeight: 600 }}>
@@ -342,7 +366,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
               </span>
             </>
           ) : (
-            <>Portfolio full selected window <span style={{ color: (portfolioFullWindow ?? 0) >= 0 ? T.green : T.red, fontWeight: 600 }}>
+            <>{isLive ? "Account equity change" : "Portfolio"} full selected window <span style={{ color: isLive ? T.text : (portfolioFullWindow ?? 0) >= 0 ? T.green : T.red, fontWeight: 600 }}>
               {(portfolioFullWindow ?? 0) >= 0 ? "+" : ""}{(portfolioFullWindow ?? 0).toFixed(2)}%
             </span></>
           )}
@@ -352,7 +376,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
       {portfolioMatched != null && portfolioFullWindow != null
         && (windowStartDate !== comparisonStartDate || windowEndDate !== comparisonEndDate) && (
         <div style={{ fontSize: "11px", color: T.muted, marginTop: "-6px", marginBottom: "10px" }}>
-          Portfolio full selected window ({formatSessionDate(windowStartDate) ?? "—"}–{formatSessionDate(windowEndDate) ?? "—"}): {portfolioFullWindow >= 0 ? "+" : ""}{portfolioFullWindow.toFixed(2)}%.
+          {isLive ? "Account equity change" : "Portfolio"} full selected window ({formatSessionDate(windowStartDate) ?? "—"}–{formatSessionDate(windowEndDate) ?? "—"}): {portfolioFullWindow >= 0 ? "+" : ""}{portfolioFullWindow.toFixed(2)}%.
         </div>
       )}
 
@@ -374,7 +398,7 @@ export default function BenchmarkPerformanceChart({ market = "us" }: { market?: 
           <Tooltip content={<CustomTooltip />} />
           <ReferenceLine y={0} stroke={T.muted} strokeDasharray="2 2" />
           <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
-          <Line type="monotone" dataKey="portfolio" name="Portfolio" stroke={COLORS.portfolio} strokeWidth={2.5} dot={false} />
+          <Line type={isLive ? "linear" : "monotone"} dataKey="portfolio" name={isLive ? "Account equity (includes cash flows)" : "Portfolio"} stroke={COLORS.portfolio} strokeWidth={2.5} dot={false} connectNulls={false} />
           {hasBench && (
             <Line type="monotone" dataKey="bench" name={benchLabel} stroke={COLORS.bench} strokeWidth={1.5}
               dot={false} strokeDasharray="4 2" connectNulls={false} />

@@ -551,6 +551,11 @@ function PositionCard({ p, plan, history, activity, historyLoading, onChart, cur
           <span style={{ fontSize: "12px", color: T.muted }}>{p.qty} shares</span>
         </div>
         <SymbolName name={name} style={{ marginTop: 0 }} />
+        {posValue > 0 && posValue < 0.01 && (
+          <div style={{ fontSize: "11px", color: T.amber }}>
+            Sub-cent position · kept in the ledger; not a meaningful allocation.
+          </div>
+        )}
         <div style={{ fontSize: "11px", color: openedAt ? T.textSub : T.amber }}>
           {openedAt ? `Bought ${openedAt}` : "Purchase time unavailable"}
         </div>

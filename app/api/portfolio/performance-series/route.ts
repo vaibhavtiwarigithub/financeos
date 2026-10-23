@@ -17,6 +17,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   canonicalPortfolioSnapshots,
+  canonicalLiveEquitySnapshots,
   mergePortfolioBenchmarkSeries,
   benchmarkFreshness,
   selectDisplayBenchmark,
@@ -28,8 +29,8 @@ export const dynamic = "force-dynamic";
 
 type Market = "us" | "india";
 
-function preferenceKey(market: Market) {
-  return `portfolio_default_benchmark_${market}`;
+function preferenceKey(market: Market, book: "paper" | "live" = "paper") {
+  return book === "live" ? `live_portfolio_default_benchmark_${market}` : `portfolio_default_benchmark_${market}`;
 }
 
 function isMarket(value: unknown): value is Market {
@@ -39,8 +40,11 @@ function isMarket(value: unknown): value is Market {
 export async function GET(req: NextRequest) {
   // Viewer-safe: read-only over already-persisted tables. PATCH below stays
   // owner-only because it writes the owner's saved benchmark preference.
-  const { gate } = await requireViewerOrOwner(req);
+  const bookParam = req.nextUrl.searchParams.get("book") ?? "paper";
+  const gate = bookParam === "live" ? await requireOwner() : (await requireViewerOrOwner(req)).gate;
   if (gate) return gate;
+  if (bookParam !== "paper" && bookParam !== "live") return NextResponse.json({ error: "invalid_book" }, { status: 400 });
+  const book = bookParam;
 
   const marketParam = req.nextUrl.searchParams.get("market");
   if (!isMarket(marketParam)) {
@@ -56,7 +60,7 @@ export async function GET(req: NextRequest) {
       .eq("enabled", true)
       .order("is_primary", { ascending: false })
       .order("label", { ascending: true }),
-    svc.from("app_settings").select("value").eq("key", preferenceKey(market)).maybeSingle(),
+    svc.from("app_settings").select("value").eq("key", preferenceKey(market, book)).maybeSingle(),
   ]);
   if (benchmarkError) return NextResponse.json({ error: benchmarkError.message }, { status: 500 });
   if (preferenceError) return NextResponse.json({ error: preferenceError.message }, { status: 500 });
@@ -75,7 +79,13 @@ export async function GET(req: NextRequest) {
   let observationRows: any[];
   try {
     [portfolioRows, observationRows] = await Promise.all([
-      fetchAllRows((from, to) => svc.from("paper_performance")
+      book === "live" ? fetchAllRows((from, to) => {
+        let query = svc.from("live_performance")
+          .select("account_id,date,equity,market,currency,created_at")
+          .order("date", { ascending: true }).order("account_id", { ascending: true });
+        query = market === "us" ? query.or("market.is.null,market.eq.us") : query.eq("market", "india");
+        return query.range(from, to);
+      }, `recorded ${market} live equity`) : fetchAllRows((from, to) => svc.from("paper_performance")
         .select("id,date,nav,bench_nav,snapshot_type,tainted,updated_at")
         .eq("market", market)
         .eq("snapshot_type", "eod")
@@ -95,23 +105,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "performance history read failed" }, { status: 500 });
   }
 
-  const canonicalRows = canonicalPortfolioSnapshots(portfolioRows as any[]);
+  // An explicit empty selection means no accounts, never "all accounts".
+  const accountsParam = req.nextUrl.searchParams.get("accounts");
+  const requestedAccounts = accountsParam == null ? undefined : accountsParam.split(",").map(s => s.trim()).filter(Boolean);
+  const live = book === "live" ? canonicalLiveEquitySnapshots(portfolioRows, market, requestedAccounts) : null;
+  const canonicalRows = book === "paper" ? canonicalPortfolioSnapshots(portfolioRows as any[]) : [];
 
   let levels = observationRows.map((row: any) => ({ date: String(row.date), close: row.close == null ? null : Number(row.close) }));
   // The primary ledger predates benchmark_price_observations. Preserve an
   // honest fallback while old deployments/backfills catch up; secondary rows
   // never use paper_performance.bench_nav because it contains the primary only.
-  if (!levels.length && selected.is_primary) {
+  if (book === "paper" && !levels.length && selected.is_primary) {
     levels = canonicalRows.map((row: any) => ({
       date: String(row.date),
       close: row.bench_nav == null ? null : Number(row.bench_nav),
     }));
   }
-  const portfolio = canonicalRows.map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) }));
-  const series = mergePortfolioBenchmarkSeries(
-    portfolio,
-    levels,
-  );
+  const portfolio = live?.series ?? canonicalRows.map((row: any) => ({ date: String(row.date), nav: row.nav == null ? null : Number(row.nav) }));
+  // Insert missing live sessions as gaps, not interpolated equity or a paper proxy.
+  const liveDates = book === "live" && portfolio.length ? [...new Set([
+    ...portfolio.map(row => row.date),
+    ...levels.filter(row => row.date >= portfolio[0].date && row.date <= portfolio[portfolio.length - 1].date).map(row => row.date),
+  ])].sort() : null;
+  const liveNavs = new Map(portfolio.map(row => [row.date, row.nav]));
+  const series = mergePortfolioBenchmarkSeries(liveDates ? liveDates.map(date => ({ date, nav: liveNavs.get(date) ?? null })) : portfolio, levels);
   // Absolute freshness needs the exchange calendar: a series ending Friday is
   // correct all weekend and through a Monday holiday. Without this the chart
   // cannot tell "market closed" from "collector died".
@@ -125,6 +142,10 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     market,
+    book,
+    metric_kind: book === "live" ? "unadjusted_account_equity_change" : "paper_nav_return",
+    cash_flow_adjusted: book === "live" ? false : null,
+    live_coverage: live ? { accountCount: live.accountCount, incompleteSessions: live.incompleteSessions, invalidRows: live.invalidRows } : null,
     benchmarks,
     selected_benchmark: selected,
     series,
@@ -146,6 +167,7 @@ export async function PATCH(req: NextRequest) {
   if (!isMarket(body?.market) || typeof body?.benchmarkId !== "string") {
     return NextResponse.json({ error: "market_and_benchmarkId_required" }, { status: 400 });
   }
+  if (body.book != null && body.book !== "paper" && body.book !== "live") return NextResponse.json({ error: "invalid_book" }, { status: 400 });
 
   const svc = createServiceClient();
   const { data: benchmark, error: benchmarkError } = await svc.from("benchmarks")
@@ -158,7 +180,7 @@ export async function PATCH(req: NextRequest) {
   if (!benchmark) return NextResponse.json({ error: "benchmark_not_enabled_for_market" }, { status: 400 });
 
   const { error } = await svc.from("app_settings").upsert({
-    key: preferenceKey(body.market),
+    key: preferenceKey(body.market, body.book ?? "paper"),
     value: body.benchmarkId,
     updated_at: new Date().toISOString(),
   }, { onConflict: "key" });

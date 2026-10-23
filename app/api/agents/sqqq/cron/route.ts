@@ -60,7 +60,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 const NO_AV_FALLBACK = async () => [];
 
 const SQQQ_POLICY: SqqqPolicy = {
-  version: "sqqq-paper-entry-v1",
+  version: "sqqq-paper-entry-v2",
   maxQuoteAgeMs: 30 * 60 * 1000,
   maxSpreadBps: 50,
   maxMonitorAgeMs: 24 * 60 * 60 * 1000,

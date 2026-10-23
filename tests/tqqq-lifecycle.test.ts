@@ -26,9 +26,9 @@ describe("TQQQ lifecycle contract", () => {
     expect(planTqqqEntry({ ...entry, structuralStop: 70 })).toMatchObject({ ok: false, reason: "stop_risk_exceeded" });
   });
   it("clamps size to the shared SOXL+TQQQ sleeve headroom, not just its own cap", () => {
-    // SOXL already holds 480 of the 500 (5% of 10000) sleeve ceiling -> only 20 headroom left.
-    expect(planTqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 480 }] }))
-      .toMatchObject({ ok: true, maxNotional: 20 });
+    // SOXL already holds 450 of the 500 (5% of 10000) sleeve ceiling -> only 20 headroom left.
+    expect(planTqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 450 }] }))
+      .toMatchObject({ ok: true, maxNotional: 50 });
   });
   it("denies entry when the sleeve is already full", () => {
     expect(planTqqqEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 500 }] }))

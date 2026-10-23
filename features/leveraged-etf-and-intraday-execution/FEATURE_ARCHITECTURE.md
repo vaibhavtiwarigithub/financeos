@@ -1,5 +1,25 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Meaningful paper entry size — 2026-10-22, entry policy v2
+
+All four paper doors now apply the core constructor's existing 0.5%-of-NAV
+minimum viable position convention through `leveragedPaperEntrySize`, after
+cash, risk and combined sleeve capacity have reduced the candidate. A cash
+residual must not produce a new sub-cent position. The floor rejects the entry;
+it never increases an order, sells an unrelated holding, borrows cash or widens
+stops to force a buy. Invalid/nonfinite capacity also fails closed. All four
+cron policy versions advance to v2 for new fill provenance. The 5% combined
+SOXL/TQQQ/SQQQ/SOXS ceiling, rather than 5% per symbol, remains unchanged.
+
+This is an operational minimum consistent with existing construction, not a
+learned optimum. A hypothetical $10,000 paper book has a $50 minimum new sleeve
+entry and at most $500 combined entry-time sleeve capacity; smaller allocations
+can be rejected and cash retained. Existing historical sub-cent positions and
+fills remain real ledger records and monitored holdings. They are displayed as
+less than one cent rather than zero; no retrospective deletion, top-up or
+fabricated cleanup trade is performed. The separate live dollar lease is not
+derived from this paper rule and is unchanged.
+
 ## Decision-clock contract — 2026-10-22
 
 All four paper doors and the dormant shared live door now evaluate a fetched

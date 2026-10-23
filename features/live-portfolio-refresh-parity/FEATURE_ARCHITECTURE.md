@@ -1,5 +1,37 @@
 # Live portfolio refresh and market parity
 
+## Benchmark display correction — 2026-10-22
+
+This supersedes the older paper-proxy allowance below. The live chart reuses
+`BenchmarkPerformanceChart` and `/api/portfolio/performance-series?book=live`,
+with owner-only access and the same enabled market-local `benchmarks` choices
+and exact-session observation ledger as paper. Display preferences are separate
+for each book/market; the governed primary benchmark never changes. Both live
+markets use one wrapper, not a second chart/math implementation. Existing live
+performance endpoint delegates to this contract; it performs no provider fetch.
+
+Live history is **unadjusted recorded account equity**, not trading performance.
+The current ledger records no verified deposits, withdrawals or transfer series.
+It therefore cannot establish time-weighted return, alpha or outperformance;
+those claims/badges are withheld, with an explicit warning. No flow is inferred
+from an equity jump. No paper NAV, primary-only snapshot benchmark, or backcast
+from today's holdings substitutes for actual live history.
+
+The account set stays fixed for the selected window. A missing/invalid selected
+account invalidates that session instead of becoming a zero balance or using a
+stale carry-forward. Explicit empty selection means no accounts. US legacy-null
+market/currency rows are US-only; India requires its INR market scope. Reads are
+paginated and ordered; benchmark sessions without live observations are gaps,
+never interpolated portfolio values. Return arithmetic still rebases both
+visible lines over matching observations, but the live line is labelled account-
+equity change, not investment return. Freshness and actual coverage dates remain
+visible even when insufficient history leaves the chart empty.
+
+No schema, snapshot producer, broker connection, financial record, score, risk
+limit or live order is changed. Cash-flow collection and validated end-of-day
+valuations are prerequisites for a future true live-return comparison; this
+display repair does not claim they are built or recover missing history.
+
 **Status:** Implemented, pushed to `main`, and production-verified (`882563a0cbd18193c5939255f58f35a115af6b48`, 2026-10-19). Read-only broker/account access only. No order, account-routing, safety-threshold, or live-trading changes.
 
 ## Goal

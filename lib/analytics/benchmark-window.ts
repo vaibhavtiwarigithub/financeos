@@ -67,6 +67,7 @@ export function pctChange(value: number, base: number): number {
 export function buildBenchmarkWindow(
   series: readonly BenchmarkSeriesRow[],
   cutoffMs: number | null,
+  options: { preservePortfolioGaps?: boolean } = {},
 ): BenchmarkWindow {
   const inWindow = (r: BenchmarkSeriesRow) =>
     cutoffMs == null || new Date(r.date).getTime() >= cutoffMs;
@@ -95,9 +96,14 @@ export function buildBenchmarkWindow(
   const visibleRows = hasComparisonWindow
     ? portfolioRows.filter((r) => r.date >= overlap[0].date && r.date <= overlap[overlap.length - 1].date)
     : portfolioRows;
-  const points: BenchmarkWindowPoint[] = visibleRows.map((r) => ({
+  const plotRows = options.preservePortfolioGaps
+    ? series.filter(r => r.date >= visibleRows[0].date && r.date <= visibleRows[visibleRows.length - 1].date)
+      .slice().sort((a, b) => a.date.localeCompare(b.date))
+    : visibleRows;
+  const points: BenchmarkWindowPoint[] = plotRows.map((r) => ({
     date: r.date,
-    portfolio: hasComparisonWindow && overlapNavBase != null
+    portfolio: r.nav == null || !Number.isFinite(Number(r.nav)) || Number(r.nav) <= 0 ? null
+      : hasComparisonWindow && overlapNavBase != null
       ? pctChange(Number(r.nav), overlapNavBase)
       : pctChange(Number(r.nav), navBase),
     bench: r.bench_nav != null && overlapBenchBase != null

@@ -6,6 +6,24 @@ Records approved product, architecture, UX, technical, and business decisions.
 
 Only approved decisions belong here. Proposed decisions live in PROJECT_BUILD_LOG.md until approved.
 
+### 2026-10-22: Prevent paper dust and distinguish live equity from investment return
+
+Owner requested correction of sub-cent leveraged positions and misleading live
+benchmark charts, with standing authority to reassess bounded operating policy.
+New paper leveraged entries adopt the core constructor's 0.5%-NAV viable-position
+convention after cash/risk/sleeve clamps. It rejects rather than enlarges small
+orders; the combined 5% sleeve ceiling and independent live lease remain unchanged.
+This operational prior is not an empirically optimal sizing claim. Historical
+fills/positions are not deleted or topped up; sub-cent values display honestly.
+
+Both live-market charts reuse the paper comparator component and configured
+benchmark observation ledger, but never the paper portfolio. Account membership
+is fixed over the window; missing sessions remain gaps. Without verified cash-
+flow history, the live line is account-equity change, not trading return, and
+alpha/outperformance claims are withheld. This supersedes the earlier labelled
+India paper-proxy allowance. No financial record, account scope or live trading
+permission is changed. True cash-flow-adjusted live performance remains unbuilt.
+
 ### 2026-10-21: Direct MACD and forward-only formula lineage
 
 Status: Approved by owner request in this task (direct MACD, not another shadow).

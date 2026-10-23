@@ -12,6 +12,8 @@ const locale = (m: Mkt) => (m === "india" ? "en-IN" : "en-US");
 // fmtMoney(9979.65, "us") => "$9,979.65". Pass fractionDigits to control decimals.
 export function fmtMoney(n: number, market: Mkt, fractionDigits = 2): string {
   if (!Number.isFinite(n)) return `${symbol(market)}0`;
+  // A real sub-cent amount is not zero, even on a zero-decimal summary card.
+  if (n !== 0 && Math.abs(n) < 0.01) return `${n < 0 ? "-" : ""}<${symbol(market)}0.01`;
   const abs = Math.abs(n).toLocaleString(locale(market), {
     minimumFractionDigits: 0,
     maximumFractionDigits: fractionDigits,
@@ -24,6 +26,7 @@ export function fmtMoney(n: number, market: Mkt, fractionDigits = 2): string {
 //   US:    k (1e3) / M (1e6)                 →  $9.9k, $1.2M
 export function fmtMoneyAbbrev(n: number, market: Mkt): string {
   if (!Number.isFinite(n)) return `${symbol(market)}0`;
+  if (n !== 0 && Math.abs(n) < 0.01) return fmtMoney(n, market);
   const sym = symbol(market);
   const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);

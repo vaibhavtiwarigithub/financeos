@@ -112,7 +112,7 @@ const NO_AV_FALLBACK = async () => [];
 // the 25% max used for core equity stop rejection (semiconductorCapacity
 // separately enforces the 5% NAV notional ceiling via SOXL_MAX_NAV_FRACTION).
 const SOXL_POLICY: SoxlPolicy = {
-  version: "soxl-paper-entry-v1",
+  version: "soxl-paper-entry-v2",
   maxQuoteAgeMs: 30 * 60 * 1000,
   maxSpreadBps: 50,
   maxMonitorAgeMs: 24 * 60 * 60 * 1000, // monitorSoxl unused for now; kept for planSoxlEntry's shape

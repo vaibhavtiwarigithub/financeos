@@ -1,6 +1,6 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
 import { semiconductorCapacity, type SemiconductorHolding } from "./semiconductor-risk";
-import { leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
+import { leveragedPaperEntrySize, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Explicit paper experiment contract; thresholds are policy, not learned alpha.
  * A caller must persist the plan atomically with the fill and use the same
@@ -89,6 +89,8 @@ export function planSoxlEntry(input: {
   if (!headroom.ok) return headroom;
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };
   const maxNotional = Math.min(capacity.maxNotional, headroom.headroom);
+  const size = leveragedPaperEntrySize(input.nav, maxNotional);
+  if (!size.ok) return size;
   return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };
 }
 
