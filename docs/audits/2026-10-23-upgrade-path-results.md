@@ -32,7 +32,7 @@ block as the universe grew.
   it. Upgrade Path requests only the selected market, and the UI no longer
   separately fetches the all-market audit.
 - Applied service-only invoker RPC `get_upgrade_path_label_coverage(text)` in
-  migration `20261023134622`. It aggregates all matured horizons in PostgreSQL
+  migration `20261023135524`. It aggregates all matured horizons in PostgreSQL
   and uses the existing explicit-context/legacy-source entry cohort. The raw
   h10 geometry read remains bounded and reports failure explicitly.
 - Added a deterministic completion assessment: repair, implement a comparison,
@@ -60,7 +60,8 @@ block as the universe grew.
   empty/inactive views, one false stale schedule. Existing source counts include
   council US 1,369 / India 511; setup experts US 18,402 / India 7,483.
 - Latest council batch: 88 cells per market, all insufficient. The US fixed
-  formula batch has 12 cells: three descriptive, nine insufficient. India has
+  formula batch has 12 cells: three hindsight-descriptive, nine insufficient;
+  all six forward cells are insufficient and no cell meets adoption. India has
   12 insufficient. Insider US has two insufficient; India event has 24
   insufficient. These are not adoption passes or portfolio-return improvements.
 - Attribution ledger: 21 measured rows, all synthetic international allocation.
@@ -77,8 +78,8 @@ block as the universe grew.
   RLS/no-policy findings, seven existing search-path warnings, and the existing
   extension, authenticated-definer and leaked-password-protection warnings.
   This migration adds none; this is not a clean bill of health for the entire DB.
-- TypeScript passed. Full suite: 4,322 passed, eight skipped, zero failed.
-  Focused final repair suite: 68 passed. Isolated Next build generated all 78
+- TypeScript passed. Full suite: 4,325 passed, eight skipped, zero failed.
+  Focused final repair suite: 71 passed. Isolated Next build generated all 78
   pages and exited zero; its generated TypeScript-path edits were restored.
   Focused coverage includes authorization before client creation, invalid
   market, separate batch/set/market, insufficient labels, stale/read/cap failures,
@@ -87,6 +88,26 @@ block as the universe grew.
 - Production build and browser/deployment results are recorded below after
   verification. No manual trading collector, paid model call, order, score,
   threshold, roster, risk setting or position was changed.
+
+### Production-load correction
+
+The first deployed browser check exposed a real statement timeout in the new
+aggregate and older label-watermark reads. An isolated successful query was not
+sufficient proof. `pg_stat_statements` confirmed watermark queries approaching
+the existing eight-second timeout, and the raw h10 query also lacked its matching
+index. Applied migrations `20261023142528` (fixed parameter-bound aggregate
+replanning) and `20261023143422` (matured-at and horizon/id indexes). No timeout,
+RLS, privilege or statistical gate was relaxed. The watermark now uses an
+index-only scan; EXPLAIN measured 2.49ms. Warm US aggregate API reads measured
+221ms with unchanged 27,720 all-horizon / 8,223 India totals. Cold transport and
+other readers still require deployed end-to-end verification, not a guaranteed
+latency claim.
+
+The aggregate is read before the legacy status fan-out; collection probes run
+in batches of four. A concurrency test verifies that bound. Read failures now
+hide numerical progress rather than displaying zero labels or a zero-filled
+progress bar. Migration filenames match the actual versions assigned by the
+production runner, not the earlier locally generated timestamps.
 
 ## Work still required, not hidden as collecting
 

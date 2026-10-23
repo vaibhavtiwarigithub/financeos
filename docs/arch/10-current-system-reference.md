@@ -284,6 +284,10 @@ separate h10 geometry reader remains bounded and fails explicitly. Repeated
 observations on a date remain an inference warning; they do not cause collection
 to fail merely because more symbols were researched. Statistical gates remain
 unchanged. Daily and weekly jobs use their own freshness bounds.
+Label watermark/h10 indexes and parameter-bound aggregate planning keep this
+read model separate from raw full-history downloads. Collection-health probes
+are bounded to four concurrent reads, and failed evidence reads hide numerical
+progress instead of manufacturing zero coverage.
 
 ## 8. Crypto lane
 

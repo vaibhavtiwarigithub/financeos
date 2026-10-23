@@ -48,4 +48,12 @@ describe("Upgrade Path completion API", () => {
     expect(body.programs[0].available).toBe(false);
     expect(body.programs[0].blockers[0]).toContain("DB read failed");
   });
+  it("does not turn a hindsight fit into forward analysis readiness", async () => {
+    const id = "score-variants-forward-shadow";
+    mock.statuses.mockResolvedValue([{ ...base, id, attribution: { comparisonType: "operational_only", state: "not_attributable", reason: "Formula diagnostic" } }]);
+    mock.evaluations.mockResolvedValue([{ id, cells: [{ sample: "hindsight", classification: "measured_descriptive" }, { sample: "forward", classification: "insufficient_evidence" }], error: null, href: "/dashboard/learning", evaluatedAt: new Date().toISOString(), batchId: "batch" }]);
+    const body = await (await GET(new NextRequest("https://example.test/api/upgrade-path?market=us"))).json();
+    expect(body.programs[0].lifecycle).toBe("collecting");
+    expect(body.programs[0].benefitEvidence).toContain("0 forward descriptive, 1 hindsight descriptive");
+  });
 });

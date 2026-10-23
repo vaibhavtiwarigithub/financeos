@@ -20,8 +20,9 @@ export async function GET(req: NextRequest) {
   }
 
   const svc = createServiceClient();
-  const [statuses, collectionHealth, evaluations] = await Promise.all([
-    getShadowProgramStatuses(svc, market), loadShadowCollectionHealth(svc, market),
+  const statuses = await getShadowProgramStatuses(svc, market);
+  const [collectionHealth, evaluations] = await Promise.all([
+    loadShadowCollectionHealth(svc, market),
     loadStoredShadowEvaluations(svc, market),
   ]);
   const collection = collectionHealth.programs;
@@ -30,14 +31,16 @@ export async function GET(req: NextRequest) {
     if (status.lifecycle === "not_applicable") return { ...status, resultHref: null };
     const evaluation = evaluations.find(result => result.id === program.id);
     if (!evaluation) return { ...status, resultHref: null };
-    const descriptive = evaluation.cells.filter(cell => cell.classification === "measured_descriptive").length;
+    const descriptive = evaluation.cells.filter(cell => cell.classification === "measured_descriptive" && cell.sample !== "hindsight").length;
+    const hindsight = evaluation.cells.filter(cell => cell.classification === "measured_descriptive" && cell.sample === "hindsight").length;
+    const insufficient = evaluation.cells.filter(cell => cell.classification === "insufficient_evidence").length;
     return { ...status, resultHref: evaluation.href,
       available: status.available && !evaluation.error,
       deployment: evaluation.error ? { ...status.deployment, state: "status_unavailable" as const, summary: "Source collection may be healthy, but evaluator output could not be verified.", whyNotNextStage: evaluation.error } : status.deployment,
       lifecycle: evaluation.error ? "blocked" as const : descriptive ? "ready_for_review" as const : "collecting" as const,
       latestAt: evaluation.evaluatedAt ?? status.latestAt,
       benefitVerdict: "insufficient" as const,
-      benefitEvidence: `${evaluation.cells.length} stored market-local cells in the latest evaluation batch; ${descriptive} descriptive, ${evaluation.cells.length - descriptive} insufficient. Predictive IC is not portfolio P&L or permission to enable.`,
+      benefitEvidence: `${evaluation.cells.length} stored market-local cells in the latest evaluation batch; ${descriptive} forward descriptive, ${hindsight} hindsight descriptive (not forward readiness), ${insufficient} insufficient. Predictive IC is not portfolio P&L or permission to enable.`,
       blockers: evaluation.error ? [`Evaluator output unavailable: ${evaluation.error}`] : evaluation.cells.length ? ["Review paired cohorts, exact versions and horizons in Learning. Statistical descriptions do not establish portfolio-level benefit."] : ["No stored evaluation batch exists for this market; inspect the scheduled evaluator, not just source collection."],
       nextAction: evaluation.error ? "Repair the existing evaluator output read." : evaluation.cells.length ? "Open the existing Learning result table; compare the declared baseline and challenger on identical cohorts before proposing adoption." : "Verify the existing evaluator writes a market-local batch; do not run paid inference to manufacture evidence.",
       details: [...status.details, `Stored evaluation: ${evaluation.evaluatedAt ?? "none"}; batch ${evaluation.batchId ?? "none"}. No new calculation was run.`, ...evaluation.cells.slice(0, 8).map(evaluationCellDescription), ...(evaluation.cells.length > 8 ? ["Remaining cells are available in the linked Learning result table; the eight rows above are a preview, not a selected winner."] : [])],

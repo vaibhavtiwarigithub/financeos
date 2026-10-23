@@ -50,7 +50,8 @@ export async function loadShadowCollectionHealth(sb: any, onlyMarket?: "us" | "i
   const now = Date.now();
   const cronResult = await sb.rpc("get_shadow_cron_health");
   const cronRows = (cronResult.data ?? []) as CronEvidence[];
-  const programs = (await Promise.all(SHADOW_PROGRAMS.flatMap((program) => program.markets.filter(market => !onlyMarket || market === onlyMarket).map(async (market) => {
+  const entries = SHADOW_PROGRAMS.flatMap(program => program.markets.filter(market => !onlyMarket || market === onlyMarket).map(market => ({ program, market })));
+  const readProgram = async ({ program, market }: typeof entries[number]) => {
       const probe = SHADOW_EVIDENCE_PROBES[program.id];
       const base = {
         id: program.id,
@@ -109,7 +110,13 @@ export async function loadShadowCollectionHealth(sb: any, onlyMarket?: "us" | "i
     } catch (error: any) {
       return { ...base, table: probe.table, verdict: "unknown", note: String(error?.message ?? error) };
     }
-  })))).flat();
+  };
+  // Exact counts can scan shared ledgers. Bound the audit fan-out instead of
+  // competing with research and label maturation for dozens of DB connections.
+  const programs: Awaited<ReturnType<typeof readProgram>>[] = [];
+  for (let offset = 0; offset < entries.length; offset += 4) {
+    programs.push(...await Promise.all(entries.slice(offset, offset + 4).map(readProgram)));
+  }
 
   const tally = programs.reduce<Record<string, number>>((acc, row: any) => {
     acc[row.verdict] = (acc[row.verdict] ?? 0) + 1;

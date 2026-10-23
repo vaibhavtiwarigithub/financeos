@@ -2,8 +2,12 @@
 
 Current repair (October 23): shared market-local collection projection, completion
 queue and stored evaluator result links are implemented. Exact label-summary RPC
-`20261023134622` is applied in production with service-only execution. Release
+`20261023135524` is applied in production with service-only execution. Release
 verification is recorded in `docs/audits/2026-10-23-upgrade-path-results.md`.
+Production-load follow-ups `20261023142528` and `20261023143422` retain that
+contract while replanning bound aggregates and indexing label-watermark/h10
+reads. Collection probes are limited to four concurrent queries; unavailable
+evidence never renders as zero numerical progress.
 Production evidence at audit: 21 measured synthetic-allocation rows; 20 US ATR
 snapshots through October 22 with one complete ten-session block, not two. No
 qualified Kairos paired-book attribution result was found. Missing replay producers

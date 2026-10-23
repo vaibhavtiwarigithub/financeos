@@ -421,6 +421,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   const since7 = new Date(Date.now() - 7 * 86400_000).toISOString();
   const since45 = new Date(Date.now() - 45 * 86400_000).toISOString();
   const since90 = new Date(Date.now() - 90 * 86400_000).toISOString();
+  // Run the summary before the legacy fan-out, not in competition with dozens
+  // of table scans. Errors remain explicit; no retry or empty-evidence fallback.
+  const labelSummaryRes = await svc.rpc("get_upgrade_path_label_coverage", { p_market: market });
 
   const [
     cronRes,
@@ -455,7 +458,6 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     marketRegimeRunRes,
     fundamentalFactsRes,
     labelCoverageRes,
-    labelSummaryRes,
     dimensionDiagnosticRunRes,
     horizonExtensionRes,
     timeReviewObservationRes,
@@ -563,7 +565,6 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     // Matured decision labels. The join is inner on purpose: an observation with
     // no label has not matured and must not count toward coverage.
     loadLabelCoverageRows(svc, market),
-    svc.rpc("get_upgrade_path_label_coverage", { p_market: market }),
     svc.from("dimension_diagnostic_runs")
       .select("id,status,horizon_days,input_observation_count,distinct_session_count,created_at")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(100),
@@ -883,7 +884,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.available = !labelCoverageRes.error && !labelSummaryRes.error;
       if (!status.available) {
         status.lifecycle = "blocked";
-        status.blockers.unshift(`Label evidence unavailable: ${labelCoverageRes.error?.message ?? labelSummaryRes.error?.message ?? "unknown read failure"}`);
+        status.blockers = [`Label evidence unavailable: ${labelCoverageRes.error?.message ?? labelSummaryRes.error?.message ?? "unknown read failure"}`];
+        status.benefitEvidence = "Label evidence could not be read completely; geometry coverage and readiness are unavailable.";
+        status.nextAction = "Repair the label evidence read before interpreting geometry or changing exits.";
       }
       return status;
     }
@@ -1041,7 +1044,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.available = !labelSummaryRes.error;
       if (!status.available) {
         status.lifecycle = "blocked";
-        status.blockers.unshift(`Label coverage summary unavailable: ${labelSummaryRes.error?.message ?? "unknown read failure"}`);
+        status.blockers = [`Label coverage summary unavailable: ${labelSummaryRes.error?.message ?? "unknown read failure"}`];
+        status.benefitEvidence = "Coverage read failed. Label counts and evidence maturity are unavailable, not zero.";
+        status.details = ["The summary read failed; no label count, date count or maturity verdict is inferred."];
         status.nextAction = "Repair the summary read; this is not an absence of matured labels.";
       }
       return status;

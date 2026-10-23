@@ -53,6 +53,8 @@ export function assessCompletion(program: ShadowProgramStatus, source?: Collecti
   if (program.attribution.state === "measured") return result("result_review", 2,
     program.attribution.measurementScope === "synthetic_diagnostic" ? "Synthetic result · not Kairos portfolio" : "Paired portfolio result available",
     `${program.attribution.reason} Historical result; all program-specific validation and activation gates remain separate.`);
+  if (["exogenous-risk", "pit-fundamental-qualification"].includes(program.id))
+    return result("build_comparison", 1, "Implement the declared qualification assessment", program.blockers.join(" ") || "Source collection is not a completed qualification assessment.");
   if (program.lifecycle === "ready_for_review") return result("analysis_review", 2, "Analysis available · not ready to enable", program.blockers.join(" ") || "Review the declared analysis, not a deployment permission.");
   if (program.blockers.some(blocker => blocker.includes("no complete result-to-adoption assessment")))
     return result("build_comparison", 1, "Connect the existing evaluator", "Source rows are arriving, but the result assessment is not connected to this page. This is implementation work, not a need to wait for more rows.");

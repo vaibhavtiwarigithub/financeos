@@ -185,6 +185,7 @@ function TextBlock({ label, text }: { label: string; text: string }) {
   </div>;
 }
 function ProgressBar({ program }: { program: ShadowProgramStatus }) {
+  if (!program.available) return <div style={{ color: T.yellow, fontSize: 12 }}>Evidence unavailable · no count or readiness inferred.</div>;
   const target = program.progress.target;
   const pct = target == null ? null : Math.min(100, Math.round((program.progress.completed / Math.max(1, target)) * 100));
   return <div>
@@ -430,9 +431,15 @@ export default function UpgradePathPage() {
   const { market } = useMarket();
   const mobile = useIsMobile();
   const requestSequence = useRef(0);
+  const inFlight = useRef<{ market: string; sequence: number } | null>(null);
 
   const load = useCallback(async () => {
+    // Do not invalidate a slow response with the next polling tick or flood
+    // the database with overlapping full-audit requests for the same market.
+    if (inFlight.current?.market === market) return;
     const sequence = ++requestSequence.current;
+    inFlight.current = { market, sequence };
+    setLoading(true);
     try {
       const [response, covarianceResponse] = await Promise.all([
         fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" }),
@@ -454,6 +461,7 @@ export default function UpgradePathPage() {
       if (sequence !== requestSequence.current) return;
       setError(reason instanceof Error ? reason.message : "Status request failed");
     } finally {
+      if (inFlight.current?.sequence === sequence) inFlight.current = null;
       if (sequence === requestSequence.current) setLoading(false);
     }
   }, [market]);
@@ -491,7 +499,7 @@ export default function UpgradePathPage() {
           Collection, analysis and portfolio benefit are separate. An analysis floor is not permission to enable. Missing comparisons need implementation—not endless data collection. Negative results are useful; guaranteed improvement is not promised.
         </p>
       </div>
-      <button type="button" onClick={load} title="Refresh status" aria-label="Refresh status" style={{
+      <button type="button" onClick={load} disabled={loading} aria-busy={loading} title="Refresh status" aria-label="Refresh status" style={{
         width: "36px", height: "36px", borderRadius: "6px", border: `1px solid ${T.border}`,
         background: T.card, color: T.text, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0,
       }}><RefreshCw size={16} /></button>

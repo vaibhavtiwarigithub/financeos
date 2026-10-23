@@ -35,6 +35,9 @@ describe("Upgrade Path completion contract", () => {
     expect(applyCollectionEvidence(p, source)).toBe(p);
     expect(assessCompletion(p, source, now).state).toBe("collecting");
   });
+  it("does not leave unfinished qualification programs collecting forever", () => {
+    expect(assessCompletion(program({ id: "exogenous-risk", lifecycle: "collecting", blockers: ["No regime evaluator"] }), source, now).state).toBe("build_comparison");
+  });
   it("does not label a missing comparison as collecting or deploy-ready", () => {
     const p = program({ lifecycle: "ready_for_review", attribution: { comparisonType: "matched_replay", state: "producer_missing", reason: "No sized baseline/variant replay" } as any });
     expect(assessCompletion(p, source, now)).toMatchObject({ state: "build_comparison", reason: "No sized baseline/variant replay", canEnable: false });
@@ -67,7 +70,7 @@ describe("Upgrade Path completion contract", () => {
     expect(evaluateShadowLiveness(input).verdict).toBe("stale_schedule_run");
   });
   it("has a bounded geometry read and a separately aggregated, server-only all-horizon summary", () => {
-    const sql = readFileSync("supabase/migrations/20261023134622_upgrade_path_label_coverage_summary.sql", "utf8");
+    const sql = readFileSync("supabase/migrations/20261023135524_upgrade_path_label_coverage_summary.sql", "utf8");
     expect(sql).toContain("security invoker set search_path = ''");
     expect(sql).toContain("from public,anon,authenticated");
     expect(sql).toContain("to service_role"); expect(sql).toContain("l.matured_at<=now()");
@@ -76,5 +79,17 @@ describe("Upgrade Path completion contract", () => {
     const status = readFileSync("lib/shadows/status.ts", "utf8");
     expect(status).toContain('.eq("horizon_days", PRIMARY_HORIZON_DAYS)');
     expect(status).toContain('svc.rpc("get_upgrade_path_label_coverage", { p_market: market })');
+    const optimized = readFileSync("supabase/migrations/20261023142528_upgrade_path_label_summary_query_plan.sql", "utf8");
+    expect(optimized).toContain("return query execute $coverage$");
+    expect(optimized).toContain("$coverage$ using p_market");
+    expect(optimized).toContain("security invoker set search_path = ''");
+    expect(optimized).not.toContain("statement_timeout");
+    const indexes = readFileSync("supabase/migrations/20261023143422_upgrade_path_label_read_indexes.sql", "utf8");
+    expect(indexes).toContain("(matured_at desc)");
+    expect(indexes).toContain("(horizon_days, id)");
+    const page = readFileSync("components/dashboard/UpgradePathPage.tsx", "utf8");
+    expect(page).toContain("if (inFlight.current?.market === market) return");
+    expect(page).toContain("inFlight.current?.sequence === sequence");
+    expect(page).toContain("disabled={loading} aria-busy={loading}");
   });
 });
