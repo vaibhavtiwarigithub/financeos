@@ -144,7 +144,8 @@ export default function BenchmarkPerformanceChart({ market = "us", book = "paper
   async function chooseBenchmark(option: BenchmarkOption) {
     if (option.id === selectedBenchmark?.id || savingDefault) return;
     const previous = selectedBenchmark;
-    setSelectedBenchmark(option);
+    // Keep the old label paired with its old series until load commits both.
+    // Optimistic relabelling would briefly show VOO values under a QQQ label.
     setSavingDefault(true);
     setErr(null);
     try {

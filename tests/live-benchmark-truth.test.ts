@@ -86,5 +86,6 @@ describe("live chart is the shared comparator, not fabricated historical perform
     expect(chart).toContain('preservePortfolioGaps: isLive');
     expect(chart).toContain('connectNulls={false}');
     expect(chart).toContain("accounts=${encodeURIComponent(accountKey)}");
+    expect(chart).not.toContain("setSelectedBenchmark(option)");
   });
 });
