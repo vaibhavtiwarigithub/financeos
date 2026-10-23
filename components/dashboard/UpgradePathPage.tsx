@@ -6,6 +6,7 @@ import type { ShadowProgramStatus } from "@/lib/shadows/status";
 import type { ShadowLifecycle } from "@/lib/shadows/registry";
 import type { CompletionAssessment } from "@/lib/shadows/completion";
 import { MARKET_LABEL, useMarket } from "@/lib/market-context";
+import { isRealIsoDate } from "@/lib/date-only";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#2B2F3D",
@@ -153,6 +154,7 @@ function fmtNumber(value: number | null) {
 }
 function fmtDate(value: string | null) {
   if (!value) return "No evidence yet";
+  if (isRealIsoDate(value)) return `${value} · session`;
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function fmtPct(value: number | null) {

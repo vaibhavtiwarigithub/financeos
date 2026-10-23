@@ -91,5 +91,7 @@ describe("Upgrade Path completion contract", () => {
     expect(page).toContain("if (inFlight.current?.market === market) return");
     expect(page).toContain("inFlight.current?.sequence === sequence");
     expect(page).toContain("disabled={loading} aria-busy={loading}");
+    expect(page).toContain('import { isRealIsoDate } from "@/lib/date-only"');
+    expect(page).toContain('if (isRealIsoDate(value)) return `${value} · session`');
   });
 });

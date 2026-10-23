@@ -78,7 +78,7 @@ block as the universe grew.
   RLS/no-policy findings, seven existing search-path warnings, and the existing
   extension, authenticated-definer and leaked-password-protection warnings.
   This migration adds none; this is not a clean bill of health for the entire DB.
-- TypeScript passed. Full suite: 4,325 passed, eight skipped, zero failed.
+- TypeScript passed. Full suite: 4,328 passed, eight skipped, zero failed.
   Focused final repair suite: 71 passed. Isolated Next build generated all 78
   pages and exited zero; its generated TypeScript-path edits were restored.
   Focused coverage includes authorization before client creation, invalid
@@ -115,6 +115,23 @@ direct API proof read all 6,629 US rows in 2.51s and all 1,985 India rows in
 0.42s without error. This avoids rescanning every earlier joined row at each
 successive page. The page does not start another same-market poll while a read
 is in flight; changing markets still isolates responses by sequence.
+
+### Deployment and UI evidence
+
+Runtime `ac0104de` is on `main`; Vercel deployment
+`dpl_6hgmtwN9Eev66tweH1hyHbJRqhx8` is READY with both canonical production
+aliases. The final presentation change reuses `isRealIsoDate` and displays
+calendar-only observations as `YYYY-MM-DD · session`, rather than converting
+UTC midnight into the preceding local evening. It does not alter any timestamp,
+stored label or scoring formula. Its deployment is checked before handoff.
+
+The authenticated US page displayed the repaired completion queue and recovered
+label coverage. Anonymous Upgrade Path and source-health GETs returned 401.
+The browser bridge subsequently timed out twice while attempting India visual
+parity verification. That check and a final screenshot are **not verified**;
+no substitute synthetic image is presented as production proof. Both market
+data reads, shared-component contracts and authorization tests passed directly.
+Production rollout does not prove that missing performance programs are built.
 
 ## Work still required, not hidden as collecting
 
