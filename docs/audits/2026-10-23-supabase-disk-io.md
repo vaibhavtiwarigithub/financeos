@@ -70,3 +70,14 @@ failed. TypeScript exited zero. Security/performance advisor rule counts are
 unchanged after the additive indexes. Browser dashboard verification timed out;
 remaining I/O budget is not independently verified. Publication is to main;
 database changes are already live and do not depend on a Vercel runtime change.
+
+Main `77a733d1` deployed READY as `dpl_ETwajZ8ME1SUSJ42PyNDkicsgMcE` with
+the canonical production aliases. Its build surfaced a newly updated critical
+DOMPurify advisory affecting installed 3.4.16. A compatible transitive update to
+3.4.17 changes one package only and retains Mermaid 10.9.8. npm's production
+audit after the update has zero high/critical findings; two low Mermaid/KaTeX
+findings remain, with the offered fix requiring a Mermaid major upgrade.
+No exploitability of the specific DOM modes is asserted for Kairos. Source:
+https://github.com/advisories/GHSA-cg2g-xh64-v4q7 . Follow-up checks and deployment
+are verified separately; the database indexes are unaffected. Follow-up local
+verification again passed 4,372 tests / eight skipped / zero failed and tsc.
