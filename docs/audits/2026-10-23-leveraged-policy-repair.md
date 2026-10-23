@@ -134,6 +134,19 @@ migration, the first ten observed scheduled runs through 17:46 UTC were all
 `done`, without the earlier latest-signal timeouts. This is observed recovery,
 not a guarantee that a provider/database can never fail again.
 
-The later quote-provenance/fund-accounting follow-up is separately tested and
-published. Per-side timestamp persistence awaits the next natural L1 window;
-today's earlier observations retained only the qualified combined timestamp.
+The quote-provenance/fund-accounting follow-up `eaa553b9` is also on main;
+Vercel `dpl_2R33PCKoJsbfkyaQozumFjf3YtUL` is production READY with both
+canonical aliases. All four anonymous paper-door GETs again returned 401.
+Per-side timestamp persistence awaits the next natural L1 window; today's
+earlier observations retained only the qualified combined timestamp. The full
+suite on the final frozen source passed 4,368 tests, eight skipped, zero failed;
+TypeScript, scratch production build and staged secret scan passed. One earlier
+run failed the newly added unsupported-leverage test while its implementation
+was still being edited; isolated and full reruns on frozen source passed. That
+intermediate development run is not presented as a production test flake.
+
+The next natural SOXL run, at 18:10:12 UTC, returned `no_capacity` instead of
+`unclassified_portfolio_exposure`. Read-only portfolio readback confirmed cash
+is zero. This verifies the deployed accounting path's recovery without a forced
+fill, not a new funded v3 entry or its eventual exit. The existing sleeve cap,
+funding requirement, opposing-pair rule and historical SQQQ holding remain intact.
