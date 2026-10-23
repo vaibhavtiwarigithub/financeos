@@ -82,6 +82,29 @@ paper Vercel jobs are removed; live jobs/flags and owner settings are not enable
 
 ## Honest remaining boundaries
 
+## Production release verification
+
+Runtime `1861e6b5595a5cf469386849bba5fd9a1aa07a65` is pushed to `main`.
+Vercel `dpl_4rm9GnS1ruezvjAEnGSjvQ19sTf5` is production READY with both
+canonical app aliases assigned. Only then was the schedule migration applied.
+Read-back shows four active five-minute jobs, no superseded entry/open/close
+jobs, and the existing context job's 09:00 ET contract. Both admission migrations
+are also applied; all four fill functions call the shared guard. There are zero
+v3 positions from this closed-market verification.
+
+All four unauthenticated paper-door requests returned 401. The owner's stored
+SOXS research page displays the new ten-session explanation; all three existing
+member forecasts still render, historical scores are preserved, and console
+error capture was empty. The screenshot is a local QA artifact, not committed
+financial data. No authenticated trading endpoint or real broker order was used.
+
+The existing health drawer still includes SQQQ monitoring/run failures from the
+previous policy, partial crypto coverage, and the owner-action Kite login. These
+are not dismissed to manufacture a green dashboard. Fresh natural-session
+monitoring must independently prove SQQQ recovery.
+
+## Remaining dependencies
+
 The next natural open-session runs must establish current production collection,
 decisions and end-session exits. Closed-market QA cannot prove those outcomes.
 Polling can miss barriers between observations, a partial-venue VWAP is not a
