@@ -1,5 +1,20 @@
 # Kairos — Database Schema
 
+## Read-path indexes and explicit API privileges
+
+The global score-history reader uses a `created_at DESC` index; cross-symbol
+return readers use `(market, available_at DESC)`; provider-call reconciliation
+uses a `run_id` index. These complement existing per-symbol indexes and avoid
+full scans and repeated large sorts. Migration `20261023184400` is additive:
+no data, RLS, grants, trading rules or query limits change. Production plans and
+remaining capacity limits are recorded in `docs/audits/2026-10-23-supabase-disk-io.md`.
+
+New public tables must declare intended privileges in their creation migration,
+including the exact operations needed by `service_role`. Supabase's October 30,
+2026 change removes automatic grants for newly created tables; existing grants
+remain intact. Never copy blanket anon/authenticated grants into a service-only
+table to silence a permission error. RLS and SQL privileges are separate gates.
+
 ## LLM council late-subscription backfill (2026-10-12; migration `20261013004805` applied)
 
 `llm_council_model_forecasts` and finalized `llm_council_runs` are append-only (triggers `llm_council_forecasts_immutable`, `llm_council_runs_finalize_once`) and are never reopened. To complete a partial hybrid run whose subscription job failed, reopen only its (unprotected) batch and failed jobs; when the job completes, `council_subscription_advance` now inserts forecast rows with `on conflict (run_id,model_requested,execution_source) do nothing`, so the missing member's forecast is APPENDED (true `available_at` = its submit time) and existing rows are skipped. The run row stays `partial` with a null consensus (its update is guarded by `status='running'`); per-model subscription evaluation uses the appended rows, the stored composite median is absent for backfilled runs.
