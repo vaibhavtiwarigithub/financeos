@@ -17,18 +17,13 @@ import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import type { SemiconductorHolding } from "@/lib/trading/semiconductor-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { soxlQuoteTime } from "@/lib/trading/soxl-evidence";
-import { leveragedPaperEntryWindow as soxlEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
+import { leveragedPaperEntryWindow as soxlEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue, leveragedPaperTrailMode, leveragedPaperRunSummary } from "@/lib/trading/leveraged-intraday";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 2 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
-// This cron fires twice/day (weekdays): ~11:05 ET (entry window + a mid-
-// session monitor check) and ~16:15 ET, right after the equity position-
-// monitor's own after-close slot, so an open SOXL position gets checked
-// against the FULL day's range (dayLow/dayHigh) at least once, not just the
-// partial range visible at 11:05am -- a 3x instrument that breaches its stop
-// mid-afternoon must not sit unprotected until the next morning's check.
-// 26h tolerates that twice-daily cadence plus real slack without silently
-// accepting a genuinely stuck cron (a whole missed weekday still re-blocks).
+// The recurring v3 schedule checks every five minutes in regular sessions.
+// This broad lookup bound preserves legacy reads; the planner independently
+// enforces its much tighter ten-minute monitor-proof bound before any entry.
 const MONITOR_LIVENESS_MS = 26 * 60 * 60 * 1000;
 const AGENT_TYPE = "soxl_cron";
 
@@ -58,7 +53,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
     const { error } = await supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "us", status, symbols: ["SOXL"],
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
-    result_summary: summary.slice(0, 500),
+    result_summary: summary,
   } as any);
     if (error) console.error(`[soxl] liveness row write failed: ${error.message}`);
   } catch (e) { console.error(`[soxl] liveness row write threw: ${String(e)}`); } // bookkeeping must never break the real response
@@ -66,18 +61,14 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 
 const NO_AV_FALLBACK = async () => [];
 
-// Experimental initial parameters (not learned, not claimed optimal — spec
-// 1.C). SOXL is 3x semiconductor beta; these are deliberately tighter than a
-// core-equity swing policy: a 30-min max quote age (vs 15 for the generic
-// monitor) accepts this cron's daily cadence, a 2x ATR stop and 3x ATR target
-// give a nominal 1:1.5 geometry without a manufactured floor, and 12% is half
-// the 25% max used for core equity stop rejection (semiconductorCapacity
-// separately enforces the 5% NAV notional ceiling via SOXL_MAX_NAV_FRACTION).
+// Declared operational priors, not optimized alpha: completed five-minute ATR,
+// structural/two-ATR stop and an upward-rounded target at least twice FULL risk.
+// Combined sleeve capacity, cash and semiconductor exposure can reduce sizing.
 const SOXL_POLICY: SoxlPolicy = {
   version: "soxl-paper-intraday-v3",
   maxQuoteAgeMs: 2 * 60 * 1000,
   maxSpreadBps: 50,
-  maxMonitorAgeMs: 10 * 60 * 1000, // monitorSoxl unused for now; kept for planSoxlEntry's shape
+  maxMonitorAgeMs: 10 * 60 * 1000,
   atrStopMultiple: 2,
   maxStopPct: 12,
   targetAtrMultiple: 3,
@@ -101,10 +92,10 @@ const MIN_DOLLAR_VOLUME = 10_000_000;
 type RunResult = { body: Record<string, unknown>; httpStatus: number; runStatus: "done" | "error"; summary: string };
 
 function ok(body: Record<string, unknown>, httpStatus = 200): RunResult {
-  return { body, httpStatus, runStatus: "done", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "done", summary: leveragedPaperRunSummary(body) };
 }
 function fail(body: Record<string, unknown>, httpStatus = 500): RunResult {
-  return { body, httpStatus, runStatus: "error", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "error", summary: leveragedPaperRunSummary(body) };
 }
 
 export async function GET(req: NextRequest) {
@@ -144,6 +135,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
       },
       position: {
         market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
+        trailMode: leveragedPaperTrailMode(existing.entry_policy_version),
         priceTarget: existing.price_target == null ? null : Number(existing.price_target),
         initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
         currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),

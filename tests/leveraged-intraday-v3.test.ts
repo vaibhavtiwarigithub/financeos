@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { evaluateLeveragedIntraday, leveragedPaperEntryWindow, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
+import { evaluateLeveragedIntraday, leveragedPaperEntryWindow, leveragedPaperSessionOpen, leveragedPaperExitDue, leveragedPaperTrailMode, leveragedPaperRunSummary } from "@/lib/trading/leveraged-intraday";
 import { parseAlpacaIntradayBars, type IntradayBar } from "@/lib/data/alpaca-market-data";
 import { predictionOnlyEvidence, COUNCIL_PREDICTION_GUIDANCE, COUNCIL_PREDICTION_VERSION, councilVersionedSeriesKey } from "@/lib/llm-council/core";
 import { leveragedOpposingExposure } from "@/lib/trading/leveraged-sleeve-risk";
 import { buildFormulaLineage } from "@/lib/scoring/formula-lineage";
-import { planSoxsEntry } from "@/lib/trading/soxs-lifecycle";
+import { planSoxsEntry, monitorSoxs } from "@/lib/trading/soxs-lifecycle";
+import { planSoxlEntry, monitorSoxl } from "@/lib/trading/soxl-lifecycle";
+import { planTqqqEntry, monitorTqqq } from "@/lib/trading/tqqq-lifecycle";
+import { planSqqqEntry, monitorSqqq } from "@/lib/trading/sqqq-lifecycle";
 
 const bar = (at: string, close = 100): IntradayBar => ({ at, date: at.slice(0, 10), open: close,
   close, high: close + .5, low: close - .5, volume: 100, vwap: close });
@@ -16,7 +19,67 @@ const history = () => [
 ];
 const now = new Date("2026-10-22T13:50:03Z");
 
+const lifecycles = [
+  { symbol: "SOXL", plan: planSoxlEntry, monitor: monitorSoxl },
+  { symbol: "SOXS", plan: planSoxsEntry, monitor: monitorSoxs },
+  { symbol: "TQQQ", plan: planTqqqEntry, monitor: monitorTqqq },
+  { symbol: "SQQQ", plan: planSqqqEntry, monitor: monitorSqqq },
+];
+describe.each(lifecycles)("$symbol target/trail parity", ({ symbol, plan, monitor }) => {
+  const policyVersion = `${symbol.toLowerCase()}-paper-intraday-v3`;
+  it("rounds the full-risk target upward at a decimal boundary", () => {
+    const result = plan({ policy: { version: policyVersion, maxQuoteAgeMs: 60000, maxSpreadBps: 50,
+      maxMonitorAgeMs: 60000, atrStopMultiple: 2, maxStopPct: 12, targetAtrMultiple: 3,
+      riskBudgetPct: 1, semiconductorCapPct: 20 }, now: 100000,
+      quote: { bid: 100.1, ask: 100.1, observedAt: 99000 }, signalAt: 99000, lastExitAt: null,
+      signalSession: "2026-10-21", expectedSignalSession: "2026-10-21", entryWindowOpen: true,
+      monitorVerifiedAt: 99000, trendQualified: true, atr: .2, structuralStop: 99.7,
+      nav: 10000, cash: 1000, holdings: [], leveragedSleevePositions: [] });
+    expect(result).toMatchObject({ ok: true, target: 100.9 });
+    if (result.ok) expect(result.target - result.entry).toBeGreaterThanOrEqual(2 * (result.entry - result.stop));
+  });
+  const position = { market: "us" as const, qty: 10, avgEntry: 100, initialStopLoss: 99.7,
+    currentStop: 99.7, highestPrice: 101, priceTarget: 102, partialTaken: false };
+  const input = { now: 100000, maxQuoteAgeMs: 60000,
+    quote: { price: 100.6, dayLow: null, dayHigh: null, observedAt: 99000 }, thesisInvalidated: false };
+  it("uses recorded sub-1% risk for intraday protection, not the stock trail floor", () => {
+    const result = monitor({ ...input, position: { ...position, trailMode: leveragedPaperTrailMode(policyVersion) } });
+    expect(result).toMatchObject({ action: "stop_full", exitQty: 10 });
+    if ("trailingStop" in result) expect(result.trailingStop).toBeCloseTo(100.697);
+  });
+  it("preserves legacy policy rather than silently migrating historical lots", () => {
+    expect(monitor({ ...input, position })).toMatchObject({ action: "none" });
+    expect(leveragedPaperTrailMode(null)).toBeUndefined();
+    expect(leveragedPaperTrailMode(`${symbol.toLowerCase()}-paper-v2`)).toBeUndefined();
+    expect(leveragedPaperTrailMode("unrecognized-paper-intraday-v3")).toBeUndefined();
+  });
+  it("never loosens an existing stop and prioritizes it over a target", () => {
+    expect(monitor({ ...input, position: { ...position, currentStop: 100.8, priceTarget: 100.5,
+      trailMode: leveragedPaperTrailMode(policyVersion) } })).toMatchObject({ action: "stop_full", trailingStop: 100.8 });
+  });
+  it("does not apply a newly ratcheted high retroactively to this observation's low", () => {
+    const result = monitor({ ...input, quote: { ...input.quote, price: 101, dayLow: 100.1 },
+      position: { ...position, highestPrice: 100, trailMode: leveragedPaperTrailMode(policyVersion) } });
+    expect(result).toMatchObject({ action: "none" });
+    if ("trailingStop" in result) expect(result.trailingStop).toBeCloseTo(100.697);
+  });
+});
+
 describe("shared leveraged intraday contract", () => {
+  it("preserves structured summaries beyond the old 500-character cut", () => {
+    const body = { status: "no_entry", reason: "proxy_direction_not_confirmed", monitorVerified: true,
+      setup: { evidence: "x".repeat(1500), unmet_conditions: ["proxy_direction_not_confirmed"] } };
+    const summary = leveragedPaperRunSummary(body);
+    expect(summary.length).toBeGreaterThan(500);
+    expect(JSON.parse(summary)).toEqual(body);
+  });
+  it("discloses oversized summaries without corrupting JSON or dropping liveness", () => {
+    const summary = leveragedPaperRunSummary({ status: "no_entry", reason: "wait", monitorVerified: true,
+      setup: "x".repeat(9000) });
+    expect(summary.length).toBeLessThanOrEqual(8000);
+    expect(JSON.parse(summary)).toEqual({ status: "no_entry", reason: "wait", monitorVerified: true, summary_truncated: true });
+    expect(JSON.parse(leveragedPaperRunSummary({ setup: "x".repeat(9000) })).monitorVerified).toBe(false);
+  });
   it.each(["2026-10-22T13:44:59Z", "2026-10-22T19:30:00Z", "2026-10-24T14:00:00Z", "2026-11-27T17:30:00Z"])("blocks entry at %s", time => {
     expect(leveragedPaperEntryWindow(new Date(time))).toBe(false);
   });
@@ -39,7 +102,12 @@ describe("shared leveraged intraday contract", () => {
     expect(result.evidence).toMatchObject({ proxy: "SOXX", partial_venue: true, proxy_confirmed: true });
   });
   it("inverse funds require a FALLING proxy, not the long fund's trend", () => {
-    expect(evaluateLeveragedIntraday("SOXS", [...history(), ...current()], current(), now).state).toBe("wait");
+    expect(evaluateLeveragedIntraday("SOXS", [...history(), ...current()], current(), now)).toMatchObject({
+      state: "wait", reason: "proxy_direction_not_confirmed", evidence: {
+        etf_opening_range_confirmed: true, etf_vwap_confirmed: true, relative_volume_confirmed: true,
+        unmet_conditions: ["proxy_direction_not_confirmed"],
+      },
+    });
     const down = current(); down[3] = bar(down[3].at, 97);
     expect(evaluateLeveragedIntraday("SOXS", [...history(), ...current()], down, now).state).toBe("ready");
   });

@@ -1,5 +1,37 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Target and trail consistency correction — 2026-10-23
+
+All four paper entry planners use the existing upward-rounded full-risk target
+helper. SOXL must not serialize an unrounded floating-point value below the
+database's 2R floor. This is a numerical correction, not an alpha-parameter change.
+
+New intraday-v3 lots use their recorded entry stop-distance fraction for the
+shared ladder, including distances below 1%. Ordinary stocks, legacy leveraged
+lots and dormant live execution retain the existing ladder contract. The current
+stop remains a ratchet: it never loosens, and a newly observed high cannot create
+a stop retroactively against the same observation. No session-wide pre-entry
+range may trigger an exit. Partial profit remains half at target then a protected
+runner; a 2R target is not a promise of 2R realized for the whole original lot.
+
+Acceptance: decimal-boundary target tests for every planner; tight-risk trail,
+stop-first precedence, non-loosening and legacy-default tests for every monitor;
+route checks that only recorded intraday-v3 lots select the corrected trail.
+This does not add proxy-thesis exits, a re-entry reset strategy, continuous
+barrier coverage or broker-native protective-order proof.
+
+Production's latest-research read also needs the additive
+`agent_signals(market, symbol, created_at desc)` index: the existing partial
+pending-long index cannot serve a query that must see newer neutral/short
+verdicts. Preserve the exact read and four-day freshness rejection. Verify the
+new index and query plan before shipping; do not add retries or increase the
+app's statement timeout to mask a full-table scan.
+
+Run summaries preserve valid structured evidence up to 8,000 characters. Larger
+payloads retain bounded status/reason/liveness and explicitly mark truncation;
+never cut serialized JSON at 500 characters. Store explicit unmet setup
+conditions. This changes observability, not admission or historical rows.
+
 ## Shared intraday correction — owner approved 2026-10-22
 
 Scope is all four paper funds, not a hindsight SOXS exception. Reuse the existing

@@ -55,6 +55,14 @@ protection. Council opinions remain ten-session shadows: new packets omit app
 permissions and carry a new method identity, with separate evaluation series.
 These rules are operational priors, not demonstrated profitable alpha.
 
+The four planners share upward-rounded full-risk targets. Intraday-v3 paper
+lots trail by their recorded entry-risk fraction even below 1%; ordinary stocks,
+legacy leveraged lots and dormant live execution keep their previous defaults.
+Setup evidence names each failed condition (ETF opening range, ETF VWAP,
+directional proxy, or same-time volume) rather than a generic confirmation label.
+The 2R entry target applies to the shares sold there, not guaranteed whole-lot
+profit: selling half at 2R and the rest at entry produces 1R before costs.
+
 ## 2. Runtime and ownership
 
 The application is Next.js App Router with Supabase Postgres/Auth/pg_cron. Server

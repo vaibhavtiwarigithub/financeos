@@ -36,6 +36,11 @@ describe("leveraged research gate (routed design, fail-closed)", () => {
 });
 
 describe("routed design wiring (contract)", () => {
+  it("indexes latest-symbol reads without filtering away a newer non-long verdict", () => {
+    const sql = readFileSync("supabase/migrations/20261023173459_leveraged_signal_lookup_index.sql", "utf8");
+    expect(sql).toContain("on public.agent_signals (market, symbol, created_at desc)");
+    expect(sql).not.toMatch(/where\s+status|where\s+direction/i);
+  });
   for (const sym of ["soxl", "tqqq", "sqqq", "soxs"]) {
     const route = readFileSync(`app/api/agents/${sym}/cron/route.ts`, "utf8");
     it(`${sym} door requires the research gate before planning and uses the door quote`, () => {

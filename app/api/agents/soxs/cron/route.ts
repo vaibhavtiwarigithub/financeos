@@ -16,7 +16,7 @@ import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { soxsQuoteTime } from "@/lib/trading/soxs-evidence";
-import { leveragedPaperEntryWindow as soxsEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
+import { leveragedPaperEntryWindow as soxsEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue, leveragedPaperTrailMode, leveragedPaperRunSummary } from "@/lib/trading/leveraged-intraday";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 2 * 60 * 1000;
@@ -48,7 +48,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
     const { error } = await supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "us", status, symbols: ["SOXS"],
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
-    result_summary: summary.slice(0, 500),
+    result_summary: summary,
   } as any);
     if (error) console.error(`[soxs] liveness row write failed: ${error.message}`);
   } catch (e) { console.error(`[soxs] liveness row write threw: ${String(e)}`); } // bookkeeping must never break the real response
@@ -72,10 +72,10 @@ const MIN_DOLLAR_VOLUME = 10_000_000;
 type RunResult = { body: Record<string, unknown>; httpStatus: number; runStatus: "done" | "error"; summary: string };
 
 function ok(body: Record<string, unknown>, httpStatus = 200): RunResult {
-  return { body, httpStatus, runStatus: "done", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "done", summary: leveragedPaperRunSummary(body) };
 }
 function fail(body: Record<string, unknown>, httpStatus = 500): RunResult {
-  return { body, httpStatus, runStatus: "error", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "error", summary: leveragedPaperRunSummary(body) };
 }
 
 export async function GET(req: NextRequest) {
@@ -115,6 +115,7 @@ async function runSoxsCron(supabase: ReturnType<typeof createServiceClient>, now
       },
       position: {
         market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
+        trailMode: leveragedPaperTrailMode(existing.entry_policy_version),
         priceTarget: existing.price_target == null ? null : Number(existing.price_target),
         initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
         currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),

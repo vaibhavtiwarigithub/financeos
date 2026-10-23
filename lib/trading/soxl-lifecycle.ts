@@ -20,14 +20,11 @@ export interface SoxlPolicy {
 export interface SoxlQuote { bid: number; ask: number; observedAt: number }
 
 /**
- * Monitor-side quote contract — deliberately NOT SoxlQuote (bid/ask).
- * Production quotes essentially never carry real bid/ask (see the collector
- * route's comment); every other position monitor in this codebase
- * (app/api/agents/position-monitor/route.ts) evaluates stop/target touches
- * from `price` + session dayLow/dayHigh, never bid/ask, and this mirrors that
- * exactly rather than inventing a second contract. `price` is required, low/
- * high are optional (fall back to `price`, i.e. no intraday-touch detection
- * when a session range isn't available — never fabricated).
+ * Pure monitor contract shared with the existing ladder. Paper routes pass a
+ * fresh point mark and null ranges: session high/low may precede the entry and
+ * cannot establish a post-entry barrier touch. Other callers must qualify any
+ * supplied interval themselves. Real broker bid/ask now exists in the quote
+ * adapter; this type does not claim a broker fill or continuous protection.
  */
 export interface SoxlMonitorQuote { price: number; dayLow: number | null; dayHigh: number | null; observedAt: number }
 
@@ -77,8 +74,7 @@ export function planSoxlEntry(input: {
   const stop = Math.min(input.structuralStop, q.ask - input.atr * p.atrStopMultiple);
   const stopPct = (q.ask - stop) / q.ask * 100;
   if (stop <= 0 || stopPct > p.maxStopPct) return { ok: false, reason: "stop_risk_exceeded" };
-  const target = q.ask + (p.version.includes("intraday-v3")
-    ? Math.max(input.atr * p.targetAtrMultiple, 2 * (q.ask - stop)) : input.atr * p.targetAtrMultiple);
+  const target = leveragedPriceTarget(q.ask, stop, input.atr, p.targetAtrMultiple, p.version.includes("intraday-v3") ? 2 : 0);
   if (!Number.isFinite(target)) return { ok: false, reason: "invalid_geometry" };
   const capacity = semiconductorCapacity({ nav: input.nav, cash: input.cash,
     stopDistancePct: stopPct, riskBudgetPct: p.riskBudgetPct, exposureCapPct: p.semiconductorCapPct, holdings: input.holdings });

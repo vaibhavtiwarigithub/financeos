@@ -6,6 +6,19 @@ Records approved product, architecture, UX, technical, and business decisions.
 
 Only approved decisions belong here. Proposed decisions live in PROJECT_BUILD_LOG.md until approved.
 
+### 2026-10-23: Repair leveraged signal-read latency without changing admission
+
+Owner's approved all-four leveraged repair includes an additive index on
+`agent_signals(market, symbol, created_at desc)`. Three natural paper attempts
+timed out reading the latest signal; EXPLAIN showed a full scan of 15,716 rows
+and 2,196 shared buffers, approximately 2.03 seconds even while warm. The
+existing pending-long partial index cannot serve the deliberately status- and
+direction-agnostic latest-verdict query. Migration uses a two-second lock limit
+and must be verified in production with the exact query plan and unchanged
+security advisors. No signal filter, row, grant, RLS, timeout ceiling for app
+requests or trading setting is relaxed. Rollback, if necessary, is dropping
+only this new non-constraint index; existing indexes remain intact.
+
 ### 2026-10-22: Prevent paper dust and distinguish live equity from investment return
 
 Owner requested correction of sub-cent leveraged positions and misleading live

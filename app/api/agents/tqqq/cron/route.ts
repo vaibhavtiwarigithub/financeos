@@ -16,14 +16,12 @@ import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { tqqqQuoteTime } from "@/lib/trading/tqqq-evidence";
-import { leveragedPaperEntryWindow as tqqqEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
+import { leveragedPaperEntryWindow as tqqqEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue, leveragedPaperTrailMode, leveragedPaperRunSummary } from "@/lib/trading/leveraged-intraday";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
 const MONITOR_MAX_QUOTE_AGE_MS = 2 * 60 * 1000;
-// Twice-daily from day one (~11:25 ET entry+mid-day, ~16:20 ET after-close):
-// SOXL only got the after-close check post-launch after a gap was found
-// (a single 11:05am check missed the afternoon range); TQQQ ships with both
-// from the start since the gap class is already known.
+// V3 checks every five minutes. The planner separately requires monitor proof
+// within ten minutes; this broader legacy lookup bound cannot authorize entry.
 const MONITOR_LIVENESS_MS = 26 * 60 * 60 * 1000;
 const AGENT_TYPE = "tqqq_cron";
 
@@ -52,7 +50,7 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
     const { error } = await supabase.from("agent_runs").insert({
     agent_type: AGENT_TYPE, market: "us", status, symbols: ["TQQQ"],
     trigger_source: "scheduled", started_at: nowIso, completed_at: nowIso,
-    result_summary: summary.slice(0, 500),
+    result_summary: summary,
   } as any);
     if (error) console.error(`[tqqq] liveness row write failed: ${error.message}`);
   } catch (e) { console.error(`[tqqq] liveness row write threw: ${String(e)}`); } // bookkeeping must never break the real response
@@ -60,10 +58,8 @@ async function recordRun(supabase: ReturnType<typeof createServiceClient>, statu
 
 const NO_AV_FALLBACK = async () => [];
 
-// Experimental initial parameters (not learned, not claimed optimal — mirrors
-// SOXL_POLICY's own reasoning in soxl/cron/route.ts). TQQQ is 3x Nasdaq-100
-// beta; same 30-min quote age, 2x ATR stop / 3x ATR target geometry as SOXL.
-// No semiconductorCapPct equivalent — capacity is the shared sleeve headroom.
+// Same declared v3 full-risk geometry and two-minute quote bound as SOXL.
+// Operational priors, not validated alpha; shared sleeve capacity still applies.
 const TQQQ_POLICY: TqqqPolicy = {
   version: "tqqq-paper-intraday-v3",
   maxQuoteAgeMs: 2 * 60 * 1000,
@@ -80,10 +76,10 @@ const MIN_DOLLAR_VOLUME = 10_000_000;
 type RunResult = { body: Record<string, unknown>; httpStatus: number; runStatus: "done" | "error"; summary: string };
 
 function ok(body: Record<string, unknown>, httpStatus = 200): RunResult {
-  return { body, httpStatus, runStatus: "done", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "done", summary: leveragedPaperRunSummary(body) };
 }
 function fail(body: Record<string, unknown>, httpStatus = 500): RunResult {
-  return { body, httpStatus, runStatus: "error", summary: JSON.stringify(body).slice(0, 500) };
+  return { body, httpStatus, runStatus: "error", summary: leveragedPaperRunSummary(body) };
 }
 
 export async function GET(req: NextRequest) {
@@ -123,6 +119,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
       },
       position: {
         market: "us", qty: Number(existing.qty), avgEntry: Number(existing.avg_cost),
+        trailMode: leveragedPaperTrailMode(existing.entry_policy_version),
         priceTarget: existing.price_target == null ? null : Number(existing.price_target),
         initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
         currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),

@@ -4,6 +4,9 @@ import type { DeterministicQuote } from "@/lib/data/quotes";
 const mocks = vi.hoisted(() => ({
   authorized: true,
   held: true,
+  heldPolicy: null as string | null,
+  tightRisk: false,
+  setupState: "ready",
   liveHeld: false,
   allowLiveEntryForTest: false,
   liveBook: [] as Array<{ symbol: string; qty: unknown; current_price: unknown }>,
@@ -62,8 +65,9 @@ vi.mock("@/lib/trading/leveraged-door-signal", () => ({
 }));
 vi.mock("@/lib/trading/leveraged-intraday", async (original) => ({
   ...await original<typeof import("@/lib/trading/leveraged-intraday")>(),
-  loadLeveragedIntradaySetup: async () => ({ state: "ready", atr: 2, structuralStop: 98,
-    signalAt: Date.now() - 1000, evidence: { openingHigh: 99, etf_vwap: 99 } }),
+  loadLeveragedIntradaySetup: async () => ({ state: mocks.setupState, atr: 2, structuralStop: 98,
+    reason: "proxy_direction_not_confirmed", signalAt: Date.now() - 1000,
+    evidence: { openingHigh: 99, etf_vwap: 99, diagnostic: "x".repeat(700) } }),
 }));
 
 // All persistence and provider I/O is mocked; these tests cannot place an order,
@@ -77,7 +81,8 @@ vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({
       : table === "agent_runs" ? { completed_at: new Date(mocks.prior).toISOString() }
       : table === "paper_positions" ? (mocks.held ? {
         id: "test-position", qty: 1, avg_cost: 100, current_price: 100,
-        stop_loss: 90, initial_stop_loss: 90, highest_price: 100, price_target: 120,
+        stop_loss: mocks.tightRisk ? 99.7 : 90, initial_stop_loss: mocks.tightRisk ? 99.7 : 90,
+        highest_price: mocks.tightRisk ? 101 : 100, price_target: 120, entry_policy_version: mocks.heldPolicy,
       } : null)
       : table === "paper_portfolio" ? { nav: 10000, cash_balance: 10000 }
       : table === "leveraged_live_positions" ? (singleRead ? (mocks.liveHeld ? {
@@ -129,6 +134,9 @@ beforeEach(() => {
   vi.setSystemTime(start);
   mocks.authorized = true;
   mocks.held = true;
+  mocks.heldPolicy = null;
+  mocks.tightRisk = false;
+  mocks.setupState = "ready";
   mocks.liveHeld = false;
   mocks.allowLiveEntryForTest = false;
   mocks.liveBook = [];
@@ -144,6 +152,31 @@ beforeEach(() => {
   mocks.quote.mockImplementation(async (symbol: string) => {
     vi.setSystemTime(start + 4000);
     return quote(symbol, start + 3000);
+  });
+});
+
+describe.each(doors)("$symbol recorded paper trail routing", ({ symbol, handler }) => {
+  it("persists a complete, parseable setup reason through the actual route", async () => {
+    mocks.held = false;
+    mocks.setupState = "wait";
+    const body = await (await handler(request)).json();
+    expect(body).toMatchObject({ status: "no_entry", reason: "proxy_direction_not_confirmed" });
+    expect(mocks.records).toHaveLength(1);
+    const row = mocks.records[0] as { result_summary: string };
+    expect(row.result_summary.length).toBeGreaterThan(500);
+    expect(JSON.parse(row.result_summary)).toEqual(body);
+    expect(mocks.brokerSubmit).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("uses tight-risk protection only for recorded intraday lots (%s)", async (intraday) => {
+    mocks.tightRisk = true;
+    mocks.heldPolicy = intraday ? `${symbol.toLowerCase()}-paper-intraday-v3` : null;
+    mocks.quote.mockImplementation(async () => ({ ...quote(symbol, start - 1000), price: 100.6 }));
+    const body = await (await handler(request)).json();
+    expect(body.status).toBe(intraday ? "exited" : "held");
+    if (intraday) expect(body.action).toBe("stop_full");
+    else expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.brokerSubmit).not.toHaveBeenCalled();
+    expect(mocks.brokerCancel).not.toHaveBeenCalled();
   });
 });
 

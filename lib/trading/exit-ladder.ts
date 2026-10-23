@@ -82,6 +82,8 @@ export interface ExitLadderInput {
   partialTaken: boolean;
   /** Hedges never take partial profit. */
   isHedge?: boolean;
+  /** Recorded intraday leveraged policy only; legacy/core keep the 1% trail floor. */
+  trailMode?: "entry_distance";
 }
 
 export interface ExitLadderDecision {
@@ -109,9 +111,9 @@ export function paperStopFillPrice(currentPrice: number, stopPrice: number): num
 }
 
 /** Fraction of the high-water mark the trail sits at, from the position's own stop distance. */
-export function trailAnchorPct(initialStopLoss: number | null, avgEntry: number): number {
+export function trailAnchorPct(initialStopLoss: number | null, avgEntry: number, mode?: ExitLadderInput["trailMode"]): number {
   if (initialStopLoss == null || !(avgEntry > 0)) return 0.93;
-  return Math.min(0.99, Math.max(0.5, initialStopLoss / avgEntry));
+  return Math.min(mode === "entry_distance" ? 1 : 0.99, Math.max(0.5, initialStopLoss / avgEntry));
 }
 
 /**
@@ -131,7 +133,7 @@ export function decideExitLadder(input: ExitLadderInput): ExitLadderDecision {
   // later in the session create a stop retroactively. Evaluate protection from
   // the previously persisted high-water mark, then ratchet only for the next run.
   const priorHighestPrice = input.highestPrice ?? input.avgEntry;
-  const anchorPct = trailAnchorPct(input.initialStopLoss, input.avgEntry);
+  const anchorPct = trailAnchorPct(input.initialStopLoss, input.avgEntry, input.trailMode);
   const priorTrailingStop = Math.max(
     input.currentStop ?? input.avgEntry * anchorPct,
     priorHighestPrice * anchorPct,

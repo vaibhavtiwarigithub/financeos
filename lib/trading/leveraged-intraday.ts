@@ -1,5 +1,6 @@
 import { fetchAlpacaIexIntradayBars, type IntradayBar } from "@/lib/data/alpaca-market-data";
 import { getMarketDayStatus, researchSessionCloseAt } from "./market-calendar";
+import type { ExitLadderInput } from "./exit-ladder";
 
 export const LEVERAGED_INTRADAY_POLICY = "leveraged_intraday_opening_range_v3";
 export const LEVERAGED_EXPOSURES = {
@@ -10,6 +11,24 @@ export const LEVERAGED_EXPOSURES = {
 } as const;
 export type LeveragedSymbol = keyof typeof LEVERAGED_EXPOSURES;
 const FIVE = 300_000;
+/** Select only the exact recorded paper policy, never infer from the ticker. */
+export function leveragedPaperTrailMode(entryPolicy: unknown): ExitLadderInput["trailMode"] {
+  return typeof entryPolicy === "string" && /^(soxl|soxs|tqqq|sqqq)-paper-intraday-v3$/.test(entryPolicy)
+    ? "entry_distance" : undefined;
+}
+/** Preserve machine-readable setup evidence; slicing serialized JSON corrupts it. */
+export function leveragedPaperRunSummary(body: Record<string, unknown>): string {
+  const summary = JSON.stringify(body);
+  if (summary.length <= 8_000) return summary;
+  // Exceptional oversized payload: retain bounded decision/liveness fields and
+  // disclose missing detail. Never turn a clipped JSON fragment into evidence.
+  return JSON.stringify({
+    status: typeof body.status === "string" ? body.status.slice(0, 128) : "unknown",
+    reason: typeof body.reason === "string" ? body.reason.slice(0, 1024) : null,
+    monitorVerified: body.monitorVerified === true,
+    summary_truncated: true,
+  });
+}
 function localMinutes(now: Date) {
   const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
   return Number(p.find(x => x.type === "hour")?.value) * 60 + Number(p.find(x => x.type === "minute")?.value);
@@ -83,15 +102,26 @@ export function evaluateLeveragedIntraday(symbol: LeveragedSymbol, etf: Intraday
     }).slice(0, 5).sort((a, b) => a - b);
   const medianVolume = priorWindows.length >= 3 ? (priorWindows[Math.floor((priorWindows.length - 1) / 2)] + priorWindows[Math.ceil((priorWindows.length - 1) / 2)]) / 2 : null;
   const relativeVolume = medianVolume == null ? null : current.reduce((sum, b) => sum + b.volume, 0) / medianVolume;
+  const etfRangeConfirmed = last.close > openingHigh;
+  const etfVwapConfirmed = last.close > ev;
+  const volumeConfirmed = relativeVolume != null && relativeVolume >= 1;
+  const unmetConditions = [
+    !etfRangeConfirmed && "etf_below_opening_range",
+    !etfVwapConfirmed && "etf_below_vwap",
+    !proxyConfirmed && "proxy_direction_not_confirmed",
+    relativeVolume == null ? "intraday_relative_volume_warmup" : !volumeConfirmed && "same_time_volume_below_median",
+  ].filter((condition): condition is string => typeof condition === "string");
   const evidence = { ...out.evidence, bar_close_at: new Date(Date.parse(last.at) + FIVE).toISOString(), openingHigh, openingLow,
     etf_vwap: ev, proxy_vwap: pv, proxy_price: pl.close, proxy_confirmed: proxyConfirmed,
     intraday_atr14: atr, atr_method: "sma_true_range_14_excluding_overnight_gap", structural_stop: structuralStop, session_open: current[0].open,
     open_to_latest_pct: (last.close / current[0].open - 1) * 100, same_time_relative_volume: relativeVolume,
     relative_volume_sessions: priorWindows.length,
+    etf_opening_range_confirmed: etfRangeConfirmed, etf_vwap_confirmed: etfVwapConfirmed,
+    relative_volume_confirmed: volumeConfirmed, unmet_conditions: unmetConditions,
     vwap_method: [...current, ...underlying].every(b => b.vwap != null) ? "volume_weighted_bar_vwap" : "typical_price_proxy" };
   return { ...out, atr, structuralStop, signalAt: Date.parse(last.at) + FIVE, evidence,
-    state: relativeVolume == null ? "unavailable" : last.close > openingHigh && last.close > ev && proxyConfirmed && relativeVolume >= 1 ? "ready" : "wait",
-    reason: relativeVolume == null ? "intraday_relative_volume_warmup" : "opening_range_confirmation" };
+    state: relativeVolume == null ? "unavailable" : unmetConditions.length === 0 ? "ready" : "wait",
+    reason: relativeVolume == null ? "intraday_relative_volume_warmup" : unmetConditions[0] ?? "opening_range_confirmation" };
 }
 
 export async function loadLeveragedIntradaySetup(symbol: LeveragedSymbol): Promise<IntradaySetup> {
