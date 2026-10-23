@@ -2,11 +2,13 @@ import type { AttributionState } from "@/lib/shadows/attribution";
 import type { UpgradePathAttributionClass } from "@/lib/shadows/registry";
 
 export interface AttributionSummaryInput {
+  lifecycle?: string;
   attribution: { comparisonType: UpgradePathAttributionClass; state: AttributionState; measurementScope?: string | null };
 }
 
 /** Keep portfolio-performance evidence counts separate from operational lifecycle counts. */
 export function summarizeAttribution(programs: readonly AttributionSummaryInput[]) {
+  programs = programs.filter(program => program.lifecycle !== "not_applicable");
   return {
     performanceEligible: programs.filter((program) => program.attribution.comparisonType !== "operational_only").length,
     measured: programs.filter((program) => program.attribution.state === "measured").length,

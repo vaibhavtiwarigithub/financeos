@@ -52,7 +52,7 @@ export interface HorizonCoverage {
  */
 export const MIN_DISTINCT_DATES = 20;
 
-/** The horizon the books actually trade — exits fire on an 11-market-day clock. */
+/** Primary diagnostic horizon, not an enforced position-exit clock. */
 export const PRIMARY_HORIZON_DAYS = 10;
 
 export function coverageByHorizon(rows: readonly LabelRow[]): HorizonCoverage[] {
@@ -110,15 +110,18 @@ export function coverageBlockers(coverage: readonly HorizonCoverage[]): string[]
       `The ${binding.horizonDays}-day horizon spans ${binding.distinctDates} distinct decision date(s), below the floor of ${MIN_DISTINCT_DATES}. Any result from it describes one regime.`,
     );
   }
-  if (binding.observationsPerDate >= 5) {
-    blockers.push(
-      `${binding.observations} observations come from ${binding.distinctDates} date(s) (${binding.observationsPerDate.toFixed(1)} per date), so n overstates the independent sample.`,
-    );
-  }
   if (binding.eligibleObservations === 0 && binding.observations > 0) {
     blockers.push(
       `None of the ${binding.observations} observations at this horizon were entry-eligible, so this cohort cannot explain realised P&L.`,
     );
   }
   return blockers;
+}
+
+/** Repeated symbols warn against naive inference; more coverage must not itself fail collection. */
+export function coverageCautions(coverage: readonly HorizonCoverage[]): string[] {
+  const binding = bindingCoverage(coverage);
+  return binding && binding.observationsPerDate >= 5
+    ? [`${binding.observations} observations come from ${binding.distinctDates} date(s) (${binding.observationsPerDate.toFixed(1)} per date), so n overstates the independent sample. Distinct dates are not an estimate of independent windows; use the evaluator's overlap correction.`]
+    : [];
 }

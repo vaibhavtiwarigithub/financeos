@@ -1,6 +1,6 @@
 # Kairos current system reference
 
-> Last reviewed: 2026-10-22
+> Last reviewed: 2026-10-23
 >
 > This is the friend-facing, current-state guide. It describes what the code and
 > production contracts do today. A feature marked **shadow**, **collecting**, or
@@ -248,9 +248,10 @@ sessions and exact arithmetic. Existing production attribution rows are syntheti
 international-allocation diagnostics, not Kairos paper-book P&L. The ATR
 paired-book producer is deployed and validates complete immutable snapshots;
 it can emit only net-of-cost evidence after two non-overlapping ten-session
-blocks. Production currently has two paired snapshots (2026-09-25 through
-2026-09-28) and no ATR attribution row; the latest pre-deploy run was blocked
-because the 2026-09-29 bar was unavailable. The additive migration is applied.
+blocks. On October 23, production has 20 ATR snapshots through October 22,
+covering one completed ten-session block, and no ATR attribution row. Twenty
+snapshots include the initial state and are not twenty return intervals. The
+latest persisted producer invocation collected successfully. The additive migration is applied.
 Other paths remain producer-missing unless explicitly proven otherwise.
 “Collecting” and “review-ready” do not mean “proven improvement.”
 
@@ -266,6 +267,23 @@ The app must report, per shadow: population, dates, version, number of qualifyin
 sessions, label maturity, overlap-adjusted effective sample size, IC/t-stat or
 operational result, benchmark comparison, blockers and next safe action. It must
 never create a winner row from aggregate portfolio P&L or hindsight-selected names.
+
+Upgrade Path separates collection health, statistical analysis and portfolio
+benefit. Its first screen prioritizes failed evidence pipelines, missing outcome
+comparisons, then result reviews, with recorded owners and review dates. A
+missing paired-book producer is an implementation task, not an experiment that
+will become ready merely by waiting. Intentionally inactive scaffolds and
+market-inapplicable programs are excluded from active/performance denominators.
+Council, formula-variant, insider and India event cards read their existing
+market-local evaluator batches and link to the full Learning tables; an old or
+failed evaluation is not a fresh result. Descriptive IC is not portfolio P&L.
+
+Label coverage is a server-only database aggregate across horizons, so growing
+past a client row limit cannot turn available evidence into a false zero. The
+separate h10 geometry reader remains bounded and fails explicitly. Repeated
+observations on a date remain an inference warning; they do not cause collection
+to fail merely because more symbols were researched. Statistical gates remain
+unchanged. Daily and weekly jobs use their own freshness bounds.
 
 ## 8. Crypto lane
 

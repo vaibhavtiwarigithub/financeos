@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   bindingCoverage,
   coverageBlockers,
+  coverageCautions,
   coverageByHorizon,
   MIN_DISTINCT_DATES,
   type LabelRow,
@@ -81,12 +82,12 @@ describe("bindingCoverage — the traded horizon binds", () => {
 describe("coverageBlockers", () => {
   it("names the date shortfall, the repetition, and the zero-eligible trap", () => {
     const blockers = coverageBlockers(coverageByHorizon(WATCHLIST_ARTEFACT));
-    expect(blockers).toHaveLength(3);
+    expect(blockers).toHaveLength(2);
     expect(blockers[0]).toContain("3 distinct decision date");
-    expect(blockers[1]).toContain("overstates the independent sample");
+    expect(coverageCautions(coverageByHorizon(WATCHLIST_ARTEFACT))[0]).toContain("overstates the independent sample");
     // The mistake that made the original diagnosis wrong: a cohort that never
     // passed the eligibility gate cannot explain realised P&L.
-    expect(blockers[2]).toContain("entry-eligible");
+    expect(blockers[1]).toContain("entry-eligible");
   });
 
   it("clears when the binding horizon has enough spread-out dates", () => {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, GitCommitHorizontal, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ShadowProgramStatus } from "@/lib/shadows/status";
 import type { ShadowLifecycle } from "@/lib/shadows/registry";
+import type { CompletionAssessment } from "@/lib/shadows/completion";
 import { MARKET_LABEL, useMarket } from "@/lib/market-context";
 
 const T = {
@@ -19,9 +20,10 @@ type ApiResponse = {
   summary: {
     total: number; collecting: number; readyForReview: number; blockedOrIdle: number; trackedCalls7d: number;
     attribution?: { performanceEligible: number; measured: number; syntheticMeasured: number; collecting: number; producerMissing: number; invalid: number; notAttributable: number };
+    completion?: { applicable: number; repair: number; buildComparison: number; collecting: number; results: number; parked: number; overdue: number };
   };
   snapshotLedger: { state: "available" | "unavailable"; reason: string | null };
-  programs: Array<ShadowProgramStatus & { shadowBookSnapshot: ShadowBookSnapshot; producerRun?: {
+  programs: Array<ShadowProgramStatus & { resultHref?: string | null; completion?: CompletionAssessment; shadowBookSnapshot: ShadowBookSnapshot; producerRun?: {
     state: string; status?: string; started_at?: string; finished_at?: string | null;
     expected_session?: string | null; observed_session?: string | null; trigger_source?: string;
     blockers?: string[]; code_version?: string | null; note?: string;
@@ -40,6 +42,7 @@ type ApiResponse = {
     verdict: string;
     note: string;
     last_write: string | null;
+    rows?: number | null;
     market_scope?: string;
     schedules?: Array<{ job: string; schedule: string | null; active: boolean; found?: boolean; lastStartedAt?: string | null; lastStatus?: string | null }>;
   }>;
@@ -81,11 +84,11 @@ type CovarianceShadowResponse = {
   }>;
   boundary: string;
 };
-type LifecycleFilter = "all" | "active" | "review" | "blocked" | "off";
+type LifecycleFilter = "all" | "active" | "review" | "blocked" | "off" | "repair" | "build";
 
 const LIFECYCLE_META: Record<ShadowLifecycle, { label: string; color: string }> = {
   collecting: { label: "Collecting", color: T.blue },
-  ready_for_review: { label: "Ready for review", color: T.green },
+  ready_for_review: { label: "Analysis available", color: T.blue },
   blocked: { label: "Blocked", color: T.red },
   armed: { label: "Armed", color: T.yellow },
   paper_active: { label: "Paper active", color: T.green },
@@ -213,7 +216,14 @@ function ProgramPanel({ program, mobile, market, collection }: {
   const benefit = BENEFIT_META[program.benefitVerdict];
   const deployment = DEPLOYMENT_META[program.deployment.state];
   const attribution = ATTRIBUTION_META[program.attribution.state];
-  return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", opacity: program.available ? 1 : 0.72 }}>
+  return <section id={`upgrade-${program.id}`} style={{ scrollMarginTop: 20, background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", opacity: program.available ? 1 : 0.72 }}>
+    {program.completion && <div style={{ padding: "14px 20px", background: T.surface, borderBottom: `1px solid ${T.border}`, fontSize: 12, lineHeight: 1.6 }}>
+      <strong style={{ color: program.completion.priority === 0 ? T.red : T.accent }}>{program.completion.title}</strong>
+      <div style={{ color: T.textSub }}>{program.completion.reason}</div>
+      <div style={{ color: T.text }}>Next: {program.completion.nextAction}</div>
+      {program.resultHref && <a href={program.resultHref} style={{ display: "inline-block", color: T.blue, padding: "8px 0" }}>Open full evaluator results →</a>}
+      <div style={{ color: program.completion.overdue ? T.yellow : T.muted }}>Owner: {program.completion.owner} · Review: {program.completion.reviewDate ?? "Not scheduled"}{program.completion.overdue ? " · overdue" : ""} · No automatic activation</div>
+    </div>}
     <div style={{
       padding: mobile ? "16px" : "18px 20px", display: "flex", justifyContent: "space-between",
       alignItems: "flex-start", gap: "16px", borderBottom: `1px solid ${T.border}`,
@@ -346,7 +356,8 @@ function ProgramPanel({ program, mobile, market, collection }: {
             <StatusPill label={COLLECTION_META[collection.verdict]?.label ?? collection.verdict} color={COLLECTION_META[collection.verdict]?.color ?? T.yellow} />
             <div style={{ color: T.textSub, fontSize: "12px", lineHeight: 1.5, marginTop: "6px" }}>{collection.note}</div>
             <div style={{ color: T.muted, fontSize: "11px", marginTop: "4px" }}>
-              Latest source row: {fmtDate(collection.last_write)}{collection.market_scope === "shared_evidence" ? " · shared across markets; not an independent market-local writer" : collection.market_scope === "single_market" ? " · only this market is in scope" : ""}
+              Latest source row: {fmtDate(collection.last_write)}{collection.market_scope === "shared_evidence" ? " · shared across markets; not an independent market-local writer" : collection.market_scope === "market_and_global_context" ? " · selected market plus shared global context; not independent market evidence" : collection.market_scope === "single_market" ? " · only this market is in scope" : ""}
+              {collection.rows != null && <div>{fmtNumber(collection.rows)} total persisted source rows · not independent samples; analysis previews may use a smaller declared window.</div>}
             </div>
           </div>}
           {!collection && <div style={{ color: T.yellow, fontSize: "12px", marginBottom: "8px" }}>Collection status could not be verified.</div>}
@@ -415,6 +426,7 @@ export default function UpgradePathPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [lifecycle, setLifecycle] = useState<LifecycleFilter>("all");
+  const [queueExpanded, setQueueExpanded] = useState(false);
   const { market } = useMarket();
   const mobile = useIsMobile();
   const requestSequence = useRef(0);
@@ -422,18 +434,13 @@ export default function UpgradePathPage() {
   const load = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
-      const [response, collectionResponse, covarianceResponse] = await Promise.all([
+      const [response, covarianceResponse] = await Promise.all([
         fetch(`/api/upgrade-path?market=${market}`, { cache: "no-store" }),
-        fetch("/api/admin/shadow-liveness", { cache: "no-store" }),
         fetch(`/api/portfolio/covariance-shadow?market=${market}`, { cache: "no-store" }),
       ]);
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
       const next = await response.json() as ApiResponse;
       if (sequence !== requestSequence.current || next.market !== market) return;
-      if (collectionResponse.ok) {
-        const collectionPayload = await collectionResponse.json() as { programs?: ApiResponse["collection"] };
-        next.collection = collectionPayload.programs?.filter((row) => row.market === market) ?? [];
-      }
       if (covarianceResponse.ok) {
         setCovariance(await covarianceResponse.json() as CovarianceShadowResponse);
         setCovarianceError("");
@@ -462,11 +469,15 @@ export default function UpgradePathPage() {
   const filtered = useMemo(() => (data?.programs ?? []).filter((program) => {
     const lifecycleMatch = lifecycle === "all"
       || (lifecycle === "active" && ["collecting", "paper_active", "armed"].includes(program.lifecycle))
-      || (lifecycle === "review" && program.lifecycle === "ready_for_review")
+      || (lifecycle === "review" && ["analysis_review", "result_review"].includes(program.completion?.state ?? ""))
+      || (lifecycle === "repair" && program.completion?.state === "repair")
+      || (lifecycle === "build" && program.completion?.state === "build_comparison")
       || (lifecycle === "blocked" && ["blocked", "idle"].includes(program.lifecycle))
       || (lifecycle === "off" && program.lifecycle === "off");
     return lifecycleMatch;
   }), [data, lifecycle]);
+  const queue = useMemo(() => [...(data?.programs ?? [])].filter(program => program.completion && program.completion.priority <= 2)
+    .sort((a, b) => a.completion!.priority - b.completion!.priority || Number(b.completion!.overdue) - Number(a.completion!.overdue) || a.name.localeCompare(b.name)), [data]);
 
   return <main style={{ minHeight: "100vh", background: T.bg, color: T.text, padding: mobile ? "18px 14px 36px" : "24px 28px 48px" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "18px", marginBottom: "20px" }}>
@@ -477,7 +488,7 @@ export default function UpgradePathPage() {
           {MARKET_LABEL[data?.market ?? market]} evidence, cost, benefit and activation boundaries for every registered shadow, paper experiment and dormant upgrade path.
         </p>
         <p style={{ color: T.yellow, fontSize: "12px", lineHeight: 1.5, margin: "7px 0 0", maxWidth: "780px" }}>
-          “Ready for review” means its predeclared evidence and safety checks are complete. It never means guaranteed portfolio or benchmark improvement, and it never deploys itself.
+          Collection, analysis and portfolio benefit are separate. An analysis floor is not permission to enable. Missing comparisons need implementation—not endless data collection. Negative results are useful; guaranteed improvement is not promised.
         </p>
       </div>
       <button type="button" onClick={load} title="Refresh status" aria-label="Refresh status" style={{
@@ -491,9 +502,11 @@ export default function UpgradePathPage() {
       border: `1px solid ${T.border}`, borderRadius: "8px", overflow: "hidden", marginBottom: "16px",
     }}>
       {[
-        ["Programs", data.summary.total], ["Active", data.summary.collecting],
-        ["Review ready", data.summary.readyForReview], ["Blocked / idle", data.summary.blockedOrIdle],
-        ["Tracked calls · 7d", data.summary.trackedCalls7d],
+        ["Applicable", data.summary.completion?.applicable ?? data.summary.total],
+        ["Repair pipeline", data.summary.completion?.repair ?? data.summary.blockedOrIdle],
+        ["Missing assessment", data.summary.completion?.buildComparison ?? 0],
+        ["Results to review", data.summary.completion?.results ?? data.summary.readyForReview],
+        ["Collecting evidence", data.summary.completion?.collecting ?? data.summary.collecting],
       ].map(([label, value], index) => <div key={String(label)} style={{
         padding: "14px 16px", background: T.surface,
         borderRight: index === 4 || (mobile && index % 2 === 1) ? "none" : `1px solid ${T.border}`,
@@ -507,6 +520,19 @@ export default function UpgradePathPage() {
     {data?.summary.attribution && <div style={{ margin: "-6px 0 18px", padding: "11px 13px", border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, color: T.textSub, fontSize: 12, lineHeight: 1.5 }}>
       <b style={{ color: T.text }}>Portfolio attribution</b> · {data.summary.attribution.measured}/{data.summary.attribution.performanceEligible} performance-eligible paths measured ({data.summary.attribution.syntheticMeasured} synthetic diagnostic, not Kairos holdings) · {data.summary.attribution.collecting} collecting · {data.summary.attribution.producerMissing} producer missing · {data.summary.attribution.invalid} invalid. <span style={{ color: T.muted }}>{data.summary.attribution.notAttributable} operational-only paths are excluded. This is separate from “Review ready,” which reflects each program’s operational evidence gate.</span>
     </div>}
+
+    {data?.summary.completion && <section aria-label="Prioritized completion queue" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "18px 20px", marginBottom: 18 }}>
+      <h2 style={{ margin: "0 0 8px", fontSize: 17 }}>Next actions · {MARKET_LABEL[data.market]}</h2>
+      <p style={{ color: T.textSub, fontSize: 12, lineHeight: 1.5 }}>Repair broken evidence first, connect missing comparisons next, then review results. {data.summary.completion.parked} intentionally inactive; {data.summary.completion.overdue} past their recorded review date. Inactive and inapplicable items are not presented as experiments making progress.</p>
+      {queue.slice(0, queueExpanded ? queue.length : 6)
+        .map(program => <a key={program.id} href={`#upgrade-${program.id}`} onClick={() => setLifecycle("all")} style={{ display: "block", color: T.text, padding: "12px 0", borderTop: `1px solid ${T.border}`, textDecoration: "none", fontSize: 12, lineHeight: 1.55 }}>
+          <strong style={{ color: program.completion!.priority === 0 ? T.red : T.accent }}>{program.name} · {program.completion!.title}</strong>
+          <div>{program.completion!.nextAction}</div>
+          <div style={{ color: T.muted }}>Owner: {program.completion!.owner} · Review: {program.completion!.reviewDate ?? "Not scheduled"}{program.completion!.overdue ? " · overdue" : ""}</div>
+        </a>)}
+      {queue.length > 6 && <button type="button" aria-expanded={queueExpanded} onClick={() => setQueueExpanded(value => !value)} style={{ padding: "9px 12px", border: `1px solid ${T.border}`, background: T.card, color: T.blue, borderRadius: 6, cursor: "pointer", marginTop: 8 }}>{queueExpanded ? "Show first 6 actions" : `Show all ${queue.length} actions`}</button>}
+      {data.summary.completion.repair + data.summary.completion.buildComparison + data.summary.completion.results === 0 && <p style={{ color: T.textSub, fontSize: 12 }}>No repair or result-review action is currently reported. Collectors still have to satisfy their declared evidence gates.</p>}
+    </section>}
 
     <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: mobile ? "15px" : "18px 20px", marginBottom: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
@@ -558,7 +584,7 @@ export default function UpgradePathPage() {
 
     <section style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
       {([
-        ["all", "All"], ["active", "Active"], ["review", "Review ready"], ["blocked", "Blocked / idle"], ["off", "Off"],
+         ["all", "All"], ["repair", "Repair evidence"], ["build", "Missing comparison"], ["review", "Results / analysis"], ["active", "Active"], ["blocked", "Blocked / idle"], ["off", "Off"],
       ] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setLifecycle(value)} style={{
         border: `1px solid ${lifecycle === value ? T.accent : T.border}`, borderRadius: "6px",
         background: lifecycle === value ? `${T.accent}1F` : T.surface, color: lifecycle === value ? T.text : T.textSub,

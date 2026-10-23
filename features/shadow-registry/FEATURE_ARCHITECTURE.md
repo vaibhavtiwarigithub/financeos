@@ -1,6 +1,12 @@
 # Shadow Registry and Upgrade Path
 
 Status: APPROVED (owner instruction, 2026-07-29)
+Current implementation: October 23 result-pipeline repair reuses a shared
+collection-health projection and adds a deterministic completion queue. Existing
+council/formula/event evaluator batches are visible with Learning links; missing
+portfolio replays remain build work. See
+`features/upgrade-path-attribution/FEATURE_ARCHITECTURE.md` for the contract and
+`docs/audits/2026-10-23-upgrade-path-results.md` for verification evidence.
 Owner: Vaibhav
 Implementation role: Codex
 

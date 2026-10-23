@@ -1,5 +1,13 @@
 # Exogenous Risk Evidence Layer
 
+Current collection correction (October 23): the existing Vercel global-spillover
+and market-breadth routes do populate `exogenous_observations`. Upgrade Path no
+longer labels that source ledger an inert scaffold. Its source-health reader
+includes the selected market plus explicitly shared global rows, with a 96-hour
+bound. Global context is not counted as an independent market-local writer.
+These Yahoo/provider observations do not satisfy the official domestic macro
+adapter or regime-validation requirements below, and no decision reader is enabled.
+
 > Status (2026-10-16): **P0 LEDGERS BUILT; INDIA MACRO SERIES + SYMBOL EXPOSURE SHADOWS COLLECTING; REGIME ANALOGS AND US SYMBOL EXPOSURES NOT BUILT.**
 > Date: 2026-08-24
 > Owner approval: observation-first build approved 2026-08-01. No scoring, paper,

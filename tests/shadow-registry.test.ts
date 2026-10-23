@@ -235,7 +235,8 @@ describe("shadow registry governance contract", () => {
     expect(statusAdapter).toContain("upgrade_path_attribution_runs");
     expect(upgradePage).toContain("Causal attribution");
     expect(upgradePage).toContain("Collection health · not P&L proof");
-    expect(upgradePage).toContain("/api/admin/shadow-liveness");
+    expect(route).toContain("loadShadowCollectionHealth(svc, market)");
+    expect(upgradePage).toContain("Prioritized completion queue");
   });
 
   it("reports the setup-expert idempotency conflict instead of calling India merely idle", () => {

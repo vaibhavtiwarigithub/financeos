@@ -227,14 +227,15 @@ describe("Upgrade Path liveness contracts", () => {
   it("exposes only service-role cron run metadata for the liveness audit", () => {
     const migration = readFileSync("supabase/migrations/20260926191851_shadow_cron_run_health.sql", "utf8");
     const route = readFileSync("app/api/admin/shadow-liveness/route.ts", "utf8");
+    const reader = readFileSync("lib/shadows/collection-health.ts", "utf8");
     expect(migration).toContain("cron.job_run_details");
     expect(migration).toContain("revoke all on function public.get_shadow_cron_health() from public, anon, authenticated");
     expect(migration).toContain("grant execute on function public.get_shadow_cron_health() to service_role");
-    expect(route).toContain('rpc("get_shadow_cron_health")');
-    expect(route).toContain('const sb = createServiceClient()');
-    expect(route.indexOf("if (denied) return denied")).toBeLessThan(route.indexOf("const sb = createServiceClient()"));
+    expect(reader).toContain('rpc("get_shadow_cron_health")');
+    expect(route).toContain('loadShadowCollectionHealth(createServiceClient())');
+    expect(route.indexOf("if (denied) return denied")).toBeLessThan(route.indexOf("loadShadowCollectionHealth(createServiceClient())"));
     expect(route).not.toContain("createServerClient");
     expect(route).not.toContain("cookieStore");
-    expect(route).toContain("cron_jobs: scheduledJobsForMarket(program, market)");
+    expect(reader).toContain("cron_jobs: scheduledJobsForMarket(program, market)");
   });
 });

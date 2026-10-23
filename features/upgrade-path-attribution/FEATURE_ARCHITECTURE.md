@@ -1,6 +1,52 @@
 # Upgrade Path Causal Performance Attribution
 
-Status: PAIRED SHADOW-BOOK ATTRIBUTION DEPLOYED; first post-deploy producer evidence pending. PR #29 merged to `main` as `b422c2d4`; production Vercel deployment `dpl_AKQ3oM9QEHVAtMztLiLHBpFXVius` is READY, and migration `20260930193000` is applied. As of 2026-09-30, production has four measured rows for synthetic `international-allocation` (US), and zero ATR attribution rows. ATR currently has two paired snapshots (seed 2026-09-25; latest 2026-09-28), below its 20-session minimum; the latest pre-deploy collector run was blocked because the expected 2026-09-29 bar was unavailable. The deployed collector will report exact collecting status and can write net-only attribution after two complete, non-overlapping ten-session blocks. Gross returns remain NULL because source fills already include execution costs. Other performance-eligible programs remain producer-missing unless their own portfolio replay is verified.
+Current repair (October 23): shared market-local collection projection, completion
+queue and stored evaluator result links are implemented. Exact label-summary RPC
+`20261023134622` is applied in production with service-only execution. Release
+verification is recorded in `docs/audits/2026-10-23-upgrade-path-results.md`.
+Production evidence at audit: 21 measured synthetic-allocation rows; 20 US ATR
+snapshots through October 22 with one complete ten-session block, not two. No
+qualified Kairos paired-book attribution result was found. Missing replay producers
+remain explicit implementation work, not a data-maturity wait or activation pass.
+
+## Approved repair scope — October 23, 2026
+
+Owner instruction: audit why Upgrade Path produces no usable decisions and fix
+its broken result pipeline. Reuse the existing ledgers, collectors and health
+probes; do not create another experimental strategy or relax evidence floors.
+
+1. Collection health has one shared server reader used by both the health API
+   and Upgrade Path. Missing per-program presentation adapters must not turn
+   real producer rows into “idle / unavailable”. Collection is not validation.
+2. Label coverage is aggregated in PostgreSQL with exact market and declared
+   entry-candidate cohort; raw h10 geometry reads remain separately bounded.
+   A failed or oversized read is unavailable, never “zero labels”. A new
+   service-only, invoker RPC requires migration and grants verification.
+3. Every applicable card receives a deterministic completion assessment:
+   repair a failed producer/read; implement a missing comparison; collect an
+   explicitly missing sample; review an analysis; or retain an off/scaffold
+   item outside the active queue. A due review is not an automatic promotion.
+4. The first screen shows prioritized repair/implementation/review actions,
+   exact blockers, owner and due date, alongside actual paired results. It
+   distinguishes operational evidence from portfolio benefit and excludes
+   inapplicable markets from all completion/performance denominators.
+5. Keep historical evidence immutable. Synthetic allocation results are not
+   Kairos portfolio results; ATR snapshots are not a qualified result before
+   its declared windows mature. Missing replay adapters stay explicit build
+   work, not indefinite “collecting” or “ready to enable”.
+
+Acceptance: all 35 registry definitions resolve through a specific adapter or
+the shared source-health contract; no unexplained “Status adapter unavailable”
+for a healthy registered collector; US labels above 20,000 total remain visible;
+source failures cannot become readiness; both markets show the completion queue;
+authenticated production GET is read-only and anonymous GET remains denied.
+No score, risk, council, paper/live setting, order or promotion is changed.
+
+Historical release checkpoint (September 30, not current status): PR #29 merged
+as `b422c2d4` with migration `20260930193000`. At that date there were four
+synthetic-allocation measured rows and two ATR snapshots, with the latest expected
+bar unavailable. The deployed producer requires two non-overlapping ten-session
+blocks. Gross returns remain NULL because source fills already include costs.
 Owner: Vaibhav
 Scope: Upgrade Path governance and evidence reporting only. No score, sizing,
 paper, live, broker or execution behavior changes.

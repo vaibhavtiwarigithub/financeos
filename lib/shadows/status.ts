@@ -9,10 +9,12 @@ import { STRATEGY_STATE } from "@/lib/validation/strategy-states";
 import {
   bindingCoverage,
   coverageBlockers,
+  coverageCautions,
   coverageByHorizon,
   MIN_DISTINCT_DATES,
   PRIMARY_HORIZON_DAYS,
   type LabelRow,
+  type HorizonCoverage,
 } from "@/lib/shadows/label-coverage";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
@@ -20,6 +22,7 @@ import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mand
 import { benefitVerdictFromPairedAttribution, defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
 import { TIME_REVIEW_POLICY_VERSION } from "@/lib/trading/time-review-exit";
 import { EVALUATION_CODE_VERSION } from "@/lib/evidence/evaluation/cohort";
+import { scheduledJobsForMarket } from "@/lib/shadows/liveness";
 
 export interface ShadowCallMetrics {
   mode: CallAccountingMode;
@@ -385,6 +388,8 @@ async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<Qu
     const { data, error } = await svc.from("observation_labels")
       .select("horizon_days,fwd_return,max_favorable_excursion,max_adverse_excursion,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("decision_observations.market", market)
+      .eq("horizon_days", PRIMARY_HORIZON_DAYS)
+      .lte("matured_at", new Date().toISOString())
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) return { data: null, error };
@@ -405,11 +410,7 @@ function latestIso(rows: any[], field: string): string | null {
 }
 
 function scheduleFor(program: ShadowProgramDefinition, cronRows: any[], market: ShadowMarket): ShadowProgramStatus["schedules"] {
-  const marketJobs = program.cronJobs.filter((job) => {
-    const indiaJob = /(^|-)india($|-)/.test(job);
-    const usJob = /(^|-)us($|-)/.test(job);
-    return market === "india" ? indiaJob || (!indiaJob && !usJob) : usJob || (!indiaJob && !usJob);
-  });
+  const marketJobs = scheduledJobsForMarket(program, market);
   return marketJobs.map((job) => {
     const row = cronRows.find((item) => item?.jobname === job);
     return { job, schedule: row?.schedule ?? null, active: row?.active === true };
@@ -454,6 +455,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     marketRegimeRunRes,
     fundamentalFactsRes,
     labelCoverageRes,
+    labelSummaryRes,
     dimensionDiagnosticRunRes,
     horizonExtensionRes,
     timeReviewObservationRes,
@@ -506,8 +508,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     svc.from("paper_trades")
       .select("market,exit_reason,realized_pnl,pnl_pct,closed_at").eq("market", market).eq("exit_reason", "capital_rotation").gte("closed_at", since90).limit(500),
     svc.from("earnings_risk_observations")
-      .select("market,environment,decision_kind,report_date,options_quality,counterfactual_verdict,behavior_changed,created_at")
-      .eq("market", market).gte("created_at", since90).limit(5000),
+      .select("symbol,market,environment,decision_kind,report_date,options_quality,counterfactual_verdict,behavior_changed,created_at")
+      .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(1000),
     svc.from("international_allocation_policies")
       .select("status,target_pct,deadband_pct,updated_at").order("updated_at", { ascending: false }).limit(5),
     svc.from("international_allocation_assessments")
@@ -561,6 +563,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     // Matured decision labels. The join is inner on purpose: an observation with
     // no label has not matured and must not count toward coverage.
     loadLabelCoverageRows(svc, market),
+    svc.rpc("get_upgrade_path_label_coverage", { p_market: market }),
     svc.from("dimension_diagnostic_runs")
       .select("id,status,horizon_days,input_observation_count,distinct_session_count,created_at")
       .eq("market", market).gte("created_at", since45).order("created_at", { ascending: false }).limit(100),
@@ -691,7 +694,13 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       };
     })
     .filter((row: LabelRow | null): row is LabelRow => row != null && Number.isFinite(row.horizonDays));
-  const labelCoverage = coverageByHorizon(labelRows);
+  const labelCoverage: HorizonCoverage[] = (labelSummaryRes.data ?? []).map((row: any) => ({
+    horizonDays: Number(row.horizon_days), observations: Number(row.observations),
+    distinctDates: Number(row.distinct_dates), distinctSymbols: Number(row.distinct_symbols),
+    eligibleObservations: Number(row.eligible_observations),
+    observationsPerDate: Number(row.distinct_dates) > 0 ? Number(row.observations) / Number(row.distinct_dates) : 0,
+    sufficient: Number(row.distinct_dates) >= MIN_DISTINCT_DATES,
+  }));
   let currentMandate: Awaited<ReturnType<typeof loadTradingMandateStrict>> | null = null;
   try {
     currentMandate = await loadTradingMandateStrict(svc, market as TradingMarket);
@@ -871,7 +880,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         `The current baseline must keep ambiguous stop/target windows at or below ${(MAX_AMBIGUOUS_SHARE * 100).toFixed(0)}%; max-excursion data cannot order a double touch.`,
         "The live mandate is read at evaluation time so the incumbent cannot silently drift from the reported baseline.",
       ];
-      status.available = !labelCoverageRes.error;
+      status.available = !labelCoverageRes.error && !labelSummaryRes.error;
+      if (!status.available) {
+        status.lifecycle = "blocked";
+        status.blockers.unshift(`Label evidence unavailable: ${labelCoverageRes.error?.message ?? labelSummaryRes.error?.message ?? "unknown read failure"}`);
+      }
       return status;
     }
 
@@ -999,10 +1012,10 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
     if (program.id === "decision-label-coverage") {
       const binding = bindingCoverage(labelCoverage);
       const blockers = coverageBlockers(labelCoverage);
-      const totalDates = new Set(labelRows.map((row) => row.date)).size;
+      const totalDates = binding?.distinctDates ?? 0;
       // Never "ready_for_review": this program is permanently measure-only and
       // has no activation to be ready for. It reports collecting or blocked.
-      status.lifecycle = labelRows.length === 0 ? "idle" : blockers.length ? "blocked" : "collecting";
+      status.lifecycle = !binding ? "idle" : blockers.length ? "blocked" : "collecting";
       status.benefitVerdict = "operational_only";
       status.benefitEvidence = binding
         ? `${market.toUpperCase()} ${binding.horizonDays}-day horizon: ${binding.observations} matured labels across ${binding.distinctDates} decision date(s) and ${binding.distinctSymbols} symbol(s); ${binding.eligibleObservations} were entry-eligible.`
@@ -1013,20 +1026,24 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         unit: "symbols at the traded horizon",
       });
       status.calls = calls("zero_incremental", "Reads two evidence tables already written by the research and maturation jobs. No provider request.");
-      status.latestAt = labelRows.length
-        ? labelRows.map((row) => row.date).sort().at(-1) ?? null
-        : null;
+      status.latestAt = (labelSummaryRes.data ?? []).find((row: any) => Number(row.horizon_days) === binding?.horizonDays)?.latest_session ?? null;
       status.blockers = blockers;
       status.nextAction = blockers.length
         ? `Let maturation accumulate distinct decision dates. Do not read a scoring, universe or exit result off the ${binding?.horizonDays ?? PRIMARY_HORIZON_DAYS}-day cohort until it clears ${MIN_DISTINCT_DATES} dates.`
         : "Coverage clears the floor at the traded horizon. Results may be interpreted, still with overlap and multiple-testing caveats.";
       status.details = [
-        `${totalDates} distinct decision date(s) across all horizons.`,
+        `${totalDates} distinct decision date(s) at the binding horizon.`,
+        ...coverageCautions(labelCoverage),
         ...labelCoverage.map((row) =>
           `${row.horizonDays}d: n=${row.observations}, ${row.distinctDates} date(s), ${row.distinctSymbols} symbol(s), ${row.observationsPerDate.toFixed(1)} obs/date`),
-        "n is not the sample size. Overlapping forward windows and correlated symbols mean the effective sample is closer to the date count.",
+        "Neither rows nor distinct dates are independent samples. Use the evaluator's overlap-aware inference before claiming predictive skill.",
       ];
-      status.available = !labelCoverageRes.error;
+      status.available = !labelSummaryRes.error;
+      if (!status.available) {
+        status.lifecycle = "blocked";
+        status.blockers.unshift(`Label coverage summary unavailable: ${labelSummaryRes.error?.message ?? "unknown read failure"}`);
+        status.nextAction = "Repair the summary read; this is not an absence of matured labels.";
+      }
       return status;
     }
 
@@ -1317,7 +1334,7 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
 
     if (program.id === "earnings-risk") {
       const entries = earnings.filter((row: any) => row.decision_kind === "entry");
-      const events = new Set(entries.filter((row: any) => row.report_date).map((row: any) => `${row.market}:${row.report_date}`));
+      const events = new Set(entries.filter((row: any) => row.symbol && row.report_date).map((row: any) => `${row.market}:${row.symbol}:${row.report_date}`));
       const usable = entries.filter((row: any) => row.options_quality === "usable").length;
       const changed = earnings.filter((row: any) => row.behavior_changed).length;
       const usFloorsMet = entries.length >= 60 && events.size >= 20;
@@ -1344,9 +1361,9 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
         ]
         : ["No India behavior-change target is approved; options-implied movement is not available for India."];
       status.nextAction = market === "us"
-        ? "Let US candidate traffic collect observations; do not add options to analyst_score."
+        ? usFloorsMet ? "Review the existing event observations; predeclare quote coverage and a calibration comparison before changing trading behavior." : "Let US candidate traffic collect observations; do not add options to analyst_score."
         : "Continue India earnings-proximity measurement without borrowing US options evidence.";
-      status.details = market === "us" ? ["US can measure a same-strike move proxy."] : ["India records event proximity only."];
+      status.details = ["Latest 1,000 observations within 90 days; counts are a bounded recent sample, not an all-time total. An event is symbol + report date, not a calendar date alone.", ...(market === "us" ? ["US can measure a same-strike move proxy."] : ["India records event proximity only."])];
       status.available = !earningsRiskRes.error;
       return status;
     }
@@ -1360,11 +1377,11 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
       status.benefitVerdict = "insufficient";
       status.benefitEvidence = `${fresh.length}/${exogenousObservations.length} fresh source observation(s) across ${series.size} market-series; ${marketRegimeRuns.length} regime shadow run(s).`;
       status.progress = progress(exogenousObservations.length, null, "source observations", 90);
-      status.calls = calls("not_applicable", "P0 only persists governed evidence ledgers; no source adapter or network collection is enabled yet.");
+      status.calls = calls("unmetered", "Existing global-spillover and breadth collectors fetch source data; this status read adds no provider calls.");
       status.latestAt = latestObservation ?? latestRun;
       status.blockers = [
-        "No stable, timestamped official source adapter is enabled.",
-        "No point-in-time coverage or market-local validation evidence exists.",
+        "Global-index/futures and market-breadth context is collecting, but full official domestic macro adapters remain unbuilt.",
+        "No completed market-local regime prediction comparison exists; source rows alone are not predictive evidence.",
         "No score, signal, paper/live trade, exit, sizing, or broker reader is approved.",
       ];
       status.nextAction = "Verify official machine-readable source contracts, then start bounded source collection without adding a decision consumer.";

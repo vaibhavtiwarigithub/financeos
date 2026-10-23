@@ -24,8 +24,11 @@ export interface ShadowEvidenceProbe {
   /** Present when evidence is partitioned in the same market as the path. */
   marketCol?: "market";
   marketScope?: "shared" | "single_market";
+  includeGlobalContext?: boolean;
   expectedIdleHours: number | null;
   expectedRunIdleHours: number | null;
+  /** Explicit override when one program owns jobs with different cadences. */
+  runIdleHoursByJob?: Readonly<Record<string, number>>;
   equals?: Readonly<Record<string, string>>;
   in?: Readonly<Record<string, readonly string[]>>;
   note: string;
@@ -90,8 +93,8 @@ export const SHADOW_EVIDENCE_PROBES: Readonly<Record<string, ShadowEvidenceProbe
   "llm-council-shadow": { mode: "scheduled", table: "llm_council_runs", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "One run per research observation, written shortly after each research slot; a market with research but no run for a day is a dead scorer." },
   "chart-pattern-shadow": { mode: "event_driven", table: "chart_pattern_shadow_runs", tsCol: "created_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 96, note: "Eligible-long ResearchAgent decisions write explicit detected/no-pattern/insufficient-candle attempts; no qualifying decision is a valid wait state." },
   "earnings-risk": { mode: "scheduled", table: "earnings_risk_observations", tsCol: "created_at", marketCol: "market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Daily point-in-time event-risk annotations; behavior remains unchanged." },
-  "exogenous-risk": { mode: "inert", table: "exogenous_observations", tsCol: "created_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: null, note: "Schema foundation only; source adapters and collectors are not implemented." },
-  "international-allocation": { mode: "scheduled", table: "international_allocation_replay_runs", tsCol: "created_at", marketScope: "single_market", expectedIdleHours: 96, expectedRunIdleHours: 96, note: "Daily US/USD paired replay; weekly assessment is an additional operational record." },
+  "exogenous-risk": { mode: "scheduled", table: "exogenous_observations", tsCol: "created_at", marketCol: "market", includeGlobalContext: true, expectedIdleHours: 96, expectedRunIdleHours: null, note: "Existing Vercel global-spillover and market-breadth collectors write market-local plus shared global context. Source freshness is checked here; this is not proof of full RBI/MoSPI adapters or a regime evaluator." },
+  "international-allocation": { mode: "scheduled", table: "international_allocation_replay_runs", tsCol: "created_at", marketScope: "single_market", expectedIdleHours: 96, expectedRunIdleHours: 96, runIdleHoursByJob: { "kairos-international-allocation-shadow": 240 }, note: "Daily US/USD paired replay; weekly assessment is an additional operational record." },
   "autonomous-live": { mode: "off", table: "trade_proposals", tsCol: "created_at", expectedIdleHours: null, expectedRunIdleHours: null, note: "Autonomous live is intentionally off and its idle recurring campaign is removed." },
   "challenger-validation": { mode: "event_driven", table: "validation_experiments", tsCol: "created_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 240, note: "Weekly validation sweep; an empty candidate queue is a valid wait state." },
   "downside-hedge": { mode: "event_driven", table: "downside_hedge_events", tsCol: "created_at", marketCol: "market", expectedIdleHours: null, expectedRunIdleHours: 96, note: "Scheduled evaluator is active; no rows can be valid when deterministic stress conditions do not occur." },
@@ -141,8 +144,8 @@ export function evaluateShadowLiveness(input: {
   if (expectedRunIdleHours != null) {
     const neverRun = expectedJobs.filter((job) => job.lastStartedAt == null);
     if (neverRun.length) return { verdict: "never_run", note: `Active schedule has no recorded invocation yet: ${neverRun.map((job) => job.job).join(", ")}.`, schedules, lastWrite: input.lastWrite, idleHours: null };
-    const staleRuns = expectedJobs.filter((job) => input.nowMs - Date.parse(job.lastStartedAt!) > expectedRunIdleHours * 3_600_000);
-    if (staleRuns.length) return { verdict: "stale_schedule_run", note: `Latest scheduled invocation is outside ${expectedRunIdleHours}h for: ${staleRuns.map((job) => job.job).join(", ")}.`, schedules, lastWrite: input.lastWrite, idleHours: null };
+    const staleRuns = expectedJobs.filter((job) => !Number.isFinite(Date.parse(job.lastStartedAt!)) || input.nowMs - Date.parse(job.lastStartedAt!) > (probe.runIdleHoursByJob?.[job.job] ?? expectedRunIdleHours) * 3_600_000);
+    if (staleRuns.length) return { verdict: "stale_schedule_run", note: `Latest scheduled invocation is outside its cadence bound: ${staleRuns.map((job) => `${job.job} (${probe.runIdleHoursByJob?.[job.job] ?? expectedRunIdleHours}h)`).join(", ")}.`, schedules, lastWrite: input.lastWrite, idleHours: null };
   }
 
   if (probe.mode === "off" || probe.mode === "inert") {
