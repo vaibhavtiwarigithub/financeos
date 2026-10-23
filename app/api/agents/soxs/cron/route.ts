@@ -99,6 +99,8 @@ async function runSoxsCron(supabase: ReturnType<typeof createServiceClient>, now
   if (existingErr) return fail({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` });
   if (existing) {
     const monitorQuote = await getLeveragedIntradayQuote("SOXS");
+    // Venue events can arrive during I/O. Validate against decision time, not request start.
+    now = Date.now();
     const decision = monitorSoxs({
       now,
       maxQuoteAgeMs: MONITOR_MAX_QUOTE_AGE_MS,
@@ -164,6 +166,8 @@ async function runSoxsCron(supabase: ReturnType<typeof createServiceClient>, now
     fetchUsCandles("SOXS", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getLeveragedIntradayQuote("SOXS"),
   ]);
+  now = Date.now();
+  if (!soxsEntryWindow(new Date(now))) return ok({ status: "no_entry", reason: "outside_entry_window" });
   const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
   const expectedSession = expectedNewestSession("us", new Date(now));
   const signalSession = candles.candles.at(-1)?.date;
@@ -212,6 +216,8 @@ async function runSoxsCron(supabase: ReturnType<typeof createServiceClient>, now
     loadTradingMandate(supabase, "us"),
   ]);
   if (researchSignalError) return fail({ status: "error", reason: `research_signal_query_failed: ${researchSignalError}` });
+  // Recheck quote, signal, liveness and entry window after all evidence reads.
+  now = Date.now();
   const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now });
   if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}` });
   // Real bid/ask when the provider has one; otherwise a modeled conservative spread (paper only).

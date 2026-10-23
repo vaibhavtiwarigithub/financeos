@@ -1433,6 +1433,17 @@ Health info alert when ≥ 20 accumulate.
 
 ### Leveraged Sleeve: SOXL / TQQQ / SQQQ / SOXS paper crons
 
+**Decision-time freshness:** each monitor uses a clock sampled after quote I/O.
+Entries recheck their local window after fetching and again at final planning,
+including quote/signal/prior-monitor age after downstream evidence reads. A
+venue event newer than request start is valid only if not newer than actual
+decision time; missing, future and >15-minute quotes remain invalid. The shared
+live door follows the same clock rule per symbol, and returned monitor or
+reconciliation failures record an error rather than healthy liveness. This does
+not enable live trading or demonstrate a real broker protective lifecycle. Live
+lease accounting also rejects unknown/invalid holding prices or quantities rather
+than substituting quantity for missing price and overstating available capital.
+
 **Files:** `app/api/agents/{soxl,tqqq,sqqq,soxs}/cron/route.ts`,
 `lib/trading/{soxl,tqqq,sqqq,soxs}-lifecycle.ts`, `lib/trading/{soxl,tqqq,sqqq,soxs}-evidence.ts`,
 `lib/trading/leveraged-sleeve-risk.ts`, `lib/trading/semiconductor-risk.ts`

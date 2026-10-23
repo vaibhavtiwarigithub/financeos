@@ -1,5 +1,32 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Decision-clock contract — 2026-10-22
+
+All four paper doors and the dormant shared live door now evaluate a fetched
+quote against the clock **after** its I/O, never the original request-start
+clock. Otherwise a legitimate venue event during the request appears future-
+dated and monitoring fails. Entry windows are checked again after fetching and
+at the final plan, after downstream evidence reads; quote, signal and prior-
+monitor freshness use that final decision clock too. Every live-loop symbol
+starts with its own current clock. No venue timestamp is replaced with fetch
+time, and the existing 15-minute qualification bound remains unchanged.
+
+The live run ledger also treats returned monitor/reconciliation failures as
+errors, not just thrown exceptions; a failed run cannot mint healthy monitor
+proof for a later entry. Live lease accounting refuses nonpositive, missing or
+nonfinite open-holding prices/quantities; quantity must never substitute for
+price when computing remaining capital. Provider, persistence and broker mutations are fully
+mocked in the route-clock regression suite, including stop decisions, stale/
+future/missing timestamps, I/O crossing the entry window and liveness expiry.
+The shadow collector already used a post-fetch clock and is unchanged.
+
+Production already recorded complete timestamped bid/ask observations for all
+four funds on October 22. That proves those snapshots, not uninterrupted quote
+coverage or broker protection. This repair changes no enablement, policy cap,
+stop/target geometry or schedule. Live stop/cancel/fill proof remains a separate
+blocker; paper checks must be verified at the next natural scheduled run after
+deployment. Do not manufacture that proof by manually invoking a trading cron.
+
 ## Paper quote recovery — 2026-10-22
 
 The paper intraday reader retains Twelve Data's validated quote and daily range

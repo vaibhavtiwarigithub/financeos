@@ -166,7 +166,11 @@ export async function GET(req: NextRequest) {
   let anyError = false;
   for (const cfg of SYMBOLS) {
     try {
-      results[cfg.symbol] = await runSymbol(supabase, cfg, now, priorMonitorVerifiedAt);
+      const result = await runSymbol(supabase, cfg, now, priorMonitorVerifiedAt);
+      results[cfg.symbol] = result;
+      // Returned failures are not exceptions; they must not mint healthy monitor proof.
+      if (["error", "monitor_failed", "exit_needs_reconcile", "protective_needs_reconcile",
+        "flatten_attempted_no_protective_stop"].includes(String(result.status))) anyError = true;
     } catch (e) {
       anyError = true;
       results[cfg.symbol] = { status: "error", reason: String(e instanceof Error ? e.message : e) };
@@ -183,6 +187,8 @@ async function runSymbol(
   priorMonitorVerifiedAt: number | null,
 ): Promise<Record<string, unknown>> {
   const { symbol } = cfg;
+  // Each symbol may follow slow broker work for the preceding symbol.
+  now = Date.now();
 
   const { data: existing, error: existingErr } = await supabase
     .from("leveraged_live_positions")
@@ -241,6 +247,7 @@ async function runSymbol(
       return { status: "monitor_failed", reason: "broker_protection_unverified" };
     }
     const monitorQuote = await getLeveragedExecutableQuote(symbol);
+    now = Date.now();
     if (!monitorQuote || monitorQuote.stale || monitorQuote.bid == null) {
       return { status: "monitor_failed", reason: "broker_bid_ask_unavailable_or_stale" };
     }
@@ -372,6 +379,8 @@ async function runSymbol(
     fetchUsCandles(symbol, NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getLeveragedExecutableQuote(symbol),
   ]);
+  now = Date.now();
+  if (!cfg.entryWindow(new Date(now))) return { status: "no_entry", reason: "outside_entry_window" };
   const candles = { ...candleResult, candles: completedSessionCandles(candleResult.candles, "us", new Date(now)) };
   const expectedSession = expectedNewestSession("us", new Date(now));
   const signalSession = candles.candles.at(-1)?.date;
@@ -400,8 +409,16 @@ async function runSymbol(
   const { data: allOpenLive, error: liveErr } = await supabase
     .from("leveraged_live_positions").select("symbol, qty, current_price").is("closed_at", null);
   if (liveErr) return { status: "error", reason: `live_positions_query_failed: ${liveErr.message}` };
-  const existingLivePositions = (allOpenLive ?? []).map((p: any) => ({ symbol: String(p.symbol), marketValue: Number(p.qty ?? 0) * Number(p.current_price ?? p.qty ?? 0) }));
+  // Quantity is not a price fallback: unknown marks must not create fictitious
+  // lease headroom (or let an unpriced holding authorize another live BUY).
+  if ((allOpenLive ?? []).some((p: any) =>
+    !Number.isFinite(Number(p.qty)) || !(Number(p.qty) > 0)
+    || !Number.isFinite(Number(p.current_price)) || !(Number(p.current_price) > 0))) {
+    return { status: "no_entry", reason: "invalid_position_mark" };
+  }
+  const existingLivePositions = (allOpenLive ?? []).map((p: any) => ({ symbol: String(p.symbol), marketValue: Number(p.qty) * Number(p.current_price) }));
 
+  now = Date.now();
   const plan = planLeveragedLiveEntry({
     policy: LIVE_POLICY, now,
     quote: { bid: quote.bid ?? NaN, ask: quote.ask ?? NaN, observedAt: cfg.quoteTime(quote, now) },
