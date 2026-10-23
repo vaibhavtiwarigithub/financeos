@@ -45,10 +45,23 @@ override the gate locally in the test; the default gate test uses the real gate.
 Removing the paper repair made 28 of its 44 tests fail; restoring it passed all
 44. The extended 55-test suite passes. Final full regression: 4,239 passed,
 eight skipped, zero failures (514 passing test files and one skipped).
-TypeScript and the staged GitGuardian secret scan passed. The initial scratch
-build passed all 78 pages; the exact-source build is repeated after the final
-holding-mark correction. Release verification is recorded below once complete.
-No production recovery is inferred merely from a local test.
+TypeScript and staged GitGuardian secret scans passed. Both the initial and
+exact-final-source scratch builds passed all 78 pages, exit zero. Existing
+Supabase Edge Runtime and Vite configuration warnings remain; no new build
+failure. Generated tsconfig/next-env scratch references were restored, followed
+by another successful TypeScript check. No production recovery is inferred
+merely from a local test.
+
+## Release verification
+
+Runtime commit `973c7d8212152f31fea0b2ee2c4ace950b35ca46` is pushed to main;
+the remote SHA was read back and matched. GitHub's production deployment
+`7268197095` references that SHA, and Vercel deployment
+`dpl_EvqjgPFkSFbbwTnFptm24T3cp92G` is READY with canonical production aliases.
+Anonymous GETs to all four paper doors and the shared live door returned 401
+after deployment. No authorized trading cron, broker order, provider quote
+probe or real financial-record mutation was used as a release test. The working
+tree was clean before this documentation-only release record.
 
 ## Remaining evidence boundaries
 
