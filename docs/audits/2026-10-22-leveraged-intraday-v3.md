@@ -80,8 +80,6 @@ It removes superseded paper pg_cron jobs, replaces them with four five-minute
 jobs and moves, rather than adds, the four-symbol LLM research pass. Duplicate
 paper Vercel jobs are removed; live jobs/flags and owner settings are not enabled.
 
-## Honest remaining boundaries
-
 ## Production release verification
 
 Runtime `1861e6b5595a5cf469386849bba5fd9a1aa07a65` is pushed to `main`.
