@@ -5,6 +5,12 @@ const sql = readFileSync("supabase/migrations/20261023184400_disk_io_hot_read_in
   .replace(/--[^\n]*/g, "").replace(/\s+/g, " ");
 
 describe("measured Disk I/O access paths", () => {
+  it("does not fetch private live-account data while statically generating a deployment", () => {
+    const page = readFileSync("app/dashboard/live-portfolio/page.tsx", "utf8");
+    expect(page).toContain('export const dynamic = "force-dynamic"');
+    expect(page).not.toMatch(/export const revalidate/);
+  });
+
   it.each([
     ["signal_score_history_created_desc_idx", "signal_score_history", "created_at DESC"],
     ["symbol_daily_returns_market_available_idx", "symbol_daily_returns", "market, available_at DESC"],

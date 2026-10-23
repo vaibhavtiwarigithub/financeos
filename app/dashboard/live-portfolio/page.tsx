@@ -1,7 +1,9 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import LivePortfolioSwitch from "@/components/dashboard/LivePortfolioSwitch";
 
-export const revalidate = 60;
+// Private account snapshots belong to the request, never a build-time artifact.
+// Database downtime must not prevent shipping unrelated security repairs.
+export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const svc = createServiceClient();

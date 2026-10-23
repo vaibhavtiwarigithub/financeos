@@ -1,5 +1,13 @@
 # Live portfolio refresh and market parity
 
+## Private-page rendering boundary
+
+The live-portfolio server page is request-rendered (`force-dynamic`), not ISR or
+build-time prerendered. Deployments must not fetch private broker snapshots or
+depend on database availability to emit this page. This does not repair runtime
+database outages or establish broker freshness; existing read-only refresh,
+authorization and recorded-data contracts remain unchanged.
+
 ## Benchmark display correction — 2026-10-22
 
 This supersedes the older paper-proxy allowance below. The live chart reuses

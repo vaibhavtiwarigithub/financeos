@@ -81,3 +81,20 @@ No exploitability of the specific DOM modes is asserted for Kairos. Source:
 https://github.com/advisories/GHSA-cg2g-xh64-v4q7 . Follow-up checks and deployment
 are verified separately; the database indexes are unaffected. Follow-up local
 verification again passed 4,372 tests / eight skipped / zero failed and tsc.
+
+### Subsequent connection failure and build boundary
+
+After the index proofs, management SQL timed out twice including `SELECT 1`.
+A separate authenticated REST SELECT also hit a 12-second bound. Gateway-only
+checks returned 401 quickly, which proves routing, not database health. The
+Management API still described the project as ACTIVE_HEALTHY. Limited log
+attribute aggregation found no timeout/connection-slot/OOM strings, but does not
+establish absence of failures. Supabase's status page also reported an ongoing
+multi-region Management API incident; causation for this project's failure is
+not established. Stop heavy diagnostics and do not claim capacity recovery.
+
+The sanitizer release then exposed an existing build-time dependency: the private
+live-portfolio page used 60-second ISR and attempted database reads during static
+generation. It exceeded Next's 60-second generation bound. Making that page
+request-rendered preserves its reads/UI while removing private data and external
+database availability from the build. It does not hide or repair runtime failures.
