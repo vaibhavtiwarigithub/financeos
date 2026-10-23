@@ -109,6 +109,13 @@ hide numerical progress rather than displaying zero labels or a zero-filled
 progress bar. Migration filenames match the actual versions assigned by the
 production runner, not the earlier locally generated timestamps.
 
+The raw h10 reader also changed from OFFSET to immutable-id keyset pagination,
+retaining the 20,000-row bound and refusing non-advancing cursors. After indexing,
+direct API proof read all 6,629 US rows in 2.51s and all 1,985 India rows in
+0.42s without error. This avoids rescanning every earlier joined row at each
+successive page. The page does not start another same-market poll while a read
+is in flight; changing markets still isolates responses by sequence.
+
 ## Work still required, not hidden as collecting
 
 Verified paired portfolio producers remain missing for exit geometry,

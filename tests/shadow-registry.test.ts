@@ -288,7 +288,8 @@ describe("shadow registry governance contract", () => {
 
   it("paginates label coverage instead of trusting PostgREST's per-request row cap", () => {
     expect(statusAdapter).toContain("loadLabelCoverageRows(svc, market)");
-    expect(statusAdapter).toContain('.range(from, from + pageSize - 1)');
+    expect(statusAdapter).toContain('query.gt("id", lastId)');
+    expect(statusAdapter).toContain('.limit(pageSize)');
     expect(statusAdapter).toContain("Label coverage exceeds the bounded");
   });
 });

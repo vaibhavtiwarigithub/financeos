@@ -379,23 +379,31 @@ function deploymentFor(status: ShadowProgramStatus): ProgramRuntimeDeployment {
   };
 }
 
-async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<QueryResult<any[]>> {
+export async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Promise<QueryResult<any[]>> {
   const pageSize = 1_000;
   const maxRows = 20_000;
   const rows: any[] = [];
+  let lastId: number | null = null;
 
   for (let from = 0; from < maxRows; from += pageSize) {
-    const { data, error } = await svc.from("observation_labels")
-      .select("horizon_days,fwd_return,max_favorable_excursion,max_adverse_excursion,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
+    let query = svc.from("observation_labels")
+      .select("id,horizon_days,fwd_return,max_favorable_excursion,max_adverse_excursion,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("decision_observations.market", market)
       .eq("horizon_days", PRIMARY_HORIZON_DAYS)
       .lte("matured_at", new Date().toISOString())
       .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
+      .limit(pageSize);
+    if (lastId != null) query = query.gt("id", lastId);
+    const { data, error } = await query;
     if (error) return { data: null, error };
     const page = data ?? [];
     rows.push(...page);
     if (page.length < pageSize) return { data: rows, error: null };
+    const nextId = Number(page[page.length - 1]?.id);
+    if (!Number.isSafeInteger(nextId) || (lastId != null && nextId <= lastId)) {
+      return { data: null, error: { message: "Label pagination cursor did not advance; coverage is unavailable." } };
+    }
+    lastId = nextId;
   }
 
   return {
