@@ -2,6 +2,7 @@
 
 import type { PositionActivitySeries } from "@/lib/portfolio/position-history";
 import { PAPER_BOOK_T } from "@/components/dashboard/PaperBookHeader";
+import { fmtMoney } from "@/lib/format-money";
 
 const T = PAPER_BOOK_T;
 const WIDTH = 300;
@@ -40,7 +41,7 @@ export default function PositionActivityChart({
     <div style={{ marginTop: "8px", paddingTop: "7px", borderTop: `1px solid ${T.border}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "baseline", marginBottom: "2px" }}>
         <span style={{ fontSize: "10px", color: T.textSub, letterSpacing: "0.04em" }}>POSITION LADDER · SHARES</span>
-        <span style={{ fontSize: "10px", color: T.muted, fontWeight: 700 }}>{currentQty.toLocaleString(undefined, { maximumFractionDigits: 6 })} held</span>
+        <span style={{ fontSize: "10px", color: T.muted, fontWeight: 700 }}>{currentQty.toLocaleString(undefined, { maximumSignificantDigits: 8 })} held</span>
       </div>
       {unavailable ? (
         <div style={{ height: "48px", display: "flex", alignItems: "center", color: activity?.status === "reconciliation_mismatch" ? T.amber : T.muted, fontSize: "10px" }}>
@@ -49,7 +50,7 @@ export default function PositionActivityChart({
       ) : (
         <>
           {(() => {
-            const maxQty = Math.max(currentQty, ...events.map(event => event.quantityAfter), 1);
+            const maxQty = Math.max(currentQty, ...events.map(event => event.quantityAfter), Number.EPSILON);
             const innerWidth = WIDTH - LEFT - RIGHT;
             const innerHeight = HEIGHT - TOP - BOTTOM;
             const firstAt = Date.parse(events[0].at);
@@ -61,8 +62,8 @@ export default function PositionActivityChart({
               y: TOP + ((maxQty - event.quantityAfter) / maxQty) * innerHeight,
             }));
             const zeroY = TOP + innerHeight;
-            const formatQty = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-            const formatMoney = (value: number) => `${currency}${value.toFixed(2)}`;
+            const formatQty = (value: number) => value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+            const formatMoney = (value: number) => fmtMoney(value, currency === "₹" ? "india" : "us");
             return (
               <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`Position share ladder: ${events.length} reconciled buy and sell events, ${formatQty(currentQty)} shares currently held`} style={{ display: "block", width: "100%", height: "78px", overflow: "visible" }}>
                 <line x1={LEFT} x2={WIDTH - RIGHT} y1={zeroY} y2={zeroY} stroke={T.muted} strokeDasharray="3 3" strokeWidth="0.8" />

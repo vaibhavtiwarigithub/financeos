@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { leveragedPaperEntrySize, LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION } from "@/lib/trading/leveraged-sleeve-risk";
 import { fmtMoney, fmtMoneyAbbrev } from "@/lib/format-money";
 import { planSoxlEntry } from "@/lib/trading/soxl-lifecycle";
@@ -35,6 +36,14 @@ describe("meaningful leveraged paper entry size", () => {
 });
 
 describe("nonzero position values must not appear as zero", () => {
+  it("uses nonzero-safe quantities and shared money formatting in ladder tooltips", () => {
+    const source = readFileSync("components/dashboard/PositionActivityChart.tsx", "utf8");
+    expect(source).toContain("maximumSignificantDigits: 8");
+    expect(source).toContain('fmtMoney(value, currency === "₹" ? "india" : "us")');
+    expect(source).toContain("Number.EPSILON");
+    expect(source).not.toContain("maximumFractionDigits: 4");
+    expect((0.00001).toLocaleString("en-US", { maximumSignificantDigits: 8 })).not.toBe("0");
+  });
   it("shows sub-cent values precisely enough without changing true zero or normal amounts", () => {
     expect(fmtMoney(0.0005, "us", 0)).toBe("<$0.01");
     expect(fmtMoney(-0.0001, "us")).toBe("-<$0.01");

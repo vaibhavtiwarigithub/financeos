@@ -52,8 +52,34 @@ score formula, broker order path, live lease or enablement was added.
   sub-cent formatting are tested. Existing sleeve clamp tests now use a viable
   boundary, rather than requiring an order below the newly declared minimum.
 - TypeScript and the 78-page production scratch build passed. Generated scratch
-  references are restored before release. Secret scan/deployment/browser results
-  are recorded after the release checks finish.
+  references were restored before release. The full suite passed again after
+  the benchmark-label follow-up; 28 focused checks and TypeScript passed after
+  adding nonzero-safe ladder quantities/tooltips. Ladder scaling no longer forces
+  a one-share axis minimum over a fractional holding. No new dependency.
+
+## Release and production verification
+
+- Runtime `655ee38d2c5c0e46ecf4386fd87e7b4c28b362cd` reached production READY
+  (`dpl_45wFoihj1g4xspvas4BthaLWYdpA`). Follow-up `891d0a9e` also reached READY
+  (`dpl_DFFtm77MJXmb8qsZ3E4Th5GScXBy`), with both canonical and financeos-phi
+  aliases. Benchmark labels now remain paired with their loaded series while
+  a new comparator is being fetched, rather than optimistically relabelling
+  the previous comparator's values.
+- Owner browser verified US VOO/QQQ/XLF/XLK and India NIFTY 50/BANKBEES/ITBEES/
+  JUNIORBEES choices. Switching VOO to QQQ preserved the account-equity change
+  while changing the comparator. Original primary display choices were restored;
+  paper retained its independent saved QQQ preference. No governed primary changed.
+- Live displayed the explicit cash-flow warning, fixed account coverage, matched
+  dates and no outperformance badge. India showed its stale last capture and
+  insufficient recent history instead of paper performance. Kite reported an
+  expired daily token: owner reconnection is needed for future authenticated
+  captures, not a reason to invent historical data.
+- The deployed paper SQQQ card showed the sub-cent warning, `<$0.01` value and
+  its original exact quantity. No cleanup order or database mutation occurred.
+- Anonymous canonical US and compatibility India history requests returned 401.
+  Staged secret scans passed. A follow-up quantity-formatting repair is included
+  in the commit containing this record; final deployment status is checked again
+  before reporting completion.
 
 ## Boundaries
 
