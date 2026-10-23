@@ -1913,11 +1913,12 @@ export async function processSymbol(
   const { score: rawAnalystScore, effWeights, renormalized, includedDims } = computeWeightedAnalystScore(scoreOf, included, weightOf);
   // ponytail: ETFs score high technically (no fundamental/insider drag after renorm) but
   // have no single-name upside; cap so they can't displace equity alpha candidates in rotation.
-  const analystScore = isEtf ? Math.min(rawAnalystScore, ETF_SCORE_CAP) : rawAnalystScore;
+  const applyEtfRankingCap = isEtf && instrumentPolicy.family !== "leveraged_or_inverse_etf";
+  const analystScore = applyEtfRankingCap ? Math.min(rawAnalystScore, ETF_SCORE_CAP) : rawAnalystScore;
   const formulaLineage = buildFormulaLineage({
     market, instrumentFamily: instrumentPolicy.family,
     baseWeights: weightOf, appliedWeights: effWeights, included,
-    etfCap: isEtf ? ETF_SCORE_CAP : null,
+    etfCap: applyEtfRankingCap ? ETF_SCORE_CAP : null,
     strategyVersionId: (champion as any)?.id ?? null,
     technicalParameters: (scores.evidence.technical.score_trace as any)?.macd_parameters ?? null,
   });
@@ -2780,7 +2781,7 @@ export async function processSymbol(
             insider:     cwShadow("insider", "insider_weight") ?? iw,
           };
           const { score: rawShadow } = computeWeightedAnalystScore(scoreOf, included, challengerWeights);
-          const shadowScore = isEtf ? Math.min(rawShadow, ETF_SCORE_CAP) : rawShadow;
+          const shadowScore = applyEtfRankingCap ? Math.min(rawShadow, ETF_SCORE_CAP) : rawShadow;
           const { error: challengerError } = await supabase.from("shadow_decisions").insert({
             market, symbol, observation_id: obsRow.id, policy_version_id: sv.id,
             would_enter: shadowScore >= (scoreThreshold ?? 60), score: shadowScore,

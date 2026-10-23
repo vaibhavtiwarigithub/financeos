@@ -11,6 +11,12 @@ export const LEVERAGED_SLEEVE_MAX_NAV_FRACTION = 0.05;
 // viable position. A ceiling is not a mandate to spend the last fraction of a cent.
 export const LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION = 0.005;
 
+/** Round UP so decimal serialization cannot turn an exact 2R plan into <2R. */
+export function leveragedPriceTarget(entry: number, stop: number, atr: number, multiple: number, minRewardRisk = 0): number {
+  const target = entry + Math.max(atr * multiple, (entry - stop) * minRewardRisk);
+  return minRewardRisk > 0 ? Math.ceil(target * 1_000_000) / 1_000_000 : target;
+}
+
 export function leveragedPaperEntrySize(nav: number, availableNotional: number):
   { ok: true; maxNotional: number } | { ok: false; reason: string } {
   if (!Number.isFinite(nav) || nav <= 0 || !Number.isFinite(availableNotional))
@@ -25,6 +31,17 @@ export const LEVERAGED_SLEEVE_SYMBOLS = new Set(["SOXL", "TQQQ", "SQQQ", "SOXS"]
 export interface LeveragedSleevePosition {
   symbol: string;
   marketValue: number;
+}
+
+/** Do not offset exact opposing daily-reset products and call it diversification. */
+export function leveragedOpposingExposure(symbol: string, positions: LeveragedSleevePosition[]): { ok: true } | { ok: false; reason: string } {
+  const opposite: Record<string, string> = { SOXL: "SOXS", SOXS: "SOXL", TQQQ: "SQQQ", SQQQ: "TQQQ" };
+  if (!opposite[symbol]) return { ok: false, reason: "unknown_leveraged_symbol" };
+  for (const p of positions) {
+    if (!Number.isFinite(p.marketValue) || p.marketValue < 0) return { ok: false, reason: "invalid_position_mark" };
+    if (p.symbol.toUpperCase() === opposite[symbol] && p.marketValue > 0) return { ok: false, reason: "opposing_leveraged_exposure" };
+  }
+  return { ok: true };
 }
 
 export function leveragedSleeveHeadroom(input: {

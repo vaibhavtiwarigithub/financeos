@@ -19,11 +19,14 @@ export const COUNCIL_FORMULA_VERSIONS = Object.freeze({
 });
 
 export function buildFormulaLineage(configuration: Record<string, unknown>) {
+  const versions = configuration.instrumentFamily === "leveraged_or_inverse_etf"
+    ? { ...FORMULA_VERSIONS, composite: "composite_leveraged_uncapped_v2_20261022" }
+    : FORMULA_VERSIONS;
   return {
     manifestVersion: "score-formula-lineage-v1",
-    versions: FORMULA_VERSIONS,
+    versions,
     configuration,
-    configurationHash: fingerprint({ versions: FORMULA_VERSIONS, configuration }),
+    configurationHash: fingerprint({ versions, configuration }),
     legacyPolicy: "Missing historical lineage is legacy/unknown, not inferred from current code.",
   };
 }

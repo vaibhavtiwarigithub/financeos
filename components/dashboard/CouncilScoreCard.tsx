@@ -50,8 +50,8 @@ export default function CouncilScoreCard({ symbol, market }: { symbol: string; m
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-        <h2 className="text-sm font-semibold text-muted-foreground">LLM Council · shadow scores</h2>
-        <span className="text-xs text-muted-foreground">Selected models score independently. Measurement only: no trade or exit reads this.</span>
+        <h2 className="text-sm font-semibold text-muted-foreground">LLM Council · 10-session shadow outlook</h2>
+        <span className="text-xs text-muted-foreground">Relative attractiveness over 10 market sessions—not a return percentage or intraday entry signal. Measurement only: no trade or exit reads this.</span>
       </div>
 
       {!data && <div className="text-xs text-muted-foreground py-3">Loading council scores…</div>}

@@ -1,6 +1,6 @@
 # Kairos current system reference
 
-> Last reviewed: 2026-10-07
+> Last reviewed: 2026-10-22
 >
 > This is the friend-facing, current-state guide. It describes what the code and
 > production contracts do today. A feature marked **shadow**, **collecting**, or
@@ -26,6 +26,34 @@ There are three separate investing books:
 | Crypto | USD | Isolated paper pool and native research lane; live crypto disabled |
 
 Paper books never share NAV, cash, positions, benchmarks, or learning cohorts.
+
+### Leveraged funds: a separate intraday paper policy
+
+SOXL/SOXS and TQQQ/SQQQ are opposing daily-reset exposure pairs. Their paper
+workflow uses the same five-minute ETF/proxy setup rules, not company earnings
+or a ten-session LLM score as an intraday forecast. The existing four-symbol
+research pass runs at 09:00 New York time. During regular sessions, the dedicated
+paper routes check on a five-minute cadence. New entries are considered after
+09:45 and before the final thirty minutes; an opening-range breakout needs a
+subsequent completed bar, so the first window does not guarantee an entry.
+
+The setup checks completed five-minute bars, direction-signed SOXX/QQQ proxy
+confirmation, session VWAP and volume compared with prior windows at the same
+time of day. IEX is one venue, not consolidated market data. Missing or stale
+data blocks entry and appears in System Health. Stops combine intraday price
+invalidation and volatility; targets cover at least twice the full planned
+initial risk. Cash, the combined 5% sleeve ceiling, 0.5% minimum entry and maximum
+stop distance remain binding. Both sides of an exact opposing pair cannot be
+held simultaneously. The database rechecks exposure under a portfolio lock.
+
+New policy-v3 lots attempt a full exit before the close; a failed attempt retries
+at the next regular-session observation. Old positions retain their recorded
+policy. Periodic paper observations cannot guarantee a stop fill between checks
+or protection through an overnight gap. The live leveraged path remains disabled
+and is not represented as having the paper intraday policy or proven broker
+protection. Council opinions remain ten-session shadows: new packets omit app
+permissions and carry a new method identity, with separate evaluation series.
+These rules are operational priors, not demonstrated profitable alpha.
 
 ## 2. Runtime and ownership
 

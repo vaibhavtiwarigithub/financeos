@@ -1,6 +1,6 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
 import { semiconductorCapacity, type SemiconductorHolding } from "./semiconductor-risk";
-import { leveragedPaperEntrySize, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
+import { leveragedPaperEntrySize, leveragedPriceTarget, leveragedOpposingExposure, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Explicit paper experiment contract; thresholds are policy, not learned alpha.
  * A caller must persist the plan atomically with the fill and use the same
@@ -77,7 +77,8 @@ export function planSoxlEntry(input: {
   const stop = Math.min(input.structuralStop, q.ask - input.atr * p.atrStopMultiple);
   const stopPct = (q.ask - stop) / q.ask * 100;
   if (stop <= 0 || stopPct > p.maxStopPct) return { ok: false, reason: "stop_risk_exceeded" };
-  const target = q.ask + input.atr * p.targetAtrMultiple;
+  const target = q.ask + (p.version.includes("intraday-v3")
+    ? Math.max(input.atr * p.targetAtrMultiple, 2 * (q.ask - stop)) : input.atr * p.targetAtrMultiple);
   if (!Number.isFinite(target)) return { ok: false, reason: "invalid_geometry" };
   const capacity = semiconductorCapacity({ nav: input.nav, cash: input.cash,
     stopDistancePct: stopPct, riskBudgetPct: p.riskBudgetPct, exposureCapPct: p.semiconductorCapPct, holdings: input.holdings });
@@ -85,6 +86,8 @@ export function planSoxlEntry(input: {
   if (capacity.maxNotional <= 0) return { ok: false, reason: "no_capacity" };
   // SOXL only ever applied its OWN 5% ceiling, so a held TQQQ/SQQQ/SOXS position let it add another full 5% and the
   // sleeve could reach 10% of NAV. TQQQ/SQQQ/SOXS already used the shared headroom; SOXL now does too.
+  const pair = leveragedOpposingExposure("SOXL", input.leveragedSleevePositions);
+  if (!pair.ok) return pair;
   const headroom = leveragedSleeveHeadroom({ nav: input.nav, positions: input.leveragedSleevePositions });
   if (!headroom.ok) return headroom;
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };

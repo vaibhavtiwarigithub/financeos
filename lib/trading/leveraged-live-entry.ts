@@ -1,4 +1,5 @@
 import { leveragedSleeveLiveHeadroom, type LeveragedLivePosition } from "./leveraged-sleeve-risk-live";
+import { leveragedOpposingExposure, leveragedPriceTarget } from "./leveraged-sleeve-risk";
 
 /** Symbol-agnostic live entry planner for the leveraged sleeve
  * (SOXL/TQQQ/SQQQ/SOXS). Mirrors the shape of soxl/tqqq/sqqq/soxs-
@@ -30,6 +31,7 @@ function fresh(time: number, now: number, maxAge: number): boolean {
 }
 
 export function planLeveragedLiveEntry(input: {
+  symbol?: string;
   policy: LeveragedLiveEntryPolicy;
   now: number;
   quote: LeveragedLiveQuote;
@@ -66,12 +68,16 @@ export function planLeveragedLiveEntry(input: {
   const stop = Math.min(input.structuralStop, q.ask - input.atr * p.atrStopMultiple);
   const stopPct = (q.ask - stop) / q.ask * 100;
   if (stop <= 0 || stopPct > p.maxStopPct) return { ok: false, reason: "stop_risk_exceeded" };
-  const target = q.ask + input.atr * p.targetAtrMultiple;
+  const target = leveragedPriceTarget(q.ask, stop, input.atr, p.targetAtrMultiple, 2);
   if (!Number.isFinite(target)) return { ok: false, reason: "invalid_geometry" };
 
   const headroom = leveragedSleeveLiveHeadroom({ leaseUsd: input.leaseUsd, positions: input.existingLivePositions });
   if (!headroom.ok) return headroom;
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };
+  if (input.symbol != null) {
+    const opposing = leveragedOpposingExposure(input.symbol, input.existingLivePositions);
+    if (!opposing.ok) return opposing;
+  }
   const maxNotional = headroom.headroom;
   if (maxNotional <= 0) return { ok: false, reason: "no_capacity" };
   return { ok: true, version: p.version, entry: q.ask, stop, target, maxNotional, signalAt: input.signalAt };

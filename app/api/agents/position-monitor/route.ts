@@ -547,6 +547,9 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   const exitFailures: Array<{ symbol: string; market: string; reason: string }> = [];
   for (const pos of positions) {
    try {
+    // A new intraday sleeve lot has its own recurring mark/exit policy. Do not
+    // apply the daily score/time/whole-session barrier policy to the same lot.
+    if (typeof pos.entry_policy_version === "string" && pos.entry_policy_version.endsWith("intraday-v3")) continue;
     const currentPrice = priceMap[pos.symbol];
     const market = marketOf(pos, hasMarketCol) as "us" | "india";
     const sc = latestScore[`${market}:${String(pos.symbol)}`];

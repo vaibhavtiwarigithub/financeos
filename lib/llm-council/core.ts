@@ -4,6 +4,23 @@ import { computeSpearmanIC } from "@/lib/validation/feature-check";
 export const COUNCIL_HORIZONS = [2, 5, 10, 20] as const;
 export const MIN_COUNSEL_CROSS_SECTION = 5;
 export const MIN_COUNCIL_EFFECTIVE_WINDOWS = 12;
+export const COUNCIL_PREDICTION_VERSION = "council_prediction_only_h10_v2";
+export function councilVersionedSeriesKey(key: string, run: any): string {
+  const v2 = String(run?.prompt_version ?? "").includes(COUNCIL_PREDICTION_VERSION)
+    || run?.input_snapshot?.prediction_contract?.version === COUNCIL_PREDICTION_VERSION;
+  return v2 ? `${key}|method=${COUNCIL_PREDICTION_VERSION}` : key;
+}
+export const COUNCIL_PREDICTION_GUIDANCE = "Forecast the instrument's future relative performance, NOT whether this app permits an order. Ignore trading permissions, position slots, budgets, deterministic score caps and entry thresholds. A 0–100 score is not a return percentage or win probability. This is a TEN-session outlook, not an intraday entry signal. For inverse funds distinguish sentiment about the fund from sentiment about its underlying; never reverse ambiguous social sentiment by assumption. Daily-reset leverage and overnight path risk remain relevant.";
+
+/** New packets only: app permissions are not predictors of an asset's return. */
+export function predictionOnlyEvidence(value: unknown): any {
+  if (Array.isArray(value)) return value.map(predictionOnlyEvidence);
+  if (value == null || typeof value !== "object") return value;
+  const excluded = new Set(["score_mode", "new_entry_allowed", "review_status", "trade_plan",
+    "trading_mandate", "entry_eligible", "rank_rejected", "threshold", "etfCap", "investability"]);
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !excluded.has(key))
+    .map(([key, item]) => [key, predictionOnlyEvidence(item)]));
+}
 
 export type Forecast = {
   score: number;

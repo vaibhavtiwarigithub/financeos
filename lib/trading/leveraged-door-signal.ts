@@ -3,11 +3,11 @@
 // Research scores SOXL/TQQQ/SQQQ/SOXS like any other symbol, but the generic
 // PaperTrader still refuses them (symbol-policy blanket block, unchanged) so they
 // never enter the 8-name alpha book or capital rotation. The dedicated doors are the
-// only way they trade, and each door now also requires the latest research signal for
-// its own symbol to be a fresh, deterministic long at or above the market's entry
-// threshold. Fail-closed: no signal, a neutral/short signal, a stale one, or a score
-// below threshold means no entry. The doors' own trend / liquidity / stop geometry /
-// 5% combined sleeve cap and exit ladder are unchanged and still all apply.
+// only way they trade. Legacy callers require a fresh deterministic long above
+// threshold. Paper intraday-v3 instead requires fresh session-validated research
+// context plus its independently confirmed current-session setup; yesterday's
+// direction/score is not an intraday entry trigger. Liquidity, stop geometry,
+// combined 5% sleeve, cash and position limits still apply.
 export const RESEARCH_GATE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
 
 export interface ResearchSignalRow {
@@ -26,16 +26,16 @@ export type ResearchGate =
 
 export function evaluateLeveragedResearchGate(
   signal: ResearchSignalRow | null,
-  input: { threshold: number; now: number },
+  input: { threshold: number; now: number; intradayQualified?: boolean },
 ): ResearchGate {
   if (!signal) return { ok: false, reason: "no_research_signal" };
   if (!Number.isFinite(input.threshold) || input.threshold <= 0) return { ok: false, reason: "invalid_threshold" };
   if (signal.score_source !== "deterministic_v1") return { ok: false, reason: "signal_not_deterministic" };
   if (signal.session_validated !== true) return { ok: false, reason: "signal_not_session_validated" };
-  if (signal.direction !== "long") return { ok: false, reason: "signal_not_long" };
+  if (!input.intradayQualified && signal.direction !== "long") return { ok: false, reason: "signal_not_long" };
   const score = Number(signal.analyst_score);
   if (signal.analyst_score == null || !Number.isFinite(score)) return { ok: false, reason: "signal_score_missing" };
-  if (score < input.threshold) return { ok: false, reason: "signal_below_threshold" };
+  if (!input.intradayQualified && score < input.threshold) return { ok: false, reason: "signal_below_threshold" };
   const created = Date.parse(signal.created_at ?? "");
   if (!Number.isFinite(created) || created > input.now) return { ok: false, reason: "signal_time_invalid" };
   if (input.now - created > RESEARCH_GATE_MAX_AGE_MS) return { ok: false, reason: "signal_stale" };

@@ -30,7 +30,7 @@ describe("SOXS lifecycle contract", () => {
       .toMatchObject({ ok: true, maxNotional: 50 });
   });
   it("denies entry when the sleeve is already full (across any of the four symbols)", () => {
-    expect(planSoxsEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SOXL", marketValue: 500 }] }))
+    expect(planSoxsEntry({ ...entry, leveragedSleevePositions: [{ symbol: "SQQQ", marketValue: 500 }] }))
       .toMatchObject({ ok: false, reason: "no_sleeve_capacity" });
   });
   it("evaluates exits from price + session low/high and takes protection before targets", () => {

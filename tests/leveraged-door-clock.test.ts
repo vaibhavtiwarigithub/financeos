@@ -60,6 +60,11 @@ vi.mock("@/lib/trading/leveraged-door-signal", () => ({
   },
   evaluateLeveragedResearchGate: mocks.researchGate,
 }));
+vi.mock("@/lib/trading/leveraged-intraday", async (original) => ({
+  ...await original<typeof import("@/lib/trading/leveraged-intraday")>(),
+  loadLeveragedIntradaySetup: async () => ({ state: "ready", atr: 2, structuralStop: 98,
+    signalAt: Date.now() - 1000, evidence: { openingHigh: 99, etf_vwap: 99 } }),
+}));
 
 // All persistence and provider I/O is mocked; these tests cannot place an order,
 // modify a real position or consume a broker/provider quota.
@@ -86,7 +91,7 @@ vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({
     const result = () => ({ data: data(), error: null });
     const chain: any = {
       select: () => chain, eq: () => chain, in: () => chain, not: () => chain,
-      is: () => chain,
+      is: () => chain, like: () => chain,
       order: () => chain, limit: () => chain,
       maybeSingle: async () => { singleRead = true; return result(); },
       insert: (value: unknown) => { op = "insert"; mocks.records.push(value); return chain; },
@@ -105,9 +110,9 @@ import { GET as live } from "@/app/api/agents/leveraged-live/cron/route";
 
 const doors = [
   { symbol: "SOXL", handler: soxl, minute: 0 },
-  { symbol: "TQQQ", handler: tqqq, minute: 20 },
-  { symbol: "SQQQ", handler: sqqq, minute: 40 },
-  { symbol: "SOXS", handler: soxs, minute: 60 },
+  { symbol: "TQQQ", handler: tqqq, minute: 0 },
+  { symbol: "SQQQ", handler: sqqq, minute: 0 },
+  { symbol: "SOXS", handler: soxs, minute: 0 },
 ];
 const request = {} as Parameters<typeof soxl>[0];
 let start: number;
@@ -244,7 +249,7 @@ describe.each(doors)("$symbol paper decision clock", ({ handler, symbol, minute 
 
   it("does not enter if the fetch finishes after the entry window", async () => {
     mocks.held = false;
-    start += (minute + 15) * 60_000 - 1000;
+    start = Date.parse("2026-10-22T19:29:59Z");
     vi.setSystemTime(start);
     expect(await (await handler(request)).json()).toMatchObject({ status: "no_entry", reason: "outside_entry_window" });
     expect(mocks.rpc).not.toHaveBeenCalled();
@@ -252,7 +257,7 @@ describe.each(doors)("$symbol paper decision clock", ({ handler, symbol, minute 
 
   it("rechecks the window after slower downstream research reads too", async () => {
     mocks.held = false;
-    start += (minute + 15) * 60_000 - 10_000;
+    start = Date.parse("2026-10-22T19:29:50Z");
     vi.setSystemTime(start);
     mocks.evidenceDelayMs = 10_000;
     expect(await (await handler(request)).json()).toMatchObject({ status: "no_entry", reason: "outside_entry_window" });
@@ -266,6 +271,15 @@ describe.each(doors)("$symbol paper decision clock", ({ handler, symbol, minute 
     mocks.quote.mockImplementation(async () => quote(symbol, start - 15 * 60_000 + 1000));
     mocks.evidenceDelayMs = 2000;
     expect(await (await handler(request)).json()).toMatchObject({ status: "no_entry", reason: "invalid_quote" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("does not certify monitoring from a quote older than two minutes", async () => {
+    mocks.held = false;
+    start += minute * 60_000;
+    vi.setSystemTime(start);
+    mocks.quote.mockImplementation(async () => quote(symbol, start - 150_000));
+    expect(await (await handler(request)).json()).toMatchObject({ status: "no_entry", reason: "invalid_quote", monitorVerified: false });
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
 

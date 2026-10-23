@@ -4,6 +4,43 @@ import type { Candle } from "@/lib/data/technicals";
 
 const MARKET_DATA_BASE = "https://data.alpaca.markets/v2/stocks";
 
+export type IntradayBar = Candle & { at: string; vwap?: number };
+
+/** Strict five-minute event bars. Never relabel request time as bar time. */
+export function parseAlpacaIntradayBars(payload: unknown): IntradayBar[] {
+  const root = payload as any;
+  if (!Array.isArray(root?.bars)) return [];
+  const seen = new Set<string>();
+  const bars: IntradayBar[] = [];
+  for (const row of root.bars) {
+    if (typeof row?.t !== "string" || !Number.isFinite(Date.parse(row.t)) || seen.has(row.t)) return [];
+    if (![row.o, row.h, row.l, row.c, row.v].every(v => typeof v === "number" && Number.isFinite(v))
+      || Math.min(row.o, row.h, row.l, row.c) <= 0 || row.v < 0
+      || row.h < Math.max(row.o, row.c, row.l) || row.l > Math.min(row.o, row.c, row.h)) return [];
+    const date = sessionDate(row.t);
+    if (!date) return [];
+    seen.add(row.t);
+    bars.push({ at: row.t, date, open: row.o, high: row.h, low: row.l, close: row.c, volume: row.v,
+      ...(typeof row.vw === "number" && Number.isFinite(row.vw) && row.vw > 0 ? { vwap: row.vw } : {}) });
+  }
+  return bars.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+export async function fetchAlpacaIexIntradayBars(symbol: string, now = new Date()): Promise<IntradayBar[]> {
+  if (!["SOXL", "SOXS", "TQQQ", "SQQQ", "SOXX", "QQQ"].includes(symbol)) return [];
+  const credentials = await getAlpacaCredentials("paper") ?? await getAlpacaCredentials("live");
+  if (!credentials) return [];
+  const start = new Date(now.getTime() - 7 * 86_400_000);
+  const url = `${MARKET_DATA_BASE}/${symbol}/bars?timeframe=5Min&start=${start.toISOString()}&end=${now.toISOString()}&limit=1000&adjustment=all&feed=iex&sort=desc`;
+  const payload = await providerCachedFetch("alpaca", `ALPACA_IEX_5MIN:${symbol}:${Math.floor(now.getTime() / 300000)}`, url, {
+    timeoutMs: 8000, maxAgeDays: 0, maxStaleAgeDays: 0,
+    headers: { "APCA-API-KEY-ID": credentials.key, "APCA-API-SECRET-KEY": credentials.secret },
+    // Descending newest 1,000 bars is a bounded warmup, not an exhaustive backfill.
+    isThrottled: value => !Array.isArray(value?.bars),
+  });
+  return parseAlpacaIntradayBars(payload);
+}
+
 function sessionDate(timestamp: unknown): string | null {
   if (typeof timestamp !== "string") return null;
   const parsed = new Date(timestamp);

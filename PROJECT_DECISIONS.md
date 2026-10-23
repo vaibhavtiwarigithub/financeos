@@ -1896,3 +1896,12 @@ and explicit owner switch.
 - limitations: the one historical US suggestion lacks a frozen contract; India has no app stop producer. Both are shown truthfully rather than manufacturing performance. The shared view/collector is ready to measure genuine future suggestions.
 - roi: auditable incremental advice outcomes without new model calls, trading authority or a second measurement system; financial benefit remains unproven.
 - shippedAt: 2026-10-22; runtime `0242a4d4` on main and production READY, migration/producer/browser proofs in `docs/audits/2026-10-22-guardian-exact-stop-qa.md`.
+# 2026-10-22 — Shared leveraged intraday correction (owner: “fix all”)
+
+Implement the approved shared paper intraday design in the leveraged feature
+architecture, preserving the combined 5% sleeve and existing risk limits.
+Separate ten-session council prediction from execution permissions and ordinary
+ETF ranking caps, with new prompt/formula/policy identities. Reuse existing
+provider, paper doors, locked fill RPCs and schedules. Operational verification
+does not establish profitable alpha. Do not enable unproved live broker stops,
+invent cash-flow history or bypass owner broker authentication.

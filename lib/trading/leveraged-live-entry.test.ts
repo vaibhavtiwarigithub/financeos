@@ -12,7 +12,7 @@ const entry = {
 
 describe("planLeveragedLiveEntry", () => {
   it("binds geometry to ask and sizes to the full lease headroom", () => {
-    expect(planLeveragedLiveEntry(entry)).toMatchObject({ ok: true, entry: 100, stop: 94, target: 109, maxNotional: 200 });
+    expect(planLeveragedLiveEntry(entry)).toMatchObject({ ok: true, entry: 100, stop: 94, target: 112, maxNotional: 200 });
   });
   it("requires working monitoring and fresh quotes", () => {
     expect(planLeveragedLiveEntry({ ...entry, monitorVerifiedAt: 0 })).toMatchObject({ ok: false, reason: "monitor_unhealthy" });

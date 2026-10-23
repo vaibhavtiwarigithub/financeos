@@ -211,3 +211,14 @@ Evidence Router jobs, not GitHub/Vibe jobs; shadow remains observational and nev
 feeds scoring or orders, though its provider calls still obey the shared pacing layer.
 
 **Order-maintenance correction (2026-07-26):** The every-30-minute maintenance trigger only sends stale-order cancellation during a US market session and processes one candidate. It independently reconciles one unknown order through a read-only broker status query; the owner can request that read-only reconciliation from Trading. The limits avoid overnight/weekend MCP churn and leave cold-start headroom.
+# Current leveraged paper cadence
+
+After the intraday-v3 release, the four `kairos-<symbol>-intraday-v3` pg_cron jobs
+replace their former open/entry/close jobs. Each checks every five minutes at
+offsets 0–3 within UTC hours 13–20; the application calendar admits regular US
+sessions only and handles DST/early closes. The existing leveraged-only research
+job moves to 09:00 ET. Duplicate paper-door Vercel crons are removed. This is
+paper execution, not an LLM call on every check or a live-protection guarantee.
+The former staggered 11:00/11:20/11:40/noon instructions below are historical and
+do not describe intraday-v3. Schedule migration is applied only after its runtime
+is confirmed production READY.

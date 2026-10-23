@@ -1,5 +1,69 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Shared intraday correction — owner approved 2026-10-22
+
+Scope is all four paper funds, not a hindsight SOXS exception. Reuse the existing
+Alpaca credentials/provider budget, completed-candle math, four paper RPCs, sleeve
+ceiling, quote validation and exit ladder. No new live authority is granted.
+
+- One regular-session paper entry window: 09:45–15:30 ET, respecting holidays,
+  half-day closes and DST. Existing legacy windows remain the dormant live
+  contract until its protective-order lifecycle is proved. Use minute-precise
+  recurring pg_cron calls to existing doors; no inference per polling tick.
+  Move the existing four-symbol context pass to 09:00 ET, not an additional
+  LLM pass. Every five minutes, offset by at most three minutes for I/O
+  contention, all four paper doors reassess; remove their duplicate Vercel jobs.
+- New paper entries require completed current-session five-minute IEX ETF AND
+  proxy bars, explicit event times, no missing intervals and a fresh executable
+  mark. IEX is partial-venue research, not consolidated quotes. SOXX and QQQ are
+  proxies, not the exact licensed fund indices. Daily candles remain context and
+  liquidity/history checks; incomplete daily candles are never scored as closed.
+- The deterministic setup requires price above the ETF's opening 15-minute range
+  and volume-weighted typical-price benchmark; the proxy must confirm directional
+  movement relative to its opening range and VWAP (negative for inverse funds).
+  Require elapsed-session volume at least the median of three to five complete
+  prior windows of exactly the same elapsed duration; no full-day volume comparison.
+  This is a declared v3 prior, not a parameter fitted to the October 22 rally.
+  Exclude the live partial five-minute bar. Require positive observed volume and
+  recent bar close within ten minutes. Missing evidence blocks entries and is
+  operationally visible, not a successful prediction or a zero score.
+- Stop invalidation uses the completed intraday opening-range low / last three
+  bar low and a two-ATR(5-minute) volatility floor. Do not tighten a structural
+  stop merely to force admission. Target is at least twice the full initial risk
+  distance, not three ATR irrespective of a wider structural stop. Preserve the
+  existing 12% maximum stop distance, 1% risk budget, 0.5% viable-entry floor and
+  combined 5% NAV ceiling. These constants are operational priors, not optimized
+  or validated alpha. Fills record intraday policy v3 and source/time evidence.
+  Daily research remains required fresh context, but its long/threshold verdict
+  no longer overrides an independently confirmed current intraday setup. Null,
+  non-deterministic, unvalidated and stale context still blocks. Only new v3 lots
+  exit in the final fifteen regular-session minutes; existing policy-null lots
+  are not relabelled or force-liquidated. Missing exit quotes alert rather than
+  fabricate a close. After-close gaps remain a risk when a scheduled exit fails.
+- At most one side of each exact opposing pair may be held. Recheck under the
+  existing portfolio row lock in every paper fill RPC; JS-only admission is not
+  enough. The combined notional ceiling also bounds gross nominal 3x exposure
+  to 15% NAV; this is not a beta estimate or proof that QQQ/SOXX diversify.
+- Council remains a ten-session shadow, not an intraday signal. Version the
+  prompt/snapshot contract; remove permissions and indicative trade plans from
+  the forecast packet and explicitly forbid inferring attractiveness from app
+  eligibility or deterministic caps. Retain instrument identity, reset/path
+  risk and source dates. Old rows/prompts are immutable. No additional LLM calls
+  or automatic council promotion. Lift the ordinary ETF cap only for the
+  separately routed leveraged family and version its composite lineage.
+- Monitoring must not use the full session's pre-entry low/high against a newly
+  entered position. A fresh point quote is valid observed evidence, but cannot
+  prove no barrier crossed between polls; no continuous-protection claim.
+
+Acceptance: same pure setup/window/exposure implementation for all four; boundary,
+gap, partial/future/stale, inverse-sign, wider-stop reward/risk and opposing-fill
+tests; service-only transactional RPC checks; authenticated read-only collection
+proof and subsequent natural-run verification. Never manually invoke an order-
+placing cron for QA. Broker stop/cancel/fill proof and owner Kite login remain
+external dependencies, not fabricated completed tasks. Cash-flow-adjusted live
+performance requires a separate verified flow ledger; do not infer cash flows
+from equity jumps.
+
 ## Meaningful paper entry size — 2026-10-22, entry policy v2
 
 All four paper doors now apply the core constructor's existing 0.5%-of-NAV

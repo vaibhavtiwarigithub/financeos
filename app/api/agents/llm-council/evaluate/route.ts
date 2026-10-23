@@ -1,3 +1,4 @@
+import { councilVersionedSeriesKey } from "@/lib/llm-council/core";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
           const chunk = eligible.slice(start, start + 100);
           const obsIds = chunk.map((x) => Number(x.obs.id));
           const { data: runs, error: runError } = await svc.from("llm_council_runs")
-            .select("id,observation_id,market,consensus_score,status,config_snapshot")
+            .select("id,observation_id,market,consensus_score,status,config_snapshot,prompt_version")
             .in("observation_id", obsIds).in("status", ["completed", "partial", "failed"]);
           if (runError) return NextResponse.json({ error: `Could not read council runs for ${market}` }, { status: 500 });
           if (!runs?.length) continue;
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
           if (!cohortRuns.length) continue;
           const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
           const { data: forecasts, error: forecastError } = await svc.from("llm_council_model_forecasts")
-            .select("run_id,model_requested,initial_score,final_score,status,execution_source")
+            .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source")
             .in("run_id", cohortRuns.map((run) => run.id)).eq("status", "completed");
           if (forecastError) return NextResponse.json({ error: `Could not read council forecasts for ${market}` }, { status: 500 });
           const forecastsByRun = new Map<string, any[]>();
@@ -100,7 +101,8 @@ export async function POST(req: NextRequest) {
               ? medianScore(apiForecasts.map((forecast) => Number(forecast.final_score)).filter(Number.isFinite))
               : run.consensus_score == null ? null : Number(run.consensus_score);
             const compositeSeriesKey = hybrid ? "composite:api_members_median" : "composite:median";
-            const addPoint = (key: string, score: unknown) => {
+            const addPoint = (baseKey: string, score: unknown) => {
+              const key = councilVersionedSeriesKey(baseKey, run);
               const value = Number(score);
               if (!Number.isFinite(value)) return;
               const list = pointsBySeries.get(key) ?? [];
@@ -120,8 +122,8 @@ export async function POST(req: NextRequest) {
               }
             }
             for (const forecast of apiForecasts) {
-              addPoint(`model:${forecast.model_requested}:independent`, forecast.initial_score);
-              addPoint(`model:${forecast.model_requested}:debated`, forecast.final_score);
+              addPoint(`model:${forecast.model_used ?? forecast.model_requested}:independent`, forecast.initial_score);
+              addPoint(`model:${forecast.model_used ?? forecast.model_requested}:debated`, forecast.final_score);
             }
           }
         }
@@ -221,23 +223,27 @@ export async function POST(req: NextRequest) {
         const label = availabilityAlignedLabel({ market, availableAt: forecast.available_at, horizonDays: horizon, symbolMarks, benchmarkMarks });
         const model = String(forecast.model_used ?? forecast.model_requested);
         const prefix = `model:${model}:subscription`;
-        pointMap.set(`${prefix}:independent`, pointMap.get(`${prefix}:independent`) ?? []);
-        pointMap.set(`${prefix}:debated`, pointMap.get(`${prefix}:debated`) ?? []);
+        const independentKey = councilVersionedSeriesKey(`${prefix}:independent`, run);
+        const debatedKey = councilVersionedSeriesKey(`${prefix}:debated`, run);
+        pointMap.set(independentKey, pointMap.get(independentKey) ?? []);
+        pointMap.set(debatedKey, pointMap.get(debatedKey) ?? []);
         if (label) {
-          add(`${prefix}:independent`, symbol, label.entrySession, forecast.initial_score, label.benchmarkNeutralReturn);
-          add(`${prefix}:debated`, symbol, label.entrySession, forecast.final_score, label.benchmarkNeutralReturn);
+          add(independentKey, symbol, label.entrySession, forecast.initial_score, label.benchmarkNeutralReturn);
+          add(debatedKey, symbol, label.entrySession, forecast.final_score, label.benchmarkNeutralReturn);
         }
         if (compositeSeen.has(run.id)) continue;
         compositeSeen.add(run.id);
         const consensusLabel = run.completed_at ? availabilityAlignedLabel({ market, availableAt: run.completed_at, horizonDays: horizon, symbolMarks, benchmarkMarks }) : null;
-        for (const key of ["composite:availability_median", "deterministic:availability_paired", "blend:availability_equal_weight_50_50_paired"]) pointMap.set(key, pointMap.get(key) ?? []);
+        for (const baseKey of ["composite:availability_median", "deterministic:availability_paired", "blend:availability_equal_weight_50_50_paired"]) {
+          const key = councilVersionedSeriesKey(baseKey, run); pointMap.set(key, pointMap.get(key) ?? []);
+        }
         if (consensusLabel && run.consensus_score != null) {
-          add("composite:availability_median", symbol, consensusLabel.entrySession, Number(run.consensus_score), consensusLabel.benchmarkNeutralReturn);
+          add(councilVersionedSeriesKey("composite:availability_median", run), symbol, consensusLabel.entrySession, Number(run.consensus_score), consensusLabel.benchmarkNeutralReturn);
           const deterministic = run.input_snapshot?.deterministic_score?.composite;
           if (deterministic != null && Number.isFinite(Number(deterministic))) {
-            add("deterministic:availability_paired", symbol, consensusLabel.entrySession, Number(deterministic), consensusLabel.benchmarkNeutralReturn);
+            add(councilVersionedSeriesKey("deterministic:availability_paired", run), symbol, consensusLabel.entrySession, Number(deterministic), consensusLabel.benchmarkNeutralReturn);
             const blend = equalWeightCouncilBlend(Number(deterministic), Number(run.consensus_score));
-            if (blend != null) add("blend:availability_equal_weight_50_50_paired", symbol, consensusLabel.entrySession, blend, consensusLabel.benchmarkNeutralReturn);
+            if (blend != null) add(councilVersionedSeriesKey("blend:availability_equal_weight_50_50_paired", run), symbol, consensusLabel.entrySession, blend, consensusLabel.benchmarkNeutralReturn);
           }
         }
       }

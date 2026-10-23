@@ -1,5 +1,5 @@
 import { decideExitLadder, type ExitLadderInput } from "./exit-ladder";
-import { leveragedPaperEntrySize, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
+import { leveragedPaperEntrySize, leveragedPriceTarget, leveragedOpposingExposure, leveragedSleeveHeadroom, type LeveragedSleevePosition } from "./leveraged-sleeve-risk";
 
 /** Mirrors tqqq-lifecycle.ts exactly. Buying shares of SQQQ (inverse 3x
  * Nasdaq-100) is an ordinary LONG position in that instrument -- not a
@@ -62,9 +62,11 @@ export function planSqqqEntry(input: {
   const stop = Math.min(input.structuralStop, q.ask - input.atr * p.atrStopMultiple);
   const stopPct = (q.ask - stop) / q.ask * 100;
   if (stop <= 0 || stopPct > p.maxStopPct) return { ok: false, reason: "stop_risk_exceeded" };
-  const target = q.ask + input.atr * p.targetAtrMultiple;
+  const target = leveragedPriceTarget(q.ask, stop, input.atr, p.targetAtrMultiple, p.version.includes("intraday-v3") ? 2 : 0);
   if (!Number.isFinite(target)) return { ok: false, reason: "invalid_geometry" };
 
+  const pair = leveragedOpposingExposure("SQQQ", input.leveragedSleevePositions);
+  if (!pair.ok) return pair;
   const headroom = leveragedSleeveHeadroom({ nav: input.nav, positions: input.leveragedSleevePositions });
   if (!headroom.ok) return headroom;
   if (headroom.headroom <= 0) return { ok: false, reason: "no_sleeve_capacity" };

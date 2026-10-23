@@ -1,16 +1,6 @@
-// TQQQ paper cron: entry when flat, monitor+exit when held. Mirrors
-// app/api/agents/soxl/cron/route.ts's structure exactly (see that file's
-// header for the full rationale on monitor-liveness proof, the price+session
-// dayLow/dayHigh quote contract, and why thesisInvalidated stays false).
-//
-// The one structural difference: TQQQ's capacity check is the SHARED
-// SOXL+TQQQ leveraged-sleeve ceiling (lib/trading/leveraged-sleeve-risk.ts,
-// 5% of NAV combined — owner's rule, 2026-09-23), not a sector-concentration
-// cap. It only needs the open SOXL/TQQQ paper positions, not a full-book
-// sector classification like SOXL's semiconductorCapacity requires.
-//
-// Entry window is 11:20-11:34 ET, 15 min after SOXL's 11:00-11:14, so the
-// two dedicated doors never contend for the same cron minute.
+// TQQQ paper v3: shared current-session setup and recurring monitoring.
+// Legacy symbol-specific live windows remain in the evidence module; this paper
+// path uses the shared calendar-aware intraday window and recorded policy version.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { doorQuoteForPlan, doorQuoteNote } from "@/lib/trading/leveraged-door-quote";
@@ -25,10 +15,11 @@ import { planTqqqEntry, monitorTqqq, type TqqqPolicy } from "@/lib/trading/tqqq-
 import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
-import { tqqqEntryWindow, tqqqQuoteTime } from "@/lib/trading/tqqq-evidence";
+import { tqqqQuoteTime } from "@/lib/trading/tqqq-evidence";
+import { leveragedPaperEntryWindow as tqqqEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
-const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000;
+const MONITOR_MAX_QUOTE_AGE_MS = 2 * 60 * 1000;
 // Twice-daily from day one (~11:25 ET entry+mid-day, ~16:20 ET after-close):
 // SOXL only got the after-close check post-launch after a gap was found
 // (a single 11:05am check missed the afternoon range); TQQQ ships with both
@@ -45,6 +36,7 @@ async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceCl
     .select("completed_at")
     .eq("agent_type", AGENT_TYPE)
     .eq("status", "done")
+    .like("result_summary", '%"monitorVerified":true%')
     .order("completed_at", { ascending: false })
     .limit(1).maybeSingle();
   if (!data?.completed_at) return null;
@@ -73,10 +65,10 @@ const NO_AV_FALLBACK = async () => [];
 // beta; same 30-min quote age, 2x ATR stop / 3x ATR target geometry as SOXL.
 // No semiconductorCapPct equivalent — capacity is the shared sleeve headroom.
 const TQQQ_POLICY: TqqqPolicy = {
-  version: "tqqq-paper-entry-v2",
-  maxQuoteAgeMs: 30 * 60 * 1000,
+  version: "tqqq-paper-intraday-v3",
+  maxQuoteAgeMs: 2 * 60 * 1000,
   maxSpreadBps: 50,
-  maxMonitorAgeMs: 24 * 60 * 60 * 1000,
+  maxMonitorAgeMs: 10 * 60 * 1000,
   atrStopMultiple: 2,
   maxStopPct: 12,
   targetAtrMultiple: 3,
@@ -98,6 +90,9 @@ export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const supabase = createServiceClient();
   const now = Date.now();
+  if (!leveragedPaperSessionOpen(new Date(now))) {
+    return NextResponse.json({ status: "no_entry", reason: "outside_regular_session" });
+  }
   const priorMonitorVerifiedAt = await lastVerifiedMonitorAt(supabase, now);
   const result = await runTqqqCron(supabase, now, priorMonitorVerifiedAt);
   await recordRun(supabase, result.runStatus, result.summary);
@@ -111,7 +106,7 @@ export const POST = GET;
 async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now: number, priorMonitorVerifiedAt: number | null): Promise<RunResult> {
   const { data: existing, error: existingErr } = await supabase
     .from("paper_positions")
-    .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target")
+    .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target, entry_policy_version, opened_at")
     .eq("symbol", "TQQQ").eq("market", "us").eq("position_role", "tqqq_paper").maybeSingle();
   if (existingErr) return fail({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` });
   if (existing) {
@@ -123,7 +118,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
       maxQuoteAgeMs: MONITOR_MAX_QUOTE_AGE_MS,
       quote: {
         price: monitorQuote.source === "unavailable" ? NaN : monitorQuote.price,
-        dayLow: monitorQuote.dayLow ?? null, dayHigh: monitorQuote.dayHigh ?? null,
+        dayLow: null, dayHigh: null,
         observedAt: tqqqQuoteTime(monitorQuote, now),
       },
       position: {
@@ -132,7 +127,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
         initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
         currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),
         highestPrice: existing.highest_price == null ? null : Number(existing.highest_price),
-        partialTaken: false,
+        partialTaken: existing.price_target == null,
       },
       thesisInvalidated: false,
     });
@@ -147,7 +142,8 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     }
     await resolveIssue("tqqq-monitor-failed", supabase);
 
-    if (decision.action === "none" || decision.action === "runner_hold") {
+    const sessionExit = leveragedPaperExitDue(new Date(now), existing.entry_policy_version, existing.opened_at);
+    if (!sessionExit && (decision.action === "none" || decision.action === "runner_hold")) {
       const { error: updateError } = await supabase.from("paper_positions").update({
         current_price: monitorQuote.price,
         highest_price: decision.highestPrice,
@@ -155,19 +151,20 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
         updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
       if (updateError) return fail({ status: "error", reason: "monitor_state_write_failed" });
-      return ok({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
+      return ok({ monitorVerified: true, status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
     }
 
     const isStop = decision.action === "stop_full";
     const fillPrice = isStop ? paperStopFillPrice(monitorQuote.price, decision.trailingStop) : monitorQuote.price;
     const exitReason = isStop ? "tqqq_stop_hit"
+      : sessionExit ? "tqqq_intraday_session_end"
       : decision.action === "partial_target" ? "tqqq_partial_target"
       : decision.action === "thesis_full" ? "tqqq_thesis_invalidated"
       : "tqqq_target_hit";
     const { data: exitResult, error: exitErr } = await supabase.rpc("execute_paper_exit", {
       p_position_id: existing.id, p_exit_price: fillPrice, p_exit_reason: exitReason,
-      p_exit_qty: decision.action === "partial_target" ? decision.exitQty : null,
-      p_partial_stop_loss: decision.action === "partial_target" ? decision.runnerStop : null,
+      p_exit_qty: !sessionExit && decision.action === "partial_target" ? decision.exitQty : null,
+      p_partial_stop_loss: !sessionExit && decision.action === "partial_target" ? decision.runnerStop : null,
     });
     if (exitErr) {
       await reportIssue({ issueKey: "tqqq-exit-failed", severity: "critical", category: "risk", title: "TQQQ paper exit RPC failed", detail: `positionId=${existing.id}: ${exitErr.message}` }, supabase);
@@ -175,10 +172,15 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     }
     const exit = exitResult as any;
     if (!exit?.ok) return fail({ status: "error", reason: `exit_denied: ${exit?.error ?? "unknown"}` });
-    return ok({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
+    return ok({ monitorVerified: true, status: "exited", action: sessionExit ? "session_end_full" : decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
   }
 
-  if (!tqqqEntryWindow(new Date(now))) return ok({ status: "no_entry", reason: "outside_entry_window" });
+  if (!tqqqEntryWindow(new Date(now))) {
+    const probe = await getLeveragedIntradayQuote("TQQQ");
+    now = Date.now();
+    if (!Number.isFinite(tqqqQuoteTime(probe, now)) || now - tqqqQuoteTime(probe, now) > MONITOR_MAX_QUOTE_AGE_MS) return fail({ status: "monitor_failed", reason: "quote_unavailable_or_stale" }, 200);
+    return ok({ status: "no_entry", reason: "outside_entry_window", monitorVerified: true });
+  }
   const [candleResult, quote] = await Promise.all([
     fetchUsCandles("TQQQ", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getLeveragedIntradayQuote("TQQQ"),
@@ -196,16 +198,27 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     return ok({ status: "no_entry", reason: "quote_unavailable_or_stale", source: quote.source });
   }
 
-  const technicals = computeTechnicals(candles.candles);
-  const veto = detectBreakdownVeto(technicals);
-  const trendQualified = !veto.vetoed
-    && technicals.priceVsEma20 === "above" && technicals.priceVsEma50 === "above" && technicals.trend20d === "up";
+  const intraday = await loadLeveragedIntradaySetup("TQQQ");
+  if (intraday.state === "unavailable") {
+    await reportIssue({ issueKey: "leveraged-intraday-data:tqqq", severity: "warn", category: "data",
+      title: "TQQQ current-session setup unavailable", detail: intraday.reason }, supabase);
+    return fail({ status: "no_entry", reason: intraday.reason, policy: intraday.policy }, 200);
+  }
+  await resolveIssue("leveraged-intraday-data:tqqq", supabase);
+  if (intraday.state !== "ready") return ok({ status: "no_entry", monitorVerified: Number.isFinite(tqqqQuoteTime(quote, Date.now())) && Date.now() - tqqqQuoteTime(quote, Date.now()) <= MONITOR_MAX_QUOTE_AGE_MS, reason: intraday.reason, setup: intraday.evidence });
+  intraday.evidence.previous_completed_session = signalSession;
+  intraday.evidence.previous_completed_close = candles.candles.at(-1)!.close;
+  intraday.evidence.opening_gap_pct = (Number(intraday.evidence.session_open) / candles.candles.at(-1)!.close - 1) * 100;
+  const technicals = { atr14: intraday.atr };
+  const trendQualified = true;
   const features = computeLeveragedShadowFeatures(candles.candles);
   if (features.dollarVolume == null || features.dollarVolume < MIN_DOLLAR_VOLUME) {
     return ok({ status: "no_entry", reason: "liquidity_floor_not_met", dollarVolume: features.dollarVolume });
   }
+  if (quote.price <= Math.max(Number(intraday.evidence.openingHigh), Number(intraday.evidence.etf_vwap)))
+    return ok({ status: "no_entry", monitorVerified: Number.isFinite(tqqqQuoteTime(quote, Date.now())) && Date.now() - tqqqQuoteTime(quote, Date.now()) <= MONITOR_MAX_QUOTE_AGE_MS, reason: "intraday_setup_reversed" });
   const atr = technicals.atr14;
-  const swingLow = Math.min(...candles.candles.slice(-10).map(c => c.low));
+  const swingLow = intraday.structuralStop;
 
   const { data: lastExit, error: lastExitError } = await supabase
     .from("paper_trades")
@@ -238,8 +251,8 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
   if (researchSignalError) return fail({ status: "error", reason: `research_signal_query_failed: ${researchSignalError}` });
   // Recheck quote, signal, liveness and entry window after all evidence reads.
   now = Date.now();
-  const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now });
-  if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}` });
+  const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now, intradayQualified: intraday.state === "ready" });
+  if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}`, monitorVerified: Number.isFinite(tqqqQuoteTime(quote, now)) && now - tqqqQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   // Real bid/ask when the provider has one; otherwise a modeled conservative spread (paper only).
   const doorQuote = doorQuoteForPlan({ bid: quote.bid, ask: quote.ask, price: quote.price }, tqqqQuoteTime(quote, now));
 
@@ -247,7 +260,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     policy: TQQQ_POLICY,
     now,
     quote: doorQuote,
-    signalAt: Date.parse(`${signalSession}T00:00:00Z`),
+    signalAt: intraday.signalAt,
     lastExitAt,
     signalSession,
     expectedSignalSession: expectedSession,
@@ -263,7 +276,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
 
   if (!plan.ok) {
     await resolveIssue("tqqq-entry-cron-failed", supabase);
-    return ok({ status: "no_entry", reason: plan.reason });
+    return ok({ status: "no_entry", reason: plan.reason, monitorVerified: Number.isFinite(tqqqQuoteTime(quote, now)) && now - tqqqQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   }
 
   const qty = plan.maxNotional / plan.entry;
@@ -276,7 +289,7 @@ async function runTqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     p_bid: quote.bid, p_ask: quote.ask, p_spread: quote.bid && quote.ask ? quote.ask - quote.bid : null,
     p_stop_loss: plan.stop, p_price_target: plan.target,
     p_policy_version: plan.version,
-    p_rationale: `TQQQ paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}]${doorQuoteNote(doorQuote, quote.source)}`,
+    p_rationale: `TQQQ paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}] [setup ${JSON.stringify(intraday.evidence)}]${doorQuoteNote(doorQuote, quote.source)}`,
   });
   if (rpcErr) {
     await reportIssue({ issueKey: "tqqq-entry-cron-failed", severity: "warn", category: "execution", title: "TQQQ paper entry RPC failed", detail: rpcErr.message }, supabase);

@@ -1,46 +1,6 @@
-// SOXL paper cron: entry when flat, monitor+exit when held.
-// Owner-approved 2026-09-22: automatic PAPER trading for SOXL, 5% NAV
-// ceiling. Live execution is untouched: this route never reads broker_orders
-// and calls no broker adapter. lib/trading/symbol-policy.ts's generic
-// leveraged/inverse block still applies to every other path (research
-// candidate selection, the mandate-driven paper-trade route, the live
-// execution gateway) — this cron is SOXL's own, deliberately separate door,
-// not a hole punched in the shared gate.
-//
-// Monitoring reuses the SAME price + session dayLow/dayHigh convention as
-// app/api/agents/position-monitor/route.ts (never bid/ask — production
-// quotes essentially never carry them; see lib/data/quotes.ts's Massive
-// 403-entitlement note). lib/trading/soxl-lifecycle.ts's SoxlMonitorQuote
-// was fixed to match that contract instead of requiring bid/ask (which this
-// route originally, incorrectly, synthesized from price alone — that would
-// have silently skipped every intraday stop/target touch). Exits reuse the
-// existing execute_paper_exit RPC unchanged (already position-role-generic).
-//
-// Deliberately deferred, not silent: thesisInvalidated is always passed as
-// false. There's no built "is the SOXL thesis still valid" signal distinct
-// from the entry trend check, and the spec's own instruction is that STALE
-// thesis evidence must never authorize an exit — so rather than reuse the
-// entry trend check (computed fresh each run, not a persisted "thesis") as a
-// proxy, this route relies on the mechanical stop/target/trail ladder alone
-// until a real thesis-freshness signal exists.
-//
-// Entry evidence is tied to a completed candle session, not invocation time.
-// Re-entry requires a newer daily setup; missing monitor proof blocks entry.
-//
-// monitorVerifiedAt (2026-09-22): now real, not NaN. Every completed
-// invocation of this route (monitor branch OR entry branch, any resolved
-// outcome that isn't an error) writes an agent_runs row with
-// agent_type='soxl_cron'. The entry branch reads the most recent PRIOR such
-// row (never this invocation's own — it hasn't been written yet) and treats
-// its completed_at as monitorVerifiedAt only if within MONITOR_LIVENESS_MS.
-// This is a liveness proof for the monitoring MECHANISM (auth, DB
-// connectivity, the quote-fetch chain) — this route only ever evaluates one
-// state per invocation (monitor when held, entry when flat), so there is
-// never a position to have "actively monitored" at entry-check time; proving
-// the pipeline itself works on its normal cadence is the honest substitute.
-// On a cold start (no prior row, or the pipeline hasn't completed cleanly in
-// MONITOR_LIVENESS_MS) entry correctly stays blocked until the first clean
-// run establishes the baseline.
+// SOXL paper v3: shared current-session setup and recurring monitoring.
+// Legacy symbol-specific live windows remain in the evidence module; this paper
+// path uses the shared calendar-aware intraday window and recorded policy version.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { doorQuoteForPlan, doorQuoteNote } from "@/lib/trading/leveraged-door-quote";
@@ -56,10 +16,11 @@ import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
 import { paperStopFillPrice } from "@/lib/trading/exit-ladder";
 import type { SemiconductorHolding } from "@/lib/trading/semiconductor-risk";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
-import { soxlEntryWindow, soxlQuoteTime } from "@/lib/trading/soxl-evidence";
+import { soxlQuoteTime } from "@/lib/trading/soxl-evidence";
+import { leveragedPaperEntryWindow as soxlEntryWindow, loadLeveragedIntradaySetup, leveragedPaperSessionOpen, leveragedPaperExitDue } from "@/lib/trading/leveraged-intraday";
 import { completedSessionCandles, expectedNewestSession } from "@/lib/data/completed-candles";
 
-const MONITOR_MAX_QUOTE_AGE_MS = 30 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
+const MONITOR_MAX_QUOTE_AGE_MS = 2 * 60 * 1000; // matches SOXL_POLICY.maxQuoteAgeMs below
 // This cron fires twice/day (weekdays): ~11:05 ET (entry window + a mid-
 // session monitor check) and ~16:15 ET, right after the equity position-
 // monitor's own after-close slot, so an open SOXL position gets checked
@@ -81,6 +42,7 @@ async function lastVerifiedMonitorAt(supabase: ReturnType<typeof createServiceCl
     .select("completed_at")
     .eq("agent_type", AGENT_TYPE)
     .eq("status", "done")
+    .like("result_summary", '%"monitorVerified":true%')
     .order("completed_at", { ascending: false })
     .limit(1).maybeSingle();
   if (!data?.completed_at) return null;
@@ -112,10 +74,10 @@ const NO_AV_FALLBACK = async () => [];
 // the 25% max used for core equity stop rejection (semiconductorCapacity
 // separately enforces the 5% NAV notional ceiling via SOXL_MAX_NAV_FRACTION).
 const SOXL_POLICY: SoxlPolicy = {
-  version: "soxl-paper-entry-v2",
-  maxQuoteAgeMs: 30 * 60 * 1000,
+  version: "soxl-paper-intraday-v3",
+  maxQuoteAgeMs: 2 * 60 * 1000,
   maxSpreadBps: 50,
-  maxMonitorAgeMs: 24 * 60 * 60 * 1000, // monitorSoxl unused for now; kept for planSoxlEntry's shape
+  maxMonitorAgeMs: 10 * 60 * 1000, // monitorSoxl unused for now; kept for planSoxlEntry's shape
   atrStopMultiple: 2,
   maxStopPct: 12,
   targetAtrMultiple: 3,
@@ -149,6 +111,9 @@ export async function GET(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const supabase = createServiceClient();
   const now = Date.now();
+  if (!leveragedPaperSessionOpen(new Date(now))) {
+    return NextResponse.json({ status: "no_entry", reason: "outside_regular_session" });
+  }
   const priorMonitorVerifiedAt = await lastVerifiedMonitorAt(supabase, now);
   const result = await runSoxlCron(supabase, now, priorMonitorVerifiedAt);
   await recordRun(supabase, result.runStatus, result.summary);
@@ -162,7 +127,7 @@ export const POST = GET;
 async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now: number, priorMonitorVerifiedAt: number | null): Promise<RunResult> {
   const { data: existing, error: existingErr } = await supabase
     .from("paper_positions")
-    .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target")
+    .select("id, qty, avg_cost, current_price, stop_loss, initial_stop_loss, highest_price, price_target, entry_policy_version, opened_at")
     .eq("symbol", "SOXL").eq("market", "us").eq("position_role", "soxl_paper").maybeSingle();
   if (existingErr) return fail({ status: "error", reason: `existing_position_query_failed: ${existingErr.message}` });
   if (existing) {
@@ -174,7 +139,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
       maxQuoteAgeMs: MONITOR_MAX_QUOTE_AGE_MS,
       quote: {
         price: monitorQuote.source === "unavailable" ? NaN : monitorQuote.price,
-        dayLow: monitorQuote.dayLow ?? null, dayHigh: monitorQuote.dayHigh ?? null,
+        dayLow: null, dayHigh: null,
         observedAt: soxlQuoteTime(monitorQuote, now),
       },
       position: {
@@ -183,7 +148,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
         initialStopLoss: existing.initial_stop_loss == null ? null : Number(existing.initial_stop_loss),
         currentStop: existing.stop_loss == null ? null : Number(existing.stop_loss),
         highestPrice: existing.highest_price == null ? null : Number(existing.highest_price),
-        partialTaken: false, // paper clears price_target after a partial (see exit-ladder.ts) — a remaining runner cannot re-fire it
+        partialTaken: existing.price_target == null, // paper clears price_target after a partial (see exit-ladder.ts) — a remaining runner cannot re-fire it
       },
       thesisInvalidated: false, // see route header comment
     });
@@ -200,7 +165,8 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     }
     await resolveIssue("soxl-monitor-failed", supabase);
 
-    if (decision.action === "none" || decision.action === "runner_hold") {
+    const sessionExit = leveragedPaperExitDue(new Date(now), existing.entry_policy_version, existing.opened_at);
+    if (!sessionExit && (decision.action === "none" || decision.action === "runner_hold")) {
       const { error: updateError } = await supabase.from("paper_positions").update({
         current_price: monitorQuote.price,
         highest_price: decision.highestPrice,
@@ -208,7 +174,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
         updated_at: new Date().toISOString(),
       }).eq("id", existing.id);
       if (updateError) return fail({ status: "error", reason: "monitor_state_write_failed" });
-      return ok({ status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
+      return ok({ monitorVerified: true, status: "held", action: decision.action, positionId: existing.id, trailingStop: decision.trailingStop });
     }
 
     // stop_full / target_full / partial_target / thesis_full: reuses the
@@ -216,13 +182,14 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     const isStop = decision.action === "stop_full";
     const fillPrice = isStop ? paperStopFillPrice(monitorQuote.price, decision.trailingStop) : monitorQuote.price;
     const exitReason = isStop ? "soxl_stop_hit"
+      : sessionExit ? "soxl_intraday_session_end"
       : decision.action === "partial_target" ? "soxl_partial_target"
       : decision.action === "thesis_full" ? "soxl_thesis_invalidated"
       : "soxl_target_hit";
     const { data: exitResult, error: exitErr } = await supabase.rpc("execute_paper_exit", {
       p_position_id: existing.id, p_exit_price: fillPrice, p_exit_reason: exitReason,
-      p_exit_qty: decision.action === "partial_target" ? decision.exitQty : null,
-      p_partial_stop_loss: decision.action === "partial_target" ? decision.runnerStop : null,
+      p_exit_qty: !sessionExit && decision.action === "partial_target" ? decision.exitQty : null,
+      p_partial_stop_loss: !sessionExit && decision.action === "partial_target" ? decision.runnerStop : null,
     });
     if (exitErr) {
       await reportIssue({ issueKey: "soxl-exit-failed", severity: "critical", category: "risk", title: "SOXL paper exit RPC failed", detail: `positionId=${existing.id}: ${exitErr.message}` }, supabase);
@@ -230,10 +197,15 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     }
     const exit = exitResult as any;
     if (!exit?.ok) return fail({ status: "error", reason: `exit_denied: ${exit?.error ?? "unknown"}` });
-    return ok({ status: "exited", action: decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
+    return ok({ monitorVerified: true, status: "exited", action: sessionExit ? "session_end_full" : decision.action, positionId: existing.id, fillPrice, closedQty: exit.closed_qty, remainingQty: exit.remaining_qty, realizedPnl: exit.realized_pnl });
   }
 
-  if (!soxlEntryWindow(new Date(now))) return ok({ status: "no_entry", reason: "outside_entry_window" });
+  if (!soxlEntryWindow(new Date(now))) {
+    const probe = await getLeveragedIntradayQuote("SOXL");
+    now = Date.now();
+    if (!Number.isFinite(soxlQuoteTime(probe, now)) || now - soxlQuoteTime(probe, now) > MONITOR_MAX_QUOTE_AGE_MS) return fail({ status: "monitor_failed", reason: "quote_unavailable_or_stale" }, 200);
+    return ok({ status: "no_entry", reason: "outside_entry_window", monitorVerified: true });
+  }
   const [candleResult, quote] = await Promise.all([
     fetchUsCandles("SOXL", NO_AV_FALLBACK).catch(() => ({ candles: [], source: "unavailable" as const })),
     getLeveragedIntradayQuote("SOXL"),
@@ -251,19 +223,30 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     return ok({ status: "no_entry", reason: "quote_unavailable_or_stale", source: quote.source });
   }
 
-  const technicals = computeTechnicals(candles.candles);
-  const veto = detectBreakdownVeto(technicals);
-  const trendQualified = !veto.vetoed
-    && technicals.priceVsEma20 === "above" && technicals.priceVsEma50 === "above" && technicals.trend20d === "up";
+  const intraday = await loadLeveragedIntradaySetup("SOXL");
+  if (intraday.state === "unavailable") {
+    await reportIssue({ issueKey: "leveraged-intraday-data:soxl", severity: "warn", category: "data",
+      title: "SOXL current-session setup unavailable", detail: intraday.reason }, supabase);
+    return fail({ status: "no_entry", reason: intraday.reason, policy: intraday.policy }, 200);
+  }
+  await resolveIssue("leveraged-intraday-data:soxl", supabase);
+  if (intraday.state !== "ready") return ok({ status: "no_entry", monitorVerified: Number.isFinite(soxlQuoteTime(quote, Date.now())) && Date.now() - soxlQuoteTime(quote, Date.now()) <= MONITOR_MAX_QUOTE_AGE_MS, reason: intraday.reason, setup: intraday.evidence });
+  intraday.evidence.previous_completed_session = signalSession;
+  intraday.evidence.previous_completed_close = candles.candles.at(-1)!.close;
+  intraday.evidence.opening_gap_pct = (Number(intraday.evidence.session_open) / candles.candles.at(-1)!.close - 1) * 100;
+  const technicals = { atr14: intraday.atr };
+  const trendQualified = true;
   const features = computeLeveragedShadowFeatures(candles.candles);
   if (features.dollarVolume == null || features.dollarVolume < MIN_DOLLAR_VOLUME) {
     return ok({ status: "no_entry", reason: "liquidity_floor_not_met", dollarVolume: features.dollarVolume });
   }
+  if (quote.price <= Math.max(Number(intraday.evidence.openingHigh), Number(intraday.evidence.etf_vwap)))
+    return ok({ status: "no_entry", monitorVerified: Number.isFinite(soxlQuoteTime(quote, Date.now())) && Date.now() - soxlQuoteTime(quote, Date.now()) <= MONITOR_MAX_QUOTE_AGE_MS, reason: "intraday_setup_reversed" });
   const atr = technicals.atr14;
   // Structural stop: swing low over the last 10 sessions. An explicit,
   // deliberately simple initial choice — not fit to anything, not claimed
   // optimal (spec 1.C).
-  const swingLow = Math.min(...candles.candles.slice(-10).map(c => c.low));
+  const swingLow = intraday.structuralStop;
 
   // A read failure cannot be mistaken for "never exited". The completed
   // candle session must postdate the last closed lot before re-entry.
@@ -312,8 +295,8 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
   if (researchSignalError) return fail({ status: "error", reason: `research_signal_query_failed: ${researchSignalError}` });
   // Recheck quote, signal, liveness and entry window after all evidence reads.
   now = Date.now();
-  const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now });
-  if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}` });
+  const researchGate = evaluateLeveragedResearchGate(researchSignal, { threshold: mandate.score_threshold, now, intradayQualified: intraday.state === "ready" });
+  if (!researchGate.ok) return ok({ status: "no_entry", reason: `research_gate:${researchGate.reason}`, monitorVerified: Number.isFinite(soxlQuoteTime(quote, now)) && now - soxlQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   // Real bid/ask when the provider has one; otherwise a modeled conservative spread (paper only).
   const doorQuote = doorQuoteForPlan({ bid: quote.bid, ask: quote.ask, price: quote.price }, soxlQuoteTime(quote, now));
 
@@ -322,7 +305,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     now,
     quote: doorQuote,
     // Daily evidence cannot become a new post-exit setup merely by being fetched again.
-    signalAt: Date.parse(`${signalSession}T00:00:00Z`),
+    signalAt: intraday.signalAt,
     lastExitAt,
     signalSession,
     expectedSignalSession: expectedSession,
@@ -347,7 +330,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
 
   if (!plan.ok) {
     await resolveIssue("soxl-entry-cron-failed", supabase);
-    return ok({ status: "no_entry", reason: plan.reason });
+    return ok({ status: "no_entry", reason: plan.reason, monitorVerified: Number.isFinite(soxlQuoteTime(quote, now)) && now - soxlQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   }
 
   const qty = plan.maxNotional / plan.entry;
@@ -360,7 +343,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
     p_bid: quote.bid, p_ask: quote.ask, p_spread: quote.bid && quote.ask ? quote.ask - quote.bid : null,
     p_stop_loss: plan.stop, p_price_target: plan.target,
     p_policy_version: plan.version,
-    p_rationale: `SOXL paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}]${doorQuoteNote(doorQuote, quote.source)}`,
+    p_rationale: `SOXL paper entry: trend-qualified breakout, ATR ${atr?.toFixed(2)}, swing-low stop ${swingLow.toFixed(2)}, dollar volume ${features.dollarVolume?.toFixed(0)} [research signal ${researchGate.signalId} score ${researchGate.score}] [setup ${JSON.stringify(intraday.evidence)}]${doorQuoteNote(doorQuote, quote.source)}`,
   });
   if (rpcErr) {
     await reportIssue({ issueKey: "soxl-entry-cron-failed", severity: "warn", category: "execution", title: "SOXL paper entry RPC failed", detail: rpcErr.message }, supabase);

@@ -420,6 +420,7 @@ async function runSymbol(
 
   now = Date.now();
   const plan = planLeveragedLiveEntry({
+    symbol,
     policy: LIVE_POLICY, now,
     quote: { bid: quote.bid ?? NaN, ask: quote.ask ?? NaN, observedAt: cfg.quoteTime(quote, now) },
     signalAt: Date.parse(`${signalSession}T00:00:00Z`), lastExitAt, signalSession, expectedSignalSession: expectedSession,

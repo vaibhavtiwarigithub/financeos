@@ -26,10 +26,10 @@ const r = (v: number | null) => (v == null ? "–" : String(Math.round(v)));
 
 export function CouncilInline({ latest }: { latest: CouncilLatest | undefined }) {
   if (!latest) return null;
-  const title = `LLM council (shadow) as of ${latest.decisionTs}: DeepSeek ${r(latest.deepseek)} · Claude ${r(latest.claude)} · Codex ${r(latest.codex)}${latest.median == null ? " · median not available (a member score is missing)" : ""}. Display only; no trade uses it.`;
+  const title = `LLM council: next 10 market sessions, not today's return or an intraday entry signal. Frozen evidence as of ${latest.decisionTs}: DeepSeek ${r(latest.deepseek)} · Claude ${r(latest.claude)} · Codex ${r(latest.codex)}${latest.median == null ? " · median not available (a member score is missing)" : ""}. Display only; no trade uses it.`;
   return (
     <div title={title} style={{ fontSize: 11, color: "#ec4899", marginTop: 3, whiteSpace: "nowrap" }}>
-      Council {r(latest.median)} <span style={{ opacity: 0.7 }}>({r(latest.deepseek)}·{r(latest.claude)}·{r(latest.codex)})</span>
+      Council · 10 sessions: {r(latest.median)} <span style={{ opacity: 0.7 }}>({r(latest.deepseek)}·{r(latest.claude)}·{r(latest.codex)})</span>
     </div>
   );
 }

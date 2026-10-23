@@ -11,6 +11,7 @@ import { selectCouncilCandidates } from "@/lib/llm-council/selection";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { enqueueSubscription, sweepSubscriptionBatches } from "@/lib/llm-council/subscription";
 import { COUNCIL_FORMULA_VERSIONS } from "@/lib/scoring/formula-lineage";
+import { predictionOnlyEvidence, COUNCIL_PREDICTION_VERSION, COUNCIL_PREDICTION_GUIDANCE } from "@/lib/llm-council/core";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -303,7 +304,8 @@ export async function POST(req: NextRequest) {
   const outcomes: Array<Record<string, unknown>> = [];
   let stopAll = false;
   const processObservation = async (observation: any): Promise<void> => {
-    const snapshot = await addPointInTimeRelationships(svc, observation, asSnapshot(observation));
+    const snapshot = predictionOnlyEvidence(await addPointInTimeRelationships(svc, observation, asSnapshot(observation)));
+    snapshot.prediction_contract = { version: COUNCIL_PREDICTION_VERSION, horizon_sessions: 10, intraday_signal: false };
     const snapshotText = JSON.stringify(snapshot);
     if (subscription) {
       try {
@@ -312,7 +314,7 @@ export async function POST(req: NextRequest) {
       } catch (error) { outcomes.push({ symbol: observation.symbol, status: "queue_refused", issue: String(error).slice(0, 180) }); }
       return;
     }
-    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
+    const independentPrompt = `Frozen decision-time evidence JSON (all numbers must come from this object):\n${snapshotText}\n\nScore this symbol's relative attractiveness over the next 10 market sessions. Give a score from 0 (least attractive) to 100 (most attractive), NOT a price target or return percent. ${COUNCIL_PREDICTION_GUIDANCE} Be independent: do not assume the deterministic score is correct. Return exactly one valid JSON object matching this schema (the type labels below are descriptions, not literal output): {"score": number, "confidence": number from 0 to 1, "rationale": string, "bull_case": string, "bear_case": string, "evidence_citations": [{"claim": string, "source": "existing JSON path or field", "as_of": "timestamp/date or 'unknown'"}]}. Use straight ASCII double quotes only. No smart quotes, code fence, comments, trailing comma, or text before/after the object. Provide at least one citation. Cite only paths that exist in the supplied snapshot and give only the timestamp that belongs to that data field, or "unknown" when it has no source timestamp. Explicitly state missing/stale data and what could falsify your view. Be LEAN: rationale at most 300 characters, bull_case and bear_case at most 120 characters each, at most 3 evidence_citations with claims under 80 characters; the whole JSON object must fit in about 250 tokens or it will be cut off and discarded.${citationGuidance(snapshot as Record<string, unknown>)}`;
     if (!budgetGuard.canReserve(estimateWorstCaseTurnCost(participants[0], independentPrompt, true))) {
       outcomes.push({ symbol: observation.symbol, status: "skipped", issue: "daily_budget_cannot_reserve_first_forecast" });
       stopAll = true;
@@ -334,7 +336,7 @@ export async function POST(req: NextRequest) {
     const { data: run, error: createError } = await svc.from("llm_council_runs").insert({
       observation_id: observation.id, market: requestedMarket, symbol: observation.symbol, decision_ts: observation.ts,
       status: "running", input_snapshot: snapshot, input_sha256: sha256(snapshotText), config_snapshot: configSnapshot,
-      prompt_version: config.prompt_version,
+      prompt_version: `${config.prompt_version}:${COUNCIL_PREDICTION_VERSION}`,
     }).select("id").single();
     if (createError || !run) {
       outcomes.push({ symbol: observation.symbol, status: "already_started_or_persist_failed" });
