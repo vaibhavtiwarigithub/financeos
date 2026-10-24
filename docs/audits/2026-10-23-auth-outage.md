@@ -61,6 +61,11 @@ guaranteed cure. Upgrading the plan alone does not resize an existing Nano
 instance. Verify actual checkout and all active-project charges first. No paid
 change has been made. [Billing example](https://supabase.com/docs/guides/platform/manage-your-usage/compute).
 
+**Owner decision:** keep Free and reduce workload only. The paid option above
+was declined, not left awaiting approval. See the Free-tier workload repair
+report for the implemented collection/analysis reductions; do not offer or
+apply a paid upgrade as if it were still authorized work.
+
 No restart, session termination, deletion, credential/access change, inference,
 trade, or protective-control bypass was performed. If staying free, a separate
 bounded workload-reduction plan must prioritize safety/operations over research

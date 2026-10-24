@@ -1,5 +1,20 @@
 # Kairos — Crons & Scheduling
 
+## Free-tier workload profile
+
+Owner selected workload reduction instead of paid compute on October 23, 2026.
+The existing five-minute council pg_cron windows below remain installed, but
+application admission only permits UTC quarter-hour sweeps before database
+access. Other calls explicitly return `free_tier_quarter_hour_sweep` and
+Retry-After, not a completed analysis run. This admits four rather than twelve
+database sweeps per scheduled hour. Collection uses two processing lanes and
+loads full frozen packets only for selected, unscored observations; the daily
+cap and cohort are unchanged. Expect up to 15 minutes pickup delay and monitor
+backlog honestly. The Vercel council evaluator is 23:30 UTC Monday–Friday.
+Safety, broker reconciliation, quote/position monitoring and trading schedules
+are unchanged. No database-side cron edits are claimed while administrative
+catalog reads fail; the application admission rule works independently.
+
 ## India benchmark retry after EOD NAV
 
 The benchmark initial pass remains 10:15 UTC. The bounded retry is 11:35 UTC
