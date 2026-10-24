@@ -30,12 +30,22 @@ Tests exercise both markets, every decision-time cohort/horizon, exact paired
 counts and IC, delayed subscription labels/version identity, read failure,
 benchmark failure and atomic-write failure. No test calls a model or broker.
 
+Final full suite: **4,379 passed / eight skipped / zero failed** with two
+workers. The first unrestricted full run had one existing calendar-performance
+test timeout (4,378 passed); that same test passed isolated and in the complete
+bounded-worker rerun without modifying the test, assertion or timeout. Final
+TypeScript, focused route checks and staged secret scans passed. Runtime commit
+`e42f1a21` is on remote `main`; deployment READY and actual database recovery
+must be verified independently, not inferred from these local results.
+
 ## Service recovery remains a separate verification
 
 At 01:30 UTC October 24 the system read showed six idle client sessions, one
 active and three idle in transaction, against max_connections 60. This does not
 establish current connection exhaustion. The latest checked IC batch was still
 October 22 at 23:48 UTC. Later small management SQL checks timed out.
+A direct production REST read requesting only the latest IC timestamp also
+timed out after eight seconds. No evaluator rerun was forced into that outage.
 
 The signed-in Supabase Database Observability page was reached at about 01:45
 UTC; CPU, memory, IOPS, throughput, connections and disk metrics all said
