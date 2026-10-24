@@ -22,6 +22,10 @@ deletion, inference test, manual order, trading-placing cron or brake reset.
 - Session-aware freshness alerts name the required completed session, rather
   than confusingly reporting a breach at 40 hours against a 96-hour rolling
   grace that is not the actual daily-bar rule. Gates are unchanged.
+- Catch-up health reconciliation accepts the existing all-market label producer's
+  null market explicitly; it does not infer null as US for market-specific jobs.
+  Late-night schedule checks include completed catch-up runs after midnight so
+  they do not recreate a resolved incident. Original gap and EOD evidence remain.
 - Found why VOO alone stayed at October 22: the primary comparator's cache-hit
   branch checked the stale portfolio's date, not the scheduled expected session.
   The existing expected session is now the minimum provider target. This repairs
@@ -34,9 +38,12 @@ Supabase Auth/REST/admin SQL respond again. Natural cron execution resumed
 session termination was performed; no exact root cause of recovery is claimed.
 
 An authenticated price-only refresh through the existing kairos_call_agent
-dispatcher returned HTTP 200: 159/160 US names current, BRK.B failed (fixed by
-this release). Benchmark recovery collected October 23 marks but honestly
-remained partial: canonical US portfolio EOD is missing. Do not invent its NAV,
+dispatcher initially returned HTTP 200: 159/160 US names current, BRK.B failed.
+After runtime 58ad0447 deployed READY (dpl_EG3ykedosUDqk3A6tm4Zhyrbuf5k), the
+same producer verified 160/160 current, 159 already fresh, zero failed/deferred.
+All four enabled US benchmarks (VOO, QQQ, XLF, XLK) now have usable October 23
+observations. Scorecards honestly remain partial: canonical US portfolio EOD
+is missing. Do not invent its NAV,
 relabel an intraday snapshot, or invoke PositionMonitor as a repair test.
 
 Local CRON_SECRET does not authenticate production; Vercel correctly refuses
@@ -62,6 +69,9 @@ guaranteed, and no missed historical decision is retroactively fabricated.
 
 ## Release verification
 
-Focused tests, full suite, TypeScript, secret scan, exact remote SHA and Vercel
-READY are verified before handoff. Runtime deployment does not itself prove
+Full suite for the main repair: 4,422 passed / eight skipped / zero failed;
+TypeScript and secret scan passed, remote SHA matched, runtime 58ad0447 READY.
+The catch-up-alert follow-up has seven focused tests and TypeScript passing;
+its full-suite and deployment verification are checked separately at handoff.
+Runtime deployment does not itself prove
 healthy natural collection or complete historical accounting.

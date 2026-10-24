@@ -179,7 +179,6 @@ async function runCheck() {
     if (job.fridayOnly && expectedDayOfWeek !== 5) continue;
     if (job.requiresIndia && !indiaEnabled) continue;
     if (isExpectedMarketHoliday(job, expectedDayStart)) continue;
-    const expectedDayEnd = new Date(expectedDayStart.getTime() + 86400_000);
     const dateStr = expectedDayStart.toISOString().slice(0, 10);
 
     // Distinguish US vs India research/monitor runs (agent_runs has no `market`
@@ -190,7 +189,10 @@ async function runCheck() {
       .select("id, started_at, status, symbols, market, result_summary, workload_metrics")
       .eq("agent_type", job.agentType)
       .gte("started_at", expectedDayStart.toISOString())
-      .lt("started_at", expectedDayEnd.toISOString())
+      // Include a real catch-up after midnight. Otherwise the recovery pass
+      // resolves yesterday's incident and this loop immediately recreates it.
+      // Historical cron_gap evidence and session-specific EOD checks remain.
+      .lt("started_at", now.toISOString())
       .order("started_at", { ascending: false })
       .limit(10);
 

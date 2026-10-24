@@ -45,6 +45,10 @@ returned PostgREST errors (including its preview and optional RPC) and returns
 Retention windows are unchanged; no cleanup is manually executed as a test.
 Data alerts no longer promise recovery at a quota reset: follow their actual
 source/recovery details. Existing alert classifications and brakes stay intact.
+The explicitly all-market label-maturation producer's null market is accepted
+for incident recovery; null on a market-specific job is not. After-midnight
+catch-up runs satisfy operational liveness without erasing the original gap
+or bypassing session-specific EOD/NAV checks.
 
 Confirmed-review repair (owner go, 2026-10-22): broker category alone is never an
 owner-action exemption. Explicit reconnect/login/quota/PC actions remain separate,

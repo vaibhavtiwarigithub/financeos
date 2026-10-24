@@ -31,7 +31,9 @@ export function recoveredRunAlert(alert: OpenRunAlert, runs: AgentRunIdentity[])
   if (!identity || !Number.isFinite(openedAt)) return false;
   return runs.some((run) =>
     run.agent_type === identity.agentType
-    && run.market === identity.market
+    // Unscoped label maturation explicitly processes BOTH markets and writes
+    // market=null. Null on a market-specific agent is still unknown, not US.
+    && (run.market === identity.market || (run.agent_type === "label_maturation" && run.market === null))
     && isTerminalSuccessfulRun(run.status)
     && Date.parse(run.started_at) > openedAt,
   );

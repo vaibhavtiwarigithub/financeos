@@ -4,6 +4,12 @@ import { isTerminalSuccessfulRun, recoveredRunAlert } from "@/lib/monitoring/rec
 const alert = { issue_key: "cron-stale:position_monitor:2026-08-18:us", created_at: "2026-08-18T23:00:00Z" };
 
 describe("historical run alert recovery", () => {
+  it("accepts an all-market label run but not an unscoped market-specific run", () => {
+    const run = { agent_type: "label_maturation", market: null, status: "done", started_at: "2026-08-19T20:00:00Z" };
+    expect(recoveredRunAlert({ ...alert, issue_key: "cron-stale:label_maturation:2026-08-18:us" }, [run])).toBe(true);
+    expect(recoveredRunAlert(alert, [{ ...run, agent_type: "position_monitor" }])).toBe(false);
+    expect(recoveredRunAlert({ ...alert, issue_key: "cron-stale:label_maturation:2026-08-18:us" }, [{ ...run, status: "partial" }])).toBe(false);
+  });
   it("resolves only after the same market and job succeeds later", () => {
     expect(recoveredRunAlert(alert, [{ agent_type: "position_monitor", market: "us", status: "done", started_at: "2026-08-19T20:00:00Z" }])).toBe(true);
     expect(recoveredRunAlert(alert, [{ agent_type: "position_monitor", market: "india", status: "done", started_at: "2026-08-19T20:00:00Z" }])).toBe(false);
