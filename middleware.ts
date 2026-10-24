@@ -2,6 +2,20 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isOwnerIdentity, isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
 
+const AUTH_BUDGET_MS = 3_000;
+
+function authUnavailable(request: NextRequest) {
+  const headers = { "Cache-Control": "private, no-store", "Retry-After": "30" };
+  // Login is public. An old cookie must not prevent the sign-in page loading.
+  if (request.nextUrl.pathname === "/login") return NextResponse.next({ request, headers });
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Authentication temporarily unavailable", code: "AUTH_SERVICE_UNAVAILABLE" }, { status: 503, headers });
+  }
+  return new NextResponse("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Kairos — temporarily unavailable</title></head><body><main><h1>Kairos is temporarily unavailable</h1><p>The authentication service is not responding. Your account data has not been loaded. Please retry shortly.</p><p><a href=\"/dashboard\">Retry Kairos</a> · <a href=\"/login\">Open sign-in page</a></p></main></body></html>", {
+    status: 503, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
 /** Paths that require a signed-in owner to VIEW. */
 function isProtectedPage(pathname: string): boolean {
   return pathname.startsWith("/dashboard")
@@ -33,13 +47,33 @@ export async function middleware(request: NextRequest) {
       : NextResponse.next({ request });
   }
 
+  // Bound the whole authorization flow, not just one HTTP request: Auth can
+  // retry refreshes, and viewer grants/sign-out add further network waits.
+  const controller = new AbortController();
+  let finished = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Authentication deadline exceeded"));
+    }, AUTH_BUDGET_MS);
+  });
+
+  async function authorize() {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: {
+        fetch: (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          if (finished || controller.signal.aborted) return Promise.reject(new Error("Authentication deadline exceeded"));
+          return fetch(input, { ...init, signal: controller.signal });
+        },
+      },
       cookies: {
         getAll() { return request.cookies.getAll(); },
         setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+          if (finished || controller.signal.aborted) return;
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
@@ -50,7 +84,10 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError && (!authError.status || authError.status >= 500 || authError.status === 429)) {
+    throw new Error("Authentication service unavailable");
+  }
 
   // This is the real access gate — the client-side email checks in
   // app/login/page.tsx are cosmetic only (a bypassed/direct Supabase Auth call,
@@ -68,11 +105,13 @@ export async function middleware(request: NextRequest) {
   const isOwner = isOwnerIdentity(user?.email, user?.email_confirmed_at);
   let isViewer = false;
   if (user && !isOwner) {
-    const { data: grant } = await supabase
+    const { data: grant, error: grantError } = await supabase
       .from("app_user_roles")
       .select("revoked_at")
       .eq("user_id", user.id)
       .maybeSingle();
+    // Unreadable is not revoked. Fail closed without signing the viewer out.
+    if (grantError) throw new Error("Viewer authorization service unavailable");
     isViewer = Boolean(grant && !grant.revoked_at);
     if (!isViewer) {
       await supabase.auth.signOut();
@@ -117,6 +156,17 @@ export async function middleware(request: NextRequest) {
   }
 
   return supabaseResponse;
+  }
+
+  try {
+    return await Promise.race([authorize(), deadline]);
+  } catch {
+    return authUnavailable(request);
+  } finally {
+    finished = true;
+    clearTimeout(timer!);
+    controller.abort();
+  }
 }
 
 export const config = {

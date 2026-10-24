@@ -1,5 +1,18 @@
 # Feature Architecture: Shared Viewer Access (Read-Only Friends & Family)
 
+## Authentication outage containment (2026-10-23)
+
+Cookie-bearing middleware requests have one three-second budget covering Auth,
+viewer-grant reads and any sign-out. A deadline aborts outstanding fetches and
+prevents late cookie writes or further retry requests. Protected pages return
+a private/no-store 503 recovery page; APIs return a 503 with
+`AUTH_SERVICE_UNAVAILABLE`. Public login remains reachable even with an old
+cookie. Verification failures never admit a caller or trust cookie contents.
+Transient Auth/grant failures do not deliberately sign the caller out and are
+not interpreted as revoked access. Healthy owner/viewer allowlists, confirmed
+owner identity and per-route authorization stay unchanged. This contains a
+middleware timeout; it does not claim an overloaded database has recovered.
+
 ## Status
 
 Architecture status: Approved
