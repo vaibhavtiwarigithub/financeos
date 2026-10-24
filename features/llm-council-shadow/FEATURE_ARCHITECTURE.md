@@ -3,8 +3,9 @@
 ## Owner-selected Free-tier workload profile (2026-10-23)
 
 The owner declined a paid compute upgrade and selected workload reduction.
-Existing five-minute cron windows remain installed, but collector admission
-checks UTC quarter-hour slots **before creating a database client**. Intermediate
+The six existing cron windows now run every fifteen minutes (migration
+20261024122903, applied and catalog-verified October 24). Collector admission
+also checks UTC quarter-hour slots **before creating a database client**. Intermediate
 calls return an explicit `free_tier_quarter_hour_sweep` deferral and Retry-After;
 they do not write a completed run. This cuts admitted sweeps from twelve to four
 per scheduled hour without altering the daily cap, roster, prompts or cohort.
@@ -20,8 +21,8 @@ The Vercel IC evaluator runs at 23:30 UTC Monday–Friday rather than weekends;
 authenticated diagnostic invocation remains available. Freshness checks must
 follow that schedule. This does not pause data collectors or promote evidence.
 No trading/safety-monitor cadence, broker state or financial history is changed.
-Physical pg_cron cadence changes cannot be claimed until database access and
-catalog readback succeed; the application-side admission guard is independent.
+Hour/day windows, commands, job identity and active state are unchanged. This
+reduces physical scheduler/HTTP wakeups as well as admitted collector work.
 
 ## Evaluator operational integrity (2026-10-23)
 

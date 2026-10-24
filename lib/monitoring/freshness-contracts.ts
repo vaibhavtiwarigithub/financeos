@@ -245,7 +245,8 @@ export function evaluateFreshness(
   // A daily-bar contract asks "is this the session that should exist by now?".
   // Everything else keeps the rolling calendar grace, which is the right shape
   // for a timestamp watermark like label maturation.
-  const cutoff = contract.sessionAware && contract.watermarkType === "date" && contract.market !== "global"
+  const sessionAware = contract.sessionAware && contract.watermarkType === "date" && contract.market !== "global";
+  const cutoff = sessionAware && contract.market !== "global"
     ? toMs(expectedNewestSession(contract.market, new Date(now.getTime() - (contract.settleHours ?? 0) * 3600_000)), "date")
     : now.getTime() - contract.graceHours * 3600_000;
   const newestByScope = new Map<string, number>();
@@ -294,6 +295,9 @@ export function evaluateFreshness(
   }
 
   const everythingStale = stale.length === total;
+  const freshnessRule = sessionAware
+    ? `required completed session ${new Date(cutoff).toISOString().slice(0, 10)} (after ${contract.settleHours ?? 0}h settlement)`
+    : `${contract.graceHours}h grace`;
   return {
       ...base,
       breached: true,
@@ -304,9 +308,9 @@ export function evaluateFreshness(
       kind: newestByScope.size === 0 ? "empty" : everythingStale ? "stale" : "coverage",
       detail: everythingStale
       ? newestWatermark && ageHours != null
-        ? `Newest ${contract.watermarkColumn} is ${newestWatermark}, ${ageHours.toFixed(0)}h old against a ${contract.graceHours}h grace. The watermark is not advancing.`
+        ? `Newest ${contract.watermarkColumn} is ${newestWatermark}, ${ageHours.toFixed(0)}h old; behind the ${freshnessRule}. The watermark is not advancing.`
         : `All ${total} required scope(s) are missing a usable ${contract.watermarkColumn} within the last ${contract.lookbackDays} days.`
-      : `${stale.length}/${total} scope(s) are past the ${contract.graceHours}h grace — coverage ${(coverage * 100).toFixed(0)}% vs required ${(contract.minCoverage * 100).toFixed(0)}%. `
+      : `${stale.length}/${total} scope(s) are behind the ${freshnessRule} — coverage ${(coverage * 100).toFixed(0)}% vs required ${(contract.minCoverage * 100).toFixed(0)}%. `
         + `Aggregate max(${contract.watermarkColumn})=${newestWatermark} looks healthy and is hiding them. `
         + `Stale: ${stale.slice(0, 15).join(", ")}${stale.length > 15 ? ` … +${stale.length - 15} more` : ""}.`,
   };

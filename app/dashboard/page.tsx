@@ -7,6 +7,11 @@ import { loadTradingMandate } from "@/lib/trading-mandate";
 
 export const revalidate = 30;
 
+// Only fields consumed by DashboardHome. Research packets and score-breakdown
+// JSON belong on their detail pages, not in every home-page response.
+const HOME_SIGNAL_FIELDS = "id,symbol,direction,analyst_score,conviction,status,created_at";
+const HOME_RUN_FIELDS = "id,agent_type,symbols,signals_written,status,completed_at,result_summary";
+
 export default async function DashboardPage() {
   // getSession() reads from cookie — no network round-trip unlike getUser()
   const authClient = await createClient();
@@ -46,10 +51,10 @@ export default async function DashboardPage() {
     // agent_runs.market defaults to 'us' for cross-market agents (learner, mentor,
     // macro-sentinel); a few pre-077 rows are null, so "us" also accepts null.
     mkt === "india"
-      ? supabase.from("agent_runs").select("*").eq("market", "india").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false })
-      : supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
-    supabase.from("agent_signals").select("*").eq("market", mkt).order("created_at", { ascending: false }).limit(6),
-    supabase.from("agent_signals").select("*").eq("market", mkt).eq("status", "pending").gte("analyst_score", Math.max(0, tradingMandate.score_threshold - 5)).order("analyst_score", { ascending: false }).limit(5),
+      ? supabase.from("agent_runs").select(HOME_RUN_FIELDS).eq("market", "india").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false })
+      : supabase.from("agent_runs").select(HOME_RUN_FIELDS).or("market.eq.us,market.is.null").gte("completed_at", sevenDaysAgo).order("completed_at", { ascending: false }),
+    supabase.from("agent_signals").select(HOME_SIGNAL_FIELDS).eq("market", mkt).order("created_at", { ascending: false }).limit(6),
+    supabase.from("agent_signals").select(HOME_SIGNAL_FIELDS).eq("market", mkt).eq("status", "pending").gte("analyst_score", Math.max(0, tradingMandate.score_threshold - 5)).order("analyst_score", { ascending: false }).limit(5),
     supabase.from("learning_log").select("*").order("created_at", { ascending: false }).limit(3),
     // Filter to the Trading account (••••8641) specifically — without this,
     // "most recent snapshot" could silently return Autopilot or Agentic's

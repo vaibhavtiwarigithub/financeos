@@ -42,13 +42,18 @@ export async function reportIssue(
 ): Promise<void> {
   const svc = client ?? createServiceClient();
   try {
-    const { data: existing } = await svc
+    const { data: existing, error: readError } = await svc
       .from("agent_alerts")
-      .select("id")
+      .select("id,severity,category,title,detail,auto_expire_at")
       .eq("issue_key", input.issueKey)
       .eq("resolved", false)
       .limit(1)
       .maybeSingle();
+
+    if (readError) {
+      console.error(`[system-health] reportIssue(${input.issueKey}) read failed:`, readError.message);
+      return;
+    }
 
     const payload = {
       severity: input.severity,
@@ -59,7 +64,16 @@ export async function reportIssue(
     };
 
     if (existing?.id) {
-      await svc.from("agent_alerts").update(payload).eq("id", (existing as any).id);
+      // Recurring checks must remain visible without rewriting identical rows
+      // (WAL + dead tuples) on every tick. Never cache this across requests:
+      // another process may have resolved or changed the issue meanwhile.
+      const sameExpiry = (existing.auto_expire_at ?? null) === payload.auto_expire_at
+        || (existing.auto_expire_at != null && payload.auto_expire_at != null
+          && Date.parse(existing.auto_expire_at) === Date.parse(payload.auto_expire_at));
+      if (existing.severity === payload.severity && existing.category === payload.category
+        && existing.title === payload.title && (existing.detail ?? null) === payload.detail && sameExpiry) return;
+      const { error } = await svc.from("agent_alerts").update(payload).eq("id", existing.id).eq("resolved", false);
+      if (error) console.error(`[system-health] reportIssue(${input.issueKey}) update failed:`, error.message);
     } else {
       // The partial unique index guards against a race creating two open rows.
       // On conflict there's already an open row — treat as success.

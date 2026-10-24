@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 
 // Pins the provider-selection rule for SECONDARY benchmark ingestion.
 //
@@ -11,6 +12,13 @@ import { describe, it, expect } from "vitest";
 // instead of +1.345% for the same window.
 
 import { pickFreshestProvider, newestBarDate } from "@/lib/data/benchmark-ingest";
+
+it("does not let a missing portfolio EOD freeze the primary benchmark too", () => {
+  const route = readFileSync("app/api/agents/benchmark-scorecard/route.ts", "utf8");
+  expect(route).toContain("bookSession && bookSession > expectedSession ? bookSession : expectedSession");
+  expect(route).toContain("upsertProviderObservations(svc, benchmark, requiredSession)");
+  expect(route).not.toContain("upsertProviderObservations(svc, benchmark, latestBookSession.get");
+});
 
 const bars = (dates: string[]) => dates.map((d, i) => ({ date: d, close: 100 + i }));
 

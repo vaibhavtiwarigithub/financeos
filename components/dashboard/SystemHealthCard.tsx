@@ -62,7 +62,7 @@ function fixHint(a: Alert): { href?: string; label: string } {
   if (cat === "models") return { href: "/dashboard/agents", label: "Reassign in Agents → Model Config" };
   if (cat === "broker") return { href: "/dashboard/settings", label: "Reconnect in Settings" };
   if (cat === "trading") return { href: "/dashboard/settings", label: "Review in Settings → Trading" };
-  if (cat === "data") return { label: "Resolves at the next data-quota reset" };
+  if (cat === "data") return { label: "Inspect the source and recovery details below" };
   if (cat === "cron") return { href: "/dashboard/intelligence", label: "See Intelligence → runs" };
   if (cat === "calibration") return { href: "/dashboard/edges", label: "Review calibration evidence" };
   return { label: "" };

@@ -27,6 +27,7 @@
 // gate, which is why it needed an explicit decision.
 
 import type { Candle } from "@/lib/data/technicals";
+import { yahooChartSymbol } from "@/lib/data/yahoo-symbol";
 
 /** Yahoo `range` values, shortest to longest. */
 export type YahooRange = "5d" | "1mo" | "3mo" | "6mo" | "1y" | "2y" | "3y" | "5y" | "10y" | "max";
@@ -79,7 +80,7 @@ export async function fetchYahooRawReplaySeries(
   const normalizedSymbol = symbol.trim().toUpperCase();
   if (!normalizedSymbol) return null;
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalizedSymbol)}?interval=1d&range=${range}&events=div%2Csplits`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooChartSymbol(normalizedSymbol))}?interval=1d&range=${range}&events=div%2Csplits`;
     const response = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
       next: { revalidate: 3600 },
@@ -170,7 +171,7 @@ export async function fetchYahooCandles(
 ): Promise<Candle[]> {
   try {
     const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooChartSymbol(symbol))}?interval=1d&range=${range}`,
       { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 3600 }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return [];

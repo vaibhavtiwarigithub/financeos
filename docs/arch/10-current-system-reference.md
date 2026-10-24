@@ -1,6 +1,6 @@
 # Kairos current system reference
 
-> Last reviewed: 2026-10-23
+> Last reviewed: 2026-10-24
 >
 > This is the friend-facing, current-state guide. It describes what the code and
 > production contracts do today. A feature marked **shadow**, **collecting**, or
@@ -26,6 +26,24 @@ There are three separate investing books:
 | Crypto | USD | Isolated paper pool and native research lane; live crypto disabled |
 
 Paper books never share NAV, cash, positions, benchmarks, or learning cohorts.
+"Active" describes the configured engine, not an unconditional permission to
+buy: market-local health and accuracy/drawdown brakes may halt new exposure.
+
+### Free-tier resource budget and truthful recovery
+
+The owner requires Supabase to stay on Free. Council collection uses two lanes
+and fifteen-minute scheduled sweeps; full evidence packets load only for selected
+unscored candidates. Home-page signal/run responses exclude unused research
+payloads. Repeated identical health findings stay visible without rewriting the
+same alert every tick. Cleanup reports partial database failures rather than
+pretending storage was reclaimed. No financial/research history is removed by
+these optimizations, and retained data can still exceed the Free storage quota.
+
+Provider symbol spelling is separate from app identity: Yahoo candle requests
+translate US share classes such as BRK.B to BRK-B, but positions and evidence
+keep BRK.B. Benchmark collection targets at least the expected completed market
+session even if portfolio EOD failed; a current benchmark cannot replace a
+missing, reconciled portfolio snapshot. Recovery does not fabricate past NAV.
 
 ### Leveraged funds: a separate intraday paper policy
 

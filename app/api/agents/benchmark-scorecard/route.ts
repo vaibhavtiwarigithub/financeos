@@ -324,7 +324,11 @@ async function buildScorecards(svc: any, marketScope: Market, expectedSession: s
   for (const benchmark of scopedBenchmarks) {
     await upsertPaperObservations(svc, benchmark);
     await upsertLiveObservations(svc, benchmark);
-    await upsertProviderObservations(svc, benchmark, latestBookSession.get(benchmark.market) ?? null);
+    // A failed portfolio EOD must not also freeze its independent comparator.
+    // The scheduled market session is a floor, not the age of the broken book.
+    const bookSession = latestBookSession.get(benchmark.market);
+    const requiredSession = bookSession && bookSession > expectedSession ? bookSession : expectedSession;
+    await upsertProviderObservations(svc, benchmark, requiredSession);
   }
 
   for (const market of [marketScope]) {

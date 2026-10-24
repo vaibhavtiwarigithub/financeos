@@ -1,5 +1,6 @@
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import type { Candle } from "@/lib/data/technicals";
+import { yahooChartSymbol } from "@/lib/data/yahoo-symbol";
 
 // US daily-candle adapters, in fallback priority. RSI/EMA are computed LOCALLY
 // from these candles (lib/data/technicals.ts) — we never buy an "indicator API".
@@ -27,7 +28,7 @@ export function newestBarIsStale(candles: Candle[]): boolean {
 // Yahoo Finance v8 chart — no API key, no observed rate limit, 251 adjusted bars.
 // Works for US (AAPL) and India (RELIANCE.NS). Primary source for fetchUsCandles.
 export async function fetchYahooCandles(symbol: string, forceRefresh = false): Promise<Candle[]> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooChartSymbol(symbol))}?interval=1d&range=1y`;
   try {
     const json = await providerCachedFetch("yahoo", `YAHOO_CANDLES:${symbol}`, url, { timeoutMs: 8000, ...(forceRefresh ? { forceRefresh: true } : {}) });
     const result = json?.chart?.result?.[0];

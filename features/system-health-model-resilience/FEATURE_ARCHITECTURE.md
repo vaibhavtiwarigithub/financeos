@@ -36,6 +36,16 @@ Implementation allowed: Yes
 
 ## Why this feature exists
 
+Free-only repair (owner request, October 24, 2026): repeated reports read the
+current open row and skip identical payload writes, avoiding unnecessary WAL
+and dead tuples. Reads remain authoritative, changed payloads still persist,
+and updates cannot overwrite a concurrently resolved row. Cleanup now checks
+returned PostgREST errors (including its preview and optional RPC) and returns
+503/ok=false for partial failure rather than claiming zero deletions/success.
+Retention windows are unchanged; no cleanup is manually executed as a test.
+Data alerts no longer promise recovery at a quota reset: follow their actual
+source/recovery details. Existing alert classifications and brakes stay intact.
+
 Confirmed-review repair (owner go, 2026-10-22): broker category alone is never an
 owner-action exemption. Explicit reconnect/login/quota/PC actions remain separate,
 but reconciliation, order, cancellation and exposure faults take precedence and

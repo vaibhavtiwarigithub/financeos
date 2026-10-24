@@ -3,8 +3,9 @@
 ## Free-tier workload profile
 
 Owner selected workload reduction instead of paid compute on October 23, 2026.
-The existing five-minute council pg_cron windows below remain installed, but
-application admission only permits UTC quarter-hour sweeps before database
+The six existing council pg_cron windows run every fifteen minutes (migration
+20261024122903; applied and catalog-verified October 24). Application admission
+also only permits UTC quarter-hour sweeps before database
 access. Other calls explicitly return `free_tier_quarter_hour_sweep` and
 Retry-After, not a completed analysis run. This admits four rather than twelve
 database sweeps per scheduled hour. Collection uses two processing lanes and
@@ -12,8 +13,8 @@ loads full frozen packets only for selected, unscored observations; the daily
 cap and cohort are unchanged. Expect up to 15 minutes pickup delay and monitor
 backlog honestly. The Vercel council evaluator is 23:30 UTC Monday–Friday.
 Safety, broker reconciliation, quote/position monitoring and trading schedules
-are unchanged. No database-side cron edits are claimed while administrative
-catalog reads fail; the application admission rule works independently.
+are unchanged. Original council hour/day windows, commands and active states
+are preserved. Physical council scheduler wakeups fall by two-thirds.
 
 ## India benchmark retry after EOD NAV
 
