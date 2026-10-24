@@ -365,6 +365,14 @@ successful build or rendered card means the money path worked.
 
 ## 12. How to read the rest of the repository
 
+Local cache recovery tooling (`scripts/provider-cache-archive.mjs`) can export
+superseded provider-cache slots older than 45 days, verify checksums and perform
+an isolated local PostgreSQL restoration. It cannot delete or restore production
+rows. The October 24 production exports failed; partial files are not backups.
+Pruning remains blocked until a complete archive passes its restore drill and
+an atomic conditional SQL path is available. Trading/research history is excluded.
+See `features/provider-cache-archive/FEATURE_ARCHITECTURE.md` for the recovery gates.
+
 Use `docs/arch/` for stable operational chapters, `features/*/FEATURE_ARCHITECTURE.md`
 for individual designs, `WORK_LOG.md` for delivery evidence, `PROJECT_DECISIONS.md`
 for owner approvals, and `public/agent-diagrams/system-map.json` for topology.
