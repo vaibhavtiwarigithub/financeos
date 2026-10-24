@@ -34,7 +34,9 @@ export async function POST(req: NextRequest) {
     result_summary: "Council IC evaluation started; both markets; shadow only; no inference.",
   }).select("id").single();
   if (receipt.error || !receipt.data?.id) return NextResponse.json({ error: "Could not record council evaluator start" }, { status: 500 });
+  const batchId = randomUUID();
   let publishedBatch: string | null = null;
+  let publicationAttempted = false;
   let phase = "model history";
   try {
   const modelHistory = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
@@ -56,7 +58,6 @@ export async function POST(req: NextRequest) {
     list.push(forecast);
     forecastsByRun.set(forecast.run_id, list);
   }
-  const batchId = randomUUID();
   // A single insert publishes all cells atomically. A failed later read must
   // never make an incomplete batch look like the newest successful evaluation.
   const pendingCells: any[] = [];
@@ -268,6 +269,7 @@ export async function POST(req: NextRequest) {
     }
   }
   phase = "atomic IC publication";
+  publicationAttempted = true;
   const { error: writeError } = await svc.from("llm_council_ic_runs").insert(pendingCells);
   if (writeError) throw new Error("Could not publish complete council IC batch");
   publishedBatch = batchId;
@@ -280,7 +282,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v2", shadowOnly: true });
   } catch {
     // Do not expose database messages (which may contain request details).
-    const message = publishedBatch ? `Council IC batch ${publishedBatch} published, but completion receipt failed` : `Council IC evaluation failed at ${phase}; no complete batch published`;
+    const message = publishedBatch ? `Council IC batch ${publishedBatch} published, but completion receipt failed`
+      : publicationAttempted ? `Council IC batch ${batchId} publication unconfirmed; verify ledger before retry`
+      : `Council IC evaluation failed at ${phase}; no complete batch published`;
     await svc.from("agent_runs").update({ status: "error", completed_at: new Date().toISOString(), result_summary: message }).eq("id", receipt.data.id);
     return NextResponse.json({ error: message }, { status: 500 });
   }

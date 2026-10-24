@@ -25,6 +25,8 @@ It lacked an agent-run start/completion/error receipt.
 - Write existing `agent_runs` start/done/error receipts with safe phase names.
   If the function dies, the existing watchdog can reap its running receipt. A
   completion-receipt failure after successful publication is reported accurately.
+  An insert acknowledgement error is labelled publication-unconfirmed with the
+  batch ID, not falsely described as proof that the transaction rolled back.
 
 Tests exercise both markets, every decision-time cohort/horizon, exact paired
 counts and IC, delayed subscription labels/version identity, read failure,

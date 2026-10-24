@@ -100,6 +100,7 @@ describe("council evaluator shared reads and atomic publication", () => {
     expect(response.status).toBe(500);
     expect(state.writes).toHaveLength(1);
     expect(state.calls.some((c) => c.update?.status === "done")).toBe(false);
+    expect(await response.text()).toContain("publication unconfirmed; verify ledger before retry");
   });
 
   it("retains availability-aligned subscription scores, version identity and paired baselines without loading full packets", async () => {
