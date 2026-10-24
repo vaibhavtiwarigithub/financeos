@@ -367,10 +367,14 @@ successful build or rendered card means the money path worked.
 
 Local cache recovery tooling (`scripts/provider-cache-archive.mjs`) can export
 superseded provider-cache slots older than 45 days, verify checksums and perform
-an isolated local PostgreSQL restoration. It cannot delete or restore production
-rows. The October 24 production exports failed; partial files are not backups.
-Pruning remains blocked until a complete archive passes its restore drill and
-an atomic conditional SQL path is available. Trading/research history is excluded.
+an isolated local PostgreSQL restoration. Its explicit owner-operated pruning
+mode requires matching archive/restore/plan evidence, exact scalar columns and
+full-payload SHA-256 matching, newest-slot protection, short paced transactions
+and durable receipts. No automatic production restore exists.
+The October 24 retry backed up/restored 28,082 rows and then removed those same
+superseded rows, preserving all 7,677 latest-key dates. Earlier partial files are
+not backups. Trading/research history is excluded. Physical storage remains about
+1.37 GB; cleanup has not resolved the physical storage quota concern.
 See `features/provider-cache-archive/FEATURE_ARCHITECTURE.md` for the recovery gates.
 
 Use `docs/arch/` for stable operational chapters, `features/*/FEATURE_ARCHITECTURE.md`
