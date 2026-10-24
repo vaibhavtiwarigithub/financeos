@@ -11,7 +11,7 @@ import { asMinedVariant, MINING_HORIZONS, parseMiningRationale } from "@/lib/sco
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-async function loadObservationRows(svc: ReturnType<typeof createServiceClient>, market: "us" | "india", horizon: number, entryOnly = false): Promise<ObsRow[]> {
+async function loadObservationRows(svc: ReturnType<typeof createServiceClient>, market: "us" | "india", horizon: number, entryRows?: ObsRow[]): Promise<ObsRow[]> {
   const labels = await fetchAllRows((from, to) => svc.from("observation_labels")
     .select("observation_id,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,fundamental_score,technical_score,sentiment_score,insider_score,availability_mask,entry_eligible,direction,decision_context,discovery_source)")
     .eq("horizon_days", horizon).eq("decision_observations.market", market)
@@ -21,20 +21,23 @@ async function loadObservationRows(svc: ReturnType<typeof createServiceClient>, 
     const o = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     const y = row.benchmark_neutral_return == null ? NaN : Number(row.benchmark_neutral_return);
     if (!o || !Number.isFinite(y)) continue;
-    if (entryOnly && !isEntryCandidateLong({ entryEligible: o.entry_eligible, direction: o.direction, decisionContext: o.decision_context, discoverySource: o.discovery_source })) continue;
     const mask = o.availability_mask ?? {};
     const value = (name: string) => o[`${name}_score`] == null ? null : Number(o[`${name}_score`]);
-    all.push({
+    const mapped: ObsRow = {
       ts: String(o.ts), symbol: String(o.symbol).toUpperCase(), y, analyst: o.analyst_score == null ? null : Number(o.analyst_score),
       scores: { fundamental: value("fundamental"), technical: value("technical"), sentiment: value("sentiment"), insider: value("insider") },
       avail: { fundamental: mask.fundamental === true, technical: mask.technical === true, sentiment: mask.sentiment === true, insider: mask.insider === true },
-    });
+    };
+    all.push(mapped);
+    if (entryRows && isEntryCandidateLong({ entryEligible: o.entry_eligible, direction: o.direction, decisionContext: o.decision_context, discoverySource: o.discovery_source })) entryRows.push(mapped);
   }
   return all;
 }
 
 async function loadEntryObservationRows(svc: ReturnType<typeof createServiceClient>, market: "us" | "india", horizon: number): Promise<ObsRow[]> {
-  return loadObservationRows(svc, market, horizon, true);
+  const entryRows: ObsRow[] = [];
+  await loadObservationRows(svc, market, horizon, entryRows);
+  return entryRows;
 }
 
 // Measure-only nightly evaluation of the pre-registered score variants against the live composite. "forward" = observations dated at or
@@ -57,12 +60,12 @@ export async function GET(req: NextRequest) {
   if (!VARIANTS.every((v) => known.has(v.id))) return NextResponse.json({ ok: false, error: "code variants differ from the registered set" }, { status: 500 });
 
   const summary: Array<{ market: string; horizon: number; rows: number; forwardRows: number }> = [];
-  const observations = new Map<string, ObsRow[]>();
   const entryObservations = new Map<string, ObsRow[]>();
   for (const market of ["us", "india"] as const) {
     for (const horizon of HORIZONS) {
-      const all = await loadObservationRows(svc, market, horizon);
-      observations.set(`${market}:${horizon}`, all);
+      const entries: ObsRow[] = [];
+      const all = await loadObservationRows(svc, market, horizon, entries);
+      entryObservations.set(`${market}:${horizon}`, entries);
       const forward = all.filter((r) => Date.parse(r.ts) >= declaredMs);
       const hindsight = all.filter((r) => Date.parse(r.ts) < declaredMs);
       summary.push({ market, horizon, rows: all.length, forwardRows: forward.length });

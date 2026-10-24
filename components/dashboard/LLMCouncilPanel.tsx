@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { COUNCIL_MODELS } from "@/lib/llm-model-catalog";
-import { effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
+import { COUNCIL_SWEEP_INTERVAL_MINUTES, effectiveCouncilDebateRounds } from "@/lib/llm-council/limits";
 import { groupCouncilUsageRows, type CouncilUsageRecord } from "@/lib/llm-council/usage-view";
 import CouncilSubscriptionWorkers from "./CouncilSubscriptionWorkers";
 
@@ -182,6 +182,7 @@ export default function LLMCouncilPanel({ symbol, market }: { symbol?: string; m
         }} style={{ ...selectStyle, display: "block", width: "100%", marginTop: 5 }} />
       </label>}
     </div>
+    <div style={{ marginTop: 10, color: T.muted, fontSize: 12 }}>Free-tier workload profile: collection checks every {COUNCIL_SWEEP_INTERVAL_MINUTES} minutes within scheduled market windows, with at most two concurrent symbols. New research may wait up to 15 minutes for pickup; this does not change selected models or the daily cap.</div>
     {(!subscription || hybrid) && <>
     <div style={{ marginTop: 14, color: T.sub, fontSize: 12 }}>API participants · their calls use the hard daily API budget. {hybrid ? "Hybrid mode makes one independent API call per selected API member; no metered API debate or orchestrator call." : "API debate/orchestrator calls are also covered by the budget."}</div>
     <div style={{ marginTop: 8, color: missingProviders.length ? T.red : T.green, fontSize: 12 }}>{missingProviders.length ? `Missing provider API key: ${missingProviders.join(", ")} — add it in Settings → AI Models before enabling.` : "API keys are configured for the selected API models."}</div>

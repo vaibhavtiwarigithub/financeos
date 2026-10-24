@@ -18,4 +18,9 @@ describe("LLM council evaluator cron contract", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
     expect(config.crons.some((cron: { path: string }) => cron.path === "/api/agents/evaluation/p1-gate/cron")).toBe(false);
   });
+
+  it("avoids weekend full-history evaluation under the owner-selected Free profile", () => {
+    const config = JSON.parse(readFileSync("vercel.json", "utf8"));
+    expect(config.crons.find((cron: { path: string }) => cron.path === "/api/agents/llm-council/evaluate").schedule).toBe("30 23 * * 1-5");
+  });
 });

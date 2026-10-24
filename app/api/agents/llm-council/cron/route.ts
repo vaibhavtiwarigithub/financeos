@@ -3,7 +3,7 @@ import { callLLM, isReasoningModel, priceFor } from "@/lib/llm-router";
 import { providerForModel, getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
-import { councilProviderTimeoutMs, createCouncilBudgetGuard, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
+import { councilProviderTimeoutMs, councilSweepDelaySeconds, createCouncilBudgetGuard, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
 import { isCouncilModel } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
@@ -235,6 +235,10 @@ export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const requestedMarket = new URL(req.url).searchParams.get("market");
   if (requestedMarket !== "us" && requestedMarket !== "india") return NextResponse.json({ error: "market must be us or india" }, { status: 400 });
+  const retryAfter = councilSweepDelaySeconds(new Date());
+  if (retryAfter > 0) return NextResponse.json({ market: requestedMarket, deferred: "free_tier_quarter_hour_sweep", retryAfterSeconds: retryAfter, shadowOnly: true }, {
+    headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" },
+  });
   const invocationStartedAt = Date.now();
   const svc = createServiceClient();
   const { data: config, error: configError } = await svc.from("llm_council_config").select("*").eq("id", "global").single();
@@ -282,7 +286,9 @@ export async function POST(req: NextRequest) {
   for (let offset = 0; offset <= MAX_OBSERVATION_SCAN; offset += 500) {
     const pageSize = Math.min(500, MAX_OBSERVATION_SCAN + 1 - offset);
     const { data, error } = await svc.from("decision_observations")
-      .select("id,ts,market,symbol,code_version,features,availability_mask,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,direction,entry_eligible,score_threshold,price_at_decision,currency,decision_context,discovery_source")
+      // Do not de-TOAST/transfer full packets for already-scored observations
+      // on every scheduled sweep. Candidate selection needs metadata only.
+      .select("id,ts,market,symbol,analyst_score,score_threshold,direction,decision_context,discovery_source")
       .eq("market", requestedMarket).gte("ts", observationCutoff)
       .order("ts", { ascending: false }).order("id", { ascending: false }).range(offset, offset + pageSize - 1);
     if (error) return NextResponse.json({ error: "Could not load frozen research observations" }, { status: 500 });
@@ -303,7 +309,21 @@ export async function POST(req: NextRequest) {
 
   const outcomes: Array<Record<string, unknown>> = [];
   let stopAll = false;
-  const processObservation = async (observation: any): Promise<void> => {
+  let hydrationFailed = false;
+  let hydrationBlocked = 0;
+  const processObservation = async (candidate: any): Promise<void> => {
+    const { data: observation, error } = await svc.from("decision_observations")
+      .select("id,ts,market,symbol,code_version,features,availability_mask,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,direction,entry_eligible,score_threshold,price_at_decision,currency,decision_context,discovery_source")
+      .eq("id", candidate.id).eq("market", requestedMarket).maybeSingle();
+    if (error || !observation || String(observation.id) !== String(candidate.id)
+      || observation.ts !== candidate.ts || observation.symbol !== candidate.symbol
+      || observation.market !== requestedMarket) {
+      hydrationFailed = true;
+      hydrationBlocked++;
+      stopAll = true;
+      outcomes.push({ symbol: candidate.symbol, status: "blocked", issue: "frozen_observation_unavailable_or_changed" });
+      return;
+    }
     const snapshot = predictionOnlyEvidence(await addPointInTimeRelationships(svc, observation, asSnapshot(observation)));
     snapshot.prediction_contract = { version: COUNCIL_PREDICTION_VERSION, horizon_sessions: 10, intraday_signal: false };
     const snapshotText = JSON.stringify(snapshot);
@@ -449,7 +469,8 @@ export async function POST(req: NextRequest) {
   // invocation finishes inside maxDuration. Remaining symbols are picked up by the next scheduled invocation.
   let cursor = 0;
   let processed = 0;
-  const poolSize = Math.max(1, Math.min(6, candidates.length));
+  // Owner selected workload reduction on Free, not a larger compute tier.
+  const poolSize = Math.max(1, Math.min(2, candidates.length));
   await Promise.all(Array.from({ length: poolSize }, async () => {
     while (!stopAll && cursor < candidates.length && Date.now() - invocationStartedAt < 200_000) {
       const next = candidates[cursor++];
@@ -457,5 +478,7 @@ export async function POST(req: NextRequest) {
       processed++;
     }
   }));
-  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, processed, remainingUnscored: rankedCandidates.length - processed, cohort: COUNCIL_ALL_RESEARCH_COHORT_KEY, cohortHalfWidthPoints: COUNCIL_COHORT_HALF_WIDTH, outcomes, dailySpendUsd: dailySpend, shadowOnly: true });
+  return NextResponse.json({ market: requestedMarket, candidates: candidates.length, processed, remainingUnscored: rankedCandidates.length - processed + hydrationBlocked, cohort: COUNCIL_ALL_RESEARCH_COHORT_KEY, cohortHalfWidthPoints: COUNCIL_COHORT_HALF_WIDTH, outcomes, dailySpendUsd: dailySpend, shadowOnly: true,
+    ...(hydrationFailed ? { error: "Frozen observation hydration failed; collection stopped", blocked: true } : {}),
+  }, { status: hydrationFailed ? 503 : 200 });
 }

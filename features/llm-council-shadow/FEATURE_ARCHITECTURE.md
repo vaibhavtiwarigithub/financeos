@@ -1,5 +1,28 @@
 # Multi-LLM Research Council and Scorecard
 
+## Owner-selected Free-tier workload profile (2026-10-23)
+
+The owner declined a paid compute upgrade and selected workload reduction.
+Existing five-minute cron windows remain installed, but collector admission
+checks UTC quarter-hour slots **before creating a database client**. Intermediate
+calls return an explicit `free_tier_quarter_hour_sweep` deferral and Retry-After;
+they do not write a completed run. This cuts admitted sweeps from twelve to four
+per scheduled hour without altering the daily cap, roster, prompts or cohort.
+Pickup may be delayed up to 15 minutes and backlog must remain visible.
+
+Candidate scans read only selection metadata. Full frozen observations are read
+by exact ID/market only for selected unscored observations. Missing or changed
+identity blocks collection before inference; no neutral/missing packet is
+fabricated. Processing concurrency is two, down from six. Source timestamps,
+availability labels and every stored feature in an admitted packet are retained.
+
+The Vercel IC evaluator runs at 23:30 UTC Monday–Friday rather than weekends;
+authenticated diagnostic invocation remains available. Freshness checks must
+follow that schedule. This does not pause data collectors or promote evidence.
+No trading/safety-monitor cadence, broker state or financial history is changed.
+Physical pg_cron cadence changes cannot be claimed until database access and
+catalog readback succeed; the application-side admission guard is independent.
+
 ## Evaluator operational integrity (2026-10-23)
 
 The scheduled GET/POST evaluator reuses bounded, totally ordered pagination.

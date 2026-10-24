@@ -1,5 +1,15 @@
 # Feature Architecture: Score Formula Forward Shadow
 
+## Free-tier read reuse
+
+Fixed and mined evaluations share each market/horizon label read within an
+invocation. The loader projects both all-scored and entry-candidate-long arrays
+from the same immutable source rows using the existing entry predicate. Fixed
+formulas still use the all-scored population; mined formulas still use only
+entry candidates. Additional mined-only horizons are loaded once on demand.
+Unused retention of all-market/all-horizon rows is removed. No weight, formula,
+declaration boundary, label, cohort or adoption rule changes.
+
 ## Status
 **Implemented and deployed (2026-10-15).** Measure-only. Nothing in scoring, gates, sizing or trading reads it. The additive paired-spread/HAC migration `20261015164628` is applied and its columns were verified in production. The implementation is on `main` (PRs #70, #71, and UI correctness follow-up #72); the scheduled evaluator and Learning panels are live.
 

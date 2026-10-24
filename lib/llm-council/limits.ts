@@ -3,6 +3,13 @@ export const MAX_COUNCIL_PARTICIPANTS = 5;
 export const MAX_COUNCIL_SYMBOLS_PER_MARKET_DAY = 400;
 export const COUNCIL_PROVIDER_CALL_TIMEOUT_MS = 12_000;
 export const COUNCIL_PROVIDER_CALL_BUDGET_PER_INVOCATION_MS = 165_000;
+// Owner chose Free-tier workload reduction on 2026-10-23. Existing five-minute
+// scheduler windows remain, but only quarter-hour sweeps perform database work.
+export const COUNCIL_SWEEP_INTERVAL_MINUTES = 15;
+export function councilSweepDelaySeconds(now: Date): number {
+  const slot = now.getUTCMinutes() % COUNCIL_SWEEP_INTERVAL_MINUTES;
+  return slot === 0 ? 0 : (COUNCIL_SWEEP_INTERVAL_MINUTES - slot) * 60 - now.getUTCSeconds();
+}
 
 export type CouncilBudgetReservation = { id: number; amountUsd: number };
 

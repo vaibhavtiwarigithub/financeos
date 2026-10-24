@@ -119,7 +119,7 @@
     },
     {
       "path": "/api/agents/llm-council/evaluate",
-      "schedule": "30 23 * * *"
+      "schedule": "30 23 * * 1-5"
     }
   ]
 }
