@@ -8,10 +8,10 @@ import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_KEY, isNearThresholdEnt
 import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-const PAGE = 500;
 
 /**
  * Two cohorts, both evaluated every night. `all_research_v1` = every research symbol scored once per session.
@@ -27,20 +27,57 @@ function runInCohort(cohortKey: string, run: any): boolean {
 export async function POST(req: NextRequest) {
   if (!verifyCronSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const svc = createServiceClient();
-  const modelHistory: any[] = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await svc.from("llm_council_model_forecasts")
+  const receipt = await svc.from("agent_runs").insert({
+    agent_type: "llm_council_evaluate", status: "running", symbols: [],
+    trigger_source: "scheduled", signals_written: 0,
+    tokens_input: 0, tokens_output: 0, claude_calls: 0,
+    result_summary: "Council IC evaluation started; both markets; shadow only; no inference.",
+  }).select("id").single();
+  if (receipt.error || !receipt.data?.id) return NextResponse.json({ error: "Could not record council evaluator start" }, { status: 500 });
+  let publishedBatch: string | null = null;
+  let phase = "model history";
+  try {
+  const modelHistory = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
       .select("model_requested,execution_source,llm_council_runs!inner(market,config_snapshot)")
-      .order("created_at", { ascending: true }).range(offset, offset + PAGE - 1);
-    if (error) return NextResponse.json({ error: "Could not load council model history" }, { status: 500 });
-    modelHistory.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
+      .order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to), "council model history");
+  // Only council-linked observations can contribute. Read these ledgers once,
+  // not once per historical-label page, cohort and horizon.
+  phase = "terminal runs";
+  const terminalRuns = await fetchAllRows<any>((from, to) => svc.from("llm_council_runs")
+    .select("id,observation_id,market,consensus_score,status,config_snapshot,prompt_version")
+    .in("status", ["completed", "partial", "failed"]).order("id", { ascending: true }).range(from, to), "council runs");
+  phase = "completed forecasts";
+  const completedForecasts = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
+    .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source")
+    .eq("status", "completed").order("id", { ascending: true }).range(from, to), "council forecasts");
+  const forecastsByRun = new Map<string, any[]>();
+  for (const forecast of completedForecasts) {
+    const list = forecastsByRun.get(forecast.run_id) ?? [];
+    list.push(forecast);
+    forecastsByRun.set(forecast.run_id, list);
   }
   const batchId = randomUUID();
+  // A single insert publishes all cells atomically. A failed later read must
+  // never make an incomplete batch look like the newest successful evaluation.
+  const pendingCells: any[] = [];
   const inserted: Array<{ market: string; horizon: number; series: number }> = [];
 
   for (const market of ["us", "india"] as const) {
+    phase = `${market} linked observation labels`;
+    const marketRuns = terminalRuns.filter((run) => run.market === market);
+    const obsIds = [...new Set(marketRuns.map((run) => run.observation_id).filter((id) => id != null))];
+    const marketLabels: any[] = [];
+    for (let start = 0; start < obsIds.length; start += 100) {
+      const chunk = obsIds.slice(start, start + 100);
+      marketLabels.push(...await fetchAllRows<any>((from, to) => svc.from("observation_labels")
+        .select("observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,entry_eligible,direction,decision_context,discovery_source)")
+        .in("observation_id", chunk).in("horizon_days", [...COUNCIL_HORIZONS])
+        .eq("decision_observations.market", market)
+        .order("observation_id", { ascending: true }).order("horizon_days", { ascending: true }).range(from, to), `${market} council labels`));
+    }
     for (const cohortKey of [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY]) {
+    const cohortRuns = marketRuns.filter((run) => runInCohort(cohortKey, run));
+    const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
     for (const horizon of COUNCIL_HORIZONS) {
       const pointsBySeries = new Map<string, CouncilLabelPoint[]>();
       pointsBySeries.set("composite:median", []);
@@ -52,13 +89,7 @@ export async function POST(req: NextRequest) {
         pointsBySeries.set(`model:${entry.model_requested}:independent`, []);
         pointsBySeries.set(`model:${entry.model_requested}:debated`, []);
       }
-      for (let offset = 0; ; offset += PAGE) {
-        const { data: labels, error } = await svc.from("observation_labels")
-          .select("observation_id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,entry_eligible,direction,decision_context,discovery_source)")
-          .eq("horizon_days", horizon).eq("decision_observations.market", market)
-          .order("observation_id", { ascending: true }).range(offset, offset + PAGE - 1);
-        if (error) return NextResponse.json({ error: `Could not load matured labels for ${market} h${horizon}` }, { status: 500 });
-        const rows = (labels ?? []) as any[];
+        const rows = marketLabels.filter((row) => row.horizon_days === horizon);
         const eligible: Array<{ obs: any; outcome: number }> = [];
         for (const row of rows) {
           const obs = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
@@ -70,38 +101,18 @@ export async function POST(req: NextRequest) {
           if (cohortKey === COUNCIL_COHORT_KEY && !isNearThresholdEntryLong(obs)) continue;
           eligible.push({ obs, outcome: Number(outcome) });
         }
-        for (let start = 0; start < eligible.length; start += 100) {
-          const chunk = eligible.slice(start, start + 100);
-          const obsIds = chunk.map((x) => Number(x.obs.id));
-          const { data: runs, error: runError } = await svc.from("llm_council_runs")
-            .select("id,observation_id,market,consensus_score,status,config_snapshot,prompt_version")
-            .in("observation_id", obsIds).in("status", ["completed", "partial", "failed"]);
-          if (runError) return NextResponse.json({ error: `Could not read council runs for ${market}` }, { status: 500 });
-          if (!runs?.length) continue;
-          const cohortRuns = (runs as any[]).filter((run) => runInCohort(cohortKey, run));
-          if (!cohortRuns.length) continue;
-          const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
-          const { data: forecasts, error: forecastError } = await svc.from("llm_council_model_forecasts")
-            .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source")
-            .in("run_id", cohortRuns.map((run) => run.id)).eq("status", "completed");
-          if (forecastError) return NextResponse.json({ error: `Could not read council forecasts for ${market}` }, { status: 500 });
-          const forecastsByRun = new Map<string, any[]>();
-          for (const forecast of (forecasts ?? []) as any[]) {
-            const list = forecastsByRun.get(forecast.run_id) ?? [];
-            list.push(forecast);
-            forecastsByRun.set(forecast.run_id, list);
-          }
-          for (const item of chunk) {
+          for (const item of eligible) {
             const run: any = runByObs.get(Number(item.obs.id));
             if (!run) continue;
             const runForecasts = forecastsByRun.get(run.id) ?? [];
             const apiForecasts = runForecasts.filter((forecast) => forecast.execution_source !== "subscription");
             const hybrid = run.config_snapshot?.execution_mode === "hybrid";
             const comparisonScore = hybrid
-              ? medianScore(apiForecasts.map((forecast) => Number(forecast.final_score)).filter(Number.isFinite))
+              ? medianScore(apiForecasts.filter((forecast) => forecast.final_score != null).map((forecast) => Number(forecast.final_score)).filter(Number.isFinite))
               : run.consensus_score == null ? null : Number(run.consensus_score);
             const compositeSeriesKey = hybrid ? "composite:api_members_median" : "composite:median";
             const addPoint = (baseKey: string, score: unknown) => {
+              if (score == null) return;
               const key = councilVersionedSeriesKey(baseKey, run);
               const value = Number(score);
               if (!Number.isFinite(value)) return;
@@ -126,15 +137,12 @@ export async function POST(req: NextRequest) {
               addPoint(`model:${forecast.model_used ?? forecast.model_requested}:debated`, forecast.final_score);
             }
           }
-        }
-        if (rows.length < PAGE) break;
-      }
       const cells = [...pointsBySeries.entries()].map(([seriesKey, points]) => {
         const model = seriesKey.startsWith("model:") ? seriesKey.split(":")[1] : null;
         return buildCouncilIcCell(market, horizon, seriesKey, model, points);
       });
       if (cells.length) {
-        const { error: writeError } = await svc.from("llm_council_ic_runs").insert(cells.map((cell) => ({
+        pendingCells.push(...cells.map((cell) => ({
           evaluation_batch_id: batchId,
           market: cell.market,
           horizon_days: cell.horizonDays,
@@ -150,7 +158,6 @@ export async function POST(req: NextRequest) {
           classification: cell.classification,
           reason: cell.reason,
         })));
-        if (writeError) return NextResponse.json({ error: `Could not persist ${market} h${horizon} IC cells` }, { status: 500 });
       }
       inserted.push({ market, horizon, series: cells.length });
     }
@@ -160,24 +167,21 @@ export async function POST(req: NextRequest) {
   // Subscription results arrive after the research observation. Give them a
   // separate, availability-aligned label: first regular close strictly after
   // each submitted forecast, then h complete matched closes beyond it.
-  const delayed: any[] = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await svc.from("llm_council_model_forecasts")
-      .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source,available_at,llm_council_runs!inner(id,market,symbol,status,completed_at,consensus_score,input_snapshot,config_snapshot)")
+  phase = "subscription forecasts";
+  const delayed = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
+      .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source,available_at,llm_council_runs!inner(id,market,symbol,status,completed_at,consensus_score,deterministic_score:input_snapshot->deterministic_score,prediction_contract:input_snapshot->prediction_contract,config_snapshot)")
       .eq("execution_source", "subscription").eq("status", "completed")
-      .order("available_at", { ascending: true }).range(offset, offset + PAGE - 1);
-    if (error) return NextResponse.json({ error: "Could not load delayed subscription forecasts" }, { status: 500 });
-    delayed.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
-  }
+      .order("available_at", { ascending: true }).order("id", { ascending: true }).range(from, to), "delayed subscription forecasts");
   const delayedRuns = new Map<string, any>();
   for (const row of delayed) {
     const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
+    if (run) run.input_snapshot = { prediction_contract: run.prediction_contract };
     if (!run || !["completed", "partial"].includes(run.status) || !["subscription", "hybrid"].includes(run.config_snapshot?.execution_mode)) continue;
     delayedRuns.set(run.id, run);
   }
   const availabilityCells: Array<{ market: string; horizon: number; series: number }> = [];
   for (const market of ["us", "india"] as const) {
+    phase = `${market} availability closes`;
     const marketRows = delayed.flatMap((row) => {
       const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
       return run?.market === market && delayedRuns.has(run.id) ? [{ forecast: row, run }] : [];
@@ -188,27 +192,25 @@ export async function POST(req: NextRequest) {
     const markMap = new Map<string, Array<{ date: string; close: number | null }>>();
     for (let symbolStart = 0; symbolStart < symbols.length; symbolStart += 40) {
       const symbolChunk = symbols.slice(symbolStart, symbolStart + 40);
-      for (let offset = 0; ; offset += PAGE) {
-        const { data, error } = await svc.from("price_cache").select("symbol,date,close")
-          .in("symbol", symbolChunk).gte("date", fromDate).order("date", { ascending: true }).range(offset, offset + PAGE - 1);
-        if (error) return NextResponse.json({ error: `Could not load ${market} availability-aligned closes` }, { status: 500 });
-        for (const mark of data ?? []) {
+        const marks = await fetchAllRows<any>((from, to) => svc.from("price_cache").select("symbol,date,close")
+          .in("symbol", symbolChunk).gte("date", fromDate).order("date", { ascending: true }).order("symbol", { ascending: true }).range(from, to), `${market} availability-aligned closes`);
+        for (const mark of marks) {
           const key = String(mark.symbol).toUpperCase();
           const list = markMap.get(key) ?? [];
           list.push({ date: String(mark.date).slice(0, 10), close: mark.close == null ? null : Number(mark.close) });
           markMap.set(key, list);
         }
-        if (!data || data.length < PAGE) break;
-      }
     }
     try {
+      phase = `${market} stored research benchmark`;
       markMap.set(benchmarkSymbolFor(market, "research"), await loadStoredResearchBenchmark(svc, market, fromDate, new Date().toISOString().slice(0, 10)));
     } catch {
-      return NextResponse.json({ error: `Could not load ${market} stored research benchmark` }, { status: 500 });
+      throw new Error(`Could not load ${market} stored research benchmark`);
     }
     for (const horizon of COUNCIL_HORIZONS) {
       const pointMap = new Map<string, CouncilLabelPoint[]>();
       const add = (key: string, symbol: string, session: string, score: unknown, outcome: number) => {
+        if (score == null) return;
         const value = typeof score === "number" ? score : Number(score);
         if (!Number.isFinite(value) || !Number.isFinite(outcome)) return;
         const points = pointMap.get(key) ?? [];
@@ -239,7 +241,7 @@ export async function POST(req: NextRequest) {
         }
         if (consensusLabel && run.consensus_score != null) {
           add(councilVersionedSeriesKey("composite:availability_median", run), symbol, consensusLabel.entrySession, Number(run.consensus_score), consensusLabel.benchmarkNeutralReturn);
-          const deterministic = run.input_snapshot?.deterministic_score?.composite;
+          const deterministic = run.deterministic_score?.composite;
           if (deterministic != null && Number.isFinite(Number(deterministic))) {
             add(councilVersionedSeriesKey("deterministic:availability_paired", run), symbol, consensusLabel.entrySession, Number(deterministic), consensusLabel.benchmarkNeutralReturn);
             const blend = equalWeightCouncilBlend(Number(deterministic), Number(run.consensus_score));
@@ -252,7 +254,7 @@ export async function POST(req: NextRequest) {
         return buildCouncilIcCell(market, horizon, key, parts[0] === "model" ? parts[1] : null, points);
       });
       if (cells.length) {
-        const { error } = await svc.from("llm_council_ic_runs").insert(cells.map((cell) => ({
+        pendingCells.push(...cells.map((cell) => ({
           evaluation_batch_id: batchId, market: cell.market, horizon_days: cell.horizonDays,
           series_key: cell.seriesKey, forecast_model: cell.forecastModel,
           cohort_key: "forecast_available_close_v2", observation_count: cell.observationCount,
@@ -261,12 +263,27 @@ export async function POST(req: NextRequest) {
           t_stat: cell.tStat, classification: cell.classification,
           reason: `${AVAILABILITY_LABEL_VERSION}. ${cell.reason} Subscription labels use price_cache closes strictly after forecast availability and the versioned research benchmark; gross close-to-close price movement, not execution P&L.`,
         })));
-        if (error) return NextResponse.json({ error: `Could not persist ${market} availability-aligned IC cells` }, { status: 500 });
       }
       availabilityCells.push({ market, horizon, series: cells.length });
     }
   }
+  phase = "atomic IC publication";
+  const { error: writeError } = await svc.from("llm_council_ic_runs").insert(pendingCells);
+  if (writeError) throw new Error("Could not publish complete council IC batch");
+  publishedBatch = batchId;
+  phase = "completion receipt";
+  const { error: receiptError } = await svc.from("agent_runs").update({
+    status: "done", completed_at: new Date().toISOString(),
+    result_summary: `Council IC batch ${batchId}: ${pendingCells.length} cells, both markets, h2/h5/h10/h20; shadow only; no inference.`,
+  }).eq("id", receipt.data.id);
+  if (receiptError) throw new Error("Council batch published but completion receipt failed");
   return NextResponse.json({ batchId, results: inserted, availabilityAligned: availabilityCells, horizons: COUNCIL_HORIZONS, cohorts: [COUNCIL_COHORT_KEY, COUNCIL_ALL_RESEARCH_COHORT_KEY], delayedCohort: "forecast_available_close_v2", shadowOnly: true });
+  } catch {
+    // Do not expose database messages (which may contain request details).
+    const message = publishedBatch ? `Council IC batch ${publishedBatch} published, but completion receipt failed` : `Council IC evaluation failed at ${phase}; no complete batch published`;
+    await svc.from("agent_runs").update({ status: "error", completed_at: new Date().toISOString(), result_summary: message }).eq("id", receipt.data.id);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 // Vercel Cron invokes configured routes with GET. Keep the same secret check

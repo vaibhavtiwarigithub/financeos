@@ -1,5 +1,22 @@
 # Multi-LLM Research Council and Scorecard
 
+## Evaluator operational integrity (2026-10-23)
+
+The scheduled GET/POST evaluator reuses bounded, totally ordered pagination.
+Terminal council runs and completed member forecasts are loaded once; label
+reads are restricted to those observation IDs and shared across the two declared
+decision-time cohorts and four horizons. Missing numeric member scores remain
+missing, never a zero forecast. Delayed subscription reads project only the
+frozen deterministic score and prediction-contract identity, not full research
+packets. Availability-close semantics and benchmark identity are unchanged.
+
+All markets/cohorts/horizons are calculated before one atomic IC-ledger insert.
+A read failure publishes no partial latest batch. The existing `agent_runs`
+ledger records start/completion/error so a timeout is observable by the existing
+watchdog. A published batch with a failed completion receipt is explicitly
+reported as such, not claimed rolled back. This is a measurement-only repair,
+not additional inference, new forecasts, a changed statistical gate or promotion.
+
 ## Prediction Lab read-only comparison contract
 
 The owner's 2026-10-21 approval adds a Learning-page projection, not a council
