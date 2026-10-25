@@ -33,10 +33,10 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import {
   fetchRobinhoodBrokerAccounts,
   fetchKiteBrokerAccount,
-  fetchAllAccounts,
   type BrokerAccount,
   type BrokerHolding,
 } from "@/lib/brokers";
+import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
 import { verifyKiteTradingIdentity } from "@/lib/kite";
 import { computeRiskMetrics } from "@/lib/portfolio-risk";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -353,11 +353,13 @@ export async function POST(req: NextRequest) {
   const accounts: Array<{ account: BrokerAccount; accountId: string }> = [];
 
   if (market === "us") {
-    const [rh, others] = await Promise.all([
+    // fetchAllAccounts also loads the internal and Alpaca PAPER books. They
+    // must not become live holding-risk/Guardian evidence (or incur reads here).
+    const [rh, alpaca] = await Promise.all([
       fetchRobinhoodBrokerAccounts().catch(() => [] as BrokerAccount[]),
-      fetchAllAccounts("us").catch(() => [] as BrokerAccount[]),
+      fetchAlpacaAccount(false).catch(() => null),
     ]);
-    for (const a of [...rh, ...others]) {
+    for (const a of [...rh, ...(alpaca ? [alpaca] : [])]) {
       const id = a.accountId ?? a.source;
       if (!id || id === "unknown") {
         outcomes.push({ accountId: id ?? "?", broker: a.source, label: a.accountLabel ?? a.source, status: "skipped", reason: "no broker-verified account id" });
@@ -378,15 +380,6 @@ export async function POST(req: NextRequest) {
       accounts.push({ account: { ...kite, accountId: identity.account }, accountId: identity.account });
     } else {
       outcomes.push({ accountId: "kite", broker: "kite", label: "Kite India", status: "skipped", reason: `identity unverified (fail-closed): ${identity.error}` });
-    }
-    const others = await fetchAllAccounts("india").catch(() => [] as BrokerAccount[]);
-    for (const a of others) {
-      const id = a.accountId ?? a.source;
-      if (!id || id === "unknown") {
-        outcomes.push({ accountId: id ?? "?", broker: a.source, label: a.accountLabel ?? a.source, status: "skipped", reason: "no broker-verified account id" });
-        continue;
-      }
-      accounts.push({ account: a, accountId: id });
     }
   }
 
