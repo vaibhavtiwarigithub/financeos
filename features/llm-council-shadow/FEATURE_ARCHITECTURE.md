@@ -297,6 +297,10 @@ Claude subscription use also requires an authenticated Claude CLI and its own
 synthetic test. A local implementation does not prove unattended worker
 scheduling or enable the council.
 
+## Runtime recovery evidence — October 24, 2026
+
+The existing supervisors were restarted without reading private configuration contents or enqueueing inference; both production heartbeats advanced. A single authenticated data-only evaluator catch-up published 232 cells across both markets and all declared horizons, all still insufficient. This restores liveness, not predictive validation. The next natural scheduled receipt remains to be checked. See [recovery audit](../../docs/audits/2026-10-24-watchdog-council-recovery.md) for exact batch identity, tests and remaining blockers.
+
 ## Deliberately not included
 
 No autonomous web research, no new paid data-source calls, no LLM edits to deterministic dimension scores, no model-generated price targets/stops, no trade decisions, no automatic provider/model rotation, no prompt-learning from future labels, and no live/paper money-path coupling. Each would need independent evidence and approval.
