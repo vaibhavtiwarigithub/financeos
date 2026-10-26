@@ -7,6 +7,8 @@ import { LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION, LEVERAGED_SLEEVE_MAX_NAV_FRACTI
 import { doorQuoteForPlan, doorQuoteNote } from "@/lib/trading/leveraged-door-quote";
 import { evaluateLeveragedResearchGate, loadLatestResearchSignal } from "@/lib/trading/leveraged-door-signal";
 import { loadTradingMandate } from "@/lib/trading-mandate";
+import { loadPaperAllocation } from "@/lib/allocation/profile-store";
+import { capLeveragedPaperAllocation } from "@/lib/allocation/profiles";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchUsCandles } from "@/lib/data/candles";
 import { getLeveragedIntradayQuote } from "@/lib/data/leveraged-intraday-quotes";
@@ -235,9 +237,10 @@ async function runSqqqCron(supabase: ReturnType<typeof createServiceClient>, now
   }));
 
   // Routed design: research must currently endorse this symbol (see lib/trading/leveraged-door-signal.ts).
-  const [{ signal: researchSignal, error: researchSignalError }, mandate] = await Promise.all([
+  const [{ signal: researchSignal, error: researchSignalError }, mandate, allocationPolicy] = await Promise.all([
     loadLatestResearchSignal(supabase, "SQQQ"),
     loadTradingMandate(supabase, "us"),
+    loadPaperAllocation(supabase, "us"),
   ]);
   if (researchSignalError) return fail({ status: "error", reason: `research_signal_query_failed: ${researchSignalError}` });
   // Recheck quote, signal, liveness and entry window after all evidence reads.
@@ -276,6 +279,12 @@ async function runSqqqCron(supabase: ReturnType<typeof createServiceClient>, now
       monitorVerified: Number.isFinite(sqqqQuoteTime(quote, now)) && now - sqqqQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   }
 
+  if (!allocationPolicy.ok) return fail({status:"no_entry",reason:"allocation_policy_unavailable"});
+  const allocationCap=capLeveragedPaperAllocation(allocationPolicy.policy,"SQQQ",Number(portfolio.nav),
+    leveragedSleevePositions,plan.maxNotional);
+  if(!allocationCap.ok) return ok({status:"no_entry",reason:allocationCap.reason,allocation:allocationPolicy.policy,
+    monitorVerified:Number.isFinite(sqqqQuoteTime(quote,now)) && now-sqqqQuoteTime(quote,now)<=MONITOR_MAX_QUOTE_AGE_MS});
+  plan.maxNotional=allocationCap.maxNotional;
   const qty = plan.maxNotional / plan.entry;
   if (!(qty > 0)) return ok({ status: "no_entry", reason: "zero_capacity" });
 
@@ -297,5 +306,5 @@ async function runSqqqCron(supabase: ReturnType<typeof createServiceClient>, now
     return ok({ status: "no_entry", reason: result?.error ?? "rpc_denied" });
   }
   await resolveIssue("sqqq-entry-cron-failed", supabase);
-  return ok({ status: "entered", qty, entry: plan.entry, stop: plan.stop, target: plan.target, tradeId: result.trade_id });
+  return ok({ status: "entered", qty, entry: plan.entry, stop: plan.stop, target: plan.target, tradeId: result.trade_id, allocation: allocationCap.allocation });
 }

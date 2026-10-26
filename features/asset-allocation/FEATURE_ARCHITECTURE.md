@@ -1,5 +1,109 @@
 # Feature Architecture — Asset-Class Allocation
 
+## Owner-approved profile implementation — October 26, 2026
+
+The owner explicitly requested editable allocation fixes and reset defaults for
+balanced, growth and aggressive plans in both pipelines. Extend the existing
+allocation module/settings rather than add an optimizer or shadow. Static
+market-local strategic targets do not assert a macro regime. The older
+regime-dependent allocator below remains independent and may only tighten limits.
+
+### Contract and defaults
+
+Versioned profiles: conservative, balanced, growth, aggressive. Targets sum to
+100% across broad equity ETFs, individual equities, sector/thematic ETFs, bonds,
+gold bullion, silver bullion, oil/commodity funds and tactical cash. Gold miners
+and energy-sector equities remain equities, not bullion or spot oil. Tactical
+cash includes idle cash plus the dedicated leveraged sleeve; the leveraged
+maximum is a separate operating sublimit, never another additive allocation.
+US maximum stays 5%; India stays 0. Defaults use no oil or silver allocation.
+
+| Profile | Broad ETFs | Stocks | Sector/theme | Bonds | Gold | Tactical cash | US leveraged sublimit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Conservative | 30 | 5 | 0 | 50 | 10 | 5 | 0 |
+| Balanced | 40 | 15 | 5 | 25 | 10 | 5 | 0 |
+| Growth | 40 | 35 | 5 | 5 | 10 | 5 | 5 |
+| Aggressive | 40 | 40 | 10 | 0 | 5 | 5 | 5 |
+
+India uses the same broad risk budgets with no leveraged execution. Local
+instrument candidates differ; never cross USD/INR books. These exact weights are
+transparent engineering starting points, not optimized or proven alpha. Match
+the existing risk profile for the initial paper default (currently aggressive),
+with no change to score weights, stops, horizon or kill switches. All defaults
+fit the eight-name/20%-per-name arithmetic with sensible fund combinations;
+smaller owner name caps, absent eligible funds or stricter risk caps can leave
+more cash and must be disclosed. Eight names are a ceiling, not forced fills.
+
+### Storage and owner UI
+
+Reuse `app_settings` text JSON keys `paper_allocation:us` and
+`paper_allocation:india`. One record contains preset version, selected profile,
+validated targets, leverage sublimit, enabled flag, revision and bounded recent
+configuration history. Save uses optimistic comparison of the prior raw value;
+reject stale revisions with 409. Missing rows use explicit version-zero defaults;
+query/malformed saved-record errors remain unavailable rather than silently
+reverting to looser defaults. No schema or new route is required. Extend the
+owner-only `/api/settings/risk-profile` section `allocation`; do not mix an
+allocation save with broker/risk mutations. Existing risk settings stay intact.
+
+Settings → Trading displays a dedicated market-local allocation panel, profile
+selector, editable percentages, current/target/gap table, total validation,
+leverage sublimit, version, source evidence links and limitations. Save and
+Reset & save defaults persist to the selected market only. Reset touches no
+credentials, broker activation, risk weights, other market or historical records.
+
+### Paper entry use and boundaries
+
+Load policy once per paper run. Reuse instrument taxonomy to classify the book;
+unclassified funds and invalid marks cannot count as zero exposure. Size new
+entries/top-ups down to the selected bucket's remaining target budget before the
+existing constructor, cash, sector, name, daily/order and protection gates.
+Persist exact policy identity and bucket arithmetic in existing stage/mandate
+evidence. Rotation recomputes budget after removing the proposed source, so a
+full bucket can replace one of its own holdings. Selling another bucket does
+not create additional room in an already full candidate bucket. Existing
+rotation prerequisites still apply. These are prospective target budgets, not a new promise
+of optimal rebalancing or transaction-level hard risk limits. Existing pool-locked
+reserve, name, sleeve and execution controls remain authoritative.
+
+Dedicated leveraged doors monitor existing positions first and apply the
+profile's operating sublimit only to new entries, within the existing combined
+5% cap and 0.5% minimum. No live allocation/activation or forced rebalancer is
+introduced. The app exposes current-versus-target differences; it must not claim
+that setting targets has already transformed today's fully invested holdings.
+
+### Evidence and validation
+
+Bounded research admission reuses the existing candidate queue/caps: at most
+two underweight allocation funds per market/run, with provenance and no extra
+schedule or inference budget. Explicitly disabled watchlist symbols remain
+excluded. A target does not authorize a purchase without normal research.
+
+Migration plan: amend the existing shared leveraged paper admission guard after
+its portfolio row lock to read the selected saved US sublimit. Preserve its
+signature, access grants, original 5% hard check and all other gates. Missing
+records retain the original ceiling; corrupt records fail closed. Test the
+actual routine on isolated PostgreSQL with synthetic rows, including repeat
+migration application and 0%, 2%, disabled-policy and malformed-record cases.
+No tables, columns or expanded access are introduced.
+
+Vanguard's historical allocation research supports stock/bond risk tradeoffs,
+not unconditional equity-index outperformance. World Gold Council's 2026 India
+analysis reports risk-adjusted/drawdown benefit for 7.5–15% hypothetical gold;
+it is industry-sponsored, not independent proof for these exact presets.
+Devanathan/Tzikas/Boyd (2026), arXiv:2609.07946, provides open-source monthly
+stock/bond/gold evidence for volatility control/optimization, chiefly against
+60/40 and 50/30/20; it is a recent preprint, not proof the app beats S&P/NIFTY.
+SEC/Direxion identify daily reset/path dependence: leveraged funds are tactical,
+not a permanent core allocation. India issuer multi-asset products corroborate
+investability but are not a matched net-return backtest for Kairos.
+
+Test invalid totals/NaN/unknown fields, shared tactical double-counting, India
+isolation, scaled NAV, save conflicts, permission failures, reset persistence,
+classification of miners/energy/bullion/bonds, future-entry sizing and existing
+gate preservation. Verify both markets in browser and owner-only API behavior,
+full tests/typecheck/secrets, exact main SHA and production READY.
+
 > Status: **Deterministic CORE built + SHIPPED OFF (migration 175).** Genome
 > evolution, the slow rebalancer, sizing wiring, and UI are the validated
 > follow-up. Owner defaults chosen (below) — change any and say so.

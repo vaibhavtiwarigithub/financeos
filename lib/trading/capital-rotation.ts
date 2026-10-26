@@ -12,6 +12,7 @@ import {
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { replacementCapacity } from "./rotation-capacity";
+import type { AllocationPolicy } from "@/lib/allocation/profiles";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "./leveraged-sleeve-risk";
 import { isEntryCandidateLong, isHoldingReview } from "@/lib/learning/entry-cohort";
 import {
@@ -349,6 +350,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
   portfolioLimits?: PortfolioLimits;
   existingPositionsPolicy: "grandfather" | "apply";
   maxPerSector?: number;
+  allocationPolicy?: AllocationPolicy;
 }) {
   const candidate = args.candidate;
   const { data: cfgRow, error: cfgError } = await supabase
@@ -401,6 +403,7 @@ export async function recordCapitalRotationShadow(supabase: any, args: {
     dailyVol: candidate.dailyVol ?? null, intendedNotional: candidate.targetNotional,
     nav: args.portfolioNav, cash: candidate.cash, fillPrice: candidate.fillPrice ?? Number.NaN,
     limits: args.portfolioLimits ?? DEFAULT_LIMITS, maxPerSector: args.maxPerSector ?? 4,
+    allocationPolicy: args.allocationPolicy,
   });
   const config: RotationConfig = {
     shadowEnabled: (cfgRow as any)?.rotation_shadow_enabled !== false,

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { replacementCapacity } from "@/lib/trading/rotation-capacity";
 import { DEFAULT_LIMITS } from "@/lib/portfolio/constructor";
 import { paperIntendedSpend, paperAllocationSpend } from "@/lib/trading/paper-quantity";
+import { defaultAllocation } from "@/lib/allocation/profiles";
 
 const args = {
   book: [
@@ -13,6 +14,17 @@ const args = {
   cash: 1500, fillPrice: 100, limits: DEFAULT_LIMITS, maxPerSector: 4,
 };
 describe("replacement sizing", () => {
+  it("frees only the source's own allocation bucket for a replacement",()=>{
+    const policy=defaultAllocation("us");
+    const book=[{symbol:"AAPL",sector:"technology",valuePct:20,beta:null,dailyVol:null},
+      {symbol:"MSFT",sector:"technology",valuePct:20,beta:null,dailyVol:null},
+      {symbol:"VOO",sector:null,valuePct:20,beta:null,dailyVol:null}];
+    const input={...args,book,sourceSymbol:"AAPL",symbol:"BE",sellNotional:2000,cash:0,intendedNotional:2000,
+      limits:{...DEFAULT_LIMITS,maxGrossExposurePct:100,maxNameExposurePct:20},allocationPolicy:policy};
+    expect(replacementCapacity(input).buyNotional).toBeCloseTo(1999,3);
+    expect(replacementCapacity({...input,sourceSymbol:"VOO"}).reason).toBe("post_swap_allocation_target_filled");
+    expect(replacementCapacity({...input,book:[...book,{symbol:"META",sector:"technology",valuePct:10,beta:null,dailyVol:null}]}).buyNotional).toBeLessThanOrEqual(1000);
+  });
   it("keeps intended allocation available when cash is zero", () => {
     expect(paperIntendedSpend(10000, 10)).toBe(1000);
     expect(paperAllocationSpend(10000, 0, 10)).toBeNull();

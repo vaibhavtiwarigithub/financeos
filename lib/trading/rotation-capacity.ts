@@ -1,5 +1,6 @@
 import { constructPortfolio, type BookPosition, type PortfolioLimits } from "@/lib/portfolio/constructor";
 import { paperEntryQuantity } from "./paper-quantity";
+import { allocationBudget, type AllocationPolicy } from "@/lib/allocation/profiles";
 
 /** Reuse entry sizing on each hypothetical replacement; never enlarge a request. */
 export function replacementCapacity(args: {
@@ -7,6 +8,7 @@ export function replacementCapacity(args: {
   symbol: string; market: "us" | "india"; sector: string | null; dailyVol: number | null;
   intendedNotional: number; nav: number; cash: number; fillPrice: number;
   limits: PortfolioLimits; maxPerSector: number;
+  allocationPolicy?: AllocationPolicy;
 }): { buyNotional: number; buyQty: number | null; reason: string | null; adjustments?: string[] } {
   const { nav, cash, sellNotional, fillPrice, intendedNotional } = args;
   if (![nav, sellNotional, fillPrice, intendedNotional].every(n => Number.isFinite(n) && n > 0)
@@ -16,7 +18,11 @@ export function replacementCapacity(args: {
   if (args.sector && remaining.filter(p => p.sector === args.sector).length >= args.maxPerSector) {
     return { buyNotional: 0, buyQty: null, reason: "post_swap_sector_count_cap" };
   }
-  const requested = Math.min(intendedNotional, cash + sellNotional * 0.9995);
+  const allocation = args.allocationPolicy?.enabled ? allocationBudget(args.allocationPolicy,args.symbol,nav,
+    remaining.map(p=>({symbol:p.symbol,marketValue:p.valuePct/100*nav}))) : null;
+  if (allocation && (!allocation.ok || allocation.remaining<=0)) return {buyNotional:0,buyQty:null,
+    reason:allocation.ok ? "post_swap_allocation_target_filled" : allocation.reason};
+  const requested = Math.min(intendedNotional, cash + sellNotional * 0.9995, allocation?.ok ? allocation.remaining : Infinity);
   const sized = constructPortfolio(remaining, [{
     symbol: args.symbol, market: args.market, sector: args.sector, dailyVol: args.dailyVol,
     beta: null, proposedSizePct: requested / nav * 100,

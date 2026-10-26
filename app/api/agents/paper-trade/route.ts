@@ -15,6 +15,8 @@ import { estimateDailyVolPct } from "@/lib/portfolio/inputs";
 import { EXECUTABLE_SIZING_OUTCOME_CONTRACT, isExecutableSizingEvidence, predictPWin } from "@/lib/validation/calibration";
 import { positionSizePct as kellyPositionSizePct } from "@/lib/risk/sizing";
 import { computeAllocation } from "@/lib/allocation/allocator";
+import { loadPaperAllocation } from "@/lib/allocation/profile-store";
+import { allocationBudget } from "@/lib/allocation/profiles";
 import { getGlobalMaeMfePercentiles } from "@/lib/risk/percentiles";
 import { loadChampionGenome, type ResolvedGenome } from "@/lib/validation/genome-live";
 import { verifyCronSecret } from "@/lib/auth/cron";
@@ -371,6 +373,8 @@ export async function POST(req: NextRequest) {
       maxAvgPairwiseCorr: (cfg as any)?.max_avg_pairwise_corr ?? DEFAULT_LIMITS.maxAvgPairwiseCorr,
     };
     const bookByMarket = new Map<string, BookPosition[]>();
+    const strategicAllocation = new Map<string,Awaited<ReturnType<typeof loadPaperAllocation>>>();
+    for (const market of activeMarkets) if (market === "us" || market === "india") strategicAllocation.set(market,await loadPaperAllocation(supabase,market));
     const constructorNavByMarket = new Map<string, number>();
     // Asset-allocation → sizing wire (SHIPPED OFF: computeAllocation returns null
     // unless strategy_config.allocation_enabled=true). When on, the deterministic
@@ -924,6 +928,29 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const marketLimits = { ...allocationLimits, maxGrossExposurePct: liquidity.maxGrossExposurePct };
+      const strategic = strategicAllocation.get(market);
+      if (!strategic?.ok) {
+        await revertClaim(signal.id);
+        skipped.push({symbol:signal.symbol,reason:"allocation_policy_unavailable"});
+        await logStage(supabase,{signal_id:signal.id,symbol:signal.symbol,market,stage:"sizing",outcome:"rejected",reason:"allocation_policy_unavailable"});
+        continue;
+      }
+      const allocation = strategic.policy.enabled ? allocationBudget(strategic.policy,signal.symbol,
+        constructorNavByMarket.get(market) ?? NaN,(bookByMarket.get(market) ?? []).map(p=>({symbol:p.symbol,
+          marketValue:p.valuePct/100*(constructorNavByMarket.get(market) ?? NaN)})),signal.asset_class)
+        : {ok:true as const,remaining:Infinity,bucket:"disabled",version:strategic.policy.version,revision:strategic.policy.revision};
+      if (!allocation.ok || (allocation.remaining<=0 && isTopUp)) {
+        await revertClaim(signal.id);
+        const reason=allocation.ok ? "allocation_target_filled" : allocation.reason;
+        skipped.push({symbol:signal.symbol,reason});
+        await logStage(supabase,{signal_id:signal.id,symbol:signal.symbol,market,stage:"sizing",outcome:"rejected",reason,detail:{allocation}});
+        continue;
+      }
+      const rotationProposedSizePct=proposedSizePct;
+      const allocationNoRoom=allocation.remaining<=0;
+      if(!allocationNoRoom) proposedSizePct=Math.min(proposedSizePct,allocation.remaining/(constructorNavByMarket.get(market) ?? NaN)*100);
+      Object.assign(snapshot,{allocation_policy:{version:strategic.policy.version,revision:strategic.policy.revision,
+        profile:strategic.policy.profile,bucket:allocation.bucket,targets:strategic.policy.targets}});
       // ── Correlation shadow (MEASURE ONLY) ──────────────────────────────
       // Records the verdict a correlation-aware constructor WOULD reach. It
       // gates nothing: the real constructor below is untouched and still runs
@@ -997,7 +1024,8 @@ export async function POST(req: NextRequest) {
       // only surviving evidence. Recording the exact per-symbol book this
       // decision was made against closes that gap for future audits.
       const constructorBookSnapshot = constructorBook.map(b => ({ symbol: b.symbol, sector: b.sector, valuePct: Math.round(b.valuePct * 100) / 100 }));
-      const rawSizedPct = constructed.orders[0]?.finalSizePct ?? 0;
+      const constructorSizedPct = constructed.orders[0]?.finalSizePct ?? 0;
+      const rawSizedPct = allocationNoRoom && Number.isFinite(constructorSizedPct) ? 0 : constructorSizedPct;
       // Finite-number gate — NaN fails every `<= 0` / `< 1` comparison below
       // (NaN <= 0 is false), so a NaN from an upstream model coefficient,
       // percentile, or config value would otherwise sail through every guard
@@ -1075,7 +1103,7 @@ export async function POST(req: NextRequest) {
       // one — `paperEntryQuantity` returns null at zero spend and would `continue`
       // before rotation is ever consulted. Cash and per-trade caps still apply
       // inside paperAllocationSpend.
-      const sizedPct = noRoom || atNameCap || atSectorCap ? proposedSizePct : rawSizedPct;
+      const sizedPct = !isTopUp && (noRoom || atNameCap || atSectorCap) ? rotationProposedSizePct : rawSizedPct;
       if (!noRoom) {
         await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments, liquidity, book: sizedPct < proposedSizePct ? constructorBookSnapshot : undefined } });
       }
@@ -1168,6 +1196,7 @@ export async function POST(req: NextRequest) {
             portfolioLimits: marketLimits,
             existingPositionsPolicy: tradingMandate.existing_positions_policy,
             maxPerSector,
+            allocationPolicy: strategic.policy,
           });
           rotationP1Readiness = rotationShadow.readiness;
           rotationP1EvaluatedAt = rotationShadow.evaluatedAt;

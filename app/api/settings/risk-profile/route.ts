@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { listBrokers } from "@/lib/brokers/registry";
 import { RISK_PROFILES as PROFILES, TRADING_STYLES } from "@/lib/risk-profiles";
+import { loadPaperAllocation, savePaperAllocation } from "@/lib/allocation/profile-store";
+import { ALLOCATION_PROFILES, defaultAllocation, allocationMix } from "@/lib/allocation/profiles";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,14 @@ export async function PATCH(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
-  const body = await req.json();
+  const body = await req.json().catch(()=>null);
+  if(!body || typeof body!=="object" || Array.isArray(body)) return NextResponse.json({error:"A settings object is required"},{status:400});
+  if (body.action === "allocation_policy") {
+    const allowed = new Set(["action","market","profile","enabled","expectedRevision","targets","leveragedMaxPct","reset"]);
+    if (Object.keys(body).some(key=>!allowed.has(key))) return NextResponse.json({error:"Allocation saves cannot include other trading settings"},{status:400});
+    const result = await savePaperAllocation(createServiceClient(),body);
+    return NextResponse.json(result,{status:result.status});
+  }
   const { risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr,
     max_daily_notional_usd, max_daily_notional_inr, max_daily_trades,
     max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper,
@@ -230,11 +239,27 @@ export async function PATCH(req: NextRequest) {
 }
 
 // GET: return current profile (owner-only — exposes trading config)
-export async function GET() {
+export async function GET(req?: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 
   const svc = createServiceClient();
+  if (req?.nextUrl.searchParams.get("section") === "allocation") {
+    const market=req.nextUrl.searchParams.get("market");
+    if(market!=="us" && market!=="india") return NextResponse.json({error:"Market must be US or India"},{status:400});
+    const loaded=await loadPaperAllocation(svc,market);
+    if(!loaded.ok) return NextResponse.json({error:loaded.error},{status:503});
+    const [pool,book]=await Promise.all([
+      svc.from("paper_portfolio").select("cash_balance,updated_at").eq("market",market).maybeSingle(),
+      svc.from("paper_positions").select("symbol,qty,current_price,avg_cost").eq("market",market),
+    ]);
+    const positions=(book.data??[]).map((p:any)=>({symbol:p.symbol,marketValue:Number(p.qty)*(Number(p.current_price)>0?Number(p.current_price):NaN)}));
+    const cash=Number(pool.data?.cash_balance);
+    const nav=cash+positions.reduce((sum:number,p:any)=>sum+p.marketValue,0);
+    return NextResponse.json({policy:loaded.policy,defaults:Object.fromEntries(ALLOCATION_PROFILES.map(profile=>[profile,defaultAllocation(market,profile)])),
+      snapshot:pool.error || book.error || !pool.data ? null : {nav,cash,asOf:pool.data.updated_at,...allocationMix(loaded.policy,nav,cash,positions)},
+      snapshotError:pool.error || book.error || !pool.data ? "Paper book could not be verified" : null});
+  }
   const fullSelect = "risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper, etf_allocation_cap_pct";
   let { data, error } = await svc
     .from("strategy_config")

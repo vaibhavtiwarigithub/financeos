@@ -70,7 +70,26 @@ test('actual fill routine enforces reserve after pool lock and counts every held
     assert.equal((await check('us',100,70)).error, 'max_open_names');
     await sql("update paper_positions set market='india';");
     assert.equal((await check('india',100,70)).error, 'max_open_names');
+    if(process.env.KAIROS_PAPER_ADMISSION_FIXTURE){
+      const admission=fs.readFileSync(process.env.KAIROS_PAPER_ADMISSION_FIXTURE,'utf8');
+      const limit=fs.readFileSync(new URL('../supabase/migrations/20261026231841_allocation_profile_leveraged_limit.sql',import.meta.url),'utf8');
+      await sql(`delete from paper_positions; update paper_portfolio set cash_balance=10000,nav=10000;
+        create table app_settings(key text primary key,value text); ${admission}; ${limit} ${limit}
+        create function local_admission(c numeric) returns jsonb language sql as $$
+          select public.leveraged_paper_admission_guard('SOXL','us','USD',c/100,100,c,clock_timestamp(),95,110); $$;
+        insert into app_settings values('paper_allocation:us','{"version":"allocation_presets_v1_20261026","market":"us","enabled":true,"leveragedMaxPct":2,"profile":"growth","revision":1}');`);
+      const admissionCheck=async cost=>JSON.parse((await sql(`select local_admission(${cost});`)).trim());
+      assert.equal((await admissionCheck(201)).error,'allocation_leveraged_limit');
+      assert.equal((await admissionCheck(200)).ok,true);
+      await sql("update app_settings set value=jsonb_set(value::jsonb,'{leveragedMaxPct}','0')::text;");
+      assert.equal((await admissionCheck(50)).error,'allocation_leveraged_limit');
+      await sql("update app_settings set value=jsonb_set(value::jsonb,'{enabled}','false')::text;");
+      assert.equal((await admissionCheck(500)).ok,true); // still within the original combined 5%
+      assert.equal((await admissionCheck(501)).error,'no_sleeve_capacity');
+      await sql("update app_settings set value='{';");
+      assert.equal((await admissionCheck(50)).error,'allocation_policy_unavailable');
+    }
   });
   assert.equal(fs.existsSync(path.join(dir, 'restore-drill/postmaster.pid')), false);
-  console.log(JSON.stringify({ syntheticLiquidityAndConcurrencyVerified: true, realFinancialWrites: 0 }));
+  console.log(JSON.stringify({ syntheticLiquidityAndConcurrencyVerified: true, allocationLimitVerified:!!process.env.KAIROS_PAPER_ADMISSION_FIXTURE, realFinancialWrites: 0 }));
 });

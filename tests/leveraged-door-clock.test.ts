@@ -57,6 +57,7 @@ vi.mock("@/lib/trading/leveraged-etf-shadow-features", () => ({
   computeLeveragedShadowFeatures: () => ({ dollarVolume: 100e6 }),
 }));
 vi.mock("@/lib/trading-mandate", () => ({ loadTradingMandate: async () => ({ score_threshold: 60 }) }));
+vi.mock("@/lib/allocation/profile-store",()=>({loadPaperAllocation:async()=>({ok:true,policy:(await import("@/lib/allocation/profiles")).defaultAllocation("us","aggressive")})}));
 vi.mock("@/lib/trading/leveraged-door-signal", () => ({
   loadLatestResearchSignal: async () => {
     vi.setSystemTime(Date.now() + mocks.evidenceDelayMs);

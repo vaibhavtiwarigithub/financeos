@@ -24,6 +24,8 @@ import { buildDeterministicNarrative, resolveSignalDirection } from "@/lib/signa
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { readDeferredCandidates, applyCandidateCarryForward, balancedDiscoveryOrder } from "@/lib/research-queue";
 import { fetchAlpacaActivityCandidates, type AlpacaActivityContext } from "@/lib/data/alpaca-market-data";
+import { allocationResearchSeeds } from "@/lib/allocation/profile-store";
+import type { AllocationDiscoveryContext } from "@/lib/allocation/profiles";
 import { recentCandidatesForResearch, recordRecentCandidate } from "@/lib/research/recent-candidates";
 import { fetchRelativeStrengthCandidates, type RelativeStrengthDiscoveryContext } from "@/lib/research/relative-strength-discovery";
 import { ETF_SCORE_CAP, routeToArchetypes, computeArchetypeScore } from "@/lib/scoring/archetypes";
@@ -243,7 +245,7 @@ export type SymbolEntry = {
   fundamentalMaxAgeDays?: number;
   screenerBucket?: "momentum" | "value"; // which dual-bucket screener flagged this (Research Journal)
   discovery_source?: DiscoverySource;    // how this symbol entered the research batch
-  discoveryContext?: RelativeStrengthDiscoveryContext | BenchmarkCoverageCandidate["context"] | AlpacaActivityContext; // provenance only; never a score input
+  discoveryContext?: RelativeStrengthDiscoveryContext | BenchmarkCoverageCandidate["context"] | AlpacaActivityContext | AllocationDiscoveryContext; // provenance only; never a score input
   listingCandidateIds?: number[]; // internal pointer(s) for fair, research-only listing rotation
 };
 
@@ -828,6 +830,12 @@ export async function gatherSymbols(
   }
 
   let activityAdded = 0;
+  for(const candidate of includeUs ? await allocationResearchSeeds(supabase,"us") : []) {
+    if(holdingSet.has(candidate.symbol))continue;
+    if(!candidateMap.has(candidate.symbol))addCandidate(candidate.symbol,"screener_momentum");
+    const entry=candidateMap.get(candidate.symbol)!;
+    if(entry.discovery_source!=="watchlist"){entry.discoveryContext=candidate.context;entry.isEtf=true;entry.assetClass="etf";}
+  }
   for (const candidate of activityCandidates) {
     if (activityAdded >= 2) break;
     if (holdingSet.has(candidate.symbol) || candidateMap.has(candidate.symbol)) continue;
@@ -903,7 +911,8 @@ export async function gatherSymbols(
   const discoveryKeys = balancedDiscoveryOrder(rawCappedKeys.filter(isDiscovery).map(symbol => {
     const entry = candidateMap.get(symbol)!;
     const context = entry.discoveryContext;
-    const lane = context && "kind" in context && context.kind === "alpaca_activity" ? "price_activity"
+    const lane = context && "kind" in context && context.kind === "allocation_target" ? "allocation_target"
+      : context && "kind" in context && context.kind === "alpaca_activity" ? "price_activity"
       : context && "benchmark" in context ? "benchmark_coverage"
       : entry.screenerBucket ?? entry.discovery_source ?? "legacy";
     return { symbol, lane };
@@ -1054,9 +1063,11 @@ export async function gatherSymbols(
       }, supabase).catch(() => {});
     }
     const indiaCoverage = await loadBenchmarkCoverage("india");
-    const coverageBySymbol = new Map(indiaCoverage.map(item => [item.symbol, item.context]));
+    const allocationIndia = await allocationResearchSeeds(supabase,"india");
+    const coverageBySymbol = new Map<string,SymbolEntry["discoveryContext"]>(indiaCoverage.map(item => [item.symbol, item.context]));
+    for(const item of allocationIndia)coverageBySymbol.set(item.symbol,item.context);
     const sectorCoverage = indiaCoverage.filter(item => !seenAll.has(item.symbol)).slice(0, 3).map(item => item.symbol);
-    const indexRotation = [...new Set([...sectorCoverage, ...await orderHoldingsByLastScored(supabase, indexUniverse, "india")])];
+    const indexRotation = [...new Set([...allocationIndia.map(item=>item.symbol), ...sectorCoverage, ...await orderHoldingsByLastScored(supabase, indexUniverse, "india")])];
     const recentIndia = await recentCandidatesForResearch(supabase, "india");
     const orderedIndia = [...new Set([...recentIndia.map(row => row.symbol), ...buildIndiaCandidateOrder({
       manual: watchlist.indiaManual,
@@ -1087,7 +1098,7 @@ export async function gatherSymbols(
     for (const sym of indiaBatch) {
       if (seenAll.has(sym)) continue;
       seenAll.add(sym);
-      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: false, assetClass: "india",
+      indiaSymbols.push({ symbol: sym, isHeld: false, isEtf: allocationIndia.some(item=>item.symbol===sym), assetClass: "india",
         discovery_source: (indiaSourceOf.get(sym) as DiscoverySource) ?? "india_screener",
         discoveryContext: coverageBySymbol.get(sym) });
     }

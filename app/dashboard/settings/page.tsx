@@ -9,6 +9,7 @@ import LLMConfigPanel from "@/components/dashboard/LLMConfigPanel";
 import AdminPanel from "@/components/dashboard/AdminPanel";
 import AutomationPanel from "@/components/dashboard/AutomationPanel";
 import TradingMandatePanel from "@/components/dashboard/TradingMandatePanel";
+import AllocationProfilePanel from "@/components/dashboard/AllocationProfilePanel";
 import ValidationAutomationPanel from "@/components/dashboard/ValidationAutomationPanel";
 import DownsideHedgePanel from "@/components/dashboard/DownsideHedgePanel";
 import DataRoutingPanel from "@/components/dashboard/DataRoutingPanel";
@@ -1411,6 +1412,7 @@ export default function SettingsPage() {
 
           {/* Trading Style Card — holding-horizon preset (Swing / Position / Long-term) */}
           <TradingMandatePanel />
+          <AllocationProfilePanel />
           <DownsideHedgePanel />
           <ValidationAutomationPanel />
           <div style={{ display: "none", background: T.card, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px" }}>

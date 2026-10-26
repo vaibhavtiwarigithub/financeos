@@ -2,6 +2,17 @@
 
 ## Discovery and decision horizons
 
+Settings → Trading contains market-local paper allocation profiles (Conservative,
+Balanced, Growth, Aggressive), editable bucket targets and reset-to-preset.
+Future ordinary entries/top-ups are limited by remaining bucket budget; rotation
+recomputes that budget after removing its source. Dedicated leveraged doors read
+the saved 0–5% US sublimit, also checked under the common portfolio lock; India
+has no enabled leveraged sleeve. No forced sales, live policy or score changes.
+Research can admit at most two underweight allocation funds within existing
+candidate caps, respecting explicit disabled symbols. Exact preset/revision is
+logged with decisions. See the asset-allocation architecture for definitions,
+sources and limitations; target weights are not proven benchmark outperformance.
+
 US ordinary PaperTrader entries and top-ups reserve the unused part of the
 existing 5%-NAV leveraged sleeve. Dedicated leveraged doors can use it only
 after their own gates pass. The common pool-locked fill transaction enforces

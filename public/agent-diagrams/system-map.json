@@ -2140,6 +2140,13 @@
       "nodeId": "RESEARCH",
       "label": "Sentiment source query and availability alert guard",
       "reason": "US sentiment availability fell from 100% to about 89% over a week. GDELT is now queried by company name instead of the bare ticker, and a data-availability alert can only be critical for batches of at least 20 applicable symbols. No score formula changed."
+    },
+    {
+      "date": "2026-10-26",
+      "event": "change",
+      "nodeId": "TRADER",
+      "label": "Market-local paper allocation profiles and reset defaults",
+      "reason": "Settings Trading saves versioned conservative, balanced, growth or aggressive bucket targets separately for US and India. Future buys/top-ups honor remaining allocation; rotation credits the source before sizing. Existing leveraged doors read a saved US sublimit under the portfolio lock, without increasing the 5% hard ceiling. Research admits at most two underweight fund candidates within existing caps. No forced sale, live activation or score formula change; presets are not proven benchmark outperformance."
     }
   ]
 }
