@@ -239,7 +239,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 // GET: return current profile (owner-only — exposes trading config)
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
 

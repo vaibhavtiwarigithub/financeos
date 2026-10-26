@@ -106,6 +106,12 @@ authenticated roles cannot execute the guard; empty search path unchanged.
 Full-suite/typecheck/secret scan and exact mainline/READY/browser evidence are
 recorded in the work log at release.
 
+The first Vercel build rejected an optional `NextRequest` GET argument. Cached
+local route types had not detected this Next.js signature constraint. The fix
+uses the required request argument; route/API tests are repeated and Next's
+route types regenerated before the follow-up typecheck and deployment. No
+failed deployment is counted as production-ready evidence.
+
 Live policy, universal protective-order coverage, retrospective optimized mixes
 and a matched US/India total-return allocation replay are not delivered by this
 change. The US accuracy brake, missing historical EOD evidence and expired Kite
