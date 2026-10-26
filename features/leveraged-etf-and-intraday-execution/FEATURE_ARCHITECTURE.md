@@ -1,5 +1,26 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Operating liquidity — October 26 full-fix continuation
+
+The unused US paper leveraged allowance is now reserved from ordinary buys and
+top-ups: cash reserve = max(0, current NAV × 5% − combined leveraged market value).
+The full-book ordinary constructor ceiling is tightened to at most 95% plus
+current leveraged weight, without raising any existing risk limit. The common
+paper-fill transaction recomputes the same reservation under its pool lock;
+top-ups and atomic rotations inherit it. All-role distinct names count toward
+the configured eight-name mandate. Dedicated leveraged fills retain their
+existing independent eligibility/risk/protection gates and can use that cash.
+
+Migration `20261026224500` is applied and verified, with unchanged service-only
+permissions. No forced sale or historical rewrite is implied: a fully invested
+legacy book must release cash through natural exits/trims before this reserve
+is funded. The Paper Portfolio shows funded/required cash, shortfall, combined
+maximum and minimum entry amounts based on displayed NAV. At $10,000 they are
+$500 combined maximum and $50 minimum new entry; both scale with NAV. This is
+operating liquidity, not evidence a new entry wins or continuous live protection.
+India has no such sleeve reserve; ordinary global name-count integrity applies
+there too. See discovery-execution-clarity for the full decision and rollback.
+
 ## Exact rejected funding evidence — October 26, 2026
 
 All four paper planners expose the shared sizing check's exact NAV, available

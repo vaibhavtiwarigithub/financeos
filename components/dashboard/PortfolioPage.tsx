@@ -6,6 +6,7 @@ import { TRADE_COLUMNS, filterByStatus, nextSort, projectTrade, recentlySold, so
 import { SymbolLink } from "@/components/ui/SymbolLink";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { fmtMoney } from "@/lib/format-money";
+import { paperLeveragedLiquidity, LEVERAGED_SLEEVE_MAX_NAV_FRACTION, LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION } from "@/lib/trading/leveraged-sleeve-risk";
 import { paperExitPlanForTrade, type PaperExitPlan } from "@/lib/trading/paper-exit-plan";
 import { paperExitEconomics } from "@/lib/trading/paper-exit-economics";
 import { formatPaperPositionOpenedAt } from "@/lib/paper/position-opened-at";
@@ -695,6 +696,9 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
   const totalPnl = nav - startingNAV;
   const totalPnlPct = (totalPnl / startingNAV) * 100;
   const posValue = nav - cash;
+  const sleeveLiquidity = paperLeveragedLiquidity({ market: activeMarket, nav: Number(nav), cash: Number(cash),
+    maxGrossExposurePct: 100, positions: positions.map((p: any) => ({ symbol: String(p.symbol),
+      marketValue: Number(p.qty) * Number(p.current_price ?? p.avg_cost) })) });
   // closedTrades drives the trades TAB (display, capped at 50 rows). The win-rate
   // gauge reads tradeRecord instead — a whole-book count from the server, so the
   // headline stat can't drift as the display cap truncates older trades.
@@ -764,6 +768,15 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
       />
 
       <InternationalExposurePanel market={activeMarket} positions={positions} policy={internationalAllocationPolicy} />
+      {activeMarket === "us" && <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 16px", marginBottom: "16px", color: T.textSub, fontSize: "12px", lineHeight: 1.6 }}>
+        <strong style={{ color: T.text }}>Leveraged sleeve funding · paper only</strong>
+        {sleeveLiquidity.ok ? <>
+          <div>Combined leveraged ceiling: {fmtMoney(nav * LEVERAGED_SLEEVE_MAX_NAV_FRACTION, "us")} (5% of current NAV). Minimum new entry: {fmtMoney(nav * LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION, "us")} (0.5%).</div>
+          <div>Cash held for the unused 5% sleeve: {fmtMoney(sleeveLiquidity.reserveFunded, "us")} of {fmtMoney(sleeveLiquidity.reserve, "us")} needed. Available for ordinary buys: {fmtMoney(sleeveLiquidity.deployableCash, "us")}.</div>
+          {sleeveLiquidity.reserveShortfall > 0.01 && <div style={{ color: T.amber }}>Funding shortfall: {fmtMoney(sleeveLiquidity.reserveShortfall, "us")}. Existing holdings are not force-sold; natural exits or trims must release cash.</div>}
+          <div style={{ color: T.muted }}>Based on the displayed portfolio snapshot. The reserve falls as leveraged positions use it. Eight-name, setup, exposure and protection checks still apply; reserved cash does not guarantee an entry. Other limits may leave more cash. Policy {sleeveLiquidity.version}.</div>
+        </> : <div style={{ color: T.amber }}>Funding capacity cannot be calculated from the available book: {sleeveLiquidity.reason}.</div>}
+      </div>}
       {!viewerMode && <RecentCandidatesPanel market={activeMarket} book="paper" />}
 
       {/* Charts row */}

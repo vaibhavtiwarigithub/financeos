@@ -92,6 +92,47 @@ and paired attribution programs are not called completed by these code changes.
 
 ## Verification and rollout
 
+### Full-fix continuation: prospective operating liquidity
+
+Owner requested the full fix after the first release. The simpler funding path
+is to reserve the unused portion of the already approved 5%-NAV leveraged sleeve
+inside US paper cash, rather than invent a cross-horizon forced-sale strategy.
+Why: ordinary buys consumed essentially all cash before an otherwise qualified
+setup. Who: the owner's US paper book. Expected benefit: executable funding
+availability, with explicit possible cash drag and no return promise.
+
+For each ordinary entry/top-up, reuse the current book and NAV: reserved cash is
+`max(0, 5% * NAV - current combined leveraged market value)` and ordinary
+deployable cash is `max(0, cash - reserved cash)`. The full-book gross ceiling
+becomes `min(existing gross ceiling, 95% + leveraged gross weight)`. Thus the
+ordinary sleeve cannot consume its counterpart's budget, and invested leveraged
+capital is not reserved a second time. This only tightens existing limits. No
+forced sale is triggered; an already fully invested book recovers liquidity when
+natural exits/trims release it. All eight-name, sector, risk, opposing exposure,
+quote, minimum-entry and protection checks remain. A reserved dollar or slot is
+not a buy signal. India has no equivalent approved leveraged sleeve and remains
+unchanged; live settings/credentials/activation remain unchanged.
+
+Use the existing `leveraged-sleeve-risk` module, paper constructor/spend code and
+Paper Portfolio header. Record the policy identity and exact reserve in existing
+stage/run evidence. No new producer, table/column, schedule, package or API route.
+Migration plan: narrow the existing service-only `execute_paper_fill` RPC after
+its market-pool row lock to recompute full marked NAV and combined leveraged
+value, reject ordinary US spend that consumes the unused sleeve reserve, and
+count all positive distinct held names at the existing name-cap check. Top-ups
+and atomic rotations reuse this function and retain the same guard. Dedicated
+leveraged fills use their existing independent transaction and all entry gates.
+Preserve signature, privileges and existing behavior for India/crypto except
+that ordinary entry name counts include all actual held roles. Reject a missing
+US transactional kernel instead of falling back to non-atomic writes. Verify
+both authorization and row-lock behavior locally, apply through migration history,
+and prove the exact function contract exists before shipping the caller/UI.
+Compare paired full-book scenarios with the existing portfolio simulator and
+paired replay accounting, including no opportunity, losing setup, winning setup,
+full name slots, fees and preserved cash. These establish arithmetic and tradeoffs,
+not historical return superiority. Missing historical marks/contracts still
+prevent a defensible full-inception replay and automatic forced-sale promotion.
+
 Mock endpoint/auth/cache/schema/future/session failures; minimum sizing at exact
 boundary, real cash versus sleeve shortfall and all four route evidence paths;
 historical journal dates and market isolation. Run focused/full tests, TypeScript,

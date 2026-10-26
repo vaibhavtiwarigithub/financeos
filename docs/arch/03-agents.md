@@ -2,6 +2,15 @@
 
 ## Discovery and decision horizons
 
+US ordinary PaperTrader entries and top-ups reserve the unused part of the
+existing 5%-NAV leveraged sleeve. Dedicated leveraged doors can use it only
+after their own gates pass. The common pool-locked fill transaction enforces
+the reserve for concurrent ordinary buys, top-ups and rotation buys; distinct
+names across all roles count toward the existing eight-name mandate. Existing
+holdings are not liquidated to manufacture cash. The Paper Portfolio displays
+funded/required reserve and shortfall, including NAV-scaled maximum/minimum.
+India/live have no new US sleeve reservation or changed execution permissions.
+
 Research reuses fundamental, benchmark-constituent, relative-strength and retained
 candidate lanes. During US regular hours, a bounded Alpaca activity lane can add
 two candidates with source/session timestamps; it shares existing scheduling and

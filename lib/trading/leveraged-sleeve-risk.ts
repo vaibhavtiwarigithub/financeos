@@ -36,6 +36,29 @@ export interface LeveragedSleevePosition {
   marketValue: number;
 }
 
+export const PAPER_LEVERAGED_LIQUIDITY_VERSION = "paper_sleeve_liquidity_v1";
+/** Operating cash reservation for ordinary PAPER buys only. No sale or order. */
+export function paperLeveragedLiquidity(input: {
+  market: "us" | "india"; nav: number; cash: number; maxGrossExposurePct: number;
+  positions: LeveragedSleevePosition[];
+}): { ok: false; reason: string } | { ok: true; version: string; reserve: number;
+  reserveFunded: number; reserveShortfall: number; deployableCash: number; maxGrossExposurePct: number } {
+  const { market, nav, cash, maxGrossExposurePct } = input;
+  if (![nav, cash, maxGrossExposurePct].every(Number.isFinite) || nav <= 0 || cash < 0
+    || maxGrossExposurePct < 0 || maxGrossExposurePct > 100 || !["us", "india"].includes(market))
+    return { ok: false, reason: "invalid_liquidity_accounting" };
+  // India has no corresponding approved leveraged sleeve. Do not impose a US reserve.
+  if (market === "india") return { ok: true, version: PAPER_LEVERAGED_LIQUIDITY_VERSION,
+    reserve: 0, reserveFunded: 0, reserveShortfall: 0, deployableCash: cash, maxGrossExposurePct };
+  const sleeve = leveragedSleeveHeadroom({ nav, positions: input.positions });
+  if (!sleeve.ok) return sleeve;
+  const reserve = sleeve.headroom;
+  return { ok: true, version: PAPER_LEVERAGED_LIQUIDITY_VERSION, reserve,
+    reserveFunded: Math.min(cash, reserve), reserveShortfall: Math.max(0, reserve - cash),
+    deployableCash: Math.max(0, cash - reserve),
+    maxGrossExposurePct: Math.min(maxGrossExposurePct, 100 * (1 - reserve / nav)) };
+}
+
 /** Do not offset exact opposing daily-reset products and call it diversification. */
 export function leveragedOpposingExposure(symbol: string, positions: LeveragedSleevePosition[]): { ok: true } | { ok: false; reason: string } {
   const opposite: Record<string, string> = { SOXL: "SOXS", SOXS: "SOXL", TQQQ: "SQQQ", SQQQ: "TQQQ" };

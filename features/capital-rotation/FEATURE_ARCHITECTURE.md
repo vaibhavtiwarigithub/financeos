@@ -1,5 +1,18 @@
 # Feature Architecture - Capital Rotation
 
+## Paper funding boundary — October 26, 2026
+
+US ordinary buys now preserve the unused portion of the existing combined 5%
+leveraged allowance. Rotation assessment uses the tightened market constructor
+limit; its atomic buy calls the same pool-locked `execute_paper_fill` reserve
+check, so a swap cannot silently spend another sleeve's operating liquidity.
+The existing P1 evidence, exact lots, costs, persistence and execution keys are
+unchanged. This is not a leveraged cross-horizon sale-selection strategy, and it
+does not open a negative or insufficient return gate. The common entry RPC counts
+all positive distinct held names, including leveraged roles, for the configured
+eight-name cap. Migration `20261026224500` is applied; no function privilege or
+live setting changed.
+
 ## Complete funding-source assessment
 
 The owner-requested ETF/rotation correction assesses P1 for every holding, rather

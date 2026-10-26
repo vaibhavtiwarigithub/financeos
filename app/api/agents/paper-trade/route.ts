@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isSymbolBlocked } from "@/lib/trading/symbol-policy";
-import { LEVERAGED_SLEEVE_SYMBOLS } from "@/lib/trading/leveraged-sleeve-risk";
+import { LEVERAGED_SLEEVE_SYMBOLS, paperLeveragedLiquidity } from "@/lib/trading/leveraged-sleeve-risk";
 import { getQuote, getBatchQuotes, computeFillPrice } from "@/lib/data/quotes";
 import { assertFreshQuote } from "@/lib/data/quote-freshness";
 import { fetchIndiaQuote } from "@/lib/india-data";
@@ -905,9 +905,25 @@ export async function POST(req: NextRequest) {
       // Allocation-aware gross cap: tighten (never raise) this market's gross-equity
       // limit toward the equity-sleeve target when allocation is enabled.
       const allocEquityCap = allocEquityCapByMarket.get(market);
-      const marketLimits = allocEquityCap != null
+      const allocationLimits = allocEquityCap != null
         ? { ...portfolioLimits, maxGrossExposurePct: Math.min(portfolioLimits.maxGrossExposurePct, allocEquityCap) }
         : portfolioLimits;
+      // Keep the unused approved leveraged allowance available to its dedicated
+      // paper doors. Existing leveraged positions consume it once, not twice.
+      // This tightens ordinary sizing only; it never raises a cap or forces sales.
+      const liquidity = paperLeveragedLiquidity({ market: market as "us" | "india",
+        nav: constructorNavByMarket.get(market) ?? NaN, cash: Number(portfolio.cash_balance),
+        maxGrossExposurePct: allocationLimits.maxGrossExposurePct,
+        positions: (bookByMarket.get(market) ?? []).map(position => ({ symbol: position.symbol,
+          marketValue: position.valuePct / 100 * (constructorNavByMarket.get(market) ?? NaN) })) });
+      if (!liquidity.ok) {
+        await revertClaim(signal.id);
+        skipped.push({ symbol: signal.symbol, reason: liquidity.reason });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market,
+          stage: "sizing", outcome: "rejected", reason: liquidity.reason });
+        continue;
+      }
+      const marketLimits = { ...allocationLimits, maxGrossExposurePct: liquidity.maxGrossExposurePct };
       // ── Correlation shadow (MEASURE ONLY) ──────────────────────────────
       // Records the verdict a correlation-aware constructor WOULD reach. It
       // gates nothing: the real constructor below is untouched and still runs
@@ -1051,7 +1067,7 @@ export async function POST(req: NextRequest) {
       const noRoom = constructorOutcome === "no_room";
       if (noRoom) {
         const reason = `portfolio_constructor_denied: ${constructed.orders[0]?.adjustments.join("; ") ?? "no room"}`;
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, rotation_candidate: true, book: constructorBookSnapshot } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: "rejected", reason, detail: { proposedSizePct, adjustments: constructed.orders[0]?.adjustments, liquidity, rotation_candidate: true, book: constructorBookSnapshot } });
         // NB: the claim is deliberately NOT reverted here. The rotation block
         // below owns it and reverts on every non-executing path.
       }
@@ -1061,7 +1077,7 @@ export async function POST(req: NextRequest) {
       // inside paperAllocationSpend.
       const sizedPct = noRoom || atNameCap || atSectorCap ? proposedSizePct : rawSizedPct;
       if (!noRoom) {
-        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments, book: sizedPct < proposedSizePct ? constructorBookSnapshot : undefined } });
+        await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "portfolio_constructor", outcome: sizedPct < proposedSizePct ? "shrunk" : "passed", reason: `Sized ${sizedPct.toFixed(1)}% (proposed ${proposedSizePct.toFixed(1)}%)`, detail: { proposedSizePct, sizedPct, adjustments: constructed.orders[0]?.adjustments, liquidity, book: sizedPct < proposedSizePct ? constructorBookSnapshot : undefined } });
       }
 
       // finalSizePct is a percentage of this market-local NAV. Available cash
@@ -1078,7 +1094,7 @@ export async function POST(req: NextRequest) {
       const needsRotation = !isTopUp && (atNameCap || atSectorCap || noRoom || cashShort);
       const maxSpend = needsRotation ? intendedSpend : paperAllocationSpend(
         constructorNavByMarket.get(market),
-        portfolio.cash_balance,
+        liquidity.deployableCash,
         sizedPct,
         perTradeCapPaper,
       );
@@ -1305,6 +1321,13 @@ export async function POST(req: NextRequest) {
         } as any);
         const rpcMissing = rpcErr && (String((rpcErr as any).code ?? "") === "PGRST202" ||
           /could not find the function|does not exist/i.test(String(rpcErr.message ?? "")));
+        if (rpcMissing && market === "us") {
+          await revertClaim(signal.id);
+          skipped.push({ symbol: signal.symbol, reason: "liquidity_kernel_unavailable" });
+          await logStage(supabase, { signal_id: signal.id, symbol: signal.symbol, market, stage: "execution",
+            outcome: "rejected", reason: "liquidity_kernel_unavailable", detail: { liquidity, atomic_fill_required: true } });
+          continue;
+        }
         if (rpcErr && !rpcMissing) {
           await revertClaim(signal.id);
           skipped.push({ symbol: signal.symbol, reason: `rpc_fill_failed: ${rpcErr.message}` });
