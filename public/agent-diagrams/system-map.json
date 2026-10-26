@@ -836,8 +836,8 @@
       "autonomyLevel": "measure_only — read-only detection; cannot change a score, weight, threshold, eligibility, sizing, exit, or broker action"
     },
     "GUARDIAN": {
-      "label": "Manual Trade Guardian (Stage 0)",
-      "description": "Every 15 min, 13:00-21:00 UTC (9am-5pm ET) weekdays, cron-secret gated. Scoped to account 605420660 ONLY — the one order-permitted account. Fetches live Robinhood holdings (fetchRobinhoodBrokerAccounts, same call HOLDINGRISK makes), diffs against the last known qty per symbol in agentic_position_ledger, and classifies each increase: matched to a Kairos broker_orders fill = agentic, unmatched = manual. A manual fill gets a suggested protective stop (mandate stop_loss_pct off live avg cost, same source PaperTrader uses for a new entry) and a warn-level agent_alerts row naming it. PLACES NO ORDER. Suggesting a stop is not placing one — this is detection + alert only. The diff/matching core is a pure, tested function (lib/trading/manual-fill-detection.ts); the route is a thin fetch/write/alert shell. Stage 1 (an approval-card UI wired to the existing trade_proposals approve->place path, so a suggested stop can actually be placed with one tap) is separate, unbuilt work.",
+      "label": "Manual Trade Guardian",
+      "description": "Existing scheduled manual-fill detection reads the agentic Robinhood live book and records quantity transitions with explicit attribution. Stage 1 is implemented as a dedicated owner-armed software-stop plan, not an immediate SELL approval card. Arming places no order; the monitor requires existing live flags, account permission, fresh quote and execution checks. It does not establish protection for other Robinhood, Webull or Alpaca accounts. India has a separate read-only Kite holdings/GTT coverage check, matched by exchange and symbol with validated downside SELL legs; it does not produce or arm plans. Failed US plan and India broker reads show unknown and report System Health, never an empty protected book. Exact-stop outcome measurement is separate and remains ungraded when frozen evidence is absent.",
       "addedAt": "2026-09-09",
       "addReason": "Owner asked: I sometimes buy manually in the agentic account and forget to set a stop — track what was done manually vs by the app, and surface a suggested stop fast. Architecture proposed and approved 2026-09-09 (features/manual-trade-guardian/FEATURE_ARCHITECTURE.md) before any code — Stage 0 scope only: no unattended live order placement, matching the push-back mandate against running real orders without approval.",
       "status": "active",
@@ -856,7 +856,7 @@
         "agent_alerts (issue_key manual-trade-guardian:<symbol>:605420660, via reportIssue/resolveIssue)"
       ],
       "schedule": "pg_cron kairos-manual-fill-detect, */15 13-21 * * 1-5 -> POST /api/agents/manual-fill-detect/cron",
-      "autonomyLevel": "detection + alert only — suggests a stop price, places NO order. A future Stage 1 approval-card UI would let the owner tap-approve a suggested stop through the existing trade_proposals path; unbuilt."
+      "autonomyLevel": "Detection and advice are automatic; the implemented software plan requires owner arming plus the existing gated live monitor. No order on arming, no universal account coverage, and India GTT coverage remains read-only."
     },
     "GUESTCONN": {
       "label": "Guest broker connection",

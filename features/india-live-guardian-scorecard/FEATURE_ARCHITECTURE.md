@@ -59,6 +59,24 @@ the original P0 only; the approved extension migration is
 
 ## Verification
 
+### Source-truth corrections (October 25, 2026)
+
+The read-only Guardian route requires verified holdings and GTT arrays. Missing,
+malformed or rejected reads never become empty books: holdings failure returns
+503, while a GTT failure preserves valid holdings with unknown protection. The
+deduplicated `guardian-coverage:india` health issue persists until both reads pass.
+No clock-based expiry clears this issue.
+
+GTT coverage is matched by exchange and symbol. It validates every SELL quantity
+and limit price, aligned trigger/order indexes, and a downside SELL trigger
+relative to the broker holding's last price. A target-only GTT, missing reference
+price, malformed leg or cross-exchange conflict cannot be marked covered. OCO
+quantities are compared once, never summed. This is a last-read coverage check,
+not a fresh executable quote, guaranteed fill or new stop recommendation.
+
+Broker sync remounts the Guardian check so it is not left on an earlier reading.
+Full India stop-suggestion/approval/execution parity remains outside P0.
+
 - Pure Kite GTT coverage rules have unit tests for full OCO coverage, inactive triggers, partial/excess quantity, conflicting triggers, mismatched OCO legs, and missing SELL orders.
 - Required checks: focused test, TypeScript, full test suite, and a read-only owner-page smoke test when authenticated Kite access is available.
 

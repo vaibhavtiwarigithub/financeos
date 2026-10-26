@@ -73,6 +73,7 @@ export default function LivePortfolioPage({
   const [snaps, setSnaps] = useState<any[]>(liveSnaps);
   const [syncingBrokers, setSyncingBrokers] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
+  const [guardianRefreshKey, setGuardianRefreshKey] = useState(0);
 
   const [files, setFiles] = useState<FileRecord[]>(initialFiles);
   const [uploading, setUploading] = useState(false);
@@ -131,6 +132,7 @@ export default function LivePortfolioPage({
         body: JSON.stringify({ source: "owner_manual_refresh" }),
       });
       const d = await r.json();
+      if (!r.ok) throw new Error("Broker sync failed. Check your login and System Health; saved snapshots are preserved.");
       const failed = [
         ...(d.ok ? [] : ["selected Robinhood source"]),
         ...(d.registry ?? []).filter((b: any) => !b.ok && b.error !== "not connected").map((b: any) => b.broker),
@@ -141,6 +143,7 @@ export default function LivePortfolioPage({
         ? `Sync finished with issues: ${Array.from(new Set(failed)).join(", ")}. Check System Health; last successful snapshots are preserved.`
         : "Read-only broker sync completed. No orders were placed.");
       await loadHoldings();
+      setGuardianRefreshKey(v => v + 1);
     } catch (error) {
       setSyncNote(error instanceof Error ? error.message : "Broker sync failed. Existing snapshots are unchanged.");
     } finally {
@@ -264,7 +267,7 @@ export default function LivePortfolioPage({
       }
     >
 
-      <GuardianProtectionPanel />
+      <GuardianProtectionPanel key={guardianRefreshKey} />
       <RecommendationsPanel />
       <RecentCandidatesPanel market="us" book="live" />
       <RhReconnectBanner />

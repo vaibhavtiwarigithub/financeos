@@ -57,6 +57,12 @@ Make the US and India live portfolio pages describe the same operational facts c
 
 ## Contract and safety rules
 
+October 25 reliability correction: both UI sync handlers reject non-success HTTP
+responses before presenting a success message. A completed read-only sync also
+reloads the market's Guardian panel; existing coverage cannot remain silently on
+its pre-sync reading. Failed plan/holdings/GTT reads show unavailable/unknown,
+not an empty or protected portfolio. No order is placed by this refresh.
+
 1. Existing scheduled refresh remains cron-authenticated. Manual refresh is separately owner-authenticated and calls the same read-only orchestration. It never calls broker order endpoints.
 2. A broker's failed, incomplete, or disconnected read never overwrites its last good persisted snapshot. A per-broker failure must not prevent other broker refreshes.
 3. The UI reports when data was fetched, when the last saved snapshot was captured, and any per-broker refresh result. “Reload” and “Sync from broker” are distinct actions.

@@ -179,6 +179,7 @@ export default function IndiaLivePanel() {
         body: JSON.stringify({ source: "owner_manual_refresh" }),
       });
       const result = await res.json();
+      if (!res.ok) throw new Error("Broker sync failed. Check your login and System Health; saved snapshots are preserved.");
       const failed = [
         ...(result.registry ?? []).filter((r: any) => !r.ok && r.error !== "not connected").map((r: any) => r.broker),
         ...(result.alpacaLive?.ok || !result.alpacaLive?.error || result.alpacaLive.error === "Live credentials are not configured in this runtime" ? [] : ["Alpaca Live"]),
@@ -357,7 +358,7 @@ export default function IndiaLivePanel() {
 
         {/* Keep the shared Live Portfolio section order: Guardian, scorecard,
             broker connection, account summary, performance, holdings. */}
-        <IndiaManualTradeGuardianPanel />
+        <IndiaManualTradeGuardianPanel key={chartRefreshKey} />
         <IndiaRecommendationsGuardianScorecard holdings={holdings} holdingsKnown={portfolio?.connected === true} />
         <RecentCandidatesPanel market="india" book="live" />
 

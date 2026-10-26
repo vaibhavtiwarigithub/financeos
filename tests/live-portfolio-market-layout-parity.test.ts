@@ -10,7 +10,7 @@ describe("US and India Live Portfolio shared section layout", () => {
 
   it("keeps Guardian and Recommendations before broker connection, account summary and performance", () => {
     const usOrder = [
-      us.indexOf("<GuardianProtectionPanel />"),
+      us.indexOf("<GuardianProtectionPanel key={guardianRefreshKey}"),
       us.indexOf("<RecommendationsPanel />"),
       us.indexOf("<RhReconnectBanner />"),
       us.indexOf("<LiveStatCards"),
@@ -18,7 +18,7 @@ describe("US and India Live Portfolio shared section layout", () => {
       us.indexOf("{/* Holdings table */}"),
     ];
     const indiaOrder = [
-      india.indexOf("<IndiaManualTradeGuardianPanel />"),
+      india.indexOf("<IndiaManualTradeGuardianPanel key={chartRefreshKey}"),
       india.indexOf("<IndiaRecommendationsGuardianScorecard"),
       india.indexOf("{/* ── a) Connection status bar ── */}"),
       india.indexOf("<LiveStatCards"),

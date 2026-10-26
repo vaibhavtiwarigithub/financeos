@@ -25,6 +25,10 @@ describe("live portfolio refresh and market boundaries", () => {
     expect(usPage).toContain("last successful snapshots are preserved");
     expect(indiaPage).toContain('fetch("/api/live-account/refresh-snapshot"');
     expect(indiaPage).toContain("Sync brokers");
+    expect(usPage).toContain('if (!r.ok) throw new Error("Broker sync failed.');
+    expect(indiaPage).toContain('if (!res.ok) throw new Error("Broker sync failed.');
+    expect(usPage).toContain("<GuardianProtectionPanel key={guardianRefreshKey}");
+    expect(indiaPage).toContain("<IndiaManualTradeGuardianPanel key={chartRefreshKey}");
   });
 
   it("keeps Kite day positions separate and out of combined holdings/NAV", () => {

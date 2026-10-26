@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 const ACTIVE = ["pending_approval", "armed", "triggering"];
@@ -13,7 +14,11 @@ export async function GET() {
   const { data, error } = await svc.from("guardian_protection_plans")
     .select("id,symbol,qty,entry_price,stop_price,status,armed_at,triggered_at,terminal_reason,created_at,trigger_proposal_id")
     .in("status", ACTIVE).order("created_at", { ascending: false });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    await reportIssue({ issueKey: "guardian-plans:us", severity: "warn", category: "broker", title: "US Guardian plans unavailable", detail: "The active plan ledger could not be read. Plan status and stop coverage are unknown; retry after database recovery." }, svc);
+    return NextResponse.json({ error: "Guardian plans unavailable; retry or check System Health." }, { status: 503 });
+  }
+  await resolveIssue("guardian-plans:us", svc);
   return NextResponse.json({ plans: data ?? [] });
 }
 

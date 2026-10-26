@@ -25,6 +25,21 @@
 
 ---
 
+## Owner visibility correction — October 25, 2026
+
+The US plan panel treats failed HTTP/network/JSON reads as unknown, not an empty
+plan list, and offers a read-only retry. A database read failure reports the
+deduplicated `guardian-plans:us` System Health issue; only a successful ledger
+read resolves it. An ambiguous action response reloads current plan state without
+an application-level action retry. Broker sync refreshes this panel. An empty
+plan list explicitly does not establish stop coverage for all holdings.
+
+The panel states its agentic Robinhood manual-buy scope. Other Robinhood, Webull
+and Alpaca positions are not verified protected by this workflow. Daily risk
+research, a proposed stop, an armed software plan and broker-resident protection
+remain separate facts. These display/read repairs do not change the plan state
+machine, monitor enablement, order permissions or account mandate.
+
 ## 1. What's true today (verified against code + production, not assumed)
 
 - **`PositionMonitor` never watches live Robinhood positions.** It reads only
