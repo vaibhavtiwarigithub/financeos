@@ -120,6 +120,14 @@ and the allocation panel bypasses browser caching. A focused regression covers
 these headers. Both markets finish on Aggressive defaults, not temporary QA
 weights. No broker/risk controls are changed by these saves.
 
+The cache fix `c0a5202f` deployed READY (`dpl_DBWUW7Tni48oeyuLMRGBUeMDNKdY`).
+The Save button's dark foreground on the existing accent measures 6.11:1
+contrast; the final UI-only adjustment passed the generated-route typecheck.
+Production portfolio readback displays the correct $490.10 combined maximum,
+$49.01 minimum and unfunded reserve at the current $9,802 NAV. Settings readback
+shows US 18.74% core / 81.26% individual stocks and India 96.28% stocks / 3.72%
+cash, rather than pretending the new targets have already rebalanced the book.
+
 Live policy, universal protective-order coverage, retrospective optimized mixes
 and a matched US/India total-return allocation replay are not delivered by this
 change. The US accuracy brake, missing historical EOD evidence and expired Kite
