@@ -329,7 +329,7 @@ async function runSoxlCron(supabase: ReturnType<typeof createServiceClient>, now
       research: { signal_id: researchGate.signalId, score: researchGate.score, role: "daily_context_not_intraday_trigger" },
       funding: { ...plan.sizing, cash: Number(portfolio.cash_balance), nav: Number(portfolio.nav),
         account_snapshot_at: portfolio.updated_at, minimum_fraction: LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION, sleeve_max_fraction: LEVERAGED_SLEEVE_MAX_NAV_FRACTION },
-      quote: { price: quote.price, source: quote.source, observed_at: quote.observedAt ?? quote.retrievedAt },
+      quote: { price: quote.price, source: quote.source, observed_at: quote.observedAt ?? null, retrieved_at: quote.retrievedAt },
       monitorVerified: Number.isFinite(soxlQuoteTime(quote, now)) && now - soxlQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   }
 

@@ -80,6 +80,10 @@ that causal claim, distinguishes evidence confidence from probability of profit,
 and explicitly labels older missing sizing amounts. No financial logic changed.
 The follow-up uses focused journal tests, TypeScript and a separate secret/release
 check; the full suite above covers the runtime changes.
+Final timestamp review also separates quote `observed_at` (null if unavailable)
+from `retrieved_at` in all four rejection records. Retrieval time must never
+substitute for a missing provider event time; execution freshness gates remain
+unchanged. Existing door-clock, minimum-size and intraday tests cover the routes.
 
 ## Remaining queue, not claimed complete
 
