@@ -357,16 +357,20 @@ export async function fetchHoldings(supabase: any): Promise<string[]> {
 // last score time, so the wall-clock budget's cut ROTATES across the book
 // instead of decapitating the same stable tail every run. Fail-soft: if the
 // lookup breaks we keep the caller's order rather than lose holdings entirely.
-async function orderHoldingsByLastScored(supabase: any, symbols: string[], market: Market): Promise<string[]> {
+export async function orderHoldingsByLastScored(supabase: any, symbols: string[], market: Market, holdingOnly = false): Promise<string[]> {
   if (symbols.length === 0) return symbols;
   try {
-    const rows = await fetchAllRows<any>((from, to) => supabase
+    const rows = await fetchAllRows<any>((from, to) => {
+      let query = supabase
       .from("agent_signals")
       .select("symbol, created_at")
       .eq("market", market)
-      .in("symbol", symbols)
-      .order("created_at", { ascending: false })
-      .range(from, to), `last scored research symbols (${market})`);
+      .in("symbol", symbols);
+      // A candidate score never asked the holding/exit question. It cannot
+      // reset the staleness clock for owned-position research.
+      if (holdingOnly) query = query.eq("is_holding", true);
+      return query.order("created_at", { ascending: false }).range(from, to);
+    }, `last scored research symbols (${market})`);
     const lastScoredAt = new Map<string, string>();
     for (const row of rows as Array<{ symbol?: string; created_at?: string }>) {
       const sym = String(row?.symbol ?? "").toUpperCase();
@@ -744,7 +748,7 @@ export async function gatherSymbols(
   // since 07-13). Staleness ordering makes that cut rotate.
   const holdingEntries: SymbolEntry[] = [];
   const holdingSet = new Set<string>();
-  for (const sym of await orderHoldingsByLastScored(supabase, holdings, "us")) {
+  for (const sym of await orderHoldingsByLastScored(supabase, holdings, "us", true)) {
     holdingEntries.push({ symbol: sym, isHeld: true, isEtf: isEtfSymbol(sym), assetClass: classifyResearchAssetClass(sym), discovery_source: "holding" });
     holdingSet.add(sym);
   }
@@ -998,7 +1002,7 @@ export async function gatherSymbols(
   // Staleness-ordered for the same reason as US (parity): the India book must
   // rotate under the budget rather than starve a fixed tail.
   const indiaHeld = includeIndia
-    ? await orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india")
+    ? await orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india", true)
     : [];
   for (const sym of indiaHeld) {
     if (seenAll.has(sym)) continue;
@@ -1078,9 +1082,9 @@ export async function gatherSymbols(
 }
 
 // Real India holdings from Kite (/portfolio/holdings), mapped to the .NS
-// symbols the Yahoo-based India scorer expects. Empty on any error (no Kite
-// token today, market closed, etc.) — never throws into gatherSymbols.
-async function fetchIndiaHoldings(svc: any): Promise<string[]> {
+// symbols the Yahoo-based India scorer expects. A broker failure is visible in
+// health while the independent paper book can continue. Never report it healthy.
+export async function fetchIndiaHoldings(svc: any): Promise<string[]> {
   const [kiteResult, paperResult] = await Promise.allSettled([
     getKiteHoldings(svc),
     svc.from("paper_positions").select("symbol, qty").eq("market", "india").eq("position_role", "alpha"),
@@ -1092,15 +1096,18 @@ async function fetchIndiaHoldings(svc: any): Promise<string[]> {
   // recoverable), so unlike the US DB read this warns and continues on the paper
   // book rather than aborting the whole India run; the paper read failing is a
   // DB fault and aborts, exactly like US.
-  if (kiteResult.status === "rejected") {
-    const detail = kiteResult.reason instanceof Error ? kiteResult.reason.message : String(kiteResult.reason);
+  const kiteAvailable = kiteResult.status === "fulfilled"
+    && kiteResult.value?.ok === true && Array.isArray(kiteResult.value.data);
+  if (!kiteAvailable) {
+    const failure = kiteResult.status === "rejected" ? kiteResult.reason
+      : kiteResult.value?.error ?? "Kite holdings response was not a verified array";
+    const detail = failure instanceof Error ? failure.message : String(failure);
     await reportIssue({
       issueKey: "research-holdings-fetch:india-kite",
       severity: "warn",
       category: "data",
       title: "India Kite holdings fetch failed — live India positions not re-scored this run",
       detail: `getKiteHoldings() failed: ${detail}. Live Kite positions are NOT in this run's research batch, so no SELL/exit signal can be produced on them until the read recovers. India paper positions are unaffected. Usual cause: expired Kite token — re-auth in Settings.`,
-      autoExpireAt: new Date(new Date().setUTCHours(24, 0, 0, 0)).toISOString(),
     }, svc).catch(() => {});
   } else {
     await resolveIssue("research-holdings-fetch:india-kite", svc).catch(() => {});
@@ -1120,8 +1127,8 @@ async function fetchIndiaHoldings(svc: any): Promise<string[]> {
     const err = (paperResult.value as any).error;
     throw new Error(`fetchIndiaHoldings (india) paper_positions read failed: ${err.message ?? err}`);
   }
-  const kiteRows: any[] = kiteResult.status === "fulfilled"
-    ? (kiteResult.value?.data ?? kiteResult.value ?? [])
+  const kiteRows: any[] = kiteAvailable && kiteResult.status === "fulfilled"
+    ? kiteResult.value.data
     : [];
   const kiteSymbols = Array.isArray(kiteRows)
     ? kiteRows

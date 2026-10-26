@@ -32,6 +32,16 @@ describe("holding research symbols", () => {
   it("deduplicates paper and live holdings", () => {
     expect(unionHoldingSymbols(["AAPL", "MSFT"], ["aapl", "NVDA"])).toEqual(["AAPL", "MSFT", "NVDA"]);
   });
+
+  it("does not import India or simulated books into the US live research obligation", () => {
+    expect(symbolsFromLatestLiveSnapshots([
+      { broker: "kite", account_id: "india", positions_json: [{ symbol: "INFY", qty: 1 }] },
+      { broker: "internal", account_id: "paper", positions_json: [{ symbol: "PAPER", qty: 1 }] },
+      { broker: "alpaca_paper", account_id: "sim", positions_json: [{ symbol: "SIM", qty: 1 }] },
+      { broker: "webull", account_id: "live", positions_json: [{ symbol: "RBLX", qty: 1 }, { symbol: "INFY.NS", qty: 2 }] },
+      { broker: "alpaca_live", account_id: "live", positions_json: [{ symbol: "AAPL", qty: 1 }] },
+    ])).toEqual(["AAPL", "RBLX"]);
+  });
 });
 
 // Regression: 2026-07-16 holdings-starvation bug. Holdings are exempt from the

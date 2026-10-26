@@ -58,12 +58,15 @@ export function symbolsFromLatestLiveSnapshots(rows: LiveSnapshotRow[]): string[
 
   const symbols = new Set<string>();
   for (const row of latestByAccount.values()) {
+    // This helper feeds US research. Connected India and simulated books must
+    // not masquerade as live US holdings when the snapshot registry expands.
+    if (["kite", "internal", "alpaca_paper"].includes(String(row.broker ?? "").toLowerCase())) continue;
     if (!Array.isArray(row.positions_json)) continue;
     for (const position of row.positions_json as Array<Record<string, unknown>>) {
       const symbol = normalizeSymbol(position.symbol);
       const qtyRaw = position.qty ?? position.quantity;
       const qty = qtyRaw == null ? 1 : Number(qtyRaw);
-      if (symbol && Number.isFinite(qty) && qty > 0) symbols.add(symbol);
+      if (symbol && !symbol.endsWith(".NS") && !symbol.endsWith(".BO") && Number.isFinite(qty) && qty > 0) symbols.add(symbol);
     }
   }
   return [...symbols].sort();

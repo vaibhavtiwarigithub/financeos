@@ -82,7 +82,7 @@ describe("agent source pipeline remediation", () => {
     expect(agent).toContain('includeUs ? fetchHoldings(supabase) : Promise.resolve([])');
     expect(agent).toContain('includeUs ? runScreener(supabase) : Promise.resolve([])');
     expect(agent).toContain("const indiaHeld = includeIndia");
-    expect(agent).toContain('orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india")');
+    expect(agent).toContain('orderHoldingsByLastScored(supabase, await fetchIndiaHoldings(supabase), "india", true)');
     // Arity-agnostic: the invariant is that the batch is scoped by market
     // before any provider work, not how many arguments gatherSymbols takes.
     expect(cron).toMatch(/gatherSymbols\(supabase, undefined, marketScope \?\? undefined[,)]/);

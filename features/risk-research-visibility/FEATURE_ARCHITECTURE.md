@@ -164,3 +164,24 @@ Three findings that shape the implementation:
 
 ## 11. Out of scope
 Live-trading accounts the app cannot trade (e.g. `965848641`) get the same annotation — it is informational there, as the strategy note already is. No new cron, no migration, no provider call, no LLM.
+
+## Daily holding-review reliability correction — 2026-10-25
+
+Holding-review priority now reads only `is_holding=true` scores. A newer candidate
+score did not evaluate the owned-position exit question and must not reset the
+holding-review clock. Candidate/watchlist ordering retains its previous semantics.
+The US snapshot-symbol reader excludes Kite, simulated books and India-suffixed
+symbols; connected US live brokers still contribute their held-symbol union.
+
+India broker reads distinguish a fulfilled `{ok:false}` response and malformed
+payload from a verified successful holdings array. A failed read reports the
+existing health issue, never clears it, and does not silently expire that warning
+at midnight. Only a verified successful array (including an empty array) resolves
+the issue. The independent India paper research book may continue during a Kite
+login outage; that is not evidence of live-holding coverage.
+
+These repairs preserve the existing R1 research/risk separation. They do not alter
+scores, strategies, trading cadence, stop levels, execution permissions or mandates.
+Research synthesis and the remaining conditional loss-review proposal are recorded
+in `docs/research/live-holding-loss-review.md`; a proposed regime policy is not a
+shipped strategy or validated protection.

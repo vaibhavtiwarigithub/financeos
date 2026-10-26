@@ -21,7 +21,8 @@ vi.mock("@/lib/llm-router", () => ({ callLLM: vi.fn() }));
 vi.mock("@/lib/robinhood-mcp", () => ({ captureAllRobinhoodAccounts: vi.fn() }));
 vi.mock("@/lib/kite", () => ({ getKiteHoldings: vi.fn() }));
 
-const { fetchHoldings } = await import("@/lib/research-agent");
+const { fetchHoldings, fetchIndiaHoldings, orderHoldingsByLastScored } = await import("@/lib/research-agent");
+const { getKiteHoldings } = await import("@/lib/kite");
 
 /** Minimal PostgREST-shaped stub: from().select()... resolves to {data,error}. */
 function supabaseStub(handlers: Record<string, () => Promise<{ data: unknown; error: unknown }>>) {
@@ -89,6 +90,60 @@ describe("fetchHoldings fails loud (never silently empty)", () => {
 
     await expect(fetchHoldings(supabase)).resolves.toEqual(["AVGO", "HOOD", "MSFT"]);
     expect(reportIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe("India live holdings failure visibility", () => {
+  beforeEach(() => { reportIssue.mockClear(); resolveIssue.mockClear(); });
+  const svc = () => supabaseStub({ paper_positions: async () => ({ data: [{ symbol: "INFY.NS", qty: 2 }], error: null }) });
+
+  it("reports a fulfilled broker error without clearing the alert or losing paper research", async () => {
+    vi.mocked(getKiteHoldings).mockResolvedValue({ ok: false, error: "daily_login_required" } as any);
+    const db = svc();
+    expect(await fetchIndiaHoldings(db)).toEqual(["INFY.NS"]);
+    expect(reportIssue).toHaveBeenCalledWith(expect.objectContaining({ issueKey: "research-holdings-fetch:india-kite", detail: expect.stringContaining("daily_login_required") }), db);
+    expect(reportIssue.mock.calls[0][0]).not.toHaveProperty("autoExpireAt");
+    expect(resolveIssue).not.toHaveBeenCalledWith("research-holdings-fetch:india-kite", db);
+  });
+  it("does not call a malformed successful payload a verified empty book", async () => {
+    vi.mocked(getKiteHoldings).mockResolvedValue({ ok: true, data: {} } as any);
+    await fetchIndiaHoldings(svc());
+    expect(reportIssue).toHaveBeenCalled();
+    expect(resolveIssue).not.toHaveBeenCalled();
+  });
+  it("resolves only after a verified broker array, including a genuine empty book", async () => {
+    vi.mocked(getKiteHoldings).mockResolvedValue({ ok: true, data: [] } as any);
+    const db = svc();
+    expect(await fetchIndiaHoldings(db)).toEqual(["INFY.NS"]);
+    expect(reportIssue).not.toHaveBeenCalled();
+    expect(resolveIssue).toHaveBeenCalledWith("research-holdings-fetch:india-kite", db);
+  });
+  it("preserves live holdings as well as the independent paper holdings", async () => {
+    vi.mocked(getKiteHoldings).mockResolvedValue({ ok: true, data: [{ tradingsymbol: "TCS", quantity: 3 }] } as any);
+    expect(await fetchIndiaHoldings(svc())).toEqual(["INFY.NS", "TCS.NS"]);
+  });
+});
+
+describe("held-position research priority", () => {
+  it("does not let a newer candidate score refresh the holding-review clock", async () => {
+    const filters: unknown[][] = [];
+    const query: any = {
+      select: () => query, in: () => query, order: () => query,
+      eq: (...args: unknown[]) => { filters.push(args); return query; },
+      range: async () => ({ data: filters.some(([k, v]) => k === "is_holding" && v === true)
+        ? [{ symbol: "AAPL", created_at: "2026-10-23" }]
+        : [{ symbol: "HOOD", created_at: "2026-10-24" }, { symbol: "AAPL", created_at: "2026-10-23" }], error: null }),
+    };
+    expect(await orderHoldingsByLastScored({ from: () => query }, ["AAPL", "HOOD"], "us", true)).toEqual(["HOOD", "AAPL"]);
+    expect(filters).toContainEqual(["is_holding", true]);
+  });
+  it("preserves candidate-pool ordering without a holding-only restriction", async () => {
+    const filters: unknown[][] = [];
+    const query: any = { select: () => query, in: () => query, order: () => query,
+      eq: (...args: unknown[]) => { filters.push(args); return query; },
+      range: async () => ({ data: [], error: null }) };
+    await orderHoldingsByLastScored({ from: () => query }, ["AAPL"], "us");
+    expect(filters).not.toContainEqual(["is_holding", true]);
   });
 });
 
