@@ -395,7 +395,7 @@ export async function GET(req: NextRequest) {
     const fundRisks = Array.isArray(packet?.key_risks)
       ? packet.key_risks.filter((risk: string) => !/company fundamentals|fundamental data|earnings surprise|insider activity|macro regime|US\/India/i.test(risk)) : [];
     const thesisSummary = isFund
-      ? `This is a fund, not an operating company. Its available-evidence score was ${obs.analyst_score}/100, driven by ${usableDims.join(" and ") || "no usable dimensions"}; evidence coverage was ${Math.round(evidenceCoverage * 100)}%. ${technicalRead[0] ?? "No technical translation was available."} Confidence is ${confidenceLabel.toLowerCase()} because fund-profile data and/or applicable market context were incomplete in this historical packet.`
+      ? `This is a fund, not an operating company. Its available-evidence score was ${obs.analyst_score}/100, driven by ${usableDims.join(" and ") || "no usable dimensions"}; evidence coverage was ${Math.round(evidenceCoverage * 100)}%. ${technicalRead[0] ?? "No technical translation was available."} Evidence confidence is ${confidenceLabel.toLowerCase()}, based on recorded confidence and applicable evidence coverage. This is not a probability of profit; missing fund-profile details are listed separately.`
       : packet?.summary ?? rationale;
     const storedPlan = obs.features?.trade_plan;
     const tradePlan = storedPlan?.version === "v1"

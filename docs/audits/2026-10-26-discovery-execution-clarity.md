@@ -65,6 +65,22 @@ skipped, zero failed. TypeScript and changed-file secret scans passed. Exact
 remote/production release verification is performed at delivery.
 No database migration, model call, manual trade cron or broker order was used.
 
+Runtime `6d10d20302014bf01348ead60fc9764720c164e4` matched remote main and
+deployment `dpl_8a1TmJtW7GwykxjZEZnJ6FYZG7h7` reached production READY. Owner
+browser/API returned SOXL's real 15:25:04 ET below-minimum decision with old
+funding/setup fields honestly null; the panel stayed contained at 375/768/1440
+pixels, with zero console errors. Anonymous journal API was 401, login 200.
+An initial UI wait occurred before deployment readiness and timed out; retry
+after READY passed. The read-only probe's first relative request URL was invalid;
+the absolute URL returned 200. Neither was a production defect.
+
+That live reading exposed a pre-existing contradictory fund sentence saying
+confidence was high because data was incomplete. A presentation follow-up removes
+that causal claim, distinguishes evidence confidence from probability of profit,
+and explicitly labels older missing sizing amounts. No financial logic changed.
+The follow-up uses focused journal tests, TypeScript and a separate secret/release
+check; the full suite above covers the runtime changes.
+
 ## Remaining queue, not claimed complete
 
 1. Verify new evidence/admission on the next natural eligible session; old

@@ -221,6 +221,7 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                     Cash {formatMoney(s.leveraged_intraday.funding.cash, "USD")} · Minimum entry {formatMoney(s.leveraged_intraday.funding.minimumNotional, "USD")} · Available after planner limits {formatMoney(s.leveraged_intraday.funding.availableNotional, "USD")} · Shortfall {formatMoney(s.leveraged_intraday.funding.shortfall, "USD")}.
                     <div style={{ color: T.muted }}>Missing amounts were not persisted; they are not reconstructed from today’s balance. The sleeve ceiling does not reserve cash or authorize selling another holding.</div>
                   </div>}
+                  {!s.leveraged_intraday.funding && <div style={{ color: T.muted }}>Sizing amounts were not recorded in this historical run; they cannot be inferred from today’s balance.</div>}
                 </> : <div style={{ marginTop: "6px", color: T.amber }}>{data.intraday_read_failed ? "Intraday decision history could not be read." : "No same-day intraday decision was found in this view. This does not establish a buy signal or protection."}</div>}
               </div>}
               <div style={{ marginTop: "10px", color: T.textSub, fontSize: "12px" }}><b style={{ color: T.text }}>Next:</b> {s.novice.next_step}</div>
