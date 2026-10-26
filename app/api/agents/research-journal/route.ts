@@ -14,6 +14,7 @@ import { JOURNAL_ALL_DATES_LIMIT, normalizeJournalSymbol } from "@/lib/research/
 import { discoveryProvenanceItems, discoverySelectionReason } from "@/lib/research/discovery-provenance";
 import { externalLinks } from "@/lib/research/external-links";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
+import { readLeveragedJournalDecisions } from "@/lib/research/leveraged-journal";
 
 export const dynamic = "force-dynamic";
 
@@ -145,6 +146,12 @@ export async function GET(req: NextRequest) {
     : Array.from(bySymbol.values())
       .map(({ obs, runCount }) => ({ ...obs, runCount }))
       .sort((a, b) => b.analyst_score - a.analyst_score);
+
+  // Latest same-day operational decision, shown separately from the earlier
+  // daily observation. Never attach it to all-dates rows or to another market.
+  const { bySymbol: intradayBySymbol, failed: intradayReadFailed } = market === "us" && scope === "date"
+    ? await readLeveragedJournalDecisions(svc, observations.map((row: any) => row.symbol), requestedDate)
+    : { bySymbol: new Map<string, any>(), failed: false };
 
   const signalIds = [...new Set(observations.map((o: any) => o.signal_id).filter(Boolean))];
   let stageEvents: any[] = [];
@@ -488,6 +495,7 @@ export async function GET(req: NextRequest) {
           : "Wait for the failed evidence or direction gate to improve before considering an entry.",
       },
       external_links: externalLinks(obs.symbol, market, assetType),
+      leveraged_intraday: intradayBySymbol.get(obs.symbol) ?? null,
       selection: {
         source: discoverySource,
         reason: selectionReason,
@@ -534,5 +542,6 @@ export async function GET(req: NextRequest) {
     scope, date: requestedDate, market, symbol_filter: symbolFilter || null,
     latest_available_date: latestAvailableDate, count: symbols.length,
     capped: allDatesCapped, limit: scope === "all" ? JOURNAL_ALL_DATES_LIMIT : null, symbols,
+    intraday_read_failed: intradayReadFailed,
   });
 }

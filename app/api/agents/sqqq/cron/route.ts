@@ -3,6 +3,7 @@
 // path uses the shared calendar-aware intraday window and recorded policy version.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION, LEVERAGED_SLEEVE_MAX_NAV_FRACTION } from "@/lib/trading/leveraged-sleeve-risk";
 import { doorQuoteForPlan, doorQuoteNote } from "@/lib/trading/leveraged-door-quote";
 import { evaluateLeveragedResearchGate, loadLatestResearchSignal } from "@/lib/trading/leveraged-door-signal";
 import { loadTradingMandate } from "@/lib/trading-mandate";
@@ -266,7 +267,13 @@ async function runSqqqCron(supabase: ReturnType<typeof createServiceClient>, now
 
   if (!plan.ok) {
     await resolveIssue("sqqq-entry-cron-failed", supabase);
-    return ok({ status: "no_entry", reason: plan.reason, monitorVerified: Number.isFinite(sqqqQuoteTime(quote, now)) && now - sqqqQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
+    return ok({ status: "no_entry", reason: plan.reason,
+      setup: intraday.evidence, policy: intraday.policy,
+      research: { signal_id: researchGate.signalId, score: researchGate.score, role: "daily_context_not_intraday_trigger" },
+      funding: { ...plan.sizing, cash: Number(portfolio.cash_balance), nav: Number(portfolio.nav),
+        account_snapshot_at: portfolio.updated_at, minimum_fraction: LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION, sleeve_max_fraction: LEVERAGED_SLEEVE_MAX_NAV_FRACTION },
+      quote: { price: quote.price, source: quote.source, observed_at: quote.observedAt ?? quote.retrievedAt },
+      monitorVerified: Number.isFinite(sqqqQuoteTime(quote, now)) && now - sqqqQuoteTime(quote, now) <= MONITOR_MAX_QUOTE_AGE_MS });
   }
 
   const qty = plan.maxNotional / plan.entry;

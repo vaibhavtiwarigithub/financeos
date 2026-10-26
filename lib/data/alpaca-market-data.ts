@@ -1,8 +1,83 @@
 import { getAlpacaCredentials } from "@/lib/brokers/alpaca-credentials";
 import { providerCachedFetch } from "@/lib/data/provider-fetch";
 import type { Candle } from "@/lib/data/technicals";
+import { getMarketDayStatus, isMarketSessionOpen, researchSessionCloseAt } from "@/lib/trading/market-calendar";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { isScreenableUsSymbol } from "@/lib/data/yahoo-screener";
 
 const MARKET_DATA_BASE = "https://data.alpaca.markets/v2/stocks";
+
+export type AlpacaActivityContext = {
+  kind: "alpaca_activity"; lane: "most_active" | "gainer";
+  provider: "alpaca"; feed: "sip_screener"; data_session: string;
+  source_as_of: string; fetched_at: string; volume: number; percent_change: number | null;
+};
+export type AlpacaActivityCandidate = { symbol: string; context: AlpacaActivityContext };
+
+function activitySessionOpen(now: Date): boolean {
+  const day = getMarketDayStatus("us", now);
+  const close = researchSessionCloseAt("us", day.localYmd);
+  return isMarketSessionOpen("us", now) && close != null && now.getTime() < close;
+}
+
+export function validAlpacaActivityPayloads(actives: any, movers: any, now = new Date()): boolean {
+  const fresh = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value))
+    && Date.parse(value) <= now.getTime() && now.getTime() - Date.parse(value) <= 20 * 60_000
+    && activitySessionOpen(new Date(value));
+  return fresh(actives?.last_updated) && fresh(movers?.last_updated) && Array.isArray(actives?.most_actives)
+    && Array.isArray(movers?.gainers) && movers?.market_type === "stocks";
+}
+
+/** SIP activity is admission evidence, never a price target or a score input. */
+export function parseAlpacaActivity(actives: any, movers: any, now = new Date()): AlpacaActivityCandidate[] {
+  const day = getMarketDayStatus("us", now);
+  if (!activitySessionOpen(now) || !validAlpacaActivityPayloads(actives, movers, now)) return [];
+  const volumes = new Map<string, number>();
+  for (const row of actives.most_actives.slice(0, 100)) {
+    const symbol = String(row?.symbol ?? "").toUpperCase();
+    if (isScreenableUsSymbol(symbol) && typeof row.volume === "number" && Number.isFinite(row.volume) && row.volume >= 500_000) volumes.set(symbol, row.volume);
+  }
+  const gainers = new Map<string, number>();
+  for (const row of movers.gainers.slice(0, 50)) {
+    const symbol = String(row?.symbol ?? "").toUpperCase();
+    if (volumes.has(symbol) && typeof row.price === "number" && row.price >= 5 && Number.isFinite(row.price)
+      && typeof row.percent_change === "number" && Number.isFinite(row.percent_change) && row.percent_change > 0) gainers.set(symbol, row.percent_change);
+  }
+  const ordered = [...gainers.keys(), ...volumes.keys()];
+  return [...new Set(ordered)].filter(symbol => !["SOXL", "SOXS", "TQQQ", "SQQQ"].includes(symbol)).slice(0, 12)
+    .map(symbol => ({ symbol, context: { kind: "alpaca_activity", lane: gainers.has(symbol) ? "gainer" : "most_active",
+      provider: "alpaca", feed: "sip_screener", data_session: day.localYmd,
+      source_as_of: new Date(Math.min(Date.parse(actives.last_updated), Date.parse(movers.last_updated))).toISOString(),
+      fetched_at: now.toISOString(), volume: volumes.get(symbol)!, percent_change: gainers.get(symbol) ?? null } }));
+}
+
+export async function fetchAlpacaActivityCandidates(at?: Date): Promise<AlpacaActivityCandidate[]> {
+  const now = at ?? new Date();
+  // Outside regular hours the mover list can describe the preceding session.
+  // Existing fundamental/index/retained lanes continue; no premarket relabelling.
+  if (!activitySessionOpen(now)) return [];
+  const credentials = await getAlpacaCredentials("paper") ?? await getAlpacaCredentials("live");
+  if (!credentials) return [];
+  const headers = { "APCA-API-KEY-ID": credentials.key, "APCA-API-SECRET-KEY": credentials.secret };
+  const slot = Math.floor(now.getTime() / 900_000);
+  const actives = await providerCachedFetch("alpaca", `ALPACA_ACTIVITY:actives:${slot}`, "https://data.alpaca.markets/v1beta1/screener/stocks/most-actives?by=volume&top=100", {
+    headers, timeoutMs: 8000, maxStaleAgeDays: 0, isThrottled: value => !Array.isArray(value?.most_actives),
+  });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  const movers = await providerCachedFetch("alpaca", `ALPACA_ACTIVITY:movers:${slot}`, "https://data.alpaca.markets/v1beta1/screener/stocks/movers?top=20", {
+    headers, timeoutMs: 8000, maxStaleAgeDays: 0, isThrottled: value => !Array.isArray(value?.gainers),
+  });
+  // A response may legitimately be newer than request start. Validate against
+  // the post-fetch clock, while explicit dates keep offline replay deterministic.
+  const checkedAt = at ?? new Date();
+  const candidates = parseAlpacaActivity(actives, movers, checkedAt);
+  if (!validAlpacaActivityPayloads(actives, movers, checkedAt)) {
+    await reportIssue({ issueKey: "discovery-alpaca:us", severity: "warn", category: "data_provider",
+      title: "Alpaca activity discovery unavailable or stale",
+      detail: "Configured screening did not return fresh session-valid payloads. Other discovery lanes continue; no paid entitlement, trade or score change is inferred." });
+  } else await resolveIssue("discovery-alpaca:us");
+  return candidates;
+}
 
 export type IntradayBar = Candle & { at: string; vwap?: number };
 

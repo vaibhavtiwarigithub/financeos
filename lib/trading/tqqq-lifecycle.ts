@@ -43,7 +43,7 @@ export function planTqqqEntry(input: {
   nav: number;
   cash: number;
   leveragedSleevePositions: LeveragedSleevePosition[];
-}): { ok: false; reason: string } | { ok: true; version: string; entry: number; stop: number; target: number; maxNotional: number; signalAt: number } {
+}): { ok: false; reason: string; sizing?: import("./leveraged-sleeve-risk").LeveragedEntrySizing } | { ok: true; version: string; entry: number; stop: number; target: number; maxNotional: number; signalAt: number } {
   const p = input.policy;
   if (!p.version || ![p.maxQuoteAgeMs, p.maxSpreadBps, p.maxMonitorAgeMs, p.atrStopMultiple,
     p.maxStopPct, p.targetAtrMultiple, p.riskBudgetPct].every(v => Number.isFinite(v) && v > 0))

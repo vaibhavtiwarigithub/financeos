@@ -9,7 +9,8 @@ import { planSoxsEntry } from "@/lib/trading/soxs-lifecycle";
 
 describe("meaningful leveraged paper entry size", () => {
   it("refuses the reproduced sub-cent entry rather than spending cash dust", () => {
-    expect(leveragedPaperEntrySize(10000, 0.0005)).toEqual({ ok: false, reason: "below_minimum_entry" });
+    expect(leveragedPaperEntrySize(10000, 0.0005)).toEqual({ ok: false, reason: "below_minimum_entry",
+      sizing: { nav: 10000, availableNotional: 0.0005, minimumNotional: 50, shortfall: 49.9995 } });
   });
   it("preserves the exact 0.5%-NAV boundary without growing an order", () => {
     expect(LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION).toBe(0.005);

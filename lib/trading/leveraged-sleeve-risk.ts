@@ -10,6 +10,7 @@ export const LEVERAGED_SLEEVE_MAX_NAV_FRACTION = 0.05;
 // Paper entry policy v2: match the core constructor's 0.5%-NAV minimum
 // viable position. A ceiling is not a mandate to spend the last fraction of a cent.
 export const LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION = 0.005;
+export type LeveragedEntrySizing = { nav: number; availableNotional: number; minimumNotional: number; shortfall: number };
 
 /** Round UP so decimal serialization cannot turn an exact 2R plan into <2R. */
 export function leveragedPriceTarget(entry: number, stop: number, atr: number, multiple: number, minRewardRisk = 0): number {
@@ -18,12 +19,14 @@ export function leveragedPriceTarget(entry: number, stop: number, atr: number, m
 }
 
 export function leveragedPaperEntrySize(nav: number, availableNotional: number):
-  { ok: true; maxNotional: number } | { ok: false; reason: string } {
+  { ok: true; maxNotional: number } | { ok: false; reason: string; sizing?: LeveragedEntrySizing } {
   if (!Number.isFinite(nav) || nav <= 0 || !Number.isFinite(availableNotional))
     return { ok: false, reason: "invalid_capacity" };
-  if (availableNotional <= 0) return { ok: false, reason: "no_capacity" };
+  const sizing = { nav, availableNotional, minimumNotional: nav * LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION,
+    shortfall: Math.max(0, nav * LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION - availableNotional) };
+  if (availableNotional <= 0) return { ok: false, reason: "no_capacity", sizing };
   if (availableNotional < nav * LEVERAGED_PAPER_MIN_ENTRY_NAV_FRACTION)
-    return { ok: false, reason: "below_minimum_entry" };
+    return { ok: false, reason: "below_minimum_entry", sizing };
   return { ok: true, maxNotional: availableNotional };
 }
 export const LEVERAGED_SLEEVE_SYMBOLS = new Set(["SOXL", "TQQQ", "SQQQ", "SOXS"]);

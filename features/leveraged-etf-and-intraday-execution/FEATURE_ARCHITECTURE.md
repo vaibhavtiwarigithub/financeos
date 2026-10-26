@@ -1,5 +1,17 @@
 # Leveraged ETF Sleeve and Intraday Execution Architecture
 
+## Exact rejected funding evidence — October 26, 2026
+
+All four paper planners expose the shared sizing check's exact NAV, available
+notional, minimum notional and shortfall on capacity rejection. Their existing
+run summaries retain that breakdown alongside cash/account snapshot time,
+timestamped quote, setup evidence/policy and daily research identity. The journal
+reads these fields without reconstructing historical amounts. The 0.5%-NAV
+minimum meaningful entry and combined 5% leveraged ceiling are unchanged; a
+ceiling does not reserve cash. Funding sales, automatic transfers from invested
+positions, live protection and new earlier-entry/VIX rules are not implemented
+by this evidence repair. They require separate portfolio-level validation.
+
 ## Target and trail consistency correction — 2026-10-23
 
 All four paper entry planners use the existing upward-rounded full-risk target

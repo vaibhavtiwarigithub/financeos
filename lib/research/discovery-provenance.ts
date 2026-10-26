@@ -20,6 +20,14 @@ export function discoveryProvenanceItems(
 ): DiscoveryProvenanceItem[] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const context = raw as Record<string, unknown>;
+  if (context.kind === "alpaca_activity") return [
+    { label: "Discovery lane", value: context.lane === "gainer" ? "Liquid price gainer" : "High trading activity" },
+    { label: "Provider", value: "Alpaca SIP screener · discovery only" },
+    { label: "Data session", value: String(context.data_session ?? "Unknown") },
+    { label: "Provider calculated", value: String(context.source_as_of ?? "Unknown") },
+    { label: "Fetched", value: String(context.fetched_at ?? "Unknown") },
+    ...(finite(context.volume) == null ? [] : [{ label: "Reported shares traded", value: Number(context.volume).toLocaleString("en-US") }]),
+  ];
   if (typeof context.benchmark === "string") {
     return [
       { label: "Benchmark constituent", value: context.benchmark },

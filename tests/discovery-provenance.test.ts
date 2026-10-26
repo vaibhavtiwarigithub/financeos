@@ -28,4 +28,7 @@ describe("discovery provenance", () => {
     expect(discoveryProvenanceItems("watchlist", { relative_strength_z: 8 })).toEqual([]);
     expect(discoverySelectionReason("edge_relative_strength", false)).toContain("not added to the score");
   });
+  it("labels activity admission separately from fundamental growth and execution", () => {
+    expect(discoveryProvenanceItems("screener_momentum", { kind: "alpaca_activity", lane: "gainer", data_session: "2026-10-26", source_as_of: "2026-10-26T15:00:00Z", fetched_at: "2026-10-26T15:00:01Z", volume: 900000 })).toContainEqual({ label: "Provider", value: "Alpaca SIP screener · discovery only" });
+  });
 });

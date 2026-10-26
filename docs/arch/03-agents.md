@@ -1,5 +1,18 @@
 # Kairos — Agents
 
+## Discovery and decision horizons
+
+Research reuses fundamental, benchmark-constituent, relative-strength and retained
+candidate lanes. During US regular hours, a bounded Alpaca activity lane can add
+two candidates with source/session timestamps; it shares existing scheduling and
+budgets. It is discovery evidence, not an automatic buy. The daily narrative
+explicitly excludes structurally inapplicable dimensions and records its prompt
+version. For the four leveraged funds the journal separates this daily context,
+ten-session council outlook and latest same-day intraday paper decision. New
+sizing rejections retain exact cash/capacity/minimum/shortfall; old missing amounts
+are not inferred. See the discovery-execution-clarity architecture for scope and
+the remaining allocation/strategy validation queue.
+
 ## Data-feed recovery boundaries
 
 Crypto daily history tries independent sources until one has 51 completed UTC

@@ -210,6 +210,19 @@ export default function ResearchFunnel({ focusSymbol }: { focusSymbol?: string |
                 <span style={{ color: T.muted, fontSize: "10px", letterSpacing: ".08em", textTransform: "uppercase" }}>Admission evidence</span>
                 {s.selection.provenance.map((item: any) => <span key={item.label} style={{ color: T.textSub, fontSize: "10px", border: `1px solid ${T.blue}44`, padding: "4px 7px", borderRadius: "6px" }}>{item.label}: <b style={{ color: T.blue }}>{item.value}</b></span>)}
               </div>}
+              {["SOXL", "SOXS", "TQQQ", "SQQQ"].includes(s.symbol) && <div style={{ marginTop: "12px", padding: "12px", background: T.ink, border: `1px solid ${T.blue}44`, borderRadius: "8px", color: T.textSub, fontSize: "12px", lineHeight: 1.6 }}>
+                <div style={{ color: T.blue, fontWeight: 700 }}>Separate horizons · daily context and intraday execution</div>
+                <div>The evidence score above describes completed daily data. Council scores describe a 10-session outlook in research shadow. Neither predicts today’s percentage move.</div>
+                {s.leveraged_intraday ? <>
+                  <div style={{ marginTop: "6px" }}><b>Latest paper check:</b> {new Date(s.leveraged_intraday.at).toLocaleString("en-US", { timeZone: "America/New_York" })} ET · {titleCase(s.leveraged_intraday.outcome)} · {titleCase(s.leveraged_intraday.reason)}</div>
+                  <div style={{ color: T.muted }}>This is a separate same-day reading; it was not necessarily available when the research above was written.</div>
+                  {s.leveraged_intraday.setup?.unmet_conditions && <div>Setup conditions not met: {s.leveraged_intraday.setup.unmet_conditions.length ? s.leveraged_intraday.setup.unmet_conditions.map(titleCase).join(", ") : "none recorded"}.</div>}
+                  {s.leveraged_intraday.funding && <div style={{ marginTop: "6px" }}>
+                    Cash {formatMoney(s.leveraged_intraday.funding.cash, "USD")} · Minimum entry {formatMoney(s.leveraged_intraday.funding.minimumNotional, "USD")} · Available after planner limits {formatMoney(s.leveraged_intraday.funding.availableNotional, "USD")} · Shortfall {formatMoney(s.leveraged_intraday.funding.shortfall, "USD")}.
+                    <div style={{ color: T.muted }}>Missing amounts were not persisted; they are not reconstructed from today’s balance. The sleeve ceiling does not reserve cash or authorize selling another holding.</div>
+                  </div>}
+                </> : <div style={{ marginTop: "6px", color: T.amber }}>{data.intraday_read_failed ? "Intraday decision history could not be read." : "No same-day intraday decision was found in this view. This does not establish a buy signal or protection."}</div>}
+              </div>}
               <div style={{ marginTop: "10px", color: T.textSub, fontSize: "12px" }}><b style={{ color: T.text }}>Next:</b> {s.novice.next_step}</div>
             </button>
 

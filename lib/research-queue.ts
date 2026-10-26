@@ -8,6 +8,21 @@
 type Svc = any;
 const MAX_DEFER_ATTEMPTS = 6;
 
+/** Preserve provider order within each lane while fairly sharing a bounded reserve. */
+export function balancedDiscoveryOrder(items: Array<{ symbol: string; lane: string }>): string[] {
+  const lanes = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (seen.has(item.symbol)) continue;
+    seen.add(item.symbol);
+    const lane = lanes.get(item.lane) ?? [];
+    lane.push(item.symbol); lanes.set(item.lane, lane);
+  }
+  const out: string[] = [];
+  for (let index = 0; out.length < seen.size; index++) for (const lane of lanes.values()) if (lane[index]) out.push(lane[index]);
+  return out;
+}
+
 /**
  * A queued candidate keeps the source that DISCOVERED it.
  *

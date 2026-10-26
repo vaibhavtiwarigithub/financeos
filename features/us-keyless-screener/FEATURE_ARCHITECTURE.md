@@ -1,5 +1,23 @@
 # US Keyless Screener — Feature Architecture
 
+## Current bounded activity extension — October 26, 2026
+
+Owner approved discovery/execution reassessment and implementation. The existing
+Alpaca adapter now supplies regular-session most-actives and liquid gainers,
+using complete existing credential pairs, shared pacing/cache and strict provider
+timestamps. Both endpoints were verified HTTP 200 with the existing account;
+this does not establish consolidated quote entitlement. Premarket skips this
+lane. At most two new candidates join existing discovery scheduling, round-robin
+with fundamental, relative-strength and benchmark lanes. Existing discovery-only
+cap exemptions and wall-clock/model budgets remain. The coarse stored source is
+`screener_momentum`; `alpaca_activity` context identifies the precise lane, feed,
+volume, session and provider/fetch times in the existing provenance UI. No new
+schema, score rule, schedule or paid service. Configured stale/failed responses
+raise System Health; verified empty arrays are not provider failures. See
+`features/discovery-execution-clarity/FEATURE_ARCHITECTURE.md` for current scope.
+
+The original dated proposal below is retained as historical design context.
+
 Status: **Draft — awaiting owner approval. No code written.**
 Author: Claude · 2026-08-02
 Revision 3 — corrects rev 2's field validation and drops the FCF leg (§13).

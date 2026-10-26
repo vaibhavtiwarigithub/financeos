@@ -1,5 +1,17 @@
 # Feature: Research Journal (daily funnel report + learning evolution)
 
+## Leveraged horizon and funding clarity — October 26, 2026
+
+US date views add a bounded read of the latest same-day regular-session paper
+door decision for SOXL/SOXS/TQQQ/SQQQ. The existing card separates completed-data
+daily research, the council's ten-session shadow score and the later intraday
+setup. Later decisions are not represented as information available at research
+time. Outside-entry-window checks cannot hide the final eligible-window decision.
+Exact recorded cash, planner capacity, minimum entry and shortfall are displayed;
+old missing amounts remain unavailable rather than reconstructed. Query failures
+are distinct from absent historical evidence. India/all-date views add no join.
+This is read-only evidence from existing agent runs, with no trade or schema change.
+
 Status: BUILT (v1 shipped 2026-07-06; v2 novice-first upgrade approved 2026-07-12) · Owner: Vaibhav · Started 2026-07-06
 
 ## Motivation
