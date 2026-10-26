@@ -438,8 +438,8 @@
       "addedAt": "2026-07-11",
       "addReason": "Owner asked for live per-holding risk analytics — score, posture, and a plain-language strategy note per holding across all live accounts, recomputed daily. Built deterministic-first (engine owns score + posture) so an LLM can explain but never move a risk control or an order.",
       "status": "new",
-      "changedAt": "2026-07-21",
-      "changeReason": "hr-v3 corrects generic-cap sell advice: concentration is review-only for every account, simulated sell quantities stay internal, and asset-class sleeves are excluded from equity-sector caps. Protective exits and all no-order-path guarantees remain unchanged.",
+      "changedAt": "2026-10-25",
+      "changeReason": "hr-v3 keeps concentration review-only and excludes asset-class sleeves from equity-sector caps. Live-only admission now includes connected Webull through the existing read-only MCP capture, alongside Robinhood, Alpaca live and verified Kite; simulated books cannot substitute. Each account remains independent. No formula or order/protection permission changes.",
       "removedAt": null,
       "removeReason": null
     },

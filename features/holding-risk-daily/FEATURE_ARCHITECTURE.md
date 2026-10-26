@@ -134,7 +134,8 @@ Schema rules:
 ### Live-only account admission correction (2026-10-25)
 
 The daily collector uses Robinhood live account holdings, Alpaca **live** positions,
-and identity-verified Kite holdings for the corresponding market. It no longer calls
+identity-verified Kite holdings, and connected read-only MCP registry accounts
+(currently Webull) for the corresponding market. It no longer calls
 the mixed `fetchAllAccounts` helper, which also loads internal paper and Alpaca paper
 books. Simulated holdings cannot enter new live risk snapshots or substitute for
 an unavailable Kite account. Existing historical rows remain immutable. The shared
@@ -144,8 +145,12 @@ This is a source-scope repair, not a formula, stop, mandate or order-permission 
 Guardian's manual-fill software-stop lifecycle remains agentic Robinhood-only;
 India's separate Guardian panel checks current Kite delivery holdings against GTTs.
 Neither panel should be read as automatic protective coverage for every live broker.
-Webull is not admitted as an account source until an authoritative holdings adapter
-is connected; research-provider credentials alone do not establish live positions.
+Webull reuses `hasToken` and `captureAccounts` from the existing MCP driver, keeping
+each broker-verified account separate even when accounts hold the same symbol.
+An unconnected optional broker is not queried. Failed captures and missing account
+identities remain explicit skipped outcomes; paper holdings never replace them.
+Research-provider credentials alone do not establish live positions. This read-only
+capture does not enable the separate Webull signed-order adapter or stop lifecycle.
 
 1. Add a pure, versioned module `lib/risk/holding-risk.ts` with
    `computeHoldingRisk(holding, ctx)` →

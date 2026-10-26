@@ -37,6 +37,8 @@ import {
   type BrokerHolding,
 } from "@/lib/brokers";
 import { fetchAlpacaAccount } from "@/lib/brokers/alpaca";
+import { MCP_BROKERS } from "@/lib/brokers/mcp-registry";
+import { captureAccounts, hasToken } from "@/lib/brokers/mcp-driver";
 import { verifyKiteTradingIdentity } from "@/lib/kite";
 import { computeRiskMetrics } from "@/lib/portfolio-risk";
 import { fetchUsCandles } from "@/lib/data/candles";
@@ -380,6 +382,28 @@ export async function POST(req: NextRequest) {
       accounts.push({ account: { ...kite, accountId: identity.account }, accountId: identity.account });
     } else {
       outcomes.push({ accountId: "kite", broker: "kite", label: "Kite India", status: "skipped", reason: `identity unverified (fail-closed): ${identity.error}` });
+    }
+  }
+
+  // The connected read-only registry also owns real live books (e.g. Webull).
+  // Reuse its authoritative account capture, never its separate signed-order
+  // adapter or a simulated book, and never cross market/currency boundaries.
+  for (const cfg of Object.values(MCP_BROKERS).filter(cfg => cfg.market === market)) {
+    try {
+      if (!(await hasToken(svc, cfg))) continue; // optional, unconnected broker
+      const captured = await captureAccounts(cfg);
+      if (!captured.length) {
+        outcomes.push({ accountId: cfg.id, broker: cfg.id, label: cfg.label, status: "skipped", reason: "connected broker returned no verified accounts" });
+      }
+      for (const account of captured) {
+        if (!account.accountId || account.accountId === "unknown") {
+          outcomes.push({ accountId: cfg.id, broker: cfg.id, label: cfg.label, status: "skipped", reason: "no broker-verified account id" });
+          continue;
+        }
+        accounts.push({ account, accountId: account.accountId });
+      }
+    } catch {
+      outcomes.push({ accountId: cfg.id, broker: cfg.id, label: cfg.label, status: "skipped", reason: "connected broker account capture failed" });
     }
   }
 
