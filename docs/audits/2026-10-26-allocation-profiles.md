@@ -112,6 +112,14 @@ uses the required request argument; route/API tests are repeated and Next's
 route types regenerated before the follow-up typecheck and deployment. No
 failed deployment is counted as production-ready evidence.
 
+Live owner QA verified custom-save/reset for both markets, revision conflicts,
+market isolation, all four preset previews, reload persistence and no browser
+errors/overflow at 375/768/1440. It also exposed a public response cache header;
+owner settings reads and allocation saves now explicitly use private/no-store,
+and the allocation panel bypasses browser caching. A focused regression covers
+these headers. Both markets finish on Aggressive defaults, not temporary QA
+weights. No broker/risk controls are changed by these saves.
+
 Live policy, universal protective-order coverage, retrospective optimized mixes
 and a matched US/India total-return allocation replay are not delivered by this
 change. The US accuracy brake, missing historical EOD evidence and expired Kite

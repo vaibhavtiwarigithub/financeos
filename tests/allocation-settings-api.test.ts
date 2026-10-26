@@ -25,4 +25,12 @@ describe("owner allocation API boundary",()=>{
     expect((await PATCH(request({action:"allocation_policy",market:"us",reset:true}))).status).toBe(409);
     expect(mocks.save).toHaveBeenCalledOnce();
   });
+  it("makes settings responses private and non-cacheable",async()=>{
+    mocks.save.mockResolvedValue({status:200,policy:{revision:2}});
+    const saved=await PATCH(request({action:"allocation_policy",market:"us"}));
+    expect(saved.headers.get("Cache-Control")).toBe("private, no-store");
+    mocks.load.mockResolvedValue({ok:false,error:"unavailable"});
+    const read=await GET(new NextRequest("https://example.test/api/settings/risk-profile?section=allocation&market=us"));
+    expect(read.status).toBe(503);expect(read.headers.get("Cache-Control")).toBe("private, no-store");
+  });
 });

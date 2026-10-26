@@ -7,6 +7,7 @@ import { loadPaperAllocation, savePaperAllocation } from "@/lib/allocation/profi
 import { ALLOCATION_PROFILES, defaultAllocation, allocationMix } from "@/lib/allocation/profiles";
 
 export const dynamic = "force-dynamic";
+const PRIVATE_SETTINGS_HEADERS = { "Cache-Control": "private, no-store" };
 
 const VALID_TRADING_MODES = ["disabled", "manual", "auto"] as const;
 const VALID_PROFILES = ["conservative", "balanced", "aggressive"] as const;
@@ -25,7 +26,7 @@ export async function PATCH(req: NextRequest) {
     const allowed = new Set(["action","market","profile","enabled","expectedRevision","targets","leveragedMaxPct","reset"]);
     if (Object.keys(body).some(key=>!allowed.has(key))) return NextResponse.json({error:"Allocation saves cannot include other trading settings"},{status:400});
     const result = await savePaperAllocation(createServiceClient(),body);
-    return NextResponse.json(result,{status:result.status});
+    return NextResponse.json(result,{status:result.status,headers:PRIVATE_SETTINGS_HEADERS});
   }
   const { risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_mode, broker, max_positions_per_sector, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_days, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr,
     max_daily_notional_usd, max_daily_notional_inr, max_daily_trades,
@@ -246,9 +247,9 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   if (req?.nextUrl.searchParams.get("section") === "allocation") {
     const market=req.nextUrl.searchParams.get("market");
-    if(market!=="us" && market!=="india") return NextResponse.json({error:"Market must be US or India"},{status:400});
+    if(market!=="us" && market!=="india") return NextResponse.json({error:"Market must be US or India"},{status:400,headers:PRIVATE_SETTINGS_HEADERS});
     const loaded=await loadPaperAllocation(svc,market);
-    if(!loaded.ok) return NextResponse.json({error:loaded.error},{status:503});
+    if(!loaded.ok) return NextResponse.json({error:loaded.error},{status:503,headers:PRIVATE_SETTINGS_HEADERS});
     const [pool,book]=await Promise.all([
       svc.from("paper_portfolio").select("cash_balance,updated_at").eq("market",market).maybeSingle(),
       svc.from("paper_positions").select("symbol,qty,current_price,avg_cost").eq("market",market),
@@ -258,7 +259,7 @@ export async function GET(req: NextRequest) {
     const nav=cash+positions.reduce((sum:number,p:any)=>sum+p.marketValue,0);
     return NextResponse.json({policy:loaded.policy,defaults:Object.fromEntries(ALLOCATION_PROFILES.map(profile=>[profile,defaultAllocation(market,profile)])),
       snapshot:pool.error || book.error || !pool.data ? null : {nav,cash,asOf:pool.data.updated_at,...allocationMix(loaded.policy,nav,cash,positions)},
-      snapshotError:pool.error || book.error || !pool.data ? "Paper book could not be verified" : null});
+      snapshotError:pool.error || book.error || !pool.data ? "Paper book could not be verified" : null},{headers:PRIVATE_SETTINGS_HEADERS});
   }
   const fullSelect = "risk_profile, trading_style, target_hold_days, score_threshold, position_size_pct, stop_loss_pct, target_pct, trading_enabled, trading_mode, broker, ks_daily_loss_pct, ks_drawdown_pct, ks_accuracy_pct, exit_hysteresis, posture, posture_expires_at, base_risk_profile, active_broker_us, active_broker_india, trading_enabled_us, trading_enabled_india, active_account_us, active_account_india, live_account_source, robinhood_mcp_enabled, max_order_notional, max_order_notional_usd, max_order_notional_inr, max_daily_notional_usd, max_daily_notional_inr, max_daily_trades, max_order_notional_usd_paper, max_order_notional_inr_paper, max_daily_notional_usd_paper, max_daily_notional_inr_paper, etf_allocation_cap_pct";
   let { data, error } = await svc
@@ -272,6 +273,6 @@ export async function GET(req: NextRequest) {
     data = fallback.data as any;
     error = fallback.error;
   }
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? {});
+  if (error) return NextResponse.json({ error: error.message }, { status: 500,headers:PRIVATE_SETTINGS_HEADERS });
+  return NextResponse.json(data ?? {},{headers:PRIVATE_SETTINGS_HEADERS});
 }

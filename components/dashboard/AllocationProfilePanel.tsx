@@ -8,7 +8,7 @@ export default function AllocationProfilePanel(){
   const currentMarket=useRef(market);currentMarket.current=market;
   const [draft,setDraft]=useState<AllocationPolicy|null>(null),[snapshot,setSnapshot]=useState<any>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[revision,setRevision]=useState(0);
   useEffect(()=>{let active=true;setDraft(null);setSnapshot(null);setMessage("");
-    fetch(`/api/settings/risk-profile?section=allocation&market=${market}`).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error??"Load failed");return d;})
+    fetch(`/api/settings/risk-profile?section=allocation&market=${market}`,{cache:"no-store"}).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error??"Load failed");return d;})
       .then(d=>{if(active){setDraft(d.policy);setRevision(d.policy.revision);setSnapshot(d.snapshot);if(d.snapshotError)setMessage(d.snapshotError);}})
       .catch(e=>{if(active)setMessage(e.message);});return()=>{active=false;};},[market]);
   async function save(reset=false){if(!draft)return;setBusy(true);setMessage("");try{
