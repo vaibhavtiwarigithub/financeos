@@ -7,6 +7,7 @@ import { isIndia } from "@/lib/india-data";
 import { completeDeferred, enqueueDeferred, readDeferredCandidates } from "@/lib/research-queue";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { resolvePrewarmScope, PREWARM_RECENT_DECISION_DAYS } from "@/lib/data/prewarm-scope";
+import { formatPrewarmFailureSymbols } from "@/lib/monitoring/prewarm-health";
 import { RISK_PROFILES } from "@/lib/risk-profiles";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { emitAlert } from "@/lib/alerts/emit";
@@ -799,11 +800,17 @@ export async function POST(req: NextRequest) {
   const PREWARM_RESPONSE_RESERVE_MS = 5_000;
   const prewarmDeadline = routeStartedAt + (maxDuration * 1000) - PREWARM_RESPONSE_RESERVE_MS;
 
-  let prewarm = { ok: 0, failed: 0, skipped: prewarmSymbols.length, alreadyFresh: 0 };
+  let prewarm: Awaited<ReturnType<typeof prewarmPriceCache>> = {
+    ok: 0, failed: 0, skipped: prewarmSymbols.length, alreadyFresh: 0,
+    failedSymbols: [], skippedSymbols: [],
+  };
   try {
     prewarm = await prewarmPriceCache(prewarmSymbols, supabase, { market: prewarmMarket, deadlineAt: prewarmDeadline });
   } catch (e: any) {
-    prewarm = { ok: 0, failed: prewarmSymbols.length, skipped: 0, alreadyFresh: 0 };
+    prewarm = {
+      ok: 0, failed: prewarmSymbols.length, skipped: 0, alreadyFresh: 0,
+      failedSymbols: [], skippedSymbols: [],
+    };
     console.error(`[research:${runTag}] price_cache prewarm threw:`, e?.message ?? e);
   }
 
@@ -821,10 +828,11 @@ export async function POST(req: NextRequest) {
       detail:
         `${prewarm.ok - prewarm.alreadyFresh} fetched, ${prewarm.alreadyFresh} already fresh, ` +
         `${prewarm.failed} failed, ${prewarm.skipped} skipped for time ` +
-        `(deadline ${new Date(prewarmDeadline).toISOString()}). Symbols left unrefreshed keep serving their ` +
+        `(deadline ${new Date(prewarmDeadline).toISOString()}). ` +
+        `${formatPrewarmFailureSymbols(prewarm)} Symbols left unrefreshed keep serving their ` +
         `previous close, and a stale close is what W1's quote gate now REFUSES to fill against — so entries ` +
-        `for those names will be declined rather than mispriced. Investigate provider budgets or raise the ` +
-        `research budget if skipped is persistently high.`,
+        `for those names will be declined rather than mispriced. Failed provider symbols need source investigation; ` +
+        `deferred symbols are retried on the next bounded refresh.`,
       autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
     }, supabase);
   } else {

@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { prewarmPriceCache } from "@/lib/chart-data";
 import { resolvePrewarmScope, PREWARM_RECENT_DECISION_DAYS } from "@/lib/data/prewarm-scope";
+import { formatPrewarmFailureSymbols } from "@/lib/monitoring/prewarm-health";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -153,18 +154,12 @@ export async function POST(req: NextRequest) {
   // bars that drive marks, stops and targets.
   const issueKey = `price-prewarm-incomplete:${market}`;
   if (result.skipped > 0 || result.failed > 0) {
-    const symbolsNeedingRefresh = [
-      ...(result.failedSymbols ?? []).map((symbol) => `failed:${symbol}`),
-      ...(result.skippedSymbols ?? []).map((symbol) => `deferred:${symbol}`),
-    ];
-    const failureSample = symbolsNeedingRefresh.slice(0, 12);
-    const omitted = symbolsNeedingRefresh.length - failureSample.length;
     await reportIssue({
       issueKey,
       severity: "warn",
       category: "data",
       title: `Post-close price prewarm incomplete (${market.toUpperCase()}) — ${result.skipped + result.failed}/${symbols.length} not refreshed`,
-      detail: `${result.ok} fetched/current, ${result.alreadyFresh} already fresh, ${result.failed} failed, ${result.skipped} skipped for time. Unrefreshed symbols: ${failureSample.join(", ") || "identity unavailable"}${omitted > 0 ? `; ${omitted} more omitted` : ""}. A failed open-position mark can affect monitoring, so position symbols remain first in the bounded scope.`,
+      detail: `${result.ok} fetched/current, ${result.alreadyFresh} already fresh, ${result.failed} failed, ${result.skipped} skipped for time. ${formatPrewarmFailureSymbols(result)} A failed open-position mark can affect monitoring, so position symbols remain first in the bounded scope.`,
       autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
     }, svc).catch(() => {});
   } else {
