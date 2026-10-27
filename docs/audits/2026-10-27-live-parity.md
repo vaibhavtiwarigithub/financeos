@@ -51,3 +51,17 @@ fresh closure veto, observation-bounded memory expiry, arrival during fetch,
 local closures, and owner-only runtime metadata/unknown reads/no account leakage.
 Release and natural scheduled outcomes are recorded in WORK_LOG. Do not manually
 invoke a trading-capable cron or broker order to test this repair.
+
+Release proof: runtime `954f495c983ae9723f91bf2ae15f1eb9d16c7cbb` matched
+remote main; production deployment `dpl_DcFK8xpkzZ8z1CdtdxaqaktSvq6h` is READY.
+Full suite:4,537 passed/eight skipped/zero failed; TypeScript and secret scan pass.
+Actual owner API200/private-no-store and UI verify deployment flag on, owner
+switch off, permitted account selected, scan metadata available with Sept16
+completion, and zero plans. No overflow at375/768/1440 or page errors. Browser-only
+unknown and switches-on-with-checks fixtures passed and were removed; no real
+configuration or plans changed. India coverage still503 (Kite unavailable).
+
+Collector recovery is not yet proven: the release followed the11:30Chicago
+dispatch. Inspect the next natural15-minute scan for advanced timestamps or a
+precise connectivity error; keep the pending verification in WORK_LOG. No
+trading-capable cron was manually invoked.
