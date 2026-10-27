@@ -43,6 +43,7 @@ export type PositionActivityRow = {
   exit_at?: string | null;
   closed_at?: string | null;
   partial_exit_lot?: boolean | null;
+  tainted?: boolean | null;
 };
 
 export type PositionActivityEvent = {
@@ -52,13 +53,24 @@ export type PositionActivityEvent = {
   fillPrice: number;
   notional: number;
   quantityAfter: number;
+  /** Gross lot P/L on sales; buys do not realize a profit or loss. */
+  realizedPnl?: number | null;
   reason: string | null;
+};
+
+export type PositionPlanPoint = {
+  at: string;
+  stopLoss: number | null;
+  target: number | null;
+  source: "recorded_change" | "current_snapshot";
 };
 
 export type PositionActivitySeries = {
   events: PositionActivityEvent[];
   status: "ready" | "unavailable" | "reconciliation_mismatch";
   reconstructedQty: number | null;
+  planPoints?: PositionPlanPoint[];
+  planHistoryStatus?: "recorded" | "not_recorded" | "unavailable" | "truncated";
 };
 
 const PROVENANCE = new Set(["live_quote", "carry_forward", "entry_cost"]);
@@ -121,11 +133,12 @@ export function buildPositionActivitySeries(args: {
     if (exitAt) {
       const exitQty = positive(row.qty);
       const exitPrice = positive(row.exit_price);
-      if (!exitQty || !exitPrice || !row.exit_reason || !Number.isFinite(Date.parse(exitAt))) {
+      if (!exitQty || !exitPrice || !row.exit_reason || !Number.isFinite(Date.parse(exitAt))
+        || Date.parse(exitAt) < Date.parse(row.executed_at)) {
         return { events: [], status: "unavailable", reconstructedQty: null };
       }
       sales.push({ at: exitAt, side: "sell", quantity: exitQty, fillPrice: exitPrice,
-        notional: exitQty * exitPrice, quantityAfter: 0, reason: row.exit_reason });
+        notional: exitQty * exitPrice, quantityAfter: 0, realizedPnl: row.tainted ? null : exitQty * (exitPrice - fillPrice), reason: row.exit_reason });
     }
   }
 
@@ -140,7 +153,7 @@ export function buildPositionActivitySeries(args: {
     const quantity = group.reduce((sum, row) => sum + (positive(row.qty) ?? 0), 0);
     const fillPrice = prices[0]!;
     buys.push({ at: first.executed_at, side: "buy", quantity, fillPrice,
-      notional: quantity * fillPrice, quantityAfter: 0, reason: group.some(row => row.partial_exit_lot) ? "entry (partial-exit lineage reconciled)" : "entry/add" });
+      notional: quantity * fillPrice, quantityAfter: 0, realizedPnl: null, reason: group.some(row => row.partial_exit_lot) ? "entry (partial-exit lineage reconciled)" : "entry/add" });
   }
 
   const events = [...buys, ...sales].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)

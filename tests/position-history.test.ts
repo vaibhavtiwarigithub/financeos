@@ -77,6 +77,36 @@ describe("position activity ladder", () => {
       ["buy", 4, 4], ["sell", 1, 3], ["buy", 4, 7],
     ]);
     expect(result.events[1].notional).toBe(110);
+    expect(result.events[1].realizedPnl).toBe(10);
+    expect(result.events[0].realizedPnl).toBeNull();
+    expect(result.events[2].realizedPnl).toBeNull();
+  });
+
+  it("uses the sold lot's original cost for fractional losses, not the add-on price", () => {
+    const result = buildPositionActivitySeries({
+      positionId, symbol: "NVDA", market: "us", positionRole: "alpha",
+      openedAt: "2026-10-01T14:59:00.000Z", currentQty: 4.5,
+      rows: [activityRow({ id: "sale", qty: 0.5, exit_price: 90, exit_reason: "partial_exit", exit_at: "2026-10-02T16:00:00Z" }),
+        activityRow({ id: "residual", qty: 1.5, partial_exit_lot: true }),
+        activityRow({ id: "add", qty: 3, fill_price: 120, executed_at: "2026-10-03T15:00:00Z", paper_event_id: 104, signal_id: "other" })],
+    });
+    expect(result.status).toBe("ready");
+    expect(result.events.filter(e => e.side === "sell").map(e => e.realizedPnl)).toEqual([-5]);
+  });
+
+  it("refuses a sale timestamp before its lot was bought", () => {
+    const result = buildPositionActivitySeries({ positionId, symbol: "NVDA", market: "us", positionRole: "alpha",
+      openedAt: "2026-10-01T14:59:00Z", currentQty: 3,
+      rows: [activityRow({ qty: 1, exit_price: 110, exit_reason: "partial", exit_at: "2026-10-01T14:59:59Z" }), activityRow({ qty: 3, id: "residual", partial_exit_lot: true })] });
+    expect(result.status).toBe("unavailable");
+  });
+
+  it("does not turn tainted lot prices into a realized-profit claim", () => {
+    const result = buildPositionActivitySeries({ positionId, symbol: "NVDA", market: "us", positionRole: "alpha",
+      openedAt: "2026-10-01T14:59:00Z", currentQty: 3,
+      rows: [activityRow({ qty: 1, tainted: true, exit_price: 110, exit_reason: "partial", exit_at: "2026-10-02T16:00:00Z" }), activityRow({ qty: 3, id: "residual", partial_exit_lot: true })] });
+    expect(result.status).toBe("ready");
+    expect(result.events.find(e => e.side === "sell")?.realizedPnl).toBeNull();
   });
 
   it("refuses to show a plausible chart when the reconstructed lots do not match the held quantity", () => {

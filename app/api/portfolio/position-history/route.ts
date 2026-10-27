@@ -30,12 +30,12 @@ export async function GET(req: NextRequest) {
 
   const sb = createServiceClient();
   const { data: positions, error: positionError } = await sb.from("paper_positions")
-    .select("id, symbol, qty, opened_at, position_role")
+    .select("id, symbol, qty, opened_at, position_role, stop_loss, price_target")
     .eq("market", market)
     .in("id", requestedIds);
   if (positionError) return privateJson({ error: "Position history unavailable" }, 503);
 
-  const activePositions = (positions ?? []) as Array<{ id: string; symbol: string; qty: number | string; opened_at: string | null; position_role: string | null }>;
+  const activePositions = (positions ?? []) as Array<{ id: string; symbol: string; qty: number | string; opened_at: string | null; position_role: string | null; stop_loss: number | string | null; price_target: number | string | null }>;
   const verifiedIds = activePositions.map(p => p.id);
   const emptySeries = Object.fromEntries(activePositions.map(p => [p.id, {
     symbol: p.symbol, points: [], asOf: null, status: "unavailable" as const,
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   if (oldestOpenedAt && symbols.length) {
     for (let offset = 0; offset < MAX_ACTIVITY_ROWS; offset += PAGE_SIZE) {
       let query = sb.from("paper_trades")
-        .select("id,market,symbol,order_side,qty,fill_price,executed_at,signal_id,paper_event_id,position_role,exit_price,exit_reason,exit_at,closed_at,partial_exit_lot")
+        .select("id,market,symbol,order_side,qty,fill_price,executed_at,signal_id,paper_event_id,position_role,exit_price,exit_reason,exit_at,closed_at,partial_exit_lot,tainted")
         .eq("market", market).in("symbol", symbols).gte("executed_at", oldestOpenedAt)
         .order("executed_at", { ascending: true }).order("id", { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
@@ -104,6 +104,11 @@ export async function GET(req: NextRequest) {
       positionId: p.id, symbol: p.symbol, market, positionRole: p.position_role,
       openedAt: p.opened_at, currentQty: Number(p.qty), rows: trades,
     });
+    // Reading today's plan is an observation, not evidence of when it changed.
+    // Never extend these levels backwards over the position's lifetime.
+    const level = (n: unknown) => n != null && Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null;
+    value.planPoints = [{ at: new Date().toISOString(), stopLoss: level(p.stop_loss), target: level(p.price_target), source: "current_snapshot" }];
+    value.planHistoryStatus = "not_recorded";
     if ((activityTruncated || activityUnavailable) && value.status === "ready") return [p.id, { ...value, events: [], status: "unavailable" as const }];
     return [p.id, value];
   }));

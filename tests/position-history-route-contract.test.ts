@@ -17,7 +17,7 @@ describe("position history endpoint contract", () => {
 
   it("requires market scope and verifies open positions before reading marks", () => {
     expect(source).toContain('.eq("market", market)');
-    expect(source).toContain('.select("id, symbol, qty, opened_at, position_role")');
+    expect(source).toContain('.select("id, symbol, qty, opened_at, position_role, stop_loss, price_target")');
     expect(source).not.toContain("created_at");
     expect(source.indexOf('from("paper_positions")')).toBeLessThan(source.indexOf('from("paper_position_marks")'));
     expect(source).toContain('.in("position_id", verifiedIds)');

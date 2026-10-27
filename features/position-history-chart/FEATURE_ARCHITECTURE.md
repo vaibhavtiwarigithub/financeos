@@ -99,3 +99,15 @@ The broad-market sequence is therefore:
 5. Existing position P&L and exit plan remain unchanged.
 6. No database migration, provider call, portfolio policy change, order, or paper/live flag change.
 7. Activity chart either reconciles event-derived ending shares exactly to the open position or visibly refuses; split residuals are not counted as new buys.
+
+## October 27 extension: exit levels and realized sale P/L
+
+Owner requested stop/target changes and profit/loss at each trade point in the existing ladder. Reuse the bounded position-history endpoint and existing lot reconciliation. Each sale carries `realizedPnl = sold quantity × (exit price − original lot fill price)`; buys carry null, not zero realized profit. This is gross lot P/L, before fees/taxes, not total-return attribution. Tainted lots have unknown P/L. Reject exit timestamps preceding entry.
+
+The same SVG has two aligned time lanes: shares above, per-share fill/stop/target prices below. Sale amounts appear at event markers and every event has a keyboard-readable description plus expandable chronological details. Currency follows the market, including fractional quantities/sub-cent values.
+
+**Existing evidence limitation:** neither paper marks nor order events retained every stop/target update. Current `paper_positions.stop_loss/price_target` is only a present observation. It must never be plotted backwards from entry or assigned `updated_at` as its change date. The endpoint supplies one current snapshot; the UI explicitly says earlier changes were not recorded. A null target is not a zero-price target.
+
+**Proposed capture, pending explicit schema approval:** a small service-only append-only `paper_position_plan_events` table with position ID, market, symbol, position epoch, event time/ID, old/new stop and target, and event kind. An AFTER INSERT/UPDATE trigger captures actual final values atomically, only on real level/epoch changes, across both markets and all roles/SQL fill and partial-exit paths. RLS, revoked direct public writes, fixed search_path, and update/delete/truncate protection are required. Seed only a labeled current observation, never historical changes. Query by verified open IDs + market + epoch with bounded pagination. Reject/label read failure and truncation. Prove trigger behavior with isolated synthetic records, never test production financial changes. No trading-rule edits or broker calls.
+
+Until that schema is explicitly approved and verified, prospective history collection remains pending; the chart must not claim it is collecting full change history.

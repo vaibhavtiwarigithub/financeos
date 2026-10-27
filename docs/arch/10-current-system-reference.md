@@ -169,6 +169,14 @@ activity path intentionally remain separate so buys/sells are not confused with
 price movement. Daily marks are stale/provenance-labelled. Neither line claims
 split-adjusted total return or intraday price history.
 
+The execution ladder also shows gross lot-realized P/L at sale events (quantity
+times exit-minus-original-fill price; buys do not realize P/L, tainted lots remain
+unknown). Its lower, time-aligned price lane shows fill prices and current
+stop/target observations. Current exit levels are never backdated: historical
+stop/target changes were not retained. Full prospective change capture requires
+the separately proposed append-only event-table migration. Expandable details
+make trade amounts and exit levels accessible without hover.
+
 The historical sizing replay is an offline diagnostic. It compares fixed equal
 allocation with stop-risk allocation under finite cash, caps, costs, partial exits
 and supplied marks. It does not alter production sizing or claim a globally optimal
