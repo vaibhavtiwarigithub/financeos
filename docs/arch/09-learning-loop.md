@@ -1427,3 +1427,26 @@ stage is specified in
 market-local non-overlapping analog episodes, matured 5/10/20-session
 benchmark-excess outcomes, and an explicit insufficient state. Nothing in that
 design is currently connected to scoring or trading.
+
+### Macro-to-forward-outcome diagnostic (2026-10-27)
+
+`GET /api/learning/macro-performance?market=us|india` and the Learning-page
+Macro context panel now pair existing research decisions with matured
+benchmark-neutral outcome labels at h2/h5/h10/h20. US cells compare the
+decision-time `macro_score` and deterministic composite to future outcomes;
+India cells compare first-seen factor changes with family-aggregated outcomes.
+Every result includes the exact formula version, instrument family, horizon,
+matched dates, symbol rows, and horizon-spaced date-window count. Same-day
+symbols are aggregated before correlation, so a shared macro observation is
+not counted once per symbol. The India join requires both `obs_date` and
+`fetched_at` to be no later than the decision; a later backfill cannot leak into
+an earlier decision.
+
+The endpoint is owner-only and read-only. It does not fetch providers, write
+data, alter the composite, add India macro to scoring, or affect the LLM prompt
+or any trade path. Its Spearman value is descriptive time-series association,
+not cross-sectional stock IC. Horizon-spaced windows are not called an
+effective sample size or independent macro episodes; inferential t-stats and
+promotion statuses are deliberately withheld. Sparse or missing evidence is
+shown as insufficient. See
+`features/macro-regime-analogs/FEATURE_ARCHITECTURE.md` for the full contract.

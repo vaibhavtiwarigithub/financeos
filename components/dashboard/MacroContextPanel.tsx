@@ -34,6 +34,16 @@ type Payload = {
   indiaExposures: Exposure[];
 };
 
+type MacroEvidenceCell = {
+  market: Mkt; instrumentFamily: string; series: string; formulaVersion: string; horizonSessions: number;
+  matchedDates: number; horizonSpacedWindows: number; symbolRows: number;
+  coveragePct: number; spearmanIc: number | null; state: "insufficient" | "descriptive";
+};
+type MacroPerformance = {
+  market: Mkt; evaluatedAt: string; rowsRead: number; cells: MacroEvidenceCell[];
+  interpretation: string; limitations: string[];
+};
+
 const FACTORS = [
   ["market", "NIFTY 50"],
   ["usdinr", "USD/INR"],
@@ -61,6 +71,9 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [performance, setPerformance] = useState<MacroPerformance | null>(null);
+  const [performanceError, setPerformanceError] = useState<string | null>(null);
+  const [horizon, setHorizon] = useState(5);
 
   useEffect(() => {
     let active = true;
@@ -77,11 +90,27 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
     return () => { active = false; };
   }, [market]);
 
+  useEffect(() => {
+    let active = true;
+    setPerformance(null);
+    setPerformanceError(null);
+    fetch(`/api/learning/macro-performance?market=${market}`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.error ?? `Request failed (${response.status})`);
+        return body as MacroPerformance;
+      })
+      .then((data) => { if (active) setPerformance(data); })
+      .catch((cause) => { if (active) setPerformanceError(cause instanceof Error ? cause.message : "Macro outcome evidence could not be loaded."); });
+    return () => { active = false; };
+  }, [market]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toUpperCase();
     const rows = (payload?.indiaExposures ?? []).filter((row) => !needle || row.symbol.includes(needle));
     return showAll ? rows : rows.slice(0, 18);
   }, [payload, query, showAll]);
+  const performanceCells = useMemo(() => (performance?.cells ?? []).filter((cell) => cell.horizonSessions === horizon), [performance, horizon]);
 
   return (
     <div style={{ marginBottom: 24, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18, background: "linear-gradient(130deg, rgba(129,140,248,.07), rgba(26,29,39,.96) 38%)" }}>
@@ -160,6 +189,49 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
           <strong style={{ color: T.sub }}>Historical analog status:</strong> {payload.historicalAnalog.reason} {payload.market === "us" ? `The append-only market-local regime ledger has ${payload.historicalAnalog.regimeRunCount} US run(s).` : `The append-only market-local regime ledger has ${payload.historicalAnalog.regimeRunCount} India run(s).`}
         </div>
       </>}
+
+      <section aria-label="Macro forward outcome evidence" style={{ marginTop: 18, borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ color: T.text, fontSize: 14, fontWeight: 650 }}>Macro context vs. realized forward moves</div>
+            <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>Matured, benchmark-neutral research outcomes; one aggregate per date and instrument family.</div>
+          </div>
+          <label style={{ color: T.sub, fontSize: 11, display: "flex", gap: 7, alignItems: "center" }}>
+            Horizon
+            <select aria-label="Macro evidence horizon" value={horizon} onChange={(event) => setHorizon(Number(event.target.value))} style={{ background: "#11131A", color: T.text, border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 8px" }}>
+              {[2, 5, 10, 20].map((days) => <option key={days} value={days}>{days} sessions</option>)}
+            </select>
+          </label>
+        </div>
+        {performanceError && <div role="status" style={{ color: T.red, fontSize: 12, padding: "12px 0" }}>Outcome evidence unavailable: {performanceError}</div>}
+        {!performanceError && !performance && <div style={{ color: T.muted, fontSize: 12, padding: "12px 0" }}>Loading matured outcome evidence…</div>}
+        {performance && <>
+          <div style={{ color: T.sub, fontSize: 12, lineHeight: 1.55, margin: "10px 0 12px" }}>{performance.interpretation}</div>
+          {performanceCells.length ? <div style={{ overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+            <table style={{ borderCollapse: "collapse", minWidth: 680, width: "100%", fontSize: 11 }}>
+              <thead><tr style={{ color: T.muted, textAlign: "left", background: "rgba(0,0,0,.12)" }}>
+                {["Instrument family", "Macro / score series", "Formula version", "Dates", "Horizon-spaced windows", "Symbol rows", "Spearman IC", "Evidence"].map((label) => <th key={label} style={{ padding: "9px 10px", borderBottom: `1px solid ${T.border}`, fontWeight: 550, whiteSpace: "nowrap" }}>{label}</th>)}
+              </tr></thead>
+              <tbody>{performanceCells.map((cell) => <tr key={`${cell.instrumentFamily}-${cell.series}-${cell.formulaVersion}`} style={{ color: T.text }}>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.instrumentFamily.replaceAll("_", " ")}</td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}` }}>{cell.series}</td>
+                <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.formulaVersion}</td>
+                <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}` }}>{cell.matchedDates}</td>
+                <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}` }}>{cell.horizonSpacedWindows}</td>
+                <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}` }}>{cell.symbolRows}</td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, color: cell.spearmanIc == null ? T.muted : cell.spearmanIc >= 0 ? T.green : T.red }}>{fmt(cell.spearmanIc, 3)}</td>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, color: cell.state === "descriptive" ? T.amber : T.muted }}>{cell.state}</td>
+              </tr>)}</tbody>
+            </table>
+          </div> : <div style={{ color: T.muted, fontSize: 12, padding: 12, border: `1px dashed ${T.border}`, borderRadius: 8 }}>No matched macro/label rows at this horizon yet. This is insufficient evidence, not a zero or a pass.</div>}
+          <div style={{ color: T.muted, fontSize: 11, lineHeight: 1.5, marginTop: 10 }}>
+            <strong style={{ color: T.sub }}>Read this carefully:</strong> IC here is a descriptive time-series association, not cross-sectional stock-ranking IC. Horizon-spaced windows are not an effective sample size or independent episodes. No t-stat or promotion verdict is claimed. {performance.market === "india" ? "India macro remains out of the composite; factors are joined using their first-seen collection time." : "US macro is a shared score term; this cannot rank one US symbol above another on the same day."}
+          </div>
+          <div style={{ color: T.muted, fontSize: 11, lineHeight: 1.5, marginTop: 7 }}>
+            <strong style={{ color: T.sub }}>Council coverage:</strong> each model receives the frozen deterministic dimension scores and available feature evidence, including US macro where present. It returns one overall score; there is no separate council macro score, so the app cannot claim a model relied on macro from its final score alone.
+          </div>
+        </>}
+      </section>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 # Macro Context, Historical Analogs, and Symbol Sensitivity
 
-> Status: **P0 visibility + append-only US regime-state capture implemented; first exploratory India ETF proxy check completed; historical-analogue model remains not built and is not evidence-ready.**
+> Status: **P0 visibility + append-only US regime-state capture implemented; P1A read-only, label-mature macro outcome diagnostic approved and implemented 2026-10-27; historical-analogue forecasting remains unbuilt and is not evidence-ready.**
 > Owner direction: 2026-10-16. All work in this feature is measure-only.
 
 ## Decision record
@@ -40,6 +40,78 @@ bulk backfill the 17 legacy weekly snapshots or treat them as a clean
 point-in-time series.
 
 The panel does not infer or display a symbol-level expected return from beta × today's move. It does not call an LLM, fetch new provider data, write rows, or influence scoring, eligibility, sizing, rotation, exits, or execution.
+
+## P1A implemented: market-local macro outcome diagnostic (measure-only)
+
+The former P1 proposal is split so the application can answer the currently
+supportable question without pretending the full historical-analogue model is
+ready. `GET /api/learning/macro-performance?market=us|india` and the Learning
+page's Macro context panel consume existing first-seen inputs, frozen research
+observations, and matured `observation_labels`. This is an on-demand read: no
+new table, cron, provider call, inference, or database write.
+
+### Market-specific estimands
+
+- **US:** The stored `macro_score` and stored `analyst_score` are evaluated as
+  time-series predictors of next 2/5/10/20-session benchmark-neutral returns.
+  Decisions are collapsed to one median score and one median return per
+  market-local date (and instrument family where available); symbols on the
+  same day are not counted as independent macro observations. The endpoint
+  also reports macro's existing threshold-attribution cohorts from the frozen
+  score ledger. This is research-cohort attribution, not a portfolio replay or
+  causal estimate. A common macro scalar has no cross-sectional Rank IC.
+- **India:** Macro is still structurally **not enabled in the composite**.
+  The endpoint evaluates each existing India factor separately against matured
+  forward benchmark-neutral returns by instrument family. A factor observation
+  is usable only when both `obs_date <= decision date` and its first-seen
+  `fetched_at <= decision timestamp`; historical rows fetched later are never
+  backdated into the feature set. The output is a time-series association of
+  one shared daily factor state with per-date family-average outcomes, not a
+  per-symbol causal exposure or an India macro score.
+- **All instrument families:** Fundamental availability/applicability stays
+  governed by `dimensionApplicability` and instrument taxonomy. Macro is a
+  market/factor context, not an issuer fundamental. ETF, commodity, leveraged,
+  and operating-company outcomes are reported separately only when the
+  immutable research cohort and taxonomy permit; leveraged results remain
+  daily-return evidence and do not validate intraday stops or holding rules.
+- **LLM council:** Its frozen input packet already contains the deterministic
+  dimension scores and stored feature evidence, including a `macro` score field.
+  The council output is a single 0–100 relative-attractiveness forecast; it
+  does not emit a separate macro forecast or prove that it used any specific
+  dimension. The council’s existing per-model and composite label evaluation
+  remains the way to assess that forecast. This implementation neither changes
+  the council prompt nor adds inference.
+
+### Evidence contract
+
+- Uses only completed `observation_labels` with non-null
+  `benchmark_neutral_return`, matched to their immutable decision timestamp.
+- Reports per-market, per-family, per-factor/score-series and horizon: matched
+  dates, symbol rows, missing factor/label coverage, Spearman rank correlation,
+  and horizon-spaced non-overlapping date-window count. Window count is not an
+  effective sample size and dates/windows are not asserted to be independent
+  macro episodes.
+- Inferential t-statistics and “validated” status are withheld. No promotion
+  threshold is crossed by this diagnostic; sparse macro episode history and
+  repeated regimes remain explicit limitations.
+- Empty or immature cohorts are `insufficient`, not a zero score, failed
+  collector, or neutral/pass result. Query failures remain visible errors.
+- India beta estimates remain historical co-movement only. They are shown in
+  P0 context but are not multiplied by current shocks to manufacture a return
+  forecast. US historical analog status remains separate from the legacy
+  `macro_regime` consumer.
+
+### Non-goals and promotion boundary
+
+This stage does not add macro to India's composite, change US macro's current
+score contribution, tune thresholds/weights, change instrument-family
+applicability, affect council prompts or scores, or alter any portfolio or
+trading behavior. The existing US MacroSentinel score and India macro shadow
+remain independent. Any future regime/sector interaction, policy sizing, or
+money-path use needs its own frozen version, point-in-time data contract,
+paired portfolio replay, out-of-sample review, and separately approved
+promotion. A descriptive correlation is not evidence that changing a formula
+will improve returns.
 
 ## Correct design for a future historical-analogue shadow
 
@@ -97,7 +169,7 @@ TRI methodology is documented by
 
 Therefore P0 makes existing evidence visible but does **not** claim the requested historical-analogue capability is complete. P1 requires a reviewed point-in-time input contract and a market-local, append-only prediction/evaluation producer; do not mark it ready merely because the P0 panel exists.
 
-## Acceptance criteria for the future P1
+## Acceptance criteria for future P1B historical analog forecasting
 
 - Reproducible, versioned feature vector and input fingerprint for each market-local as-of date.
 - No data whose `available_at` exceeds the decision timestamp.
