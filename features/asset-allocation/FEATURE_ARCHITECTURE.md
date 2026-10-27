@@ -51,7 +51,11 @@ The Robinhood snapshot refresher had omitted `position_count` while replacing
 its holdings array. The existing fresh-capture upsert now stores the count from
 that same holdings array, matching registry/Alpaca writers. Failed captures
 preserve prior data. No existing snapshot is patched by hand; count-mismatched
-current charts remain withheld until a successful natural capture replaces them.
+current charts remain withheld until a successful supported capture replaces them.
+An owner-authenticated read-only Sync brokers verification after deployment
+produced seven Robinhood and one Webull consistent snapshots with zero count
+mismatches and restored the combined US current pie. No trading route or order
+was invoked; normal snapshot/performance capture retained its existing behavior.
 
 ## Owner-approved profile implementation — October 26, 2026
 

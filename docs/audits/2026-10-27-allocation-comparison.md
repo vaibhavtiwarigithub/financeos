@@ -55,9 +55,15 @@ reported/stored position counts of7/5 and16/15. Diagnosis found the deterministi
 `refreshViaMcp` upsert replaced positions_json but omitted position_count, allowing
 the older count to survive. The existing upsert now stores a.holdings.length
 with that exact capture's holdings array, matching the other broker writers.
-No old financial/snapshot rows were patched and no broker capture was manually
-invoked. A successful natural refresh must prove count/array equality before
-the aggregate pie is declared recovered. Individual complete accounts work.
+No old records were patched directly. After deployment, the supported owner
+read-only Sync brokers action was exercised once: HTTP200, Robinhood and Webull
+successful. Snapshots dated17:16:18.903Z/17:16:19.316Z contain seven Robinhood
+and one Webull accounts, all with zero count/array mismatches. The combined US
+live view now renders both donuts. The current residual remains unverified,
+not cash. No trade-placing cron, order, live switch or inference was invoked.
+Alpaca and Kite were unavailable during this refresh and are not invented into
+the live comparison. Existing normal snapshot/forward-performance writes ran
+through their supported producer, not direct financial edits.
 
 The real-route regression mocks all broker/provider interfaces, proves one
 snapshot upsert contains count2 with the same two holdings, no network calls,
@@ -66,3 +72,7 @@ focused post-correction suite passes24 tests, including existing broker-refresh
 boundaries and allocation arithmetic; TypeScript and secret checks accompany
 release. The full4,554-test chart suite preceded this one-field metadata repair.
 Kite reconnection remains an owner/source issue; no fabricated holdings or cash.
+
+Repair runtime6bf04dd7545992dfa6a581540aec4e32fbaa65dc matches remote main;
+Vercel dpl_35vokoPd6t8hiHzocbnoM8DsNj8y is READY. Refreshed aggregate US layout
+passes320/768/1440 without page overflow and the owner live switch remains OFF.
