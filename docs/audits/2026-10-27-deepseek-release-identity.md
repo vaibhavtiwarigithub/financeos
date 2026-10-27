@@ -60,3 +60,27 @@ Legacy period grouping is descriptive and explicitly unverified. Metadata
 capture can reduce sample size; it does not create predictive skill or justify
 model promotion. Raw historical observations remain available, and new immutable
 evaluation batches do not rewrite older results.
+
+## Production verification
+
+Runtime commit `f8cd4f169437777c5a9c8a13c6d8dd5dff29f90d` matched remote main
+and deployed READY as `dpl_22KbVnAyMzvUU9UCStkPwVNq3PCR`.
+The owner Settings page returned 200, showing the advertised 1017 label on all
+17 active DeepSeek flow rows while picker/request values remain `deepseek-flash`.
+The provider-source/unverified-revision notice is visible. No document overflow
+at 375/768/1440; no console errors were recorded.
+
+One existing `kairos_call_agent` invocation targeted only the data-only council
+evaluator. Its completed receipt published immutable batch
+`439b90a7-2033-4461-9a0d-730ba49d02da` at 2026-10-27 11:49:37 UTC: 416 cells,
+both markets and h2/h5/h10/h20; 320 cells have DeepSeek release-period tags.
+The available historical data populate pre/post-update unverified periods;
+there is no fabricated rollout-day or newly stamped forecast. All 416 cells
+remain insufficient and all t-statistics are null. The configuration fingerprint
+is identical before and after verification. No collector/inference was invoked.
+
+The read-only US h2 Prediction Lab returned 200 with 134 method cells, including
+64 release-labelled methods, and `shadowOnly=true`. New config provenance will
+be observed on the next naturally collected API/hybrid forecasts; no extra job
+was queued to manufacture that proof. Previous forecasts/evaluation batches,
+selected models, prompts, budgets and trading controls are preserved.
