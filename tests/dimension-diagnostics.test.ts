@@ -21,6 +21,13 @@ function observation(id: number, date: string, available = true): DiagnosticObse
 }
 
 describe("dimension diagnostics P0", () => {
+  it("does not call immature empty horizons a provider failure",()=>{
+    const empty=buildDimensionFindings([],120).filter(f=>f.findingType==="availability");
+    expect(empty).toHaveLength(5);
+    expect(empty.every(f=>f.classification==="insufficient_evidence"&&f.metrics.availability_rate===null)).toBe(true);
+    const populated=buildDimensionFindings([observation(1,"2026-08-01",false)],2);
+    expect(populated.find(f=>f.subjectKey==="technical"&&f.findingType==="availability")?.classification).toBe("data_degraded");
+  });
   it("keeps availability and predictive findings separate", () => {
     const rows = [observation(1, "2026-08-01"), observation(2, "2026-08-01")];
     const findings = buildDimensionFindings(rows, 2);

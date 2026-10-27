@@ -195,6 +195,11 @@ export async function POST(req: NextRequest) {
       if (i + BATCH_SIZE < slice.length) await new Promise((r) => setTimeout(r, BATCH_PAUSE_MS));
     }
 
+    // The consumer can run hours before this producer. A successful fresh
+    // publication recovers the exact no-fresh-rows condition immediately;
+    // an empty/failed publication must never dismiss that warning.
+    if (scored > 0) await resolveIssue("india-screen-cache:no-fresh-candidates", sb);
+
     return NextResponse.json({
       scored, skipped, total, processed: slice.length,
       universe_source: universeDegraded ? "nifty100_fallback" : "nse_equity_directory",

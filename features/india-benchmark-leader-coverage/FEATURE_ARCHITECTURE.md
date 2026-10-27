@@ -6,6 +6,12 @@
 
 ## Decision
 
+Health recovery: after a successful fresh screen-cache publication, the existing
+refresh producer resolves the exact no-fresh-candidates alert previously raised
+by research. Zero usable rows or failed upserts retain it. This prevents a
+recovered source appearing broken until the following research session; no
+freshness threshold, candidate eligibility or research/trading cadence changes.
+
 Add a bounded, rotating NIFTY-50 research-coverage lane alongside the existing broad NSE screener. Resolve current constituents from the official NSE Indices CSV (cached for up to 24 hours, accepted only when it parses as exactly 50 unique EQ symbols); if that source cannot be verified, use the repository snapshot and raise a System Health warning. Attempt all in-universe NIFTY-50 screen-cache rows on each nightly refresh, then reserve up to four of the default eight India candidate slots for the least-recently-researched constituents. Explicit manual India watchlist symbols remain first. The remaining slots continue to use deferred, curated-watchlist and broad-screen names.
 
 This adds research coverage only. It does not make an index constituent a buy, change any dimension/composite score, raise a score threshold, alter position sizing, relax liquidity/sector/name/portfolio limits, or enable/force capital rotation. PaperTrader and capital rotation continue to judge the resulting signals using their existing gates.

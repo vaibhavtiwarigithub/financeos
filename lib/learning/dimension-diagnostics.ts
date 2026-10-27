@@ -211,7 +211,8 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
       subjectType: "dimension",
       subjectKey: dimension,
       findingType: "availability",
-      classification: available.length === 0 ? "data_degraded" : "measured_descriptive",
+      classification: observations.length === 0 ? "insufficient_evidence"
+        : available.length === 0 ? "data_degraded" : "measured_descriptive",
       metrics: {
         observations: observations.length,
         available: available.length,
@@ -220,7 +221,9 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
         availability_rate: observations.length ? available.length / observations.length : null,
         invalid_or_unknown_session_provenance: observations.filter(row => !hasExecutableSession(row)).length,
       },
-      reason: available.length === 0
+      reason: observations.length === 0
+        ? "No labeled observations are available for this horizon; dimension availability is not yet measurable."
+        : available.length === 0
         ? `No labeled observations declared ${dimension} available. This is a data-quality finding, not a scoring recommendation.`
         : "Availability is measured from the immutable decision-time mask; it is not re-fetched from current providers.",
     });

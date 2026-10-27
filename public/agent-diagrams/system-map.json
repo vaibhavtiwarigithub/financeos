@@ -2147,6 +2147,13 @@
       "nodeId": "TRADER",
       "label": "Market-local paper allocation profiles and reset defaults",
       "reason": "Settings Trading saves versioned conservative, balanced, growth or aggressive bucket targets separately for US and India. Future buys/top-ups honor remaining allocation; rotation credits the source before sizing. Existing leveraged doors read a saved US sublimit under the portfolio lock, without increasing the 5% hard ceiling. Research admits at most two underweight fund candidates within existing caps. No forced sale, live activation or score formula change; presets are not proven benchmark outperformance."
+    },
+    {
+      "date": "2026-10-26",
+      "event": "change",
+      "nodeId": "RESEARCH",
+      "label": "Producer recovery and empty-horizon health truth",
+      "reason": "A successful India screen-cache publication now clears the existing no-fresh-candidates warning immediately; empty or failed writes cannot clear it. Dimension availability with no labeled observations remains insufficient rather than a provider failure, while populated missing-data cohorts remain degraded. No scoring, trading, statistical-method or schedule change; historical findings are preserved."
     }
   ]
 }

@@ -1,5 +1,12 @@
 # Alpha Diagnostic Lab
 
+Availability integrity repair (October 26, 2026): a horizon with no labeled
+observations has unmeasurable availability and must remain insufficient evidence.
+It cannot establish a provider/data failure. Populated cohorts with zero declared
+availability retain their degraded finding. This changes no score, t-stat method,
+promotion threshold or historical record; the next scheduled diagnostic publishes
+the corrected classification.
+
 > **2026-08-28 v2 amendment:** P0 implementation defects found by the independent
 > review are governed by
 > `MEASUREMENT_INTEGRITY_REPAIR_ARCHITECTURE.md`. That approved amendment
