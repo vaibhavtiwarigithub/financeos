@@ -40,13 +40,13 @@ export async function POST(req: NextRequest) {
   let phase = "model history";
   try {
   const modelHistory = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
-      .select("model_requested,execution_source,llm_council_runs!inner(market,config_snapshot)")
+      .select("model_requested,execution_source,llm_council_runs!inner(market,config_snapshot,created_at,prompt_version)")
       .order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to), "council model history");
   // Only council-linked observations can contribute. Read these ledgers once,
   // not once per historical-label page, cohort and horizon.
   phase = "terminal runs";
   const terminalRuns = await fetchAllRows<any>((from, to) => svc.from("llm_council_runs")
-    .select("id,observation_id,market,consensus_score,status,config_snapshot,prompt_version")
+    .select("id,observation_id,market,consensus_score,status,config_snapshot,prompt_version,created_at")
     .in("status", ["completed", "partial", "failed"]).order("id", { ascending: true }).range(from, to), "council runs");
   phase = "completed forecasts";
   const completedForecasts = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
@@ -58,6 +58,10 @@ export async function POST(req: NextRequest) {
     list.push(forecast);
     forecastsByRun.set(forecast.run_id, list);
   }
+  const apiModelIds=(id:string)=>(forecastsByRun.get(id)??[])
+    .filter(row=>row.execution_source!=="subscription").map(row=>row.model_used??row.model_requested);
+  // Include recorded fallbacks when deciding whether the composite depends on Flash.
+  for(const run of terminalRuns) run.api_model_ids=apiModelIds(run.id);
   // A single insert publishes all cells atomically. A failed later read must
   // never make an incomplete batch look like the newest successful evaluation.
   const pendingCells: any[] = [];
@@ -81,14 +85,16 @@ export async function POST(req: NextRequest) {
     const runByObs = new Map(cohortRuns.map((run) => [Number(run.observation_id), run]));
     for (const horizon of COUNCIL_HORIZONS) {
       const pointsBySeries = new Map<string, CouncilLabelPoint[]>();
-      pointsBySeries.set("composite:median", []);
-      pointsBySeries.set("deterministic:analyst_score_paired", []);
-      pointsBySeries.set("blend:equal_weight_50_50_paired", []);
+      for(const run of cohortRuns.length ? cohortRuns : [null]) {
+        const composite=run?.config_snapshot?.execution_mode==="hybrid" ? "composite:api_members_median" : "composite:median";
+        for(const key of [composite,"deterministic:analyst_score_paired","blend:equal_weight_50_50_paired"])
+          pointsBySeries.set(councilVersionedSeriesKey(key,run),[]);
+      }
       for (const entry of modelHistory) {
         const run = Array.isArray(entry.llm_council_runs) ? entry.llm_council_runs[0] : entry.llm_council_runs;
         if (run?.market !== market || !runInCohort(cohortKey, run) || entry.execution_source === "subscription" || typeof entry.model_requested !== "string") continue;
-        pointsBySeries.set(`model:${entry.model_requested}:independent`, []);
-        pointsBySeries.set(`model:${entry.model_requested}:debated`, []);
+        pointsBySeries.set(councilVersionedSeriesKey(`model:${entry.model_requested}:independent`,run), []);
+        pointsBySeries.set(councilVersionedSeriesKey(`model:${entry.model_requested}:debated`,run), []);
       }
         const rows = marketLabels.filter((row) => row.horizon_days === horizon);
         const eligible: Array<{ obs: any; outcome: number }> = [];
@@ -170,13 +176,13 @@ export async function POST(req: NextRequest) {
   // each submitted forecast, then h complete matched closes beyond it.
   phase = "subscription forecasts";
   const delayed = await fetchAllRows<any>((from, to) => svc.from("llm_council_model_forecasts")
-      .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source,available_at,llm_council_runs!inner(id,market,symbol,status,completed_at,consensus_score,deterministic_score:input_snapshot->deterministic_score,prediction_contract:input_snapshot->prediction_contract,config_snapshot)")
+      .select("run_id,model_requested,model_used,initial_score,final_score,status,execution_source,available_at,llm_council_runs!inner(id,market,symbol,status,completed_at,consensus_score,deterministic_score:input_snapshot->deterministic_score,prediction_contract:input_snapshot->prediction_contract,config_snapshot,created_at)")
       .eq("execution_source", "subscription").eq("status", "completed")
       .order("available_at", { ascending: true }).order("id", { ascending: true }).range(from, to), "delayed subscription forecasts");
   const delayedRuns = new Map<string, any>();
   for (const row of delayed) {
     const run = Array.isArray(row.llm_council_runs) ? row.llm_council_runs[0] : row.llm_council_runs;
-    if (run) run.input_snapshot = { prediction_contract: run.prediction_contract };
+    if (run) { run.input_snapshot = { prediction_contract: run.prediction_contract }; run.api_model_ids=apiModelIds(run.id); }
     if (!run || !["completed", "partial"].includes(run.status) || !["subscription", "hybrid"].includes(run.config_snapshot?.execution_mode)) continue;
     delayedRuns.set(run.id, run);
   }

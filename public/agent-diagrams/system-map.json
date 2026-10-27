@@ -2154,6 +2154,13 @@
       "nodeId": "RESEARCH",
       "label": "Producer recovery and empty-horizon health truth",
       "reason": "A successful India screen-cache publication now clears the existing no-fresh-candidates warning immediately; empty or failed writes cannot clear it. Dimension availability with no labeled observations remains insufficient rather than a provider failure, while populated missing-data cohorts remain degraded. No scoring, trading, statistical-method or schedule change; historical findings are preserved."
+    },
+    {
+      "date": "2026-10-27",
+      "event": "change",
+      "nodeId": "RESEARCH",
+      "label": "DeepSeek advertised release and council period identity",
+      "reason": "API routing stays deepseek-flash. Settings displays provider-advertised V4.1-Flash-1017 with documentation date and no response-pinning claim. New council configs capture provenance outside prompts; IC and matched Prediction Lab methods separate historical unverified release periods and documented new collections. Paired deterministic/composite/blend samples remain aligned. No model selection, inference, score, threshold, trading or historical-record change."
     }
   ]
 }

@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-council/availability-label";
 import { benchmarkSymbolFor, BENCHMARK_REGISTRY_VERSION } from "@/lib/data/benchmark-registry";
 import { councilComparisons, predictionLookbackDays, type CouncilComparisonPoint } from "@/lib/learning/council-comparison";
+import { councilProviderReleaseSuffix, councilSeriesReleaseLabel } from "@/lib/llm-model-catalog";
 import { medianScore } from "@/lib/llm-council/core";
 import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
 import { readTechnicalFeatureDiagnostics } from "@/lib/learning/technical-feature-reader";
@@ -90,13 +91,16 @@ export async function GET(req: NextRequest) {
       const family = typeof r.instrument?.family === "string" && r.instrument.family.trim() ? r.instrument.family : "legacy/unknown";
       const baselineIdentity = ` · family ${family} · baseline ${baselineFormula}`;
       const roster = members.map((f) => `${f.model_requested}>${f.model_used ?? "unknown"}/${f.execution_source}`).sort().join(" + ");
+      const releaseContext={...r,api_model_ids:members.filter(f=>f.execution_source==="api").map(f=>f.model_used??f.model_requested)};
+      const releaseIdentity=(key:string)=>{const suffix=councilProviderReleaseSuffix(key,releaseContext);
+        return suffix ? ` · ${councilSeriesReleaseLabel(key+suffix)}` : "";};
       const common = { symbol: r.symbol, session: label.entrySession, observationId: String(r.observation_id), decisionTs: r.decision_ts, baseline: Number(baseline), outcome: label.benchmarkNeutralReturn };
       for (const f of members) {
         if (!f.model_used) continue; // do not invent actual model identity
-        points.push({ ...common, score: Number(f.initial_score), method: `${f.model_requested} → ${f.model_used} · ${f.execution_source} · ${r.prompt_version} · initial${baselineIdentity}` });
+        points.push({ ...common, score: Number(f.initial_score), method: `${f.model_requested} → ${f.model_used} · ${f.execution_source} · ${r.prompt_version} · initial${baselineIdentity}${releaseIdentity(`model:${f.model_used}:independent`)}` });
       }
       const median = medianScore(members.map((f) => Number(f.initial_score)));
-      if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}${baselineIdentity}` });
+      if (median != null && members.every((f) => Boolean(f.model_used))) points.push({ ...common, score: median, method: `Initial median [${roster}] · ${r.prompt_version}${baselineIdentity}${releaseIdentity("composite:median")}` });
     }
     return NextResponse.json({
       market, horizon, asOf: cutoff, since, lookbackDays, priceWindowStart: priceSince, shadowOnly: true, cohort: "all_research_v1",

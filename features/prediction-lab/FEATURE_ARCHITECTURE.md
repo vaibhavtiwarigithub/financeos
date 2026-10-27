@@ -1,5 +1,16 @@
 # Prediction Lab: evidence-led council, formula and strategy improvement
 
+## Provider alias release context — October 27, 2026
+
+Matched council methods reuse the council release-period helper. DeepSeek Flash
+member scores and dependent initial medians receive a collection-time release
+context, so their deterministic comparisons retain the identical matched sample
+within each period. Capture provider-documented catalog provenance in new council
+config snapshots, outside prompts. Historical aliases remain explicitly
+unverified, including a separate rollout-day bucket; no weights version is
+invented from an old research date. No new return convention, inference threshold,
+formula, calibrated-skill claim or trading reader is introduced.
+
 ## Learning presentation repair — owner requested 2026-10-21
 
 Reuse the existing Learning panels, not a second dashboard or evidence pipeline.

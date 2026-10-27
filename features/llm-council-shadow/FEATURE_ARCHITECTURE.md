@@ -1,5 +1,38 @@
 # Multi-LLM Research Council and Scorecard
 
+## Owner-approved provider release identity (October 27, 2026)
+
+Keep the official `deepseek-flash` request ID. The catalog displays DeepSeek's
+advertised V4.1-Flash-1017 release with its documentation source and verification
+date. This is provider-documented alias resolution, not response-pinned weights.
+No model call is needed to refresh a display label.
+
+New API/hybrid run config snapshots record this catalog provenance outside the
+model evidence packet. Existing records are not edited. The existing versioned
+IC series helper additionally partitions DeepSeek member series and affected
+composite/paired deterministic/fixed-blend series by release period. Unstamped
+historical records use explicitly unverified pre-update, October 17 rollout-day,
+post-update and unknown-time periods. The announcement specifies a date, not a
+precise switch instant, so rollout day cannot be assigned to exact weights.
+Use the council run's collection timestamp as the historical period proxy,
+never an older research decision timestamp; neither is a pinned API revision.
+Subscription independent member series retain their own identity; debated
+members also inherit the DeepSeek context when debate was enabled. Existing
+prompt-method separation, cohort/label clocks and inference gates are preserved.
+
+Reuse existing JSON config_snapshot and series_key fields: no migration, prompt,
+roster/settings change, historical rewrite, extra inference or trading reader.
+Both Settings and Learning show human-readable period/provenance labels. Old
+persisted IC batches cannot prove release isolation and remain visibly legacy
+until the next scheduled evaluator (or one supported authenticated, data-only
+verification invocation) publishes the partitioned batch. Do not invoke the
+inference collector merely to test release labels.
+
+The read-only Prediction Lab comparison projection uses the same release-period
+helper in its method identity, including recorded API fallbacks. Thus member
+and initial-median comparisons retain a period-specific matched deterministic
+baseline instead of silently pooling aliases through that alternate view.
+
 ## Owner-selected Free-tier workload profile (2026-10-23)
 
 The owner declined a paid compute upgrade and selected workload reduction.

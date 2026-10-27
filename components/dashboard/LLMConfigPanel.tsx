@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import ModelFreshnessCard from "@/components/dashboard/ModelFreshnessCard";
 import LLMCouncilPanel from "@/components/dashboard/LLMCouncilPanel";
+import { advertisedModelLabel, DEEPSEEK_FLASH_RELEASE } from "@/lib/llm-model-catalog";
 
 // Self-contained LLM configuration: per-agent/flow model picker + provider API
 // keys (vault-backed) + freshness check. Rendered in Settings → AI Models (the
@@ -80,7 +81,7 @@ export default function LLMConfigPanel() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "16px" }}>
           <div>
             <div style={{ fontWeight: 600, fontSize: "14px", color: T.text }}>Agent / Flow → LLM</div>
-            <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>The active provider model is shown under each flow. V4.1 Flash is the default; changes take effect on the next run without a deploy.</div>
+            <div style={{ fontSize: "12px", color: T.muted, marginTop: "3px" }}>The selected API model is shown under each flow. DeepSeek advertises {DEEPSEEK_FLASH_RELEASE.advertisedRelease} for deepseek-flash (verified {DEEPSEEK_FLASH_RELEASE.verifiedOn}); this is not a pinned response revision. Changes take effect on the next run without a deploy.</div>
           </div>
           {configToast && <span style={{ fontSize: "12px", color: T.green }}>{configToast}</span>}
         </div>
@@ -93,7 +94,7 @@ export default function LLMConfigPanel() {
                 <div key={cfg.agent_name} style={{ background: T.surface, borderRadius: "10px", padding: "14px 16px", display: "grid", gridTemplateColumns: "150px 1fr 80px 80px 100px", gap: "12px", alignItems: "center" }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: "13px", color: T.text }}>{cfg.agent_name}</div>
-                    <div style={{ fontSize: "11px", color: cfg.effective_model === "deepseek-flash" ? T.green : T.muted, marginTop: "2px" }}>Using: {cfg.effective_model ?? cfg.model}</div>
+                    <div style={{ fontSize: "11px", color: cfg.effective_model === "deepseek-flash" ? T.green : T.muted, marginTop: "2px" }}>Using: {advertisedModelLabel(cfg.effective_model ?? cfg.model)}{cfg.effective_model === "deepseek-flash" ? " · API: deepseek-flash" : ""}</div>
                     {cfg.notes && <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{cfg.notes}</div>}
                   </div>
                   <select
@@ -103,7 +104,7 @@ export default function LLMConfigPanel() {
                     style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "6px", color: T.text, fontSize: "12px", padding: "5px 8px", outline: "none", cursor: "pointer" }}
                   >
                     <optgroup label="DeepSeek">
-                      <option value="deepseek-flash">deepseek-flash (V4.1 Flash — current default)</option>
+                      <option value="deepseek-flash">{DEEPSEEK_FLASH_RELEASE.advertisedRelease} (deepseek-flash · default)</option>
                       <option value="deepseek-v4-pro">deepseek-v4-pro (thinking, higher cost)</option>
                     </optgroup>
                     <optgroup label="Groq (Free)">

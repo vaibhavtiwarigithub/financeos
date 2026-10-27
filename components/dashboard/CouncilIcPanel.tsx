@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users } from "lucide-react";
 import { useMarket } from "@/lib/market-context";
+import { councilSeriesReleaseLabel } from "@/lib/llm-model-catalog";
 
 // LLM council (shadow) evidence on the Learning page: rank IC and t-stat per member, composite median, the deterministic
 // baseline and the fixed 50/50 blend, on the SAME matured outcomes, plus daily coverage. Viewer-safe stored aggregates
@@ -21,6 +22,7 @@ const COHORT_LABEL: Record<string, string> = {
   forecast_available_close_v2: "Availability-aligned v2 (expected next close, early-close aware, missing entry fails closed)",
 };
 const SERIES_LABEL = (key: string) => {
+  key=key.split("|")[0];
   if (key === "composite:median") return "Council median";
   if (key === "composite:api_members_median") return "API members median";
   if (key === "composite:availability_median") return "Council median";
@@ -100,7 +102,7 @@ export default function CouncilIcPanel() {
                   <tbody>
                     {cells.map((c) => (
                       <tr key={`${c.series_key}-${c.cohort_key}`} style={{ borderTop: `1px solid ${T.border}`, color: T.text }} title={c.reason}>
-                        <td style={{ padding: "5px 10px 5px 0" }}>{SERIES_LABEL(c.series_key)}</td>
+                        <td style={{ padding: "5px 10px 5px 0" }} title={c.series_key}>{SERIES_LABEL(c.series_key)}<div style={{fontSize:11,color:T.muted,maxWidth:420}}>{councilSeriesReleaseLabel(c.series_key)}</div></td>
                         <td style={{ padding: "5px 10px 5px 0" }}>{c.observation_count}</td>
                         <td style={{ padding: "5px 10px 5px 0" }}>{c.qualifying_sessions}</td>
                         <td style={{ padding: "5px 10px 5px 0" }}>{num(c.independent_windows, 1)}</td>

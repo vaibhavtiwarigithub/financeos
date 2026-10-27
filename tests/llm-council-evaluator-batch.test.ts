@@ -10,11 +10,11 @@ vi.mock("@/lib/analytics/benchmark-history", () => ({
   }),
 }));
 
-const runs = ["us", "india"].flatMap((market, m) => Array.from({ length: 5 }, (_, i) => ({
+const runs: any[] = ["us", "india"].flatMap((market, m) => Array.from({ length: 5 }, (_, i) => ({
   id: `${market}-${i}`, observation_id: m * 10 + i + 1, market, status: "completed",
   consensus_score: 60 + i, config_snapshot: { cohort_key: "all_research_v1", near_threshold_entry_long: true },
 })));
-const forecasts = runs.map((run, i) => ({ id: i, run_id: run.id, model_requested: "test-model",
+const forecasts: any[] = runs.map((run, i) => ({ id: i, run_id: run.id, model_requested: "test-model",
   model_used: "test-model", execution_source: "api", status: "completed", initial_score: 60 + i % 5, final_score: 60 + i % 5,
   llm_council_runs: run,
 }));
@@ -49,7 +49,7 @@ vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({ from(ta
         data = runs.filter((run) => ids.includes(run.observation_id)).flatMap((run, i) => [2, 5, 10, 20].map((horizon) => ({
           observation_id: run.observation_id, horizon_days: horizon, benchmark_neutral_return: i / 100,
           decision_observations: { id: run.observation_id, market: run.market, symbol: `${run.market}${i}`,
-            ts: "2026-10-01T14:00:00Z", analyst_score: 60 + i, score_threshold: 60,
+            ts: run.decision_ts ?? "2026-10-01T14:00:00Z", analyst_score: 60 + i, score_threshold: 60,
             direction: "long", decision_context: "entry_candidate" },
         })));
       }
@@ -63,8 +63,36 @@ vi.mock("@/lib/supabase/service", () => ({ createServiceClient: () => ({ from(ta
 import { POST } from "@/app/api/agents/llm-council/evaluate/route";
 
 describe("council evaluator shared reads and atomic publication", () => {
-  beforeEach(() => { state.calls = []; state.writes = []; state.fail = ""; state.delayed = false; });
+  beforeEach(() => { state.calls = []; state.writes = []; state.fail = ""; state.delayed = false;
+    for(const run of runs){delete run.decision_ts;delete run.created_at;delete run.config_snapshot.participant_models;}
+    for(const forecast of forecasts){forecast.model_requested="test-model";forecast.model_used="test-model";}
+  });
   const request = () => new NextRequest("https://example.test/api/agents/llm-council/evaluate", { method: "POST" });
+
+  it("publishes disjoint DeepSeek release periods with identically paired baseline/composite/blend samples",async()=>{
+    const runLength=runs.length,forecastLength=forecasts.length;
+    for(const [i,base] of [...runs].entries()){
+      const copy={...base,id:`${base.id}-after`,observation_id:base.observation_id+5,config_snapshot:{...base.config_snapshot},decision_ts:"2026-10-20T14:00:00Z"};
+      runs.push(copy);forecasts.push({...forecasts[i],run_id:copy.id,llm_council_runs:copy});
+    }
+    try {
+    runs.forEach(run=>{run.decision_ts??="2026-10-16T14:00:00Z";run.created_at=run.decision_ts;run.config_snapshot.participant_models=["deepseek-flash"];});
+    forecasts.forEach(f=>{f.model_requested="deepseek-flash";f.model_used="deepseek-flash";});
+    expect((await POST(request())).status).toBe(200);
+    for(const market of ["us","india"]){
+      const cells=state.writes[0].filter((c:any)=>c.market===market&&c.horizon_days===2&&c.cohort_key==="all_research_v1");
+      const members=cells.filter((c:any)=>c.series_key.startsWith("model:deepseek-flash:independent"));
+      expect(members.map((c:any)=>c.observation_count).sort()).toEqual([5,5]);
+      for(const member of members){const suffix=member.series_key.split("|dsflash=")[1];
+        for(const prefix of ["composite:median","deterministic:analyst_score_paired","blend:equal_weight_50_50_paired"]){
+          const paired=cells.find((c:any)=>c.series_key===`${prefix}|dsflash=${suffix}`);
+          expect(paired?.observation_count).toBe(member.observation_count);
+        }
+      }
+      expect(cells.every((c:any)=>c.t_stat===null)).toBe(true);
+    }
+    } finally {runs.splice(runLength);forecasts.splice(forecastLength);}
+  });
 
   it("loads only linked labels once per market, preserving every horizon/cohort and paired sample", async () => {
     const response = await POST(request());

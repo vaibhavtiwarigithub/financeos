@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { computeSpearmanIC } from "@/lib/validation/feature-check";
+import { councilProviderReleaseSuffix } from "@/lib/llm-model-catalog";
 
 export const COUNCIL_HORIZONS = [2, 5, 10, 20] as const;
 export const MIN_COUNSEL_CROSS_SECTION = 5;
@@ -8,7 +9,7 @@ export const COUNCIL_PREDICTION_VERSION = "council_prediction_only_h10_v2";
 export function councilVersionedSeriesKey(key: string, run: any): string {
   const v2 = String(run?.prompt_version ?? "").includes(COUNCIL_PREDICTION_VERSION)
     || run?.input_snapshot?.prediction_contract?.version === COUNCIL_PREDICTION_VERSION;
-  return v2 ? `${key}|method=${COUNCIL_PREDICTION_VERSION}` : key;
+  return (v2 ? `${key}|method=${COUNCIL_PREDICTION_VERSION}` : key)+councilProviderReleaseSuffix(key,run);
 }
 export const COUNCIL_PREDICTION_GUIDANCE = "Forecast the instrument's future relative performance, NOT whether this app permits an order. Ignore trading permissions, position slots, budgets, deterministic score caps and entry thresholds. A 0–100 score is not a return percentage or win probability. This is a TEN-session outlook, not an intraday entry signal. For inverse funds distinguish sentiment about the fund from sentiment about its underlying; never reverse ambiguous social sentiment by assumption. Daily-reset leverage and overnight path risk remain relevant.";
 

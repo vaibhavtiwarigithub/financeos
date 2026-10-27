@@ -4,7 +4,7 @@ import { providerForModel, getProviderKey } from "@/lib/llm-keys";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { councilProviderTimeoutMs, councilSweepDelaySeconds, createCouncilBudgetGuard, effectiveCouncilDebateRounds, limitCouncilCandidates, validCouncilConsensus, validCouncilParticipants } from "@/lib/llm-council/limits";
-import { isCouncilModel } from "@/lib/llm-model-catalog";
+import { isCouncilModel, providerAliasReleaseSnapshot } from "@/lib/llm-model-catalog";
 import { extractJson, medianScore, parseForecast, sha256, validateForecastCitations, type Forecast } from "@/lib/llm-council/core";
 import { COUNCIL_ALL_RESEARCH_COHORT_KEY, COUNCIL_COHORT_HALF_WIDTH, isNearThresholdEntryLong } from "@/lib/llm-council/cohort";
 import { selectCouncilCandidates } from "@/lib/llm-council/selection";
@@ -343,6 +343,7 @@ export async function POST(req: NextRequest) {
     const configSnapshot = {
       execution_mode: hybrid ? "hybrid" : "api",
       participant_models: participants,
+      provider_alias_releases: providerAliasReleaseSnapshot(participants),
       subscription_worker_ids: hybrid ? config.subscription_worker_ids : [],
       orchestrator_model: config.orchestrator_model,
       debate_rounds: debateRounds,

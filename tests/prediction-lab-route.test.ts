@@ -40,6 +40,23 @@ describe("Prediction Lab read-only projection", () => {
     expect((await GET(request("market=us&horizon=3"))).status).toBe(400);
     expect(mocks.service).not.toHaveBeenCalled();
   });
+  it("separates release periods in live matched comparisons without changing the baseline sample",async()=>{
+    vi.setSystemTime(new Date("2026-10-27T12:00:00Z"));
+    const dates=Array.from({length:16},(_,i)=>`2026-10-${String(i+12).padStart(2,"0")}`)
+      .filter(d=>![0,6].includes(new Date(`${d}T12:00:00Z`).getUTCDay()));
+    mocks.tables.llm_council_runs=Array.from({length:10},(_,i)=>({id:`r${i}`,observation_id:`o${i}`,symbol:`S${i%5}`,market:"us",status:"completed",
+      created_at:i<5?"2026-10-13T13:00:00Z":"2026-10-19T13:00:00Z",decision_ts:i<5?"2026-10-13T13:00:00Z":"2026-10-19T13:00:00Z",
+      config_snapshot:{cohort_key:"all_research_v1",participant_models:["deepseek-flash"]},prompt_version:"test-v1",deterministic:{composite:50+i%5}}));
+    mocks.tables.llm_council_model_forecasts=mocks.tables.llm_council_runs.map((r,i)=>({id:`f${i}`,run_id:r.id,status:"completed",created_at:r.created_at,
+      available_at:r.created_at,model_requested:"deepseek-flash",model_used:"deepseek-flash",execution_source:"api",initial_score:60+i%5}));
+    const {benchmarkSymbolFor}=await import("@/lib/data/benchmark-registry");const benchmark=benchmarkSymbolFor("us","research");
+    mocks.tables.price_cache=[benchmark,...Array.from({length:5},(_,i)=>`S${i}`)].flatMap(symbol=>dates.map((date,i)=>({symbol,date,close:100+(symbol===benchmark?0:(Number(symbol.slice(1))+1)*i)})));
+    const r=await GET(request());expect(r.status).toBe(200);const body=await r.json();
+    expect(body.cells).toHaveLength(4);
+    expect(body.cells.every((c:any)=>c.observations===5&&c.returnedPoints===5&&c.descriptiveHacT===null)).toBe(true);
+    expect(body.cells.some((c:any)=>c.method.includes("Before Oct 17"))).toBe(true);
+    expect(body.cells.some((c:any)=>c.method.includes("After Oct 17"))).toBe(true);
+  });
   it.each(["us", "india"] as const)("returns paired raw-point IC and frozen baseline for %s without writes or providers", async (market) => {
     const dates = ["2026-09-28", "2026-09-29", "2026-09-30"];
     mocks.tables.llm_council_runs = Array.from({ length: 5 }, (_, i) => ({
