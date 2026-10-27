@@ -214,3 +214,14 @@ shadow persistence. An exception before market diagnostics return records an
 this run health for operational-only programs too. Shadow-row freshness has no
 time promise: the cron's own last-run status is the liveness contract, while a
 new shadow row requires an eligible live position during that session.
+
+### 2026-10-27: market-status observation lifetime
+
+The shared session corroborator now validates the original `av_cache.fetched_at`
+alongside its payload. An overnight US-closed status fetched during India hours
+cannot veto the next US regular session. Only observations younger than five
+minutes, with a valid nonfuture timestamp, can corroborate open/closed; the memory
+cache expires at observation time plus five minutes. Stale or unavailable status
+uses the existing local-session fallback with independent quote/broker gates.
+Fresh closed observations still block. This preserves the existing AV daily call
+budget and changes no live switch, execution permission or protective-order gate.

@@ -8,6 +8,7 @@
 //      the ultimate backstop for any halt this layer misses.
 
 import { avCachedFetch } from "@/lib/av-cache";
+import { createServiceClient } from "@/lib/supabase/service";
 
 // ── Static holiday calendars (defense/fallback layer) ────────────────────────
 // A holiday on a weekday would otherwise pass weekday+hours. UPDATE ANNUALLY or
@@ -198,7 +199,7 @@ export function isMarketSessionOpen(market: string, now: Date = new Date()): boo
 // India — one call authoritatively covers both, catches UNSCHEDULED closures,
 // and needs no yearly calendar update.
 type MktStatus = "open" | "closed" | "unknown";
-let _statusCache: { at: number; byMarket: Record<string, MktStatus> } | null = null;
+let _statusCache: { expiresAt: number; byMarket: Record<string, MktStatus> } | null = null;
 const STATUS_TTL_MS = 5 * 60 * 1000;
 
 const REGION_MATCH: Record<string, RegExp> = {
@@ -207,7 +208,7 @@ const REGION_MATCH: Record<string, RegExp> = {
 };
 
 async function fetchMarketStatuses(): Promise<Record<string, MktStatus>> {
-  if (_statusCache && Date.now() - _statusCache.at < STATUS_TTL_MS) return _statusCache.byMarket;
+  if (_statusCache && Date.now() < _statusCache.expiresAt) return _statusCache.byMarket;
   const key = process.env.ALPHA_VANTAGE_API_KEY;
   const byMarket: Record<string, MktStatus> = { us: "unknown", india: "unknown" };
   if (!key) return byMarket;
@@ -221,14 +222,28 @@ async function fetchMarketStatuses(): Promise<Record<string, MktStatus>> {
       8_000,
     );
     if (!body) return byMarket;
-    const markets: any[] = Array.isArray(body?.markets) ? body.markets : [];
+    // A daily cache hit is not a live status. The early India invocation can
+    // cache US=closed at 04:00 UTC; it must not veto the entire US session.
+    // Read payload and its original fetch time together, including carried
+    // responses, and keep AV's existing one-call-per-day/budget behavior.
+    const { data: observed, error } = await createServiceClient().from("av_cache")
+      .select("payload,fetched_at").eq("cache_key", "MARKET_STATUS")
+      .eq("cache_date", new Date().toISOString().slice(0, 10)).maybeSingle();
+    const fetchedAt = Date.parse(String(observed?.fetched_at ?? ""));
+    const checkedAt = Date.now(); // post-read clock; never reject a response arriving during fetch
+    if (error || !Number.isFinite(fetchedAt) || fetchedAt > checkedAt || checkedAt - fetchedAt >= STATUS_TTL_MS) {
+      _statusCache = { expiresAt: checkedAt + STATUS_TTL_MS, byMarket };
+      return byMarket;
+    }
+    const markets: any[] = Array.isArray(observed.payload?.markets) ? observed.payload.markets : [];
     for (const mkt of ["us", "india"] as const) {
       const row = markets.find((m) => String(m?.market_type ?? "").toLowerCase() === "equity" &&
         REGION_MATCH[mkt].test(String(m?.region ?? "") + " " + String(m?.primary_exchanges ?? "")));
       const cur = String(row?.current_status ?? "").toLowerCase();
       byMarket[mkt] = cur === "open" ? "open" : cur === "closed" ? "closed" : "unknown";
     }
-    _statusCache = { at: Date.now(), byMarket };
+    // Memory cannot renew the provider observation's lifetime.
+    _statusCache = { expiresAt: fetchedAt + STATUS_TTL_MS, byMarket };
     return byMarket;
   } catch {
     return byMarket;

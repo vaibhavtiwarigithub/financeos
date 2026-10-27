@@ -218,3 +218,15 @@ Detection + ledger → pending Guardian plan → owner arms the plan → later
 verified breach → gateway-gated market SELL. The user has not enabled the
 existing live switch, so the deployed monitor presently refuses before quote
 or broker work. No external order was sent while implementing this feature.
+
+## Owner runtime visibility (2026-10-27)
+
+The existing owner-only plans GET also reports the live deployment and owner
+switches, pause/lock and permitted-account selection, plus the existing account
+scanner's last started/completed timestamps. It does not expose account IDs,
+credentials or configuration secrets and uses private/no-store caching. A failed
+metadata read is unavailable rather than a disabled switch or verified empty
+book. The panel distinguishes switches off from switches on with execution
+checks still required. Neither a completed scan nor an empty plan list establishes
+current broker-stop coverage. Scope remains new manual buys in the agentic
+Robinhood account; this is not cross-broker or India execution parity.

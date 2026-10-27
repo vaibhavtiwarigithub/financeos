@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 
 export const dynamic = "force-dynamic";
 const ACTIVE = ["pending_approval", "armed", "triggering"];
@@ -16,10 +17,26 @@ export async function GET() {
     .in("status", ACTIVE).order("created_at", { ascending: false });
   if (error) {
     await reportIssue({ issueKey: "guardian-plans:us", severity: "warn", category: "broker", title: "US Guardian plans unavailable", detail: "The active plan ledger could not be read. Plan status and stop coverage are unknown; retry after database recovery." }, svc);
-    return NextResponse.json({ error: "Guardian plans unavailable; retry or check System Health." }, { status: 503 });
+    return NextResponse.json({ error: "Guardian plans unavailable; retry or check System Health." }, { status: 503, headers: { "Cache-Control": "private, no-store" } });
   }
   await resolveIssue("guardian-plans:us", svc);
-  return NextResponse.json({ plans: data ?? [] });
+  // Owner-visible runtime truth, not proof that a holding has a broker stop.
+  // Match the existing monitor's account scope; never return account identifiers.
+  const [config, scan] = await Promise.all([
+    svc.from("strategy_config").select("live_auto_enabled,app_paused,security_locked,active_account_us").limit(1).maybeSingle(),
+    svc.from("agentic_position_scan_state").select("last_started_at,last_completed_at")
+      .eq("account_id", "605420660").maybeSingle(),
+  ]);
+  return NextResponse.json({ plans: data ?? [], runtime: {
+    deploymentEnabled: AUTONOMOUS_LIVE_ENABLED,
+    configurationAvailable: !config.error && config.data != null,
+    liveEnabled: config.error || !config.data ? null : config.data.live_auto_enabled === true,
+    paused: config.error || !config.data ? null : config.data.app_paused === true || config.data.security_locked === true,
+    permittedAccountSelected: config.error || !config.data ? null : config.data.active_account_us === "605420660",
+    scanAvailable: !scan.error,
+    lastScanStartedAt: scan.error ? null : scan.data?.last_started_at ?? null,
+    lastScanCompletedAt: scan.error ? null : scan.data?.last_completed_at ?? null,
+  } }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 export async function POST(req: NextRequest) {

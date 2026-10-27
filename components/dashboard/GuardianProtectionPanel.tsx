@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 const T = { card: "#1A1D27", border: "#252836", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", green: "#34D399", greenBg: "#052E16", amber: "#FBBF24", amberBg: "#2D1B00", red: "#F87171", redBg: "#3B0000", accent: "#818CF8" };
 type Plan = { id: number; symbol: string; qty: number; entry_price: number | null; stop_price: number; status: string; armed_at: string | null; terminal_reason: string | null; created_at: string };
+type Runtime = { deploymentEnabled: boolean; configurationAvailable: boolean; liveEnabled: boolean | null; paused: boolean | null; permittedAccountSelected: boolean | null; scanAvailable: boolean; lastScanStartedAt: string | null; lastScanCompletedAt: string | null };
 
 export default function GuardianProtectionPanel() {
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -10,6 +11,7 @@ export default function GuardianProtectionPanel() {
   const [working, setWorking] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [runtime, setRuntime] = useState<Runtime | null>(null);
   const load = async () => {
     setLoading(true); setLoadError(null);
     try {
@@ -17,8 +19,10 @@ export default function GuardianProtectionPanel() {
       const d = await r.json();
       if (!r.ok || !Array.isArray(d.plans)) throw new Error("Guardian plans could not be verified. Retry or check System Health.");
       setPlans(d.plans);
+      setRuntime(d.runtime ?? null);
     } catch {
       setPlans([]);
+      setRuntime(null);
       setLoadError("Guardian plans could not be verified. This does not mean your holdings are protected or that no plans exist.");
     } finally { setLoading(false); }
   };
@@ -38,6 +42,10 @@ export default function GuardianProtectionPanel() {
       Arming stores a software stop only — it does not place a broker order. A market exit can be submitted only after a verified breach and only when the existing live-autonomy deployment flag and your live enablement switch are both on.
     </div>
     {notice && <div style={{ color: T.sub, fontSize: 12, marginTop: 10 }}>{notice}</div>}
+    {!loading && !loadError && <div style={{ color: T.amber, fontSize: 12, marginTop: 12, lineHeight: 1.6 }}>
+      <div><strong>Automatic live exits: </strong>{!runtime ? "unknown" : !runtime.deploymentEnabled || runtime.liveEnabled === false ? "OFF" : !runtime.configurationAvailable ? "unknown — settings unavailable" : runtime.paused || runtime.permittedAccountSelected === false ? "blocked by pause, lock or account selection" : "switches on — armed plan and all execution checks still required"}</div>
+      <div>Last completed account scan: {!runtime?.scanAvailable ? "unavailable" : runtime.lastScanCompletedAt ? new Date(runtime.lastScanCompletedAt).toLocaleString() : "no completed scan recorded"}. A dated scan does not establish current stop coverage.</div>
+    </div>}
     {loadError && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 12 }}>{loadError} <button onClick={() => void load()} disabled={loading} style={{ background: "transparent", color: T.accent, border: `1px solid ${T.border}`, borderRadius: 6, padding: "5px 9px", cursor: "pointer" }}>Retry Guardian</button></div>}
     <div style={{ color: T.sub, fontSize: 11, marginTop: 10 }}>This panel covers agentic Robinhood manual-buy plans only. Other Robinhood, Webull and Alpaca holdings are not verified as stop-protected here. Daily risk research is separate from protective orders.</div>
     {loading ? <div style={{ color: T.muted, fontSize: 12, paddingTop: 14 }}>Loading protection plans…</div> : loadError ? null : plans.length === 0 ? <div style={{ color: T.muted, fontSize: 12, paddingTop: 14 }}>No manual-buy protection plans are awaiting action. An empty plan list does not establish stop coverage for all holdings.</div> : <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
