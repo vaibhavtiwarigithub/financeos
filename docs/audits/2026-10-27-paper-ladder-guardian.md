@@ -31,3 +31,7 @@ Related live-portfolio limitation: verified cash-flow history is still needed fo
 ## Verification
 
 24 focused tests and TypeScript/secret scans passed. The full run passed 4,510 tests with eight skipped and one unrelated parallel performance timeout; that isolated performance test passed in 4.79 seconds (all 4,511 checked tests passing across verification). Runtime commit 6383779940e563a153de5b3c06759c25445c43d2 matched remote main and production dpl_7vfLWebjYyk9cBQSGrvwKV6bj8SR was READY. Live API200 and owner UI verified six US and eight India reconciled ladders, four real US sale events, correct currency/current levels and expandable event details. No overflow at375/768/1440; zero console errors. A browser-only negative-P/L fixture passed and was removed; actual data restored. No production financial writes, broker order actions, trading-cron invocations or extra model calls are used to test this feature.
+
+## Approved follow-up completed
+
+After this review, the owner approved prospective history capture. It is now applied and production verified; see 2026-10-27-paper-plan-history.md for migration, security, atomic SQL proof and live US/India reader evidence. Earlier stop/target changes remain unknown. This resolves the history-table approval/capture item above; it does not resolve the separate Guardian queue.

@@ -26,3 +26,7 @@ The existing share/price ladder now draws recorded stop/target steps from the fi
 ## Rollback
 
 A renderer/read defect can revert the consumer while leaving the small append-only ledger intact. If capture demonstrably causes unexpected position-write failures, stop affected automation through the existing controls and investigate; restore capture with a reviewed forward migration rather than deleting evidence or bypassing financial gates. An audit-write failure deliberately rolls back its associated position update, preserving the approved atomicity requirement.
+
+## Production delivery proof
+
+Runtime eab3fd153877cb741aa3520597c3ccf027a0d9c matched remote main. Vercel dpl_5FFawDck72LdcWgHrqSpd9cPZPTv was READY and aliased the canonical production URL. Authenticated UI/API200 verified six US and eight India recorded histories, private/no-store responses, real baseline provenance and recording-start labels. No console errors or overflow at375/768/1440. A browser-response-only before/after and target-removal fixture rendered its marker and expanded details, then was removed and actual data restored. The production ledger still contains exactly fourteen genuine baselines and no manufactured changes. The first naturally scheduled level update remains forward evidence to inspect; local SQL proof and enabled production capture are verified without pretending such an update already happened.
