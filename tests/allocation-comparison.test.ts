@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { compareAllocation, liveSnapshotAllocation } from "@/lib/allocation/comparison";
+import { compareAllocation, liveSnapshotAllocation, paperAllocationBook } from "@/lib/allocation/comparison";
 import { defaultAllocation } from "@/lib/allocation/profiles";
 
 const policy = defaultAllocation("us");
 const snapshot = (extra: Record<string, unknown> = {}) => ({ account_id: "test-account", broker: "alpaca_live", equity: 1000, captured_at: "2026-10-26T16:00:00Z", position_count: 1, positions_json: [{ symbol: "VOO", qty: 2, current_price: 400 }], ...extra });
 
 describe("goal/current allocation display integrity", () => {
+  it("uses marked paper holdings plus cash rather than a lagging stored NAV", () => {
+    const book = paperAllocationBook([{ symbol: "AAPL", qty: 2, current_price: 450 }], 100);
+    expect(book.nav).toBe(1000);
+    expect(compareAllocation(policy, book).rows.find(r => r.bucket === "individual")?.currentPct).toBe(90);
+  });
+  it.each([null, 0])("never falls back to entry cost for an unpriced paper holding: %s", price => {
+    expect(compareAllocation(policy, paperAllocationBook([{ symbol: "AAPL", qty: 2, current_price: price }], 100)).error).toBeTruthy();
+  });
   it("compares an entire book and counts cash plus leverage once", () => {
     const mix = compareAllocation(policy, { nav: 1000, cash: 30, positions: [{ symbol: "VOO", marketValue: 400 }, { symbol: "AAPL", marketValue: 400 }, { symbol: "XLK", marketValue: 100 }, { symbol: "GLD", marketValue: 50 }, { symbol: "SOXL", marketValue: 20 }] });
     expect(mix.error).toBeNull();

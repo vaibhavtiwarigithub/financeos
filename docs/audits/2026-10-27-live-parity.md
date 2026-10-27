@@ -61,7 +61,8 @@ completion, and zero plans. No overflow at375/768/1440 or page errors. Browser-o
 unknown and switches-on-with-checks fixtures passed and were removed; no real
 configuration or plans changed. India coverage still503 (Kite unavailable).
 
-Collector recovery is not yet proven: the release followed the11:30Chicago
-dispatch. Inspect the next natural15-minute scan for advanced timestamps or a
-precise connectivity error; keep the pending verification in WORK_LOG. No
-trading-capable cron was manually invoked.
+Collector recovery is now proven by the next natural15-minute scan: started
+2026-10-27T16:45:02.482736Z and completed16:45:05.609085Z (11:45Chicago),
+advancing the completion timestamp fromSept16. This verifies collection, not
+universal stop coverage or live enablement. No trading-capable cron was manually
+invoked, no orders were placed as a test, and all live switches stayed unchanged.

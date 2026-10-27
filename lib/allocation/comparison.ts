@@ -7,6 +7,17 @@ export type AllocationBook = {
 
 const number = (value: unknown): number => value == null || value === "" ? NaN : Number(value);
 
+/** The stored paper NAV can lag current marks; use the same holdings/cash basis as Settings. */
+export function paperAllocationBook(holdings: { symbol: string; qty: unknown; current_price?: unknown }[], cashValue: unknown, asOf?: string | null): AllocationBook {
+  const cash = number(cashValue);
+  const positions = holdings.map(p => {
+    const qty = number(p.qty), price = number(p.current_price);
+    return { symbol: p.symbol, marketValue: qty === 0 ? 0 : qty > 0 && price > 0 ? qty * price : NaN };
+  });
+  return { nav: cash + positions.reduce((sum, p) => sum + p.marketValue, 0), cash, positions, asOf,
+    note: "Comparison value is marked paper holdings plus cash, matching Settings. It can differ from the last stored portfolio NAV. Source time is the cash/book timestamp; individual mark times can differ. Missing marks are not replaced with entry cost." };
+}
+
 /** Read-only display arithmetic. Never feeds entry sizing or normalizes missing data. */
 export function compareAllocation(policy: AllocationPolicy, book: AllocationBook | null) {
   const rows = ALLOCATION_BUCKETS.map(bucket => ({ bucket, targetPct: policy.targets[bucket], currentPct: null as number | null }));
