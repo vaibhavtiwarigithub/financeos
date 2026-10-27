@@ -22,6 +22,28 @@ Claude should update this summary periodically with:
 
 *Log meaningful instructions below. Skip tiny wording changes and obvious bug fixes.*
 
+### Entry 14 - 2026-10-27 (Intraday screen scope and storage)
+
+Instruction: Reassess the proposed broad 15-minute US scan and whether transient
+market data should move from Supabase tables to Parquet/object storage.
+Classification: Approved implementation-scope clarification / architecture
+Impact: The lightweight Alpaca activity screen is already implemented inline in
+existing US research runs. It uses provider-ranked top-actives/movers, caches two
+endpoint payloads per 15-minute slot, returns at most 12 candidates, and admits at
+most two; it does not write 5,000 quote rows/day. The current Vercel team is Hobby
+and supports Vercel Cron only once daily. A Supabase-triggered 15-minute scan is
+technically possible but would add recurring work to the constrained database
+and requires a true expiring-shortlist store; the seven-day carry-forward queue
+is not that store. Given the standing no-upgrade/reduce-workload mandate and no
+measured benefit, keep the existing screen and do not introduce a new scanner,
+schedule, schema, or file/object-storage service. No need to move transactionally
+useful portfolio/research data into Parquet; revisit high-volume immutable history
+only with measured evidence and a separate approved architecture.
+Evidence: implementation in `lib/data/alpaca-market-data.ts` and
+`lib/research-agent.ts`; provider contract in Alpaca snapshot/screener docs;
+current Vercel plan read through Vercel CLI as Hobby; official Supabase pricing
+documents 500-MB database and 1-GB object storage quotas.
+
 ### Entry 13 - 2026-10-19 (Reuse-first coding-agent workflow)
 
 Instruction: Make Codex and Claude inspect the implemented system precisely before adding more code, and prefer extending/reusing the canonical owner over parallel implementations.

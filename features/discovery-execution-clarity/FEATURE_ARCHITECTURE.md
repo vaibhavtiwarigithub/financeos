@@ -1,5 +1,38 @@
 # Discovery and execution clarity
 
+## Scale and storage decision — 2026-10-27
+
+The bounded Alpaca activity screen described below is already implemented and
+active inside the existing US research calls. It requests the provider's current
+most-active list (up to 100) and movers list (up to 20), applies the existing
+freshness/liquidity filters, returns at most 12 discovery candidates, and the
+existing candidate-cap machinery admits at most two activity names. This is a
+provider-ranked discovery lane; it is not a per-symbol 500-name scan, a
+15-minute research run, an intraday score, or day-trading execution.
+
+Do not persist every transient quote. The current screen stores no quote row per
+symbol: the existing provider cache deduplicates the two endpoint responses by
+15-minute cache slot, and the normal research/admission ledger records only
+symbols actually admitted to a research run. Therefore the estimate of 5,000
+quote rows/day is not the current workload. A row-count-only estimate also
+cannot establish when a database quota would be reached; row width, JSON payloads,
+indexes, retention and physical churn matter. Supabase currently includes a
+500-MB database quota and 1-GB object-storage quota on Free; the app owner has
+explicitly chosen no upgrades and lower workload.
+
+Do not add a separate 15-minute collector or store a 500-symbol quote panel in
+this scope. Vercel's connected team is Hobby, whose Vercel Cron limit is one
+execution per day. Supabase `pg_cron` could technically call a route more often,
+but a new recurring scan would add load to the same constrained database and
+needs a durable, expiring shortlist contract that the existing seven-day
+carry-forward `research_queue` is not designed to provide. That architecture
+has no demonstrated incremental benefit over the existing provider-ranked
+screen, so no new schedule, table, paid service, raw quote history, or trading
+path is approved here. Keep the existing research cadence and caps. Revisit only
+with measured provider coverage, DB/IO headroom, queue-throughput evidence, and
+a separate architecture review; keep any future screen discovery-only until an
+independent intraday feature/exit contract is validated.
+
 Owner instruction: October 26, 2026, reassess the discussed plan and go ahead.
 Status: implementation of bounded discovery and operational evidence; strategy
 challengers and universal live protection remain explicitly separate.

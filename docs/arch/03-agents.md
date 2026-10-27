@@ -33,6 +33,16 @@ sizing rejections retain exact cash/capacity/minimum/shortfall; old missing amou
 are not inferred. See the discovery-execution-clarity architecture for scope and
 the remaining allocation/strategy validation queue.
 
+The Alpaca lane uses the provider's most-actives and movers screens (at most 100
+and 20 source rows), then admits at most 12 screened candidates and at most two
+new activity names through the existing discovery budget. It runs inline with
+the existing US research calls; there is no separate 15-minute 500-symbol scan,
+no full intraday score, and no persistence of a quote row for every screened
+symbol. Provider responses are cache-deduplicated by 15-minute slot. A future
+high-frequency shortlist must not reuse the seven-day deferred research queue
+as an expiring candidate store or become a trade signal without its own validated
+intraday scoring and execution contracts. See `features/discovery-execution-clarity/FEATURE_ARCHITECTURE.md`.
+
 ## Data-feed recovery boundaries
 
 Crypto daily history tries independent sources until one has 51 completed UTC
