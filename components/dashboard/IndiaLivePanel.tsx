@@ -5,6 +5,7 @@ import { fmtMoney } from "@/lib/format-money";
 import { useRevealToggle, maskText, EyeToggle } from "@/components/dashboard/PrivacyMask";
 import LiveStatCards from "@/components/dashboard/LiveStatCards";
 import LivePerformanceChart from "@/components/dashboard/LivePerformanceChart";
+import PortfolioAllocationComparison from "@/components/charts/PortfolioAllocationComparison";
 import LivePortfolioShell from "@/components/dashboard/LivePortfolioShell";
 import { IndiaManualTradeGuardianPanel, IndiaRecommendationsGuardianScorecard } from "@/components/dashboard/IndiaLiveGuardianPanels";
 
@@ -390,6 +391,11 @@ export default function IndiaLivePanel() {
 
         {/* ── Performance vs NIFTY 50 (shared, market-aware) ── */}
         <LivePerformanceChart market="india" refreshKey={chartRefreshKey} />
+        <PortfolioAllocationComparison market="india" book="live" current={holdingsConnected ? {
+          nav: portfolio?.nav ?? NaN, cash: null, asOf: portfolio?.fetched_at,
+          positions: holdings.map(h => ({ symbol: h.symbol, marketValue: h.qty > 0 && h.last_price > 0 ? h.value : NaN })),
+          note: "NSE delivery holdings plus the reported Kite margin balance form the comparison basis. Margin balance is not verified cash and stays unclassified. Coin mutual funds and same-day positions are excluded.",
+        } : null} />
 
         {/* Coin is a separate read-only sleeve. It never shares equity order or score controls. */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "16px" }}>

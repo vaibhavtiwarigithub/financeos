@@ -1,5 +1,5 @@
 # Kairos — What Is This?
-> Last updated: 2026-09-08
+> Last updated: 2026-10-27
 > Current runtime/status authority: [10-current-system-reference.md](10-current-system-reference.md).
 > Update this file when: product direction changes, new feature areas are added, core principles change, or the top-level pitch changes.
 
@@ -8,6 +8,16 @@
 > **LLM council (shadow, 2026-10-13):** DeepSeek, Claude and Codex score every new research observation; scores appear on the symbol page (chart dimension + card), Score Tracker, Learning page (rank IC / t-stat), Trading page badges and Upgrade Path. Display and measurement only; no trade reads them. See `features/llm-council-shadow/FEATURE_ARCHITECTURE.md`.
 
 ## 1. The core idea
+
+Portfolio pages also explain the intended investment mix. Paper Portfolio shows
+matching Goal and Current category donuts below its allocation chart, plus a
+percentage-point gap table. Goals come from the saved market-specific profile
+in Settings → Trading, including zero targets for unused categories. Live
+Portfolio has the same comparison for the selected real US accounts or India's
+delivery portfolio. Live goals are a reference to the paper settings, not an
+active live allocation mandate. Missing marks withhold a current pie; unclassified
+assets and unverified balances remain visible and prevent precise gap claims.
+This view does not place orders, rebalance holdings or change any risk controls.
 
 Kairos is an **automated investing research assistant** that behaves like a small, careful
 hedge-fund team living inside one web app. It doesn't just pick stocks — it **runs a loop**:

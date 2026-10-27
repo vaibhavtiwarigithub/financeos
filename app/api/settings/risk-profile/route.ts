@@ -250,6 +250,7 @@ export async function GET(req: NextRequest) {
     if(market!=="us" && market!=="india") return NextResponse.json({error:"Market must be US or India"},{status:400,headers:PRIVATE_SETTINGS_HEADERS});
     const loaded=await loadPaperAllocation(svc,market);
     if(!loaded.ok) return NextResponse.json({error:loaded.error},{status:503,headers:PRIVATE_SETTINGS_HEADERS});
+    if(req.nextUrl.searchParams.get("view")==="policy") return NextResponse.json({policy:loaded.policy},{headers:PRIVATE_SETTINGS_HEADERS});
     const [pool,book]=await Promise.all([
       svc.from("paper_portfolio").select("cash_balance,updated_at").eq("market",market).maybeSingle(),
       svc.from("paper_positions").select("symbol,qty,current_price,avg_cost").eq("market",market),

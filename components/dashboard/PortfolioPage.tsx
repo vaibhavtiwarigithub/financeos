@@ -21,6 +21,7 @@ import PositionActivityChart from "@/components/dashboard/PositionActivityChart"
 import type { PositionActivitySeries, PositionHistorySeries } from "@/lib/portfolio/position-history";
 const BenchmarkPerformanceChart = lazy(() => import("@/components/dashboard/BenchmarkPerformanceChart"));
 const AllocationDonut = lazy(() => import("@/components/charts/AllocationDonut"));
+const PortfolioAllocationComparison = lazy(() => import("@/components/charts/PortfolioAllocationComparison"));
 const PnlBarChart = lazy(() => import("@/components/charts/PnlBarChart"));
 const StockModal = lazy(() => import("@/components/charts/StockModal"));
 
@@ -792,6 +793,11 @@ export default function PortfolioPage({ pools, dataMarket, positions: allPositio
       </div>
 
       {/* P&L bar */}
+      {!viewerMode && <Suspense fallback={null}><PortfolioAllocationComparison market={activeMarket} book="paper" current={portfolio ? {
+        nav, cash: portfolio.cash_balance == null ? NaN : Number(portfolio.cash_balance), asOf: portfolio.updated_at,
+        positions: positions.map(p => ({ symbol: p.symbol, marketValue: Number(p.qty) * (Number(p.current_price) > 0 ? Number(p.current_price) : NaN) })),
+        note: "Marked paper holdings and cash for this market only. Missing marks are not replaced with entry cost.",
+      } : null} /></Suspense>}
       <div style={{ marginBottom: "20px" }}>
         <Suspense fallback={null}>
           <PnlBarChart trades={trades} market={activeMarket} />

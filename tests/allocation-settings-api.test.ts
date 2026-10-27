@@ -1,5 +1,6 @@
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {NextRequest,NextResponse} from "next/server";
+import {defaultAllocation} from "@/lib/allocation/profiles";
 const mocks=vi.hoisted(()=>({owner:vi.fn(),svc:vi.fn(),save:vi.fn(),load:vi.fn()}));
 vi.mock("@/lib/auth/require-owner",()=>({requireOwner:mocks.owner}));
 vi.mock("@/lib/supabase/service",()=>({createServiceClient:mocks.svc}));
@@ -19,6 +20,15 @@ describe("owner allocation API boundary",()=>{
     expect((await PATCH(request({action:"allocation_policy",trading_enabled_us:true}))).status).toBe(400);
     expect((await PATCH(request(null))).status).toBe(400);
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it("returns owner-only saved policy without reading a paper book for comparison views",async()=>{
+    const policy=defaultAllocation("india");
+    mocks.load.mockResolvedValue({ok:true,policy});
+    const response=await GET(new NextRequest("https://example.test/api/settings/risk-profile?section=allocation&market=india&view=policy"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({policy});
+    expect(mocks.load).toHaveBeenCalledWith({},"india");
   });
   it("returns revision conflicts without touching legacy trading controls",async()=>{
     mocks.save.mockResolvedValue({status:409,error:"Allocation changed; reload before saving"});

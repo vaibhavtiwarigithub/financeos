@@ -9,6 +9,8 @@ import GuardianProtectionPanel from "@/components/dashboard/GuardianProtectionPa
 import RecommendationsPanel from "@/components/dashboard/RecommendationsPanel";
 import RecentCandidatesPanel from "@/components/dashboard/RecentCandidatesPanel";
 import { brokerAccountDisplayLabel } from "@/lib/brokers/account-label";
+import PortfolioAllocationComparison from "@/components/charts/PortfolioAllocationComparison";
+import { liveSnapshotAllocation } from "@/lib/allocation/comparison";
 
 const T = {
   bg: "#0D0F14", surface: "#13151C", card: "#1A1D27", border: "#252836",
@@ -358,6 +360,7 @@ export default function LivePortfolioPage({
 
       {/* Performance chart (shared, market-aware) */}
       <LivePerformanceChart market="us" accounts={selectedAccounts} showHoldingsToggle />
+      <PortfolioAllocationComparison market="us" book="live" current={liveSnapshotAllocation(selectedSnaps)} />
 
       {/* Holdings table */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "14px", padding: "20px", marginBottom: "20px" }}>

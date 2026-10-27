@@ -1,5 +1,52 @@
 # Feature Architecture — Asset-Class Allocation
 
+## Owner-requested goal/current portfolio charts — October 27, 2026
+
+Intention/decision: the owner wants to understand the saved intended mix versus
+the actual book directly on paper and live portfolio pages. This extends the
+approved allocation display; it does not introduce a strategy or new mandate.
+Two matching category donuts (Goal, Current) and an accessible percentage-point
+gap table share one taxonomy/colors, with all eight targets shown including zero
+silver/oil targets. Place beneath paper's symbol Allocation chart, and after the
+performance chart on both live market views. Stack charts on narrow screens.
+
+Reuse saved paper policy through the existing owner-only risk-profile GET. A
+policy-only read skips unrelated paper book reads. Goals are revision-labelled,
+link to Settings Trading, and explicitly inactive when disabled. Live goals are
+reference-only: these saved paper targets do not govern or rebalance live orders.
+No default silently replaces failed/malformed settings, and stale in-flight
+market responses cannot replace the selected market. Hide owner fetches in the
+public viewer surface.
+
+Paper current mix uses that displayed market's marked positions and cash. US
+live uses selected current broker snapshots with their own marks, not cost basis,
+buying power or a USD/INR sum. Deduplicate account snapshots, exclude simulated
+and foreign-market books, expose the oldest source time and partial selection
+issues. Unverified residual NAV is a separate gray balance, never claimed as
+cash. Unknown instrument values remain an explicit unclassified slice; missing
+marks, short positions, invalid balances or unreconciled totals withhold the
+current donut rather than normalize bad inputs into a plausible allocation.
+India uses the existing delivery-plus-margin comparison basis, with margin
+balance explicitly unverified rather than claimed as cash; exclude Coin mutual
+funds and same-day position rows and state that scope. Unavailable Kite data stays
+unavailable. Zero capital displays no current pie. No model/provider calls,
+schedules, schema, policy mutation, broker refresh or trading side effects.
+
+Files: shared read-only allocation comparison model and chart component;
+PortfolioPage, LivePortfolioPage, IndiaLivePanel; existing risk-profile GET;
+focused numerical/scope/read-contract tests and this architecture/work log.
+Acceptance: same colors/labels, correct category percentages and gap direction,
+shared cash/leveraged budget without double counting, market/account isolation,
+transparent missing/stale/unknown states, policy error/retry and market-race
+handling, mobile/desktop layout, actual owner browser/API verification, mainline
+and READY release. User's explicit request authorizes this display-only scope.
+
+Kite's `net` includes ad-hoc margin and collateral, while cash fields are
+separate; it must not be relabelled as verified cash in this chart. Source:
+https://kite.trade/docs/connect/v3/user/#funds-and-margins . Unclassified balances
+produce lower-bound category shares and withheld gaps, rather than false precise
+differences. This display does not repair or change existing account NAV records.
+
 ## Owner-approved profile implementation — October 26, 2026
 
 The owner explicitly requested editable allocation fixes and reset defaults for
