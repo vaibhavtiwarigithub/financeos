@@ -172,9 +172,13 @@ split-adjusted total return or intraday price history.
 The execution ladder also shows gross lot-realized P/L at sale events (quantity
 times exit-minus-original-fill price; buys do not realize P/L, tainted lots remain
 unknown). Its lower, time-aligned price lane shows fill prices and current
-stop/target observations. Current exit levels are never backdated: historical
-stop/target changes were not retained. Full prospective change capture requires
-the separately proposed append-only event-table migration. Expandable details
+stop/target observations. Current exit levels are never backdated: changes before
+October 27 were not retained. Owner-approved atomic append-only capture now records
+future entries, stop/target changes and target removal across both paper markets
+and all position roles. Its initial baseline is the present observation, not a
+reconstruction of older history. Unchanged levels create no extra rows. Readers
+check exact position epoch, level continuity, current-state reconciliation and
+bounded history; failures remain unavailable. Expandable details
 make trade amounts and exit levels accessible without hover.
 
 The historical sizing replay is an offline diagnostic. It compares fixed equal

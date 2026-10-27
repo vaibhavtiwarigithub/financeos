@@ -32,5 +32,9 @@ describe("position history endpoint contract", () => {
     expect(source).toContain(".range(offset, offset + PAGE_SIZE - 1)");
     expect(source).toContain('.order("session_date", { ascending: false })');
     expect(source).toContain("value.truncated = true");
+    expect(source).toContain('from("paper_position_plan_events")');
+    expect(source).toContain('MAX_PLAN_ROWS = 10_000');
+    expect(source).toContain("buildPositionPlanHistory");
+    expect(source).toContain("unavailable: planUnavailable, truncated: planTruncated");
   });
 });

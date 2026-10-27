@@ -25,8 +25,8 @@ describe("position ladder presentation", () => {
     const html = render(activity);
     expect(html).toContain("Gross realized P/L on sales: −$10");
     expect(html).toContain("No realized P/L on a buy");
-    expect(html).toContain("Stop $85");
-    expect(html).toContain("Target $120");
+    expect(html).toContain("Current stop: $85");
+    expect(html).toContain("target: $120");
     expect(html).toContain("Earlier stop/target changes were not recorded");
     expect(html).toContain("before fees/taxes");
     expect(html).toContain("Trade and stop/target details");
@@ -41,5 +41,17 @@ describe("position ladder presentation", () => {
     const html = render({ ...activity, events: activity.events.map(e => ({ ...e, realizedPnl: null })) });
     expect(html).toContain("Sale P/L unavailable");
     expect(html).not.toContain("Gross realized P/L on sales: +$0");
+  });
+  it("shows recorded before/after levels and target removal without implying a zero-price target", () => {
+    const html = render({ ...activity, planHistoryStatus: "recorded", planPoints: [
+      { at: "2026-10-02T10:00:00Z", stopLoss: 85, target: 120, source: "baseline" },
+      { at: "2026-10-03T10:00:00Z", stopLoss: 95, target: null, previousStopLoss: 85, previousTarget: 120, source: "recorded_change" },
+      { at: "2026-10-03T15:00:00Z", stopLoss: 95, target: null, source: "current_snapshot" },
+    ] });
+    expect(html).toContain("Stop/target recording from");
+    expect(html).toContain("Recording started (current baseline)");
+    expect(html).toContain("stop $85 → $95 · target $120 → none");
+    expect(html).not.toContain("Earlier stop/target changes were not recorded");
+    expect(html).not.toContain("target $120 → $0");
   });
 });

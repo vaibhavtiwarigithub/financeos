@@ -62,7 +62,10 @@ export type PositionPlanPoint = {
   at: string;
   stopLoss: number | null;
   target: number | null;
-  source: "recorded_change" | "current_snapshot";
+  source: "recorded_change" | "current_snapshot" | "baseline" | "position_created";
+  previousStopLoss?: number | null;
+  previousTarget?: number | null;
+  eventId?: string;
 };
 
 export type PositionActivitySeries = {
@@ -79,6 +82,50 @@ const positive = (value: unknown): number | null => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : null;
 };
+
+export type PositionPlanEventRow = {
+  id: number | string; position_id: string; market: string; symbol: string;
+  position_role: string | null; opened_at: string | null; recorded_at: string;
+  event_kind: string; stop_loss: number | string | null; price_target: number | string | null;
+  previous_stop_loss: number | string | null; previous_target: number | string | null;
+};
+
+/** An observed baseline is never backdated to entry. Exact epoch/role identity
+ * prevents a reused position ID or symbol from inheriting another hold's plan. */
+export function buildPositionPlanHistory(args: {
+  positionId: string; market: "us" | "india"; symbol: string; positionRole: string | null;
+  openedAt: string | null; stopLoss: number | string | null; target: number | string | null;
+  observedAt: string; rows: PositionPlanEventRow[]; unavailable?: boolean; truncated?: boolean;
+}): Pick<PositionActivitySeries, "planPoints" | "planHistoryStatus"> {
+  const level = (n: unknown) => n == null ? null : positive(n);
+  const current: PositionPlanPoint = { at: args.observedAt, stopLoss: level(args.stopLoss), target: level(args.target), source: "current_snapshot" };
+  const fallback = (status: PositionActivitySeries["planHistoryStatus"]) => ({ planPoints: [current], planHistoryStatus: status });
+  if (args.unavailable) return fallback("unavailable");
+  const rows = args.rows.filter(r => r.position_id === args.positionId && r.market === args.market
+    && r.symbol === args.symbol && r.position_role === args.positionRole && r.opened_at === args.openedAt);
+  if (!rows.length) return fallback(args.truncated ? "truncated" : "unavailable");
+  if (rows.some(r => !Number.isFinite(Date.parse(r.recorded_at)) || !/^\d+$/.test(String(r.id))
+    || !["baseline", "position_created", "level_change", "epoch_reset"].includes(r.event_kind)
+    || [r.stop_loss, r.price_target, r.previous_stop_loss, r.previous_target].some(n => n != null && positive(n) == null))) return fallback("unavailable");
+  rows.sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at) || (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0));
+  // Even a reused ID with identical timestamp/role must start again after a
+  // newly created position or a role/identity round-trip reset.
+  const lastReset = rows.reduce((index, r, i) => r.event_kind === "position_created" || r.event_kind === "epoch_reset" ? i : index, -1);
+  if (lastReset > 0) rows.splice(0, lastReset);
+  const points: PositionPlanPoint[] = [];
+  for (const row of rows) {
+    const prev = points.at(-1);
+    // A missing event or a mixed snapshot must not look like continuous history.
+    if (prev && row.event_kind === "level_change" && (prev.stopLoss !== level(row.previous_stop_loss) || prev.target !== level(row.previous_target))) return fallback("unavailable");
+    points.push({ at: row.recorded_at, stopLoss: level(row.stop_loss), target: level(row.price_target),
+      source: row.event_kind === "baseline" ? "baseline" : row.event_kind === "position_created" || row.event_kind === "epoch_reset" ? "position_created" : "recorded_change",
+      previousStopLoss: level(row.previous_stop_loss), previousTarget: level(row.previous_target), eventId: String(row.id) });
+  }
+  const last = points.at(-1)!;
+  if (last.stopLoss !== current.stopLoss || last.target !== current.target || Date.parse(last.at) > Date.parse(current.at)) return fallback("unavailable");
+  points.push(current);
+  return { planPoints: points, planHistoryStatus: args.truncated ? "truncated" : "recorded" };
+}
 
 function activityLineageKey(row: PositionActivityRow): string | null {
   const eventId = row.paper_event_id == null ? "" : String(row.paper_event_id);

@@ -16,6 +16,11 @@ export default function PositionActivityChart({ activity, currentQty, currency, 
   const money = (value: number) => fmtMoney(value, currency === "₹" ? "india" : "us");
   const signedMoney = (n: number) => `${n >= 0 ? "+" : "−"}${money(Math.abs(n))}`;
   const qty = (n: number) => n.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+  const planDescription = (p: typeof plans[number]) => {
+    const level = (n: number | null | undefined) => n == null ? "none" : money(n);
+    const label = p.source === "baseline" ? "Recording started (current baseline)" : p.source === "position_created" ? "Position created / epoch started" : p.source === "current_snapshot" ? "Current observation" : "Recorded change";
+    return `${label} · stop ${p.source === "recorded_change" ? `${level(p.previousStopLoss)} → ` : ""}${level(p.stopLoss)} · target ${p.source === "recorded_change" ? `${level(p.previousTarget)} → ` : ""}${level(p.target)}`;
+  };
   const title = loading ? "Loading position history…"
     : activity?.status === "reconciliation_mismatch" ? "Activity hidden · fills do not reconcile to current shares"
     : "Activity unavailable · exact current-position trade history is incomplete";
@@ -62,7 +67,7 @@ export default function PositionActivityChart({ activity, currentQty, currency, 
               return <g key={i}>
                 {next && <line x1={x(p.at)} x2={x(next.at)} y1={priceY(level)} y2={priceY(level)} stroke={color} strokeWidth="1.5" strokeDasharray="4 2" />}
                 {prior?.[key] != null && <line x1={x(p.at)} x2={x(p.at)} y1={priceY(prior[key]!)} y2={priceY(level)} stroke={color} strokeWidth="1.5" />}
-                <rect tabIndex={0} aria-label={`${key === "stopLoss" ? "Stop" : "Target"} ${money(level)}, ${p.source === "current_snapshot" ? "current observed level; change time unknown" : "recorded change"}, ${new Date(p.at).toLocaleString()}`} x={x(p.at) - 2.5} y={priceY(level) - 2.5} width="5" height="5" fill={color}><title>{`${key === "stopLoss" ? "Stop" : "Target"} ${money(level)} · ${new Date(p.at).toLocaleString()} · ${p.source.replaceAll("_", " ")}`}</title></rect>
+                <rect tabIndex={0} aria-label={`${planDescription(p)} · ${new Date(p.at).toLocaleString()}`} x={x(p.at) - 2.5} y={priceY(level) - 2.5} width="5" height="5" fill={color}><title>{`${planDescription(p)} · ${new Date(p.at).toLocaleString()}`}</title></rect>
               </g>;
             })}
           </g>)}
@@ -77,7 +82,7 @@ export default function PositionActivityChart({ activity, currentQty, currency, 
     </>}
     <div style={{ fontSize: 10, color: T.muted, lineHeight: 1.5, marginTop: 4 }}>
       {plans.length > 0 && <div style={{ color: T.textSub }}>Current stop: {plans.at(-1)!.stopLoss == null ? "none recorded" : money(plans.at(-1)!.stopLoss!)} · target: {plans.at(-1)!.target == null ? "none recorded" : money(plans.at(-1)!.target!)}</div>}
-      {activity?.planHistoryStatus === "recorded" ? "Stop/target lines begin with the first saved observation; earlier changes are unknown."
+      {activity?.planHistoryStatus === "recorded" ? `Stop/target recording from ${plans[0] ? new Date(plans[0].at).toLocaleString() : "first saved observation"}. Earlier changes are unknown.`
         : activity?.planHistoryStatus === "truncated" ? "Stop/target history exceeds the display limit; only the latest window is shown."
         : activity?.planHistoryStatus === "unavailable" ? "Stop/target history could not be loaded. Current levels only; historical changes are unknown."
         : "Earlier stop/target changes were not recorded. Squares show current levels only, not their historical start dates."}
@@ -86,7 +91,7 @@ export default function PositionActivityChart({ activity, currentQty, currency, 
     {events.length > 0 && <details style={{ marginTop: 6, fontSize: 10, color: T.textSub }}>
       <summary style={{ cursor: "pointer" }}>Trade and stop/target details</summary>
       <div style={{ maxHeight: 220, overflow: "auto", lineHeight: 1.6 }}>
-        {[...events.map((e, i) => ({ at: e.at, key: `e${i}`, text: pointDescription(e) })), ...plans.map((p, i) => ({ at: p.at, key: `p${i}`, text: `Stop ${p.stopLoss == null ? "none" : money(p.stopLoss)} · target ${p.target == null ? "none" : money(p.target)} · ${p.source.replaceAll("_", " ")}` }))].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).map(row => <div key={row.key} style={{ padding: "5px 0", borderBottom: `1px solid ${T.border}` }}><strong>{new Date(row.at).toLocaleString()}</strong><div>{row.text}</div></div>)}
+        {[...events.map((e, i) => ({ at: e.at, key: `e${i}`, text: pointDescription(e) })), ...plans.map((p, i) => ({ at: p.at, key: `p${i}`, text: planDescription(p) }))].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).map(row => <div key={row.key} style={{ padding: "5px 0", borderBottom: `1px solid ${T.border}` }}><strong>{new Date(row.at).toLocaleString()}</strong><div>{row.text}</div></div>)}
       </div>
     </details>}
   </div>;

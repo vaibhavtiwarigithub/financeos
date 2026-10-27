@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireViewerOrOwner } from "@/lib/auth/session-role";
 import { createServiceClient } from "@/lib/supabase/service";
-import { buildPositionActivitySeries, buildPositionHistorySeries, type PositionActivityRow, type PositionMarkRow } from "@/lib/portfolio/position-history";
+import { buildPositionActivitySeries, buildPositionHistorySeries, buildPositionPlanHistory, type PositionActivityRow, type PositionMarkRow, type PositionPlanEventRow } from "@/lib/portfolio/position-history";
 
 export const dynamic = "force-dynamic";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PAGE_SIZE = 500;
 const MAX_MARKS = 10_000;
 const MAX_ACTIVITY_ROWS = 10_000;
+const MAX_PLAN_ROWS = 10_000;
 
 function privateJson(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -99,16 +100,28 @@ export async function GET(req: NextRequest) {
     if (marks.length >= MAX_MARKS) value.truncated = true;
     return [p.id, value];
   }));
+  const planRows: PositionPlanEventRow[] = [];
+  let planUnavailable = false;
+  let planTruncated = false;
+  for (let offset = 0; offset < MAX_PLAN_ROWS; offset += PAGE_SIZE) {
+    const { data, error } = await sb.from("paper_position_plan_events")
+      .select("id,position_id,market,symbol,position_role,opened_at,recorded_at,event_kind,previous_stop_loss,previous_target,stop_loss,price_target")
+      .eq("market", market).in("position_id", verifiedIds)
+      .order("recorded_at", { ascending: false }).order("id", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) { planUnavailable = true; break; }
+    planRows.push(...((data ?? []) as PositionPlanEventRow[]));
+    if (!data || data.length < PAGE_SIZE) break;
+    if (offset + PAGE_SIZE >= MAX_PLAN_ROWS) planTruncated = true;
+  }
   const activity = Object.fromEntries(activePositions.map(p => {
     const value = buildPositionActivitySeries({
       positionId: p.id, symbol: p.symbol, market, positionRole: p.position_role,
       openedAt: p.opened_at, currentQty: Number(p.qty), rows: trades,
     });
-    // Reading today's plan is an observation, not evidence of when it changed.
-    // Never extend these levels backwards over the position's lifetime.
-    const level = (n: unknown) => n != null && Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null;
-    value.planPoints = [{ at: new Date().toISOString(), stopLoss: level(p.stop_loss), target: level(p.price_target), source: "current_snapshot" }];
-    value.planHistoryStatus = "not_recorded";
+    Object.assign(value, buildPositionPlanHistory({ positionId: p.id, symbol: p.symbol, market,
+      positionRole: p.position_role, openedAt: p.opened_at, stopLoss: p.stop_loss, target: p.price_target,
+      observedAt: new Date().toISOString(), rows: planRows, unavailable: planUnavailable, truncated: planTruncated }));
     if ((activityTruncated || activityUnavailable) && value.status === "ready") return [p.id, { ...value, events: [], status: "unavailable" as const }];
     return [p.id, value];
   }));
