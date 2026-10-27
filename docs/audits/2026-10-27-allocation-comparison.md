@@ -48,12 +48,21 @@ and broker-account data were not rewritten.
   skipping unrelated paper-book reads. The public viewer performs no new owner
   allocation fetch.
 
-## Remaining source limitation
+## Source correction and remaining verification
 
 The combined US live current pie is withheld while two Robinhood snapshots have
-reported/stored position counts of7/5 and16/15. It is not yet established whether
-the extra counts represent excluded/zero holdings, stale metadata or missing
-positions. Diagnose the existing collector's source contract before changing
-records; do not simply replace counts to make the chart look complete. A
-complete individual account can still be selected and compared. This and Kite
-reconnection remain source issues, not authority to fabricate holdings or cash.
+reported/stored position counts of7/5 and16/15. Diagnosis found the deterministic
+`refreshViaMcp` upsert replaced positions_json but omitted position_count, allowing
+the older count to survive. The existing upsert now stores a.holdings.length
+with that exact capture's holdings array, matching the other broker writers.
+No old financial/snapshot rows were patched and no broker capture was manually
+invoked. A successful natural refresh must prove count/array equality before
+the aggregate pie is declared recovered. Individual complete accounts work.
+
+The real-route regression mocks all broker/provider interfaces, proves one
+snapshot upsert contains count2 with the same two holdings, no network calls,
+and a failed capture preserves prior snapshots instead of writing zero. The
+focused post-correction suite passes24 tests, including existing broker-refresh
+boundaries and allocation arithmetic; TypeScript and secret checks accompany
+release. The full4,554-test chart suite preceded this one-field metadata repair.
+Kite reconnection remains an owner/source issue; no fabricated holdings or cash.

@@ -47,6 +47,12 @@ https://kite.trade/docs/connect/v3/user/#funds-and-margins . Unclassified balanc
 produce lower-bound category shares and withheld gaps, rather than false precise
 differences. This display does not repair or change existing account NAV records.
 
+The Robinhood snapshot refresher had omitted `position_count` while replacing
+its holdings array. The existing fresh-capture upsert now stores the count from
+that same holdings array, matching registry/Alpaca writers. Failed captures
+preserve prior data. No existing snapshot is patched by hand; count-mismatched
+current charts remain withheld until a successful natural capture replaces them.
+
 ## Owner-approved profile implementation — October 26, 2026
 
 The owner explicitly requested editable allocation fixes and reset defaults for

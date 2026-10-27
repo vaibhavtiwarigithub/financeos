@@ -46,6 +46,7 @@ async function refreshViaMcp(): Promise<{ ok: boolean; error?: string; equity?: 
       equity: a.totalValue,
       buying_power: a.buyingPower ?? null,
       portfolio_value: a.totalValue,
+      position_count: a.holdings.length,
       positions_json: a.holdings.map(h => ({
         symbol: h.symbol,
         qty: h.qty,
