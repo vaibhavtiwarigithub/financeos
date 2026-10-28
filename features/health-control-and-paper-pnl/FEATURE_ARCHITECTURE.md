@@ -59,3 +59,64 @@ Status: APPROVED AND IN BUILD (owner request, 2026-07-20)
 - US and India are never joined or summed; currency follows the selected market.
 - No external API call, LLM call, broker call, order, threshold, or autonomy flag
   is introduced by the P&L display.
+
+## Paper accuracy-latch recovery visibility — owner approved 2026-10-28
+
+### Intent and boundary
+
+Make the existing owner-facing kill-switch card explain whether the paper
+30-day accuracy brake is currently blocked, clear, insufficient for evaluation,
+or unavailable because its data could not be read. This addresses the recovery
+dead-end confusion without changing risk policy. The 35% threshold, 20-directional-
+episode minimum, 30-day window, market latch, and explicit owner reset remain
+unchanged. No automatic re-enable, probe trades, sample fabrication, or shadow
+outcome substitution is allowed.
+
+### Data contract
+
+Extend the existing owner-only `GET /api/settings/kill-switch` response with a
+nullable `paper_accuracy` summary only for a latch attributed to the paper book:
+
+```ts
+{
+  state: "blocked" | "clear" | "insufficient" | "unavailable",
+  wins: number | null,
+  losses: number | null,
+  directionalEpisodes: number | null,
+  winRatePct: number | null,
+  thresholdPct: number,
+  minimumEpisodes: number,
+  windowDays: 30
+}
+```
+
+Use the same canonical `aggregatePaperExitAccuracy` function and source query
+contract as the kill-switch evaluator (`paper_trades`, same market, non-null
+outcome, tainted exits excluded, same timestamp fallback and episode grouping).
+Read failures or a history-limit overflow are `unavailable`, never `insufficient`.
+Fewer than 20 valid directional episodes are `insufficient`; this means the
+accuracy brake has no current estimate, not that the strategy is safe or
+profitable. A measured rate below threshold is `blocked`; at or above threshold
+is `clear`. Never report a required future win count because the rolling window
+can change as new episodes arrive and old ones expire.
+
+The summary is explanatory only. It does not decide reset eligibility. The
+existing POST remains the sole reset path and rechecks all breakers, the pause,
+book attribution, owner authentication, and audit-before-enable requirements.
+The UI must state that a clear accuracy gate does not guarantee the other brakes
+pass. On unavailable data, preserve the latch and direct the user to the exact
+read failure without exposing provider/database secrets.
+
+### UI and acceptance
+
+In Settings → Trading, the paper latch card shows the rolling sample, win rate,
+threshold, and state in plain language. The existing `Recheck paper + reset`
+button remains available; its server response continues to control the result.
+After every reset attempt, refresh the read-only status. No score, position,
+order, account, threshold, or trading behavior changes.
+
+Acceptance: authenticated GET reports exact values from the canonical helper;
+20-row boundary, below/at/above threshold, tainted rows, market isolation,
+query error, and overflow states are covered; anonymous/non-owner requests retain
+the existing denial; GET performs no writes; reset continues to use the existing
+guarded and audited POST and cannot bypass any safety brake.

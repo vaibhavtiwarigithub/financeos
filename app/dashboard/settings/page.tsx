@@ -31,6 +31,16 @@ type MarketControlStatus = {
   trading_enabled: boolean;
   paused_reason?: string | null;
   trip_book?: "paper" | "live" | null;
+  paper_accuracy?: {
+    state: "blocked" | "clear" | "insufficient" | "unavailable";
+    wins: number | null;
+    losses: number | null;
+    directionalEpisodes: number | null;
+    winRatePct: number | null;
+    thresholdPct: number | null;
+    minimumEpisodes: number;
+    windowDays: number;
+  } | null;
 };
 
 const T = {
@@ -398,6 +408,7 @@ export default function SettingsPage() {
       setToast(error instanceof Error ? error.message : "Kill-switch reset failed");
     } finally {
       setResettingMarket(null);
+      loadMarketControls();
       setTimeout(() => setToast(""), 4000);
     }
   }
@@ -951,11 +962,27 @@ export default function SettingsPage() {
                 <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
                   {marketControls.filter(control => !control.trading_enabled).map(control => {
                     const books = control.trip_book ? [control.trip_book] : (["paper", "live"] as const);
+                    const accuracy = control.trip_book === "paper" ? control.paper_accuracy : null;
+                    const accuracyCopy = !accuracy || accuracy.state === "unavailable"
+                      ? "Recent paper outcomes could not be verified. The latch remains on; retry the read later."
+                      : accuracy.state === "insufficient"
+                        ? `Only ${accuracy.directionalEpisodes} of ${accuracy.minimumEpisodes} qualifying exit episodes are available in the last ${accuracy.windowDays} days. The accuracy brake has no estimate; this is not evidence that the strategy is safe or profitable.`
+                        : accuracy.state === "blocked"
+                          ? `${accuracy.wins} wins / ${accuracy.losses} losses across ${accuracy.directionalEpisodes} qualifying exits (${accuracy.winRatePct?.toFixed(1)}%; gate ${accuracy.thresholdPct}%). The accuracy brake is still blocking reset.`
+                          : `${accuracy.wins} wins / ${accuracy.losses} losses across ${accuracy.directionalEpisodes} qualifying exits (${accuracy.winRatePct?.toFixed(1)}%; gate ${accuracy.thresholdPct}%). The accuracy brake is clear; the guarded reset still checks every other safety brake.`;
                     return (
                       <div key={control.market} style={{ border: `1px solid ${T.red}55`, background: `${T.red}0D`, borderRadius: "8px", padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                         <div>
                           <div style={{ color: T.red, fontSize: "12px", fontWeight: 700 }}>{control.market.toUpperCase()} safety latch is OFF</div>
                           <div style={{ color: T.textSub, fontSize: "11px", marginTop: "3px" }}>{control.paused_reason ?? "Originating book is unknown; choose the book to recheck."}</div>
+                          {control.trip_book === "paper" && (
+                            <div style={{ marginTop: "8px", maxWidth: "680px", fontSize: "11px", lineHeight: 1.5, color: accuracy?.state === "blocked" ? T.red : accuracy?.state === "clear" ? T.green : T.yellow }}>
+                              <strong>Paper recovery · 30-day accuracy:</strong> {accuracyCopy}
+                              <div style={{ color: T.textSub, marginTop: "2px" }}>
+                                Research and position exits continue while new paper entries are paused. The latch is never cleared automatically; use Recheck only after reviewing this status. A clear accuracy result does not guarantee the other brakes pass.
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: "flex", gap: "6px" }}>
                           {books.map(book => (

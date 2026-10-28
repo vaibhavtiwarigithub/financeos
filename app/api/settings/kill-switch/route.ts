@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
-import { checkKillSwitches, type TradingBook } from "@/lib/kill-switches";
+import { checkKillSwitches, readPaperAccuracyRecoveryStatus, type TradingBook } from "@/lib/kill-switches";
 import { setMarketTrading } from "@/lib/market-controls";
 import { resolveIssue } from "@/lib/system-health";
 import { createServiceClient } from "@/lib/supabase/service";
+import { DEFAULT_KILL_SWITCH_DIALS } from "@/lib/risk-profiles";
 
 export const dynamic = "force-dynamic";
 
@@ -26,13 +27,28 @@ export async function GET() {
   const gate = await requireOwner();
   if (gate) return gate;
   const svc = createServiceClient();
-  const { data, error } = await svc
-    .from("market_controls")
+  const { data, error } = await svc.from("market_controls")
     .select("market,paused,trading_enabled,paused_reason,paused_at,updated_at")
     .order("market");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const hasPaperLatch = (data ?? []).some((row: any) => inferBook(row.paused_reason) === "paper");
+  const { data: config, error: configError } = hasPaperLatch
+    ? await svc.from("strategy_config").select("ks_accuracy_pct").maybeSingle()
+    : { data: null, error: null };
+  const rawAccuracy = Number(config?.ks_accuracy_pct);
+  const thresholdPct = configError || !config
+    ? null
+    : Number.isFinite(rawAccuracy) && rawAccuracy !== 0
+      ? rawAccuracy
+      : DEFAULT_KILL_SWITCH_DIALS.ks_accuracy_pct;
+  const markets = await Promise.all((data ?? []).map(async (row: any) => {
+    const tripBook = inferBook(row.paused_reason);
+    if (tripBook !== "paper") return { ...row, trip_book: tripBook, paper_accuracy: null };
+    const paperAccuracy = await readPaperAccuracyRecoveryStatus(svc, row.market, thresholdPct);
+    return { ...row, trip_book: tripBook, paper_accuracy: paperAccuracy };
+  }));
   return NextResponse.json({
-    markets: (data ?? []).map((row: any) => ({ ...row, trip_book: inferBook(row.paused_reason) })),
+    markets,
   });
 }
 

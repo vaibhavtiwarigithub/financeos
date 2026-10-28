@@ -73,11 +73,21 @@ type PaperOutcomeRow = {
   tainted?: boolean | null;
 };
 
-/** Aggregate pyramid lots closed together into one independent exit episode. */
-export function aggregatePaperExitAccuracy(
+export type PaperAccuracyRecoveryStatus = {
+  state: "blocked" | "clear" | "insufficient" | "unavailable";
+  wins: number | null;
+  losses: number | null;
+  directionalEpisodes: number | null;
+  winRatePct: number | null;
+  thresholdPct: number | null;
+  minimumEpisodes: number;
+  windowDays: 30;
+};
+
+function measurePaperExitAccuracy(
   rows: PaperOutcomeRow[],
   nowMs = Date.now(),
-): { wins: number; total: number; episodes: number } | null {
+): { wins: number; losses: number; total: number; episodes: number } {
   const cutoffMs = nowMs - 30 * 24 * 60 * 60 * 1000;
   const episodes = new Map<string, { pnl: number; cost: number }>();
 
@@ -102,17 +112,56 @@ export function aggregatePaperExitAccuracy(
   }
 
   let wins = 0;
-  let directional = 0;
+  let losses = 0;
   for (const episode of episodes.values()) {
     if (!(episode.cost > 0)) continue;
     const outcome = classifyOutcome((episode.pnl / episode.cost) * 100);
-    if (outcome === "breakeven") continue;
-    directional++;
     if (outcome === "win") wins++;
+    else if (outcome === "loss") losses++;
   }
+  return { wins, losses, total: wins + losses, episodes: episodes.size };
+}
 
-  return directional >= MIN_ACCURACY_SAMPLE
-    ? { wins, total: directional, episodes: episodes.size }
+/** Read-only accuracy summary for explaining a paper latch; never re-enables it. */
+export async function readPaperAccuracyRecoveryStatus(
+  supabase: any,
+  market: string,
+  thresholdPct: number | null,
+  nowMs = Date.now(),
+): Promise<PaperAccuracyRecoveryStatus> {
+  const unavailable: PaperAccuracyRecoveryStatus = {
+    state: "unavailable", wins: null, losses: null, directionalEpisodes: null,
+    winRatePct: null, thresholdPct, minimumEpisodes: MIN_ACCURACY_SAMPLE, windowDays: 30,
+  };
+  if (thresholdPct == null || !Number.isFinite(thresholdPct) || thresholdPct === 0) return unavailable;
+
+  const { data, error } = await queryPaperOutcomeRows(supabase, market);
+  if (error || !Array.isArray(data) || data.length > MAX_PAPER_OUTCOME_ROWS) return unavailable;
+
+  const metrics = measurePaperExitAccuracy(data, nowMs);
+  const winRatePct = metrics.total > 0 ? (metrics.wins / metrics.total) * 100 : null;
+  return {
+    state: metrics.total < MIN_ACCURACY_SAMPLE
+      ? "insufficient"
+      : (winRatePct ?? 0) < thresholdPct ? "blocked" : "clear",
+    wins: metrics.wins,
+    losses: metrics.losses,
+    directionalEpisodes: metrics.total,
+    winRatePct,
+    thresholdPct,
+    minimumEpisodes: MIN_ACCURACY_SAMPLE,
+    windowDays: 30,
+  };
+}
+
+/** Aggregate pyramid lots closed together into one independent exit episode. */
+export function aggregatePaperExitAccuracy(
+  rows: PaperOutcomeRow[],
+  nowMs = Date.now(),
+): { wins: number; total: number; episodes: number } | null {
+  const measured = measurePaperExitAccuracy(rows, nowMs);
+  return measured.total >= MIN_ACCURACY_SAMPLE
+    ? { wins: measured.wins, total: measured.total, episodes: measured.episodes }
     : null;
 }
 
@@ -120,6 +169,18 @@ export function aggregatePaperExitAccuracy(
 // an unscoped retry would mix USD/INR risk truth and is forbidden.
 async function scoped(q: any, market: string): Promise<any> {
   return q.eq("market", market);
+}
+
+async function queryPaperOutcomeRows(supabase: any, market: string): Promise<any> {
+  return scoped(
+    supabase
+      .from("paper_trades")
+      .select("symbol,qty,quantity,fill_price,entry_price,realized_pnl,closed_at,exit_at,executed_at,tainted,market")
+      .not("outcome", "is", null)
+      .order("closed_at", { ascending: false, nullsFirst: false })
+      .limit(MAX_PAPER_OUTCOME_ROWS + 1),
+    market,
+  );
 }
 
 // ── Live data helpers ────────────────────────────────────────────────────────
@@ -309,17 +370,7 @@ export async function checkKillSwitches(
             .limit(90),
           market,
         ),
-        scoped(
-          supabase
-            .from("paper_trades")
-            .select(
-              "symbol,qty,quantity,fill_price,entry_price,realized_pnl,closed_at,exit_at,executed_at,tainted,market",
-            )
-            .not("outcome", "is", null)
-            .order("closed_at", { ascending: false, nullsFirst: false })
-            .limit(MAX_PAPER_OUTCOME_ROWS + 1),
-          market,
-        ),
+        queryPaperOutcomeRows(supabase, market),
       ]);
 
     const readError = portfolioResult.error ?? performanceResult.error ?? tradesResult.error;

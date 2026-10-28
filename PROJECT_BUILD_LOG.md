@@ -331,3 +331,15 @@ Notes: Migrations `20260911193121`, `20260911194022`, and `20260911194147` were 
 | 10. QA | Not started |
 | 11. Launch | Not started |
 | 12. Feedback loop | Not started |
+
+### Entry 15 - 2026-10-28 (Paper accuracy-latch recovery visibility)
+
+Instruction: Explain the US paper accuracy latch and its recovery status without
+changing its threshold or bypassing safety controls.
+Classification: Approved, read-only Settings improvement.
+Impact: Settings → Trading now has a scoped diagnostic design for the same
+30-day market-local exit episodes used by the paper breaker. It distinguishes a
+blocked gate from insufficient or unavailable evidence and keeps the existing
+audited reset as the only re-enable path. No trades, positions, thresholds, or
+live controls are changed. Implementation verification and release are recorded
+in `features/health-control-and-paper-pnl/IMPLEMENTATION_RESULT.md`.
