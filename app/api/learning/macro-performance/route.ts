@@ -26,11 +26,12 @@ export async function GET(request: NextRequest) {
     const svc = createServiceClient();
     const since = new Date(Date.now() - 400 * 86_400_000).toISOString();
     const labels = await fetchAllRows((from, to) => svc.from("observation_labels")
-      .select("id,horizon_days,benchmark_neutral_return,decision_observations!inner(ts,symbol,market,macro_score,analyst_score,availability_mask,formula_lineage:features->formula_lineage)")
+      .select("id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(ts,symbol,market,macro_score,analyst_score,availability_mask,technical_as_of:features->technical->>as_of,formula_lineage:features->formula_lineage)")
       .eq("decision_observations.market", market)
       .gte("decision_observations.ts", since)
       .in("horizon_days", HORIZONS)
-      .not("benchmark_neutral_return", "is", null)
+      .not("fwd_return", "is", null)
+      .lte("matured_at", new Date().toISOString())
       .order("id", { ascending: true })
       .range(from, to), `macro ${market} matured labels`);
 
@@ -52,10 +53,11 @@ export async function GET(request: NextRequest) {
       rowsRead: labels.length,
       cells,
       interpretation: market === "us"
-        ? "US macro is one market-wide score. Its association is time-series evidence, not cross-sectional stock-picking IC. Returns use researched symbols and are aggregated once per date and instrument family."
+        ? "US macro is one market-wide score. Its family-level association is time-series evidence, not cross-sectional stock-picking IC. A fixed US equity/semiconductor exposure map separately compares raw vs direction-oriented macro scores with absolute returns for SPY/QQQ/SOXX/SOXL/TQQQ/SOXS/SQQQ; this is a shadow diagnostic, not a score or trading rule."
         : "India macro remains excluded from the composite. Factor values are joined only when first-seen fetched_at and observation date are no later than the frozen decision. Same-date symbols are aggregated once per family; this is association, not causation or a forecast.",
       limitations: [
-        "Only matured research observations with a non-null benchmark-neutral label are included.",
+        "Family-level rows require a matured benchmark-neutral label; the fixed US instrument comparison requires a matured absolute return. The two estimands are kept separate.",
+        "The fixed US instrument comparison reports per-symbol associations, not cross-sectional IC or validated strategy performance.",
         "Horizon-spaced windows are non-overlapping by date selection, not a claim that macro episodes are independent or an effective sample size.",
         "No inferential t-statistic, validated status, score mutation, LLM call, provider fetch, database write, or trading effect is produced.",
         "Instrument-family results reflect the symbols researched by Kairos, not the full market universe.",

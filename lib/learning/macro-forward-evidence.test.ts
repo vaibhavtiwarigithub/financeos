@@ -77,4 +77,47 @@ describe("macro forward evidence", () => {
     const cells = buildMacroForwardEvidence("india", labels, factors);
     expect(cells.some((cell) => cell.series === "NIFTY 50 daily % change")).toBe(false);
   });
+
+  it("compares raw and exposure-oriented US macro against absolute returns for the fixed inverse/long set", () => {
+    const labels: any[] = [];
+    const symbols = ["SPY", "QQQ", "SOXX", "SOXL", "TQQQ", "SOXS", "SQQQ"];
+    for (let i = 0; i < 30; i++) {
+      const date = dateAfter("2026-01-01", i);
+      const macro = 30 + i * 2;
+      for (const symbol of symbols) {
+        const inverse = symbol === "SOXS" || symbol === "SQQQ";
+        labels.push({ horizon_days: 2, benchmark_neutral_return: 0.001, fwd_return: (inverse ? -1 : 1) * i / 100, decision_observations: {
+          ts: `${date}T14:00:00.000Z`, symbol, market: "us", analyst_score: 60, macro_score: macro,
+          availability_mask: { macro: true }, technical_as_of: date,
+          formula_lineage: { versions: { macro: "macro_v1", composite: "composite_v1" } },
+        } });
+      }
+    }
+
+    const cells = buildMacroForwardEvidence("us", labels, []);
+    const rawInverse = cells.find((cell) => cell.instrument === "SOXS" && cell.series === "us_macro_underlying_raw_v1");
+    const orientedInverse = cells.find((cell) => cell.instrument === "SOXS" && cell.series === "us_macro_exposure_oriented_v1");
+    const orientedLong = cells.find((cell) => cell.instrument === "SOXL" && cell.series === "us_macro_exposure_oriented_v1");
+
+    expect(rawInverse?.returnBasis).toBe("absolute_instrument");
+    expect(rawInverse?.spearmanIc).toBeCloseTo(-1, 10);
+    expect(orientedInverse?.spearmanIc).toBeCloseTo(1, 10);
+    expect(orientedLong?.spearmanIc).toBeCloseTo(1, 10);
+    expect(orientedInverse?.formulaVersion).toBe("us_macro_exposure_direction_v1_20261028");
+  });
+
+  it("uses the frozen price-bar session and keeps per-instrument outcomes when benchmark marks are missing", () => {
+    const cells = buildMacroForwardEvidence("us", [{
+      horizon_days: 2, benchmark_neutral_return: null, fwd_return: 0.08,
+      decision_observations: {
+        ts: "2026-10-24T14:00:00.000Z", technical_as_of: "2026-10-23", symbol: "SOXL", market: "us",
+        macro_score: 70, analyst_score: 60, availability_mask: { macro: true },
+      },
+    }], []);
+    const cell = cells.find((item) => item.instrument === "SOXL" && item.returnBasis === "absolute_instrument");
+    expect(cell?.matchedDates).toBe(1);
+    expect(cell?.symbolRows).toBe(1);
+    expect(cell?.state).toBe("insufficient");
+    expect(cells.every((item) => item.returnBasis === "absolute_instrument")).toBe(true);
+  });
 });

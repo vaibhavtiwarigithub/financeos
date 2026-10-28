@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 // LLM council (shadow) scores for one symbol, for owner AND viewer. Stored forecasts only (/api/research/council reads
 // llm_council_runs + llm_council_model_forecasts), so opening a symbol never calls a model. Nothing here feeds a trade.
 
-type Member = { member: "deepseek" | "claude" | "codex" | null; model: string; source: "api" | "subscription"; score: number | null; confidence: number | null; rationale: string | null; bull: string | null; bear: string | null; availableAt: string | null };
+type Citation = { claim: string; source: string; asOf: string };
+type Member = { member: "deepseek" | "claude" | "codex" | null; model: string; source: "api" | "subscription"; score: number | null; confidence: number | null; rationale: string | null; bull: string | null; bear: string | null; citations: Citation[]; availableAt: string | null };
 type MemberState = { model: string; member: Member["member"]; source: "api" | "subscription"; score: number | null; status: string; reason: string | null };
-type Run = { id: string; decisionTs: string; status: string; consensus: number | null; deterministic: number | null; threshold: number | null; direction: string | null; completedAt: string | null; members: Member[]; memberStates: MemberState[] };
+type Run = { id: string; decisionTs: string; status: string; consensus: number | null; deterministic: number | null; threshold: number | null; direction: string | null; cohort?: string | null; promptVersion: string | null; completedAt: string | null; members: Member[]; memberStates: MemberState[] };
 type Payload = { runs: Run[]; error?: string };
 
 const LABEL: Record<string, string> = { deepseek: "DeepSeek", claude: "Claude", codex: "Codex" };
@@ -95,6 +96,7 @@ export default function CouncilScoreCard({ symbol, market }: { symbol: string; m
           </div>
           <div className="text-xs text-muted-foreground mb-2">
             Observation {when(latest.decisionTs)} · status <span className="font-mono">{latest.status}</span>
+            {latest.promptVersion && <> · prompt <span className="font-mono">{latest.promptVersion}</span></>}
             {latest.status !== "completed" && memberScores.length < latest.memberStates.length && <> · {latest.memberStates.length - memberScores.length} of {latest.memberStates.length} selected member scores unavailable</>}
             {latest.consensus == null && memberScores.length === latest.memberStates.length && <> · median computed from all selected members (stored run finalized before the last member returned)</>}
           </div>
@@ -113,6 +115,7 @@ export default function CouncilScoreCard({ symbol, market }: { symbol: string; m
                         {f.rationale && <p className="mb-1">{f.rationale}</p>}
                         {f.bull && <p className="text-green-600 mb-1">Bull: {f.bull}</p>}
                         {f.bear && <p className="text-red-500">Bear: {f.bear}</p>}
+                        {f.citations.length > 0 && <div className="mt-2 border-t pt-2"><div className="font-semibold mb-1">Evidence cited from this snapshot</div>{f.citations.map((citation, citationIndex) => <div key={`${citation.source}:${citationIndex}`} className="mb-1"><span>{citation.claim || "Evidence"}</span> · <code>{citation.source || "path unavailable"}</code> · as of {citation.asOf}</div>)}</div>}
                       </>
                     ) : <span className="text-muted-foreground">No score: {m.status.replaceAll("_", " ")}{m.reason ? ` · ${m.reason}` : ""}.</span>}
                   </div>
@@ -142,6 +145,11 @@ export default function CouncilScoreCard({ symbol, market }: { symbol: string; m
               </tbody>
             </table>
           </div>
+
+          <details className="mb-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer underline">How the council makes this score</summary>
+            <p className="mt-2">Each member receives the frozen research snapshot available at this decision time and returns an independent 0–100 relative-attractiveness score for the next 10 market sessions, confidence, bull/bear cases, and citations to snapshot fields. Confidence is the model’s own estimate and is not calibrated probability. The displayed council score is the median of valid member scores; it is not the orchestrator’s free-form judgment. The prompt version above identifies the scoring contract. These forecasts are shadow research only and do not affect orders.</p>
+          </details>
         </>
       )}
     </div>

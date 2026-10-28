@@ -76,3 +76,29 @@ Vercel's production build also completed type checking and prerendered all 78
 static pages. GitGuardian staged secret scan found no secrets. No migration was
 needed. Pre-correction and post-correction score observations must remain
 separate by code version.
+
+## US long/inverse macro direction challenger (2026-10-28)
+
+Reused the read-only Learning macro outcome route and existing matured
+`observation_labels`. The bounded comparison covers SPY, QQQ, SOXX, SOXL, TQQQ,
+SOXS and SQQQ. It reports the persisted bullish-oriented `macro_score` and a
+separately named exposure-oriented score (unchanged for long exposure, inverted
+for SOXS/SQQQ) against absolute instrument returns. Family benchmark-neutral
+rows remain separate. Session grouping uses the frozen technical bar's
+`as_of` date, not a potentially weekend decision-write date; instrument rows
+can still be measured if the benchmark mark is missing. No formula, weight,
+score, position, prompt, model, schema, or trade behavior changed.
+
+Read-only production evidence demonstrates why this should be measured but
+not promoted: the Oct 23 SOXL record had composite 46, macro 65, technical 20,
+`new_entry_allowed=false`, and a later matured h2 absolute return of +23.00%;
+SOXS on the same session had composite 80, the same macro 65, technical 100,
+`new_entry_allowed=false`, then returned -20.59%. The separate natural Oct 27
+SOXL door run rejected a $49.01 minimum at $0.000509 paper cash. These are two
+specific postmortem observations, not evidence for changing either the scoring
+or leveraged-entry policy. Current horizon-spaced symbol samples are sparse;
+the read-only audit is in `docs/audits/2026-10-28-soxl-inverse-timing.md`.
+
+Focused tests passed (macro evidence 6/6; symbol council route 1/1). Full
+verification and release status must be recorded in `WORK_LOG.md` before this
+change is treated as complete.

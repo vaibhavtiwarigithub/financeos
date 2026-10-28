@@ -1470,3 +1470,27 @@ t-statistics because the current data do not establish independent macro
 episodes. Plan v7 records are immutable and remain visible until the next
 scheduled v8 diagnostic publishes; session series from different plan versions
 must not be joined or compared as a continuous series.
+
+### Per-instrument macro direction challenger (2026-10-28)
+
+The macro evidence panel also shows raw versus exposure-oriented US macro
+scores against absolute returns for the fixed long/inverse ETF set specified in
+`features/instrument-aware-scoring/FEATURE_ARCHITECTURE.md` §13. These are
+symbol-specific descriptive associations, not cross-sectional IC. The panel
+uses each frozen technical bar session to avoid weekend decision timestamps
+being mistaken for market sessions. Instrument return rows can remain present
+when a benchmark label is unavailable; family benchmark-neutral rows cannot.
+The inverse transform is a named candidate and not a prediction guarantee:
+daily-reset inverse products can compound differently over multiple sessions.
+
+### Council explanation shown on a symbol (2026-10-28)
+
+The symbol's Council card now exposes the persisted prompt version and the
+member's validated evidence citations alongside actual model/source, score,
+self-reported confidence, rationale, and bull/bear cases. A short method
+disclosure says that the score is 0–100 relative attractiveness for ten market
+sessions, the median is deterministic, the confidence is not a calibrated
+probability, and the frozen evidence packet—not live browsing or future facts—
+is the source of evidence. This displays existing persisted output only; it
+does not lengthen prompts, add calls, or affect decisions. It is not a
+comprehensive research report or price target.

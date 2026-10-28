@@ -285,3 +285,95 @@ have only technical evidence under the current active five-dimension contract;
 the existing minimum-two-dimensions abstention remains in force, so no trade is
 manufactured until a second qualified factor exists. No new dimension, weight,
 threshold, market-data source, or live permission is introduced.
+
+## 13. Family/direction-aware score challengers (owner proceed, 2026-10-28)
+
+### Hypothesis and boundary
+
+The owner asked whether a favorable underlying-market macro score should help a
+long exposure and hurt an inverse exposure, and whether each instrument family
+uses only economically meaningful dimensions. The hypothesis is that an
+explicitly underlying-referenced signal can be direction-oriented by exposure
+and can improve forward prediction for the corresponding family. This is not
+assumed true, and the incumbent score remains unchanged.
+
+This phase is shadow/diagnostic only. It may persist candidate values alongside
+the existing immutable decision evidence and evaluate them on matured, matched
+forward labels. It must not change the production composite, entry eligibility,
+rank, sizing, stops, paper/live decisions, or council prompt/models. Unknown
+family, ambiguous signal semantics, stale source, and missing exposure mapping
+mean `not_evaluated`, not a neutral score or inferred sign.
+
+### Semantic contract
+
+Applicability and direction are separate fields. A dimension can be applicable
+but must not be flipped unless its value explicitly describes the underlying
+exposure's prospective return. The candidate contract records per input:
+
+- `dimension`, `instrument_family`, `exposure_id`, `reference` (`instrument`,
+  `underlying`, `sector`, `commodity`, `rates`, or `macro_regime`),
+- `direction` (`+1`, `-1`, `0`, or `unknown`), `transform_version`,
+- source/as-of/freshness/applicability and an exclusion reason.
+
+For the first bounded challenger, only a score whose documented meaning is
+prospective favorability of the underlying equity exposure may use the inverse
+orientation `100 - score` for an inverse fund. Fund-price technicals remain in
+the fund's own direction. Social/news sentiment is never inverted unless its
+source identity proves it refers to the underlying. Leverage magnitude, daily
+reset, volatility, gap and tracking risk are separate risk/eligibility evidence,
+not bullish or bearish alpha points.
+
+The first comparison is limited to existing US broad-equity / semiconductor
+long and inverse instruments with known underlyings (including SPY/QQQ/SOXX,
+SOXL/TQQQ, and SOXS/SQQQ where valid observations exist). It reports incumbent
+versus one predeclared direction-aware challenger on the same symbol/session
+population and h2/h5/h10/h20 labels. A shared market-level macro value cannot
+rank names cross-sectionally; its effect is evaluated as a dated time-series or
+family-relative outcome, never mislabeled as cross-sectional IC.
+
+Gold, oil, silver, rates, India families and crypto require signal-specific
+economic-reference mappings and separate cohorts. Existing measurement-only
+evidence is not pulled into the actionable composite by this work. No universal
+sign table is inferred from names like "macro" or "sentiment".
+
+### Data, evaluation, and presentation
+
+Reuse immutable `decision_observations` features, current applicability state,
+the existing matured benchmark-neutral labels, dimension/score-variant
+evaluators, and Learning/Prediction Lab result surfaces. Prefer a JSON evidence
+addition and existing append-only result contracts over another shadow table.
+Do not rewrite prior rows or backfill a new formula identity with old outcomes.
+If those existing contracts cannot represent the challenger and actual
+availability/provenance without ambiguity, stop and amend this architecture
+with the smallest required schema/migration before writing code.
+
+Required readout: version, reference direction, applicability and availability,
+matched and excluded counts/reasons, per-market and per-family results, horizon,
+descriptive rank IC, dependence-aware uncertainty only where the existing
+minimum gates allow it, and paired incremental result versus incumbent. No
+promotion or claim of skill with insufficient/negative evidence. Compare only
+on untouched forward sessions after the challenger is frozen.
+
+### Acceptance and rollout
+
+1. Golden semantics prove long-equity and inverse underlying signals have
+   opposite orientation, while own-instrument technicals and ambiguous
+   sentiment are not flipped.
+2. Unknown, stale, structurally inapplicable, or unmapped evidence cannot
+   contribute a value; US and India remain separate.
+3. Challenger and incumbent are evaluated on exactly matched observations and
+   matured labels; duplicate same-session decisions count once.
+4. No production score or trading behavior changes. Any later promotion needs
+   its own review against the family/horizon evidence floor and explicit owner
+   decision.
+5. Update the ResearchAgent and Learning architecture chapters, focused tests,
+   and this implementation result before calling the collector live. Natural
+   scheduled observations—not manually invoked trade jobs—prove collection.
+
+### Out of scope
+
+No new provider, live browsing by council models, additional LLM calls, universal
+macro score, per-symbol fitted weights, entry/exit policy, leveraged trade
+activation, risk relaxation, or automatic score mutation. Detailed council
+explanations and portfolio replay are separate workstreams documented in their
+own architectures.

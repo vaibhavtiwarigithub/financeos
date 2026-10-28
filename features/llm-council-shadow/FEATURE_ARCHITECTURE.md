@@ -180,6 +180,20 @@ The primary prediction is each participant's initial independent score; revised/
 - A coupling test forbids council table/score imports from the scoring, paper/live execution, sizing, exits, rotation, promotion, and learner decision modules. The current release adds no consumer to those systems.
 - Enabling the council only enables measurement. A later trading integration requires a separate architecture decision and out-of-sample evidence review.
 
+## Symbol-level prompt and evidence transparency (2026-10-28)
+
+Reuse the existing `llm_council_runs.prompt_version` and the already persisted
+`llm_council_model_forecasts.evidence_citations`; do not add schema or inference.
+The viewer-safe symbol card may display the contract version, actual model and
+execution source, confidence, rationale, bull/bear cases, and up to three
+validated citations (claim, exact frozen-snapshot path, source as-of date).
+Its method note must state that scores are 0–100 relative attractiveness for a
+10-market-session outlook, confidence is self-reported and uncalibrated, the
+median is deterministic, and evidence is the point-in-time packet. It must not
+imply a price target, intraday timing advice, current web research, calibrated
+probabilities, or trading use. The panel reads stored forecasts only and never
+calls an LLM when opened.
+
 ## Subscription-worker execution mode (approved 2026-10-10)
 
 The owner may choose API mode or subscription-worker mode. The latter uses at

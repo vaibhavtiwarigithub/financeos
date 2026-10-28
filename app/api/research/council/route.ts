@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
   const { data: runs, error } = await svc
     .from("llm_council_runs")
-    .select("id,decision_ts,status,consensus_score,completed_at,failure_code,config_snapshot,det:input_snapshot->deterministic_score->>composite,threshold:input_snapshot->deterministic_score->>threshold,direction:input_snapshot->deterministic_score->>direction,cohort:config_snapshot->>cohort_key")
+    .select("id,decision_ts,status,consensus_score,completed_at,failure_code,config_snapshot,prompt_version,det:input_snapshot->deterministic_score->>composite,threshold:input_snapshot->deterministic_score->>threshold,direction:input_snapshot->deterministic_score->>direction,cohort:config_snapshot->>cohort_key")
     .eq("symbol", symbol).eq("market", market)
     .order("decision_ts", { ascending: false }).limit(limit);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   if (runRows.length) {
     const { data: rows, error: fError } = await svc
       .from("llm_council_model_forecasts")
-      .select("run_id,model_requested,model_used,initial_score,final_score,confidence,final_rationale,bull_case,bear_case,execution_source,available_at")
+      .select("run_id,model_requested,model_used,initial_score,final_score,confidence,final_rationale,bull_case,bear_case,evidence_citations,execution_source,available_at")
       .in("run_id", runRows.map((r) => r.id)).eq("status", "completed");
     if (fError) return NextResponse.json({ error: fError.message }, { status: 500 });
     forecasts.push(...(rows ?? []));
@@ -65,6 +65,7 @@ export async function GET(req: NextRequest) {
       threshold: num(r.threshold),
       direction: r.direction ?? null,
       cohort: r.cohort ?? null,
+      promptVersion: r.prompt_version ?? null,
       completedAt: r.completed_at,
       members: (byRun.get(r.id) ?? []).map((f) => ({
         member: councilMemberOf(f.model_requested),
@@ -75,6 +76,11 @@ export async function GET(req: NextRequest) {
         rationale: typeof f.final_rationale === "string" ? f.final_rationale.slice(0, 600) : null,
         bull: typeof f.bull_case === "string" ? f.bull_case.slice(0, 300) : null,
         bear: typeof f.bear_case === "string" ? f.bear_case.slice(0, 300) : null,
+        citations: Array.isArray(f.evidence_citations) ? f.evidence_citations.slice(0, 3).map((citation: any) => ({
+          claim: typeof citation?.claim === "string" ? citation.claim.slice(0, 160) : "",
+          source: typeof citation?.source === "string" ? citation.source.slice(0, 160) : "",
+          asOf: typeof citation?.as_of === "string" ? citation.as_of.slice(0, 40) : "unknown",
+        })) : [],
         availableAt: f.available_at,
       })),
       memberStates: buildCouncilMemberState(r.config_snapshot, byRun.get(r.id) ?? [], workerResult.data ?? [], jobsByRun.get(r.id) ?? []),

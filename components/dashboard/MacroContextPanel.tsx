@@ -35,7 +35,7 @@ type Payload = {
 };
 
 type MacroEvidenceCell = {
-  market: Mkt; instrumentFamily: string; series: string; formulaVersion: string; horizonSessions: number;
+  market: Mkt; instrumentFamily: string; instrument: string | null; series: string; formulaVersion: string; returnBasis: "benchmark_neutral" | "absolute_instrument"; horizonSessions: number;
   matchedDates: number; horizonSpacedWindows: number; symbolRows: number;
   coveragePct: number; spearmanIc: number | null; state: "insufficient" | "descriptive";
 };
@@ -194,7 +194,7 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ color: T.text, fontSize: 14, fontWeight: 650 }}>Macro context vs. realized forward moves</div>
-            <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>Matured, benchmark-neutral research outcomes; one aggregate per date and instrument family.</div>
+            <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>Matured outcomes. Family rows use benchmark-neutral returns; the fixed US leveraged/inverse comparison uses absolute instrument returns.</div>
           </div>
           <label style={{ color: T.sub, fontSize: 11, display: "flex", gap: 7, alignItems: "center" }}>
             Horizon
@@ -210,11 +210,12 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
           {performanceCells.length ? <div style={{ overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 }}>
             <table style={{ borderCollapse: "collapse", minWidth: 680, width: "100%", fontSize: 11 }}>
               <thead><tr style={{ color: T.muted, textAlign: "left", background: "rgba(0,0,0,.12)" }}>
-                {["Instrument family", "Macro / score series", "Formula version", "Dates", "Horizon-spaced windows", "Symbol rows", "Spearman IC", "Evidence"].map((label) => <th key={label} style={{ padding: "9px 10px", borderBottom: `1px solid ${T.border}`, fontWeight: 550, whiteSpace: "nowrap" }}>{label}</th>)}
+                {["Instrument / family", "Macro / score series", "Return basis", "Formula version", "Dates", "Horizon-spaced windows", "Symbol rows", "Spearman IC", "Evidence"].map((label) => <th key={label} style={{ padding: "9px 10px", borderBottom: `1px solid ${T.border}`, fontWeight: 550, whiteSpace: "nowrap" }}>{label}</th>)}
               </tr></thead>
-              <tbody>{performanceCells.map((cell) => <tr key={`${cell.instrumentFamily}-${cell.series}-${cell.formulaVersion}`} style={{ color: T.text }}>
-                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.instrumentFamily.replaceAll("_", " ")}</td>
+              <tbody>{performanceCells.map((cell) => <tr key={`${cell.instrument ?? cell.instrumentFamily}-${cell.series}-${cell.formulaVersion}`} style={{ color: T.text }}>
+                <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.instrument ?? cell.instrumentFamily.replaceAll("_", " ")}</td>
                 <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}` }}>{cell.series}</td>
+                <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.returnBasis === "absolute_instrument" ? "absolute symbol return" : "benchmark-neutral"}</td>
                 <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" }}>{cell.formulaVersion}</td>
                 <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}` }}>{cell.matchedDates}</td>
                 <td style={{ padding: "8px 10px", color: T.sub, borderBottom: `1px solid ${T.border}` }}>{cell.horizonSpacedWindows}</td>
