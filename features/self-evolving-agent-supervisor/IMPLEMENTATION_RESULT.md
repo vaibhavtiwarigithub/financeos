@@ -1,7 +1,7 @@
 # Governed Evolution Supervisor v1 — Implementation Result
 
 Date: 2026-10-28
-Status: implemented; local validation passed; production release verification pending
+Status: deployed to production; first natural supervisor-cycle persistence check pending
 
 ## Delivered
 
@@ -21,7 +21,10 @@ Status: implemented; local validation passed; production release verification pe
 - `npm run build` with an isolated `.next-codex-evolution-validation` output directory: passed (Next.js 15.5.28; 77 static pages generated). Existing Edge Runtime warning for `process.version` via the Supabase client and webpack serialization warnings remain unrelated.
 - `git diff --check` and system-map JSON parse: passed.
 - Isolated build generated temporary changes in `next-env.d.ts` and `tsconfig.json`; both were restored because those files were clean before the build.
-- Push, Vercel deployment, and production cycle verification: pending.
+- Mainline commit `8f9f30d9ebd3399acb5f5d1ce6a75a75daaf0a14` pushed; local and `origin/main` match.
+- Vercel production deployment `dpl_5p9MP2vP8RTKMy9hxWc5Dd8WaQfp` is READY and aliases the FinanceOS production URL.
+- Production smoke: `/login` returned 200; unauthenticated `/dashboard/agents` returned 307 to `/login` (access control intact).
+- Read-only production query found no `evolution_supervisor` row yet. The next natural two-hour watchdog cycle must create the first persisted snapshot; the trade-affecting watchdog was not manually invoked.
 
 ## Limits and next phases
 

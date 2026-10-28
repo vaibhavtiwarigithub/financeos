@@ -3,7 +3,7 @@
 ## Status
 
 - Architecture: owner-approved by the prior “go / finish all” direction for the governed self-evolving agent platform; this document narrows the first shippable implementation.
-- Implementation: in progress.
+- Implementation: deployed on main (2026-10-28); first natural-cycle persistence check pending.
 - Scope: one deterministic supervisory cycle, attached to the existing two-hour watchdog schedule and existing `agent_runs` ledger.
 - Markets: US and India kept distinct in every market-scoped row and status.
 
