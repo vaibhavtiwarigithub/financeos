@@ -19,7 +19,7 @@ import { managedLivePositionId } from "@/lib/protective/coverage";
 import { decideExitLadder } from "@/lib/trading/exit-ladder";
 import { isHoldingExitSignal, isPaperScoreFresh, resolvePaperExitThreshold } from "@/lib/trading/paper-exit-policy";
 import { decideDirectionFlip, MIN_FLIP_HOLD_DAYS } from "@/lib/trading/direction-flip";
-import { reportIssue } from "@/lib/system-health";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 import { type LiveExitMarketDiagnostics } from "@/lib/trading/live-exit-shadow-health";
 
 /** Supabase numerics arrive as string|number|null; a bad value must not become 0. */
@@ -316,6 +316,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
       if (shadowMode) {
         // Log the intent, submit nothing. This is the whole point of shadow
         // mode: parity is observable on real positions before the live toggle.
+        const shadowIssueKey = `live-exit-shadow-write:${market}:${account}:${symbol}`;
         const { error: shadowWriteError } = await svc.from("live_exit_ladder_shadow").insert({
           account_id: account, market, symbol,
           action, reason: actionReason,
@@ -327,7 +328,7 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
         if (shadowWriteError) {
           marketRun.shadowWriteFailures++;
           await reportIssue({
-            issueKey: `live-exit-shadow-write:${market}:${account}:${symbol}`,
+            issueKey: shadowIssueKey,
             severity: "critical", category: "risk",
             title: `Live exit shadow could not be recorded for ${symbol}`,
             detail: `${shadowWriteError.message}. No order was submitted; live-ladder evidence is incomplete.`,
@@ -335,6 +336,9 @@ export async function runLiveExitMonitor(svc: SupabaseClient, runId: string): Pr
           results.push({ market, symbol, qty: 0, reason: "shadow_write_failed", status: "blocked", error: shadowWriteError.message });
           continue;
         }
+        // The alert is per market/account/symbol, so clear it only after this
+        // exact tuple has produced a durable observation successfully.
+        await resolveIssue(shadowIssueKey, svc);
         marketRun.shadowRowsWritten++;
         if (action !== "none") {
           results.push({ market, symbol, qty: actionQty ?? 0, reason: actionReason ?? action, status: "shadow_logged" });

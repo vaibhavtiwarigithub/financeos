@@ -18,4 +18,12 @@ describe("live-exit shadow action contract", () => {
     expect(monitor).toContain("live-exit-shadow-write:");
     expect(monitor).toContain('reason: "shadow_write_failed"');
   });
+
+  it("resolves only the exact shadow-write alert after persistence succeeds", () => {
+    expect(monitor).toContain('import { reportIssue, resolveIssue } from "@/lib/system-health";');
+    expect(monitor).toContain("const shadowIssueKey = `live-exit-shadow-write:${market}:${account}:${symbol}`;");
+    const failedWrite = monitor.indexOf('reason: "shadow_write_failed"');
+    const resolved = monitor.indexOf("await resolveIssue(shadowIssueKey, svc);");
+    expect(resolved).toBeGreaterThan(failedWrite);
+  });
 });

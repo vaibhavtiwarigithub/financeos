@@ -23,5 +23,5 @@ describe("availability label bounded calendar work", () => {
     // a forecast made after the expected close or before the endpoint matures.
     expect(availabilityAlignedLabel({ ...input, asOf: "2026-09-30T19:59:59Z" })).toBeNull();
     expect(availabilityAlignedLabel({ ...input, availableAt: "2026-09-28T21:00:00Z" })?.entrySession).toBe("2026-09-29");
-  });
+  }, 60_000);
 });

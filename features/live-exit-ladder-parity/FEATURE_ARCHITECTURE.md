@@ -225,3 +225,12 @@ cache expires at observation time plus five minutes. Stale or unavailable status
 uses the existing local-session fallback with independent quote/broker gates.
 Fresh closed observations still block. This preserves the existing AV daily call
 budget and changes no live switch, execution permission or protective-order gate.
+
+### 2026-10-28: shadow-write alert recovery
+
+Production review found the IBIT shadow-write alert remained open after the
+action-contract migration had been applied and subsequent observations were
+persisting. The monitor now resolves only the matching market/account/symbol
+alert after that exact shadow insert succeeds; failed inserts continue to report
+the critical issue and block the shadow observation. This is health-state
+recovery only and does not alter ladder decisions, position state, or orders.
