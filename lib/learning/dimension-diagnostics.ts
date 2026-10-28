@@ -19,7 +19,7 @@ import { quantileDiagnostics, type FactorRow } from "./factor-quantiles";
 // v7 excludes source signals that were not validated for their market session
 // from predictive IC. v6 incorrectly counted weekend research as independent
 // tradable sessions; its rows are frozen, not rewritten.
-export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v7_session_provenance";
+export const DIMENSION_DIAGNOSTIC_PLAN_VERSION = "dimension_diagnostics_p0_v8_applicability_macro_estimand";
 // 2/5/10/20 rank signal quality at or near the mandate holding period (5-15
 // sessions). 60/120 measure EXIT TIMING — "are we exiting too early" — which
 // the short labels structurally cannot answer, because a 20-day label can never
@@ -76,6 +76,11 @@ export type DiagnosticObservation = {
   analystScore: number | null;
   scores: Record<DiagnosticDimension, number | null>;
   availabilityMask: Partial<Record<DiagnosticDimension, boolean>> | null;
+  /** Frozen scoring applicability from features.dimension_applicability.dimensions. */
+  dimensionApplicability?: Partial<Record<DiagnosticDimension, {
+    state: "applicable" | "not_applicable" | "not_enabled";
+    reason?: string;
+  }>> | null;
   benchmarkNeutralReturn: number | null;
   entryEligible: boolean;
   decisionContext?: string | null;
@@ -204,29 +209,93 @@ function predictiveMetrics(rows: Array<{ value: number; outcome: number; ts: str
 export function buildDimensionFindings(observations: DiagnosticObservation[], horizonDays: number): DiagnosticFinding[] {
   const findings: DiagnosticFinding[] = [];
   for (const dimension of DIAGNOSTIC_DIMENSIONS) {
-    const available = observations.filter((row) => row.availabilityMask?.[dimension] === true);
-    const unavailable = observations.filter((row) => row.availabilityMask?.[dimension] === false);
-    const unknown = observations.length - available.length - unavailable.length;
+    const applicabilityOf = (row: DiagnosticObservation) => row.dimensionApplicability?.[dimension]?.state ?? "applicable";
+    const applicableRows = observations.filter((row) => applicabilityOf(row) === "applicable");
+    const notApplicableRows = observations.filter((row) => applicabilityOf(row) === "not_applicable");
+    const notEnabledRows = observations.filter((row) => applicabilityOf(row) === "not_enabled");
+    const available = applicableRows.filter((row) => row.availabilityMask?.[dimension] === true);
+    const unavailable = applicableRows.filter((row) => row.availabilityMask?.[dimension] === false);
+    const unknown = applicableRows.length - available.length - unavailable.length;
+    const noApplicableRows = applicableRows.length === 0 && observations.length > 0;
+    const structuralClassification = noApplicableRows
+      ? notEnabledRows.length === observations.length ? "not_enabled"
+        : notApplicableRows.length === observations.length ? "not_applicable"
+          : "not_enabled"
+      : null;
     findings.push({
       subjectType: "dimension",
       subjectKey: dimension,
       findingType: "availability",
       classification: observations.length === 0 ? "insufficient_evidence"
-        : available.length === 0 ? "data_degraded" : "measured_descriptive",
+        : structuralClassification
+          ? structuralClassification
+          : available.length === 0 && unavailable.length > 0 ? "data_degraded" : "measured_descriptive",
       metrics: {
         observations: observations.length,
+        applicable: applicableRows.length,
+        not_applicable: notApplicableRows.length,
+        not_enabled: notEnabledRows.length,
         available: available.length,
         unavailable: unavailable.length,
         unknown,
-        availability_rate: observations.length ? available.length / observations.length : null,
+        availability_rate: applicableRows.length ? available.length / applicableRows.length : null,
         invalid_or_unknown_session_provenance: observations.filter(row => !hasExecutableSession(row)).length,
       },
       reason: observations.length === 0
         ? "No labeled observations are available for this horizon; dimension availability is not yet measurable."
+        : structuralClassification === "not_enabled"
+        ? `${dimension} is relevant or potentially useful but is not enabled in this market/instrument scoring contract; this is intentional, not a failed data collector.`
+        : structuralClassification === "not_applicable"
+        ? `${dimension} is structurally inapplicable to this scored cohort; it is not a missing-data failure.`
         : available.length === 0
         ? `No labeled observations declared ${dimension} available. This is a data-quality finding, not a scoring recommendation.`
-        : "Availability is measured from the immutable decision-time mask; it is not re-fetched from current providers.",
+        : "Availability is measured from the immutable decision-time applicability and availability records; it is not re-fetched from current providers.",
     });
+
+    if (structuralClassification) {
+      findings.push({
+        subjectType: "dimension",
+        subjectKey: dimension,
+        findingType: "predictive",
+        classification: structuralClassification,
+        metrics: {
+          cohort: ENTRY_COHORT_KEY,
+          labeled_observations: 0,
+          qualifying_sessions: 0,
+          effective_observations: 0,
+          mean_session_rank_ic: null,
+          t_stat: null,
+          alternative_estimand: dimension === "macro" ? "market_date_time_series_association" : null,
+        },
+        reason: structuralClassification === "not_enabled"
+          ? `${dimension} has no active score in this market/instrument contract. No IC or t-stat can be computed until valid point-in-time scores are collected; this is intentional, not a zero score.`
+          : `${dimension} does not apply to this cohort. No IC or t-stat is defined for it.`,
+      });
+      continue;
+    }
+
+    // A market-wide macro scalar cannot rank stocks against each other on the
+    // same date. The appropriate comparison is the separate, date-level
+    // macro-performance estimand, which withholds t-statistics until episode
+    // dependence and independent sample size can be supported.
+    if (dimension === "macro" && !structuralClassification) {
+      findings.push({
+        subjectType: "dimension",
+        subjectKey: dimension,
+        findingType: "predictive",
+        classification: "not_rankable",
+        metrics: {
+          cohort: ENTRY_COHORT_KEY,
+          rank_ic: null,
+          t_stat: null,
+          applicable_observations: applicableRows.length,
+          available_observations: available.length,
+          alternative_estimand: "market_date_time_series_association",
+        },
+        reason: "Macro is shared across names on a date, so cross-sectional stock-ranking IC and t-statistic are not meaningful. Use the separate market-context forward-outcome panel; it reports dated association and withholds t-statistics.",
+      });
+      continue;
+    }
 
     // `symbol` is carried so rank AUTOCORRELATION can compare the same names
     // across consecutive sessions. Without identity you can only compare
@@ -241,7 +310,7 @@ export function buildDimensionFindings(observations: DiagnosticObservation[], ho
     // HEADLINE = the cohort that can actually be entered. The all-scored number
     // ranks names the system would never buy, which is how a +0.105 "edge" was
     // published and retracted; it survives only as labelled context.
-    const eligible = available.filter((row) => hasExecutableSession(row) && isEntryCandidateLong({
+    const eligible = available.filter((row) => applicabilityOf(row) === "applicable" && hasExecutableSession(row) && isEntryCandidateLong({
       entryEligible: row.entryEligible,
       direction: row.direction,
       decisionContext: row.decisionContext,
@@ -317,7 +386,16 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
     const context = predictiveMetrics(toRows(rows.filter(hasExecutableSession)), horizonDays);
     const eligibleReturns = eligibleRows.flatMap((row) => finite(row.benchmarkNeutralReturn) != null
       ? [finite(row.benchmarkNeutralReturn)!] : []);
-    const availabilityValues = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => row.availabilityMask?.[dimension] === true ? 1 : 0));
+    const dimensionApplicability = rows.flatMap((row) => DIAGNOSTIC_DIMENSIONS.map((dimension) => ({
+      dimension,
+      state: row.dimensionApplicability?.[dimension]?.state ?? "applicable",
+      available: row.availabilityMask?.[dimension],
+    })));
+    const applicableDimensions = dimensionApplicability.filter((item) => item.state === "applicable");
+    const knownApplicableDimensions = applicableDimensions.filter((item) => typeof item.available === "boolean");
+    const availabilityValues = knownApplicableDimensions.map((item) => item.available ? 1 : 0);
+    const notEnabledDimensions = dimensionApplicability.filter((item) => item.state === "not_enabled").length;
+    const notApplicableDimensions = dimensionApplicability.filter((item) => item.state === "not_applicable").length;
     const versionedObservations = rows.filter((row) => row.codeVersion != null).length;
     const hasCompleteVersionProvenance = versionedObservations === rows.length;
     const classification = !hasCompleteVersionProvenance
@@ -346,6 +424,10 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
         eligible_mean_benchmark_neutral_return: mean(eligibleReturns),
         eligible_positive_return_share: hitRate(eligibleReturns),
         dimension_availability_rate: mean(availabilityValues),
+        dimension_availability_known_applicable_inputs: knownApplicableDimensions.length,
+        dimension_availability_unknown_applicable_inputs: applicableDimensions.length - knownApplicableDimensions.length,
+        dimensions_not_enabled: notEnabledDimensions,
+        dimensions_not_applicable: notApplicableDimensions,
       },
       reason: !hasCompleteVersionProvenance
         ? "Agent contribution is not rated: one or more decision records lack a code version, so behavior cannot be compared safely across deployments."
@@ -367,7 +449,7 @@ export function buildAgentFindings(observations: DiagnosticObservation[], horizo
 
 export function diagnosticFingerprint(market: string, horizonDays: number, observations: DiagnosticObservation[]): string {
   const material = observations
-    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${row.sessionValidated === true ? 1 : 0}:${row.asOfSession ?? "unknown"}:${isEntryCandidateLong({ entryEligible: row.entryEligible, direction: row.direction, decisionContext: row.decisionContext, discoverySource: row.discoverySource }) ? 1 : 0}`)
+    .map((row) => `${row.id}:${row.ts}:${row.symbol}:${row.agentLabel}:${row.codeVersion}:${row.benchmarkNeutralReturn}:${row.sessionValidated === true ? 1 : 0}:${row.asOfSession ?? "unknown"}:${JSON.stringify(row.dimensionApplicability ?? null)}:${JSON.stringify(row.availabilityMask ?? null)}:${isEntryCandidateLong({ entryEligible: row.entryEligible, direction: row.direction, decisionContext: row.decisionContext, discoverySource: row.discoverySource }) ? 1 : 0}`)
     .sort()
     .join("|");
   return crypto.createHash("sha256").update(`${DIMENSION_DIAGNOSTIC_PLAN_VERSION}|${market}|${horizonDays}|${material}`).digest("hex");

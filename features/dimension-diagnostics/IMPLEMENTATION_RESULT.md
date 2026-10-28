@@ -58,3 +58,21 @@ and are not directly comparable with v7.
 No score/weight/threshold change, agent reward/punishment, agent configuration
 mutation, candidate creation, replay, shadow strategy, promotion, paper/live
 trade, exit, sizing, provider call, LLM call, or broker action.
+
+## v8 applicability and macro-estimand correction (2026-10-28)
+
+- Reads the frozen `features.dimension_applicability.dimensions` state in
+  addition to `availability_mask`; `not_enabled` and `not_applicable` no longer
+  masquerade as provider failures. Availability rates use only applicable rows.
+- Does not calculate a cross-sectional rank IC for shared US macro state. The
+  Learning page directs owners to the existing dated macro-outcome association,
+  which correctly withholds t-statistics while independent macro episodes are
+  insufficient. India macro remains out of the composite.
+- The Dimension Rank IC panel keeps US sentiment/insider series visible and adds
+  available/applicable counts. For India, the page explicitly says sentiment and
+  issuer insider are not enabled in the current scorer and displays no fake IC/t.
+- The read route continues to show the latest immutable plan while a new plan
+  awaits its scheduled write. Results from different plan versions are never
+  stitched into a single series.
+- No schema, source collection, scoring, provider, schedule, or trading behavior
+  changed. Plan v7 records remain immutable; v8 starts a distinct record lineage.

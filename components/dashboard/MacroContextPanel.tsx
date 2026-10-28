@@ -190,7 +190,7 @@ export default function MacroContextPanel({ market }: { market: Mkt }) {
         </div>
       </>}
 
-      <section aria-label="Macro forward outcome evidence" style={{ marginTop: 18, borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+      <section id="learning-macro-evidence" aria-label="Macro forward outcome evidence" style={{ marginTop: 18, borderTop: `1px solid ${T.border}`, paddingTop: 16, scrollMarginTop: 24 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ color: T.text, fontSize: 14, fontWeight: 650 }}>Macro context vs. realized forward moves</div>

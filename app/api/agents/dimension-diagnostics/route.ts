@@ -40,7 +40,7 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc
       .from("observation_labels")
-      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,signal_id,decision_context,discovery_source)")
+      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,features,entry_eligible,direction,action,signal_id,decision_context,discovery_source)")
       .eq("horizon_days", horizonDays)
       .eq("decision_observations.market", market)
       .not("benchmark_neutral_return", "is", null)
@@ -60,6 +60,16 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
     const decision = Array.isArray(row.decision_observations) ? row.decision_observations[0] : row.decision_observations;
     if (!decision?.id || !decision.ts) return [];
     const source = decision.signal_id ? sources.get(String(decision.signal_id)) : null;
+    const rawApplicability = decision.features?.dimension_applicability?.dimensions;
+    const dimensionApplicability = rawApplicability && typeof rawApplicability === "object"
+      ? Object.fromEntries(Object.entries(rawApplicability).flatMap(([key, value]) => {
+        if (!(["fundamental", "technical", "sentiment", "macro", "insider"] as string[]).includes(key)) return [];
+        const item = value as { state?: unknown; reason?: unknown } | null;
+        const state = item?.state;
+        if (state !== "applicable" && state !== "not_applicable" && state !== "not_enabled") return [];
+        return [[key, { state, reason: typeof item?.reason === "string" ? item.reason : undefined }]];
+      }))
+      : null;
     return [{
       id: Number(decision.id), ts: String(decision.ts), symbol: String(decision.symbol), codeVersion: decision.code_version == null ? null : String(decision.code_version), analystScore: decision.analyst_score == null ? null : Number(decision.analyst_score),
       scores: {
@@ -70,6 +80,7 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
         insider: decision.insider_score == null ? null : Number(decision.insider_score),
       },
       availabilityMask: decision.availability_mask ?? null,
+      dimensionApplicability,
       benchmarkNeutralReturn: Number(row.benchmark_neutral_return), entryEligible: decision.entry_eligible === true,
       decisionContext: decision.decision_context ?? null,
       discoverySource: decision.discovery_source ?? null,
@@ -126,13 +137,12 @@ export async function GET(request: NextRequest) {
   const svc = createServiceClient();
   const { data, error } = await svc.from("dimension_diagnostic_runs")
     .select("id,market,analysis_plan_version,as_of_date,horizon_days,status,input_observation_count,mature_label_count,distinct_session_count,created_at,dimension_diagnostic_findings(subject_type,subject_key,finding_type,classification,metrics,reason)")
-    // Pin the plan version: a v3 mean_session_rank_ic is the ALL-SCORED metric
-    // and a v4 one is eligible-long. Returning both interleaved would put two
-    // incomparable numbers under one label. Limit covers every horizon in one
-    // run (DIAGNOSTIC_HORIZONS) plus a prior run for comparison; the old
-    // limit(4) silently dropped horizons once 60/120 were added.
+    // Keep the latest immutable run visible while a new plan version waits for
+    // its next scheduled publication. Each run carries its own plan version;
+    // consumers must not stitch session series or compare means across plans.
+    // The bounded newest 12 rows cover the current six horizons plus a recent
+    // prior run without dropping the long 60/120-session views.
     .eq("market", market)
-    .eq("analysis_plan_version", DIMENSION_DIAGNOSTIC_PLAN_VERSION)
     .order("created_at", { ascending: false })
     .limit(DIAGNOSTIC_HORIZONS.length * 2);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,6 +1,6 @@
 # Dimension Diagnostics Architecture
 
-> Status: approved design, not implemented.
+> Status: P0 implemented; v8 applicability-aware evidence presentation shipped 2026-10-28. P1 candidate creation, P2 sealed replay, P3 forward shadow, and P4 promotion remain separate and gated.
 >
 > Date: 2026-08-06
 >
@@ -353,3 +353,27 @@ applicable, and 09 in the same implementation change.
 - New provider polling, historical backfill, intraday alpha, or broker behavior.
 - Replacing the current Feature-Pack Validation, replay, strategy version, or
   promotion architecture.
+
+## 11. Dimension availability and estimand clarification (2026-10-28)
+
+Learning diagnostics read the decision-time
+`features.dimension_applicability.dimensions` snapshot alongside the boolean
+availability mask. `not_enabled` and `not_applicable` are structural states,
+not provider failures and not neutral score values; availability rates use only
+applicable rows. Predictive rows for a wholly disabled dimension remain explicit
+with null IC/t and the structural reason.
+
+US macro is a shared date-level state. It is therefore not shown as a
+cross-sectional stock-rank IC: that estimate is zero by construction and its
+t-stat is undefined. Its existing date/family-level forward association remains
+in the separate Macro context panel, where t-statistics are withheld because
+the current window count does not establish independent macro episodes. India
+macro remains excluded from the composite and is evaluated only through the
+existing first-seen factor association. Sentiment and issuer-insider stay
+intentionally disabled in India's active scorer under the existing qualification
+decision; the Learning page must say so rather than label it a degraded data
+feed. US sentiment and insider continue to receive market-local horizon IC/t
+when applicable, available, mature labels and the existing evidence floors pass.
+
+Plan v8 is append-only and does not reinterpret v7 findings. No score, weight,
+prompt, provider, schedule, database schema, or trading behavior changes.

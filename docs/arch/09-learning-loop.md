@@ -1450,3 +1450,23 @@ effective sample size or independent macro episodes; inferential t-stats and
 promotion statuses are deliberately withheld. Sparse or missing evidence is
 shown as insufficient. See
 `features/macro-regime-analogs/FEATURE_ARCHITECTURE.md` for the full contract.
+
+### Learning dimension applicability and IC visibility (2026-10-28)
+
+The dimension table consumes every stored predictive dimension finding, plus
+its paired availability finding. Plan v8 reads the frozen
+`features.dimension_applicability.dimensions` snapshot. `not_enabled` and
+`not_applicable` are structural states, not source failures; availability rates
+are calculated only over applicable observations. India sentiment and issuer
+insider are currently not enabled in the active composite, while India macro is
+excluded because the active US macro score cannot be applied to India. Those
+rows therefore show no IC/t rather than a fabricated zero.
+
+US sentiment and insider continue to show market-local forward rank IC/t when
+their scores are available and horizon labels mature. US macro is one shared
+value per date and has no cross-sectional stock-rank IC; the Learning page links
+it to the separate date/family time-series association table, which withholds
+t-statistics because the current data do not establish independent macro
+episodes. Plan v7 records are immutable and remain visible until the next
+scheduled v8 diagnostic publishes; session series from different plan versions
+must not be joined or compared as a continuous series.

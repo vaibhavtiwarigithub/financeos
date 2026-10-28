@@ -36,6 +36,13 @@ type QuantileDiag = {
 };
 type Metrics = {
   cohort?: string;
+  observations?: number;
+  available?: number;
+  applicable?: number;
+  not_applicable?: number;
+  not_enabled?: number;
+  unavailable?: number;
+  availability_rate?: number | null;
   quantile_diagnostics?: QuantileDiag;
   mean_session_rank_ic: number | null;
   sd_session_rank_ic?: number | null;
@@ -106,12 +113,19 @@ export default function DimensionIcPanel() {
     [data, horizon],
   );
 
-  const dimensions = useMemo(
+  const dimensionFindings = useMemo(
     () => (run?.dimension_diagnostic_findings ?? [])
       .filter((f) => f.subject_type === "dimension" && f.finding_type === "predictive")
       .sort((a, b) => (b.metrics.mean_session_rank_ic ?? -Infinity) - (a.metrics.mean_session_rank_ic ?? -Infinity)),
     [run],
   );
+  const dimensions = useMemo(() => dimensionFindings.filter((finding) => finding.subject_key !== "macro"), [dimensionFindings]);
+  const macroFinding = dimensionFindings.find((finding) => finding.subject_key === "macro");
+  const availabilityByDimension = useMemo(() => new Map(
+    (run?.dimension_diagnostic_findings ?? [])
+      .filter((finding) => finding.subject_type === "dimension" && finding.finding_type === "availability")
+      .map((finding) => [finding.subject_key, finding]),
+  ), [run]);
 
   // Union every dimension's sessions onto one date axis. Dimensions qualify on
   // different days (availability differs), so gaps are real and left null
@@ -123,7 +137,7 @@ export default function DimensionIcPanel() {
     focus === "all" ? undefined : focus,
   ), [dimensions, focus]);
 
-  const insufficient = dimensions.every((f) => f.classification === "insufficient_evidence");
+  const insufficient = dimensions.length > 0 && dimensions.every((f) => f.classification === "insufficient_evidence");
 
   return <section style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: "8px", padding: "18px 20px", marginBottom: "24px" }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -166,6 +180,14 @@ export default function DimensionIcPanel() {
           must not be used to justify a weight change.
         </div>}
 
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "6px", padding: "10px 12px", marginTop: "12px", color: T.sub, fontSize: "11.5px", lineHeight: 1.55 }}>
+          <strong style={{ color: T.text }}>Why some rows have no IC or t:</strong>{" "}
+          {market === "india"
+            ? "India sentiment and issuer-insider scores are not enabled in the current scorer, and India macro is kept out of the composite. They are shown as not enabled, not as zero or a failed prediction. See the separate India macro-factor evidence below."
+            : "US sentiment and insider are measured here when valid scores exist. Macro is a shared market state, so it cannot rank US stocks cross-sectionally; its dated forward association is shown separately below, with t-statistics withheld."}{" "}
+          <a href="#learning-macro-evidence" style={{ color: T.accent, whiteSpace: "nowrap" }}>Open macro evidence ↓</a>
+        </div>
+
         {/* IC and t explained inline and ALWAYS visible. The full nine-column
             reference lives behind the toggle, but a reader looking at a number
             like -0.1325 or a t of 1.16 should never have to hunt for what it
@@ -193,10 +215,10 @@ export default function DimensionIcPanel() {
         </div>
 
         <div style={{ overflowX: "auto", marginTop: "14px" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "760px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "940px" }}>
             <thead>
               <tr style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                {["Dimension", "Mean IC", "SD", "t", "Sessions", "nEff", "Positive days", "All-scored", "Verdict"].map((head) => (
+                {["Dimension", "Mean IC", "SD", "t", "Sessions", "nEff", "Positive days", "All-scored context", "Inputs available", "Evidence state"].map((head) => (
                   <th key={head} style={{ textAlign: head === "Dimension" ? "left" : "right", padding: "7px 10px", borderBottom: `1px solid ${T.border}`, fontWeight: 700 }}>{head}</th>
                 ))}
               </tr>
@@ -204,6 +226,10 @@ export default function DimensionIcPanel() {
             <tbody>
               {dimensions.map((finding) => {
                 const m = finding.metrics;
+                const availability = availabilityByDimension.get(finding.subject_key);
+                const available = availability?.metrics.available;
+                const applicable = availability?.metrics.applicable ?? availability?.metrics.observations;
+                const intentionallyDisabled = market === "india" && ["sentiment", "insider"].includes(finding.subject_key);
                 const ic = m.mean_session_rank_ic;
                 const color = ic == null ? T.muted : ic > 0 ? T.green : ic < 0 ? T.red : T.sub;
                 return <tr key={finding.subject_key} style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -220,8 +246,11 @@ export default function DimensionIcPanel() {
                   </td>
                   <td style={{ padding: "8px 10px", textAlign: "right", color: T.sub, fontVariantNumeric: "tabular-nums" }}>{pct(m.positive_session_share)}</td>
                   <td style={{ padding: "8px 10px", textAlign: "right", color: T.muted, fontVariantNumeric: "tabular-nums" }}>{fmt(m.all_scored_context?.mean_session_rank_ic)}</td>
-                  <td style={{ padding: "8px 10px", textAlign: "right", color: finding.classification === "insufficient_evidence" ? T.amber : T.green, fontSize: "10.5px" }}>
-                    {finding.classification === "insufficient_evidence" ? "Insufficient" : "Descriptive"}
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: intentionallyDisabled ? T.muted : T.sub, fontSize: "10.5px", whiteSpace: "nowrap" }}>
+                    {intentionallyDisabled ? "Not enabled in India" : `${available ?? 0} / ${applicable ?? "—"}`}
+                  </td>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: intentionallyDisabled || finding.classification === "not_enabled" ? T.muted : finding.classification === "insufficient_evidence" ? T.amber : T.green, fontSize: "10.5px", whiteSpace: "nowrap" }}>
+                    {intentionallyDisabled || finding.classification === "not_enabled" ? "Not enabled" : finding.classification === "not_applicable" ? "Not applicable" : finding.classification === "insufficient_evidence" ? "Insufficient" : "Descriptive"}
                   </td>
                 </tr>;
               })}
@@ -288,7 +317,7 @@ export default function DimensionIcPanel() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", minWidth: "720px" }}>
               <thead>
                 <tr style={{ color: T.muted, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  {["Dimension", "Q1", "Q2", "Q3", "Q4", "Q5", "Monotonicity", "Q5−Q1", "t", "Rank autocorr", "Sessions"].map((head) => (
+              {["Dimension", "Q1", "Q2", "Q3", "Q4", "Q5", "Monotonicity", "Q5−Q1", "t", "Rank autocorr", "Sessions"].map((head) => (
                     <th key={head} style={{ textAlign: head === "Dimension" ? "left" : "right", padding: "7px 9px", borderBottom: `1px solid ${T.border}`, fontWeight: 700 }}>{head}</th>
                   ))}
                 </tr>
@@ -327,10 +356,10 @@ export default function DimensionIcPanel() {
             <strong>Monotonicity</strong> is the rank correlation between bucket number and bucket return: +1 a clean
             gradient, 0 no gradient, −1 inverted. <strong>Q5−Q1</strong> is the only figure here in RETURN units —
             what the dimension is worth — and its <strong>t</strong> uses nEff, not the session count.
-            <strong> Rank autocorr</strong> separates a stable-but-inverted signal (high, actionable) from a ranking
+            <strong> Rank autocorr</strong> separates a stable-but-inverted signal (high, potentially useful to study) from a ranking
             that is day-to-day noise (near zero, a data problem). A number in amber is sessions EXCLUDED for having
-            no usable cross-section — macro is excluded entirely, because one market-wide value per day has no
-            quantiles. These buckets sit on a distribution already truncated at the entry threshold, so Q1 is the
+            no usable cross-section. Macro is excluded from stock-rank quantiles because it is shared across names
+            on a date. These buckets sit on a distribution already truncated at the entry threshold, so Q1 is the
             bottom of the survivors, not the factor&apos;s true bottom quintile.
           </div>
         </div> : null}
@@ -339,7 +368,7 @@ export default function DimensionIcPanel() {
           <div style={{ color: T.text, fontSize: "12px", fontWeight: 700, marginBottom: "10px" }}>Every column in this table, explained</div>
           <dl style={{ margin: 0, display: "grid", gap: "9px" }}>
             {[
-              ["Dimension", "One of the five inputs to analyst_score: fundamental (0.30), technical (0.25), sentiment (0.20), macro (0.15), insider (0.10). Rows are sorted by mean IC, best first. Note macro is a single market-wide value each day, so it has no cross-sectional variance and its IC is 0 BY CONSTRUCTION — that zero is not a measurement of its worth."],
+              ["Dimension", "Fundamental, technical, sentiment, and insider are shown here when applicable point-in-time scores exist. Macro is a shared market state, not a cross-sectional stock rank, so its effect is measured separately in the dated macro outcome panel rather than displayed as a zero IC."],
               ["Session IC (chart point)", "One trading day's Spearman rank correlation between the dimension's scores across that day's candidates and their benchmark-neutral forward returns. +1 = ranked the day perfectly, 0 = no ordering, −1 = exactly backwards. Individually noisy; a single day means nothing."],
               ["Mean IC (table)", "Those session ICs averaged over every qualifying session to date. Averaged per DAY, not pooled per observation, so a day with 80 names does not outweigh a day with 8. Roughly 0.05 sustained is a normal-to-good equity factor; a persistent 0.15+ is more likely a bug than an edge."],
               ["SD", "Spread of the session ICs around that mean. Large SD with a small mean means the dimension is inconsistent day to day, not that it is wrong."],
@@ -348,7 +377,7 @@ export default function DimensionIcPanel() {
               ["nEff (effective observations)", "Sessions ÷ horizon days. A 5-day forward return measured on consecutive days reuses the same market move roughly 5 times, so 29 sessions carry only ~5.8 independent observations. THIS is the number that decides whether a result means anything — not the observation count, which is always reassuringly large."],
               ["Positive days", "Share of sessions with IC above zero. Guards against one outlier day carrying the mean: a mean of +0.10 built on 35% positive days is a different claim than one built on 65%."],
               ["All-scored", "The same IC over every scored name, including those that were never entry-eligible and could not have been bought. Context only. It is systematically different from the headline because the eligible cohort is selected on a composite of these same dimensions — a collider that pushes component ICs apart. Never cite this column as predictive power."],
-              ["Verdict", "\"Insufficient\" means the sample is below the pre-declared floor and no predictive conclusion is permitted, however the numbers look. \"Descriptive\" means the floor is cleared and the number describes history — still not validation, promotion, or a reason to change a weight."],
+              ["Evidence state", "\"Not enabled\" and \"Not applicable\" describe the scoring contract, not a data failure. \"Insufficient\" means the sample is below the pre-declared floor. \"Descriptive\" describes observed history and is not validation, promotion, or a reason to change a weight."],
             ].map(([term, def]) => <div key={term}>
               <dt style={{ color: T.text, fontSize: "11.5px", fontWeight: 650 }}>{term}</dt>
               <dd style={{ color: T.sub, fontSize: "11.5px", lineHeight: 1.55, margin: "2px 0 0 0" }}>{def}</dd>
