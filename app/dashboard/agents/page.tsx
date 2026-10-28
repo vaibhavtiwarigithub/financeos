@@ -27,6 +27,7 @@ export default async function Page() {
     { data: paperTrades },
     { data: paperPerf },
     { data: agentRuns },
+    { data: evolutionRun },
     agentCapacity,
     rotationStatus,
   ] = await Promise.all([
@@ -47,6 +48,9 @@ export default async function Page() {
     market === "india"
       ? supabase.from("agent_runs").select("*").eq("market", "india").order("started_at", { ascending: false }).limit(40)
       : supabase.from("agent_runs").select("*").or("market.eq.us,market.is.null").order("started_at", { ascending: false }).limit(40),
+    supabase.from("agent_runs").select("workload_metrics,started_at,status,result_summary")
+      .eq("agent_type", "evolution_supervisor").is("market", null)
+      .order("started_at", { ascending: false }).limit(1).maybeSingle(),
     loadAgentCapacity(supabase, market),
     loadRotationStatus(supabase, market),
   ]);
@@ -74,6 +78,7 @@ export default async function Page() {
       agentRuns={runsByAgent}
       agentCapacity={agentCapacity}
       rotationStatus={rotationStatus}
+      evolutionSnapshot={((evolutionRun as any)?.workload_metrics?.supervisor ?? null)}
       market={market}
     />
   );

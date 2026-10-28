@@ -1930,3 +1930,12 @@ ETF ranking caps, with new prompt/formula/policy identities. Reuse existing
 provider, paper doors, locked fill RPCs and schedules. Operational verification
 does not establish profitable alpha. Do not enable unproved live broker stops,
 invent cash-flow history or bypass owner broker authentication.
+
+# Governed Evolution Supervisor v1 — approved 2026-10-28
+
+- why: existing researchers, challengers, validators, shadows, and outcome evaluators are scheduled independently, making it difficult to see where the improvement loop is blocked and allowing paper-entry brakes to be confused with research readiness.
+- who: owner operating the US and India research pipelines.
+- decision: connect their existing operational status through a deterministic StateGraph on the already-approved two-hour watchdog cadence; order safety/data-integrity issues first, then failed producers, then approved challenger validation and shadow evidence. Persist the compact snapshot in existing `agent_runs.workload_metrics` and show it on Agents & Workflows.
+- constraints: no additional schedule, schema, provider/model call, paid service, model/prompt/score/roster changes, paper or live trade behavior, champion promotion, or live authority. Existing validation sweep remains the sole owner of challenger validation and shadow routing. A paper-entry block must not stop research/shadow evaluation.
+- roi: one truthful, market-specific control view and earlier detection of lifecycle stalls; predictive or return benefit is not assumed.
+- shippedAt: pending verification.

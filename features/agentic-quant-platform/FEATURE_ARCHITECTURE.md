@@ -8,7 +8,13 @@ Approved scope: Long-only, 2-20 market-day swing-trading research, validation, p
 Approved date: 2026-06-27
 Implementation allowed: Yes (phased â€” see Delivery Phases)
 Phase 0 complete: 2026-07-01
-Phase 1: Not started
+Phase 1: Substantially implemented; see current status below and `features/self-evolving-agent-supervisor/FEATURE_ARCHITECTURE.md`.
+
+## Current Implementation Status (2026-10-28)
+
+The original “Remaining gaps (Phase 1+)” list below is a historical baseline and is no longer a reliable inventory. Since it was written, Kairos has added the point-in-time decision ledger and matured labels, a deterministic validation engine and owner-gated champion lifecycle, bounded strategy genomes, measure-only shadow decisions, per-market forward IC/evaluators, and automated challenger validation into non-executing shadow slots. These systems remain separate scheduled workflows rather than an always-running service.
+
+The newly approved Evolution Supervisor v1 joins their operational status on the existing watchdog cadence. It prioritizes safety/data-integrity blockers, failed producers, approved challenger validation, and shadow evidence. It does not create a new inference loop, change the trading path, or promote a champion. The full self-evolving claim remains unproven until matched, point-in-time, cost-aware out-of-sample portfolio comparisons provide sufficiently independent evidence; see `features/learning-core/FEATURE_ARCHITECTURE.md`.
 
 ## Feature Purpose
 

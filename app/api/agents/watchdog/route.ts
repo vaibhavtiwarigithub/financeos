@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { persistEvolutionSupervisor, runEvolutionSupervisor } from "@/lib/agents/evolution-supervisor";
+import { reportIssue, resolveIssue } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -77,6 +79,38 @@ export async function POST(req: NextRequest) {
     at: nowIso,
   };
 
+  // The existing two-hour janitor cadence is also the governed supervisory
+  // wake-up. It only reads health/evolution state and records a compact run
+  // snapshot; it does not invoke research, inference, validation, or trading.
+  let evolutionSupervisor: { state: string; queueCount: number; persisted: boolean } | null = null;
+  try {
+    const snapshot = await runEvolutionSupervisor(svc);
+    const persisted = await persistEvolutionSupervisor(svc, snapshot, isCron ? "scheduled" : "manual");
+    evolutionSupervisor = { state: snapshot.state, queueCount: snapshot.queue.length, persisted };
+    if (snapshot.state === "degraded" || !persisted) {
+      await reportIssue({
+        issueKey: "workflow-supervisor:run",
+        severity: "warn",
+        category: "workflow",
+        title: "Evolution supervisor could not verify or persist all inputs",
+        detail: snapshot.readFailures.length
+          ? `Unavailable inputs: ${snapshot.readFailures.join(", ")}.`
+          : "The snapshot could not be persisted to the existing run ledger.",
+      }, svc);
+    } else {
+      await resolveIssue("workflow-supervisor:run", svc);
+    }
+  } catch {
+    evolutionSupervisor = { state: "degraded", queueCount: 0, persisted: false };
+    await reportIssue({
+      issueKey: "workflow-supervisor:run",
+      severity: "warn",
+      category: "workflow",
+      title: "Evolution supervisor could not complete its cycle",
+      detail: "The scheduled workflow supervision cycle threw before it could produce a verified snapshot.",
+    }, svc);
+  }
+
   // Record the janitor pass so it shows in the agents list like any other run.
   await svc.from("agent_runs").insert({
     agent_type: "watchdog", status: "done", trigger_source: isCron ? "scheduled" : "manual",
@@ -84,7 +118,7 @@ export async function POST(req: NextRequest) {
     result_summary: `Watchdog: reaped ${result.reapedRuns} zombie run(s), reverted ${result.revertedClaims} stuck claim(s), expired ${Object.values(expiredByMarket).reduce((a, b) => a + b, 0)} stale pending.`,
   } as any).select("id").maybeSingle().then(() => {}, () => {});
 
-  return NextResponse.json(result);
+  return NextResponse.json({ ...result, evolutionSupervisor });
 }
 
 export async function GET() {

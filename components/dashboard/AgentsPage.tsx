@@ -8,8 +8,10 @@ import AgentDiagram from "@/components/dashboard/AgentDiagram";
 import AgentHistoryPanel from "@/components/dashboard/AgentHistoryPanel";
 import InfoTooltip from "@/components/dashboard/InfoTooltip";
 import SystemReferencePanel from "@/components/dashboard/SystemReferencePanel";
+import EvolutionSupervisorPanel from "@/components/dashboard/EvolutionSupervisorPanel";
 import { fmtMoney } from "@/lib/format-money";
 import { paperStartNav } from "@/lib/paper-nav";
+import type { EvolutionSnapshot } from "@/lib/agents/evolution-supervisor";
 import type { AgentCapacityRow } from "@/lib/agents/capacity";
 import type { RotationStatus } from "@/lib/agents/rotation-status";
 const SignalCharts = lazy(() => import("@/components/charts/SignalChartsWrapper"));
@@ -52,12 +54,13 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, agentCapacity, rotationStatus, market = "us" }: {
+export default function AgentsPage({ signals, weights, strategy, learningLog, paperPortfolio, paperPositions, paperTrades, paperPerf, agentRuns, agentCapacity, rotationStatus, evolutionSnapshot = null, market = "us" }: {
   signals: any[]; weights: any; strategy: any; learningLog: any[];
   paperPortfolio: any; paperPositions: any[]; paperTrades: any[]; paperPerf: any[];
   agentRuns?: Record<string, any[]>;
   agentCapacity?: AgentCapacityRow[];
   rotationStatus?: RotationStatus;
+  evolutionSnapshot?: EvolutionSnapshot | null;
   market?: "us" | "india";
 }) {
   const currency = market === "india" ? "₹" : "$";
@@ -314,11 +317,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
 
       <PageHeader
         title="Agents & Workflows"
-        subtitle="Scheduled status, run history, and on-demand controls"
+        subtitle="Scheduled status, run history, and governed evolution supervision"
         cadence="daily"
-        whatItDoes="Operate and inspect the workflows currently built in Kairos. This page shows scheduled-run status and provides on-demand controls; it does not imply that every agent is continuously running or self-modifying."
+        whatItDoes="Inspect the workflows currently built in Kairos. The Evolution Supervisor runs on the existing two-hour watchdog schedule and prioritizes safety issues, failed producers, challengers, and shadows. It is scheduled rather than always resident, and it cannot change scores or trade."
         whatToLookFor={[
           "Start with run history and capacity to tell whether a workflow ran, failed, was skipped, or is still queued; an agent card is not proof that its latest output is fresh.",
+          "Evolution Supervisor: one scheduled view of safety/data blockers and the US/India challenger-to-shadow lifecycle; a paper-entry accuracy brake does not stop non-executing validation or shadow collection.",
           "Paper Trades / Signals: open + closed paper positions and the pending signal queue; PaperTrader needs an entry-eligible LONG plus the evidence gates — score alone never authorizes a trade.",
           "Weights / Weight History / Learner Controls: the current scoring weights, how they've changed, and the knobs governing how the LearnerAgent adapts them.",
           "Learning Log / Learner Brain: per-trade outcome notes and the agent's reasoning behind weight proposals.",
@@ -338,6 +342,8 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         <Link href="/dashboard/upgrade-path" style={{ color: T.accent }}>Producer readiness</Link>
       </div>
       <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
+
+      <EvolutionSupervisorPanel snapshot={evolutionSnapshot} market={market} />
 
       {/* Paper portfolio hero */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "16px", padding: "clamp(16px,4vw,24px)", marginBottom: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "24px" }}>
