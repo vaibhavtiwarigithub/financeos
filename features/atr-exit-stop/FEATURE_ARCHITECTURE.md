@@ -1,6 +1,6 @@
 # ATR-scaled exit stop — shadow arm
 
-> Status: **Producer deployed; first post-deploy run/evidence pending.** Production has two paired US snapshots (seed 2026-09-25, latest 2026-09-28) and no attribution row yet; the producer requires 20 complete market sessions (two non-overlapping 10-session blocks). The last pre-deploy collector was blocked because the 2026-09-29 bar was unavailable. PR #29 is merged to `main`, deployment `dpl_AKQ3oM9QEHVAtMztLiLHBpFXVius` is READY, and the attribution-basis migration is applied.
+> Status: **US paired-book producer deployed and collecting; evidence remains insufficient.** Production read on 2026-10-28 found 23 snapshots through the 2026-10-27 session and two non-overlapping 10-session attribution blocks. The net-only paired difference is 0.001345 percentage points (95% CI −0.007809 to +0.009144 percentage points; t=1.0), which does not establish an effect. The producer's minimum two-block threshold permits a descriptive row; it is not a promotion threshold. The last pre-deploy collector was blocked because the 2026-09-29 bar was unavailable. PR #29 is merged to `main`, deployment `dpl_AKQ3oM9QEHVAtMztLiLHBpFXVius` is READY, and the attribution-basis migration is applied. India remains blocked on a validated market-local corporate-action source.
 > The old header saying “no code written” was stale. This remains measure-only; no stop,
 > target, score, sizing, paper/live behavior, or strategy promotion is authorized here.
 >

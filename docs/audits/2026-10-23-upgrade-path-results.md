@@ -1,5 +1,33 @@
 # Upgrade Path: result-pipeline repair
 
+## Production evidence follow-up — 2026-10-28
+
+Read-only production queries show the approved replay pilot is already running
+for US ATR stops: `upgrade_path_shadow_book_runs` has 23 snapshots through the
+2026-10-27 session, and the append-only attribution ledger has two overlapping
+views of the same window, each based on two non-overlapping 10-session blocks.
+The latest net-only paired difference is 0.001345 percentage points, with a
+95% Student-t interval from −0.007809 to +0.009144 percentage points and t=1.0.
+The interval spans both signs; treat it as insufficient evidence, not an edge.
+Continue the existing natural schedule; do not create another ATR arm or infer
+that the minimum two-block descriptive threshold is a promotion gate.
+
+The separate covariance sizing shadow is implemented, but it is a risk
+diagnostic rather than a portfolio-P&L replay. In the last 30 days it wrote
+115 measured India events through 2026-10-28 07:45 UTC (inputs through Oct 27).
+US wrote 91 events total (25 measured, 66 unmeasurable); its latest event was
+Oct 22, with all 12 latest rows citing only 44 common sessions against the
+predeclared 60-session minimum. US paper-trader runs from Oct 23 through Oct 28
+completed with `trading_disabled`, explaining why the candidate-level hook has
+not emitted newer rows. Preserve that trading control; do not run a trade cron
+or weaken the data floor to manufacture evidence.
+
+This does not close the remaining program-specific replay gaps. India ATR,
+score-exit, exit-geometry selection, setup-experts, and capital-rotation still
+need their documented market-specific source, baseline/variant, or integrity
+prerequisites. No new policy, provider, schedule, schema, or trading behavior
+was introduced by this evidence reconciliation.
+
 ## Diagnosis
 
 The complaint is justified, but collecting negative or inconclusive results is
