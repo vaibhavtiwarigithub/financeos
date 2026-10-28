@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMarket } from "@/lib/market-context";
 import {
@@ -992,10 +993,13 @@ export default function FundamentalsPage() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Fundamentals</h1>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Symbol Research</h1>
           <p style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>
-            Research audit log · score formulas · chart any indicator · trade markers
+            Recorded dimensions and score history · chart indicators · trade markers
             <span style={{ marginLeft: 8, color: T.yellow }}>· Sort "Date" ↓ to see today&apos;s runs at top</span>
+          </p>
+          <p style={{ color: T.muted, fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+            This page shows what the research pipeline recorded for each symbol. For matured, paired evidence on whether scores tracked later returns, use <Link href="/dashboard/learning" style={{ color: T.accent }}>Learning</Link>.
           </p>
           {backfillMsg && <p style={{ fontSize: 11, color: backfilling ? T.yellow : T.green, marginTop: 4 }}>{backfillMsg}</p>}
           {refreshMsg && <p style={{ fontSize: 11, color: refreshing ? T.yellow : T.green, marginTop: 4 }}>{refreshMsg}</p>}

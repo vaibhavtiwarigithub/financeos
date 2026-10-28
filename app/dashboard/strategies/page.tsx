@@ -185,15 +185,15 @@ export default function StrategiesPage() {
   return (
     <div style={{ maxWidth: "1400px" }}>
       <PageHeader
-        title="Strategy Intelligence"
-        subtitle="7 strategies · classify symbols to see fit scores"
+        title="Strategy Fit & Library"
+        subtitle="Rule-based matches are hypotheses; Learning holds forward evidence"
         cadence="as-needed"
-        whatItDoes="Classifies any symbol against 7 investment strategies (Momentum, GARP, Value, Dividend, Growth, Macro, Contrarian) and shows fit scores so you know which stocks match your thesis."
+        whatItDoes="Matches recorded symbol characteristics to the built-in strategy descriptions. Fit scores describe similarity to strategy rules; they are not return forecasts, validated predictive accuracy, or portfolio performance."
         whatToLookFor={[
-          "Green fit score (≥70%) = strong match for that strategy.",
-          "Run Classifier with your watchlist symbols to see which strategies they belong to.",
-          "Click any ticker chip to open full symbol analysis.",
-          "Use this before adding new positions — confirms the strategy rationale.",
+          "A higher fit score means a closer rule match, not a stronger expected return.",
+          "Run Classifier to see which strategy descriptions match the selected symbols.",
+          "Click a ticker to inspect the recorded per-symbol research.",
+          "Use Learning for matured, paired forward comparisons and Backtest for historical replay under its stated assumptions.",
         ]}
         actions={[{ label: "Run Classifier", onClick: () => setShowModal(true), primary: true }]}
       />
@@ -203,6 +203,12 @@ export default function StrategiesPage() {
       <div style={{ display: "flex", gap: "8px", marginBottom: "20px", borderBottom: "1px solid #252836", paddingBottom: "0" }}>
         <div style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#6366F1", borderBottom: "2px solid #6366F1", marginBottom: "-1px" }}>Fit Scores</div>
         <Link href="/dashboard/strategies/library" style={{ padding: "8px 14px", fontSize: "13px", fontWeight: 600, color: "#9B9EA8", textDecoration: "none", borderBottom: "2px solid transparent" }}>Algo Library →</Link>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: "10px", padding: "11px 14px", marginBottom: "18px", fontSize: "12px", color: "#9B9EA8", lineHeight: 1.5 }}>
+        <span><strong style={{ color: "#ECEDEF" }}>Interpretation:</strong> fit is a rules match, not evidence the strategy predicts returns.</span>
+        <Link href="/dashboard/learning" style={{ color: "#A5B4FC", whiteSpace: "nowrap" }}>Review forward evidence in Learning →</Link>
+        <Link href="/dashboard/backtest" style={{ color: "#A5B4FC", whiteSpace: "nowrap" }}>Inspect historical replay →</Link>
       </div>
 
       {isIndia && noIndiaSignals && (

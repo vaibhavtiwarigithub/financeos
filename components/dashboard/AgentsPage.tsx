@@ -1,6 +1,7 @@
 "use client";
 import { useState, lazy, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import AgentComparisonCard from "@/components/dashboard/AgentComparisonCard";
 import PageHeader from "@/components/dashboard/PageHeader";
 import AgentDiagram from "@/components/dashboard/AgentDiagram";
@@ -312,11 +313,12 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
     <div style={{ color: T.text, fontFamily: "'Inter', sans-serif" }}>
 
       <PageHeader
-        title="AI Agents"
-        subtitle="Agent control center · research, trade, learn"
+        title="Agents & Workflows"
+        subtitle="Scheduled status, run history, and on-demand controls"
         cadence="daily"
-        whatItDoes="Command center for all agents — run them, inspect backlog and capacity, watch run health and the paper portfolio, and review governed learning."
+        whatItDoes="Operate and inspect the workflows currently built in Kairos. This page shows scheduled-run status and provides on-demand controls; it does not imply that every agent is continuously running or self-modifying."
         whatToLookFor={[
+          "Start with run history and capacity to tell whether a workflow ran, failed, was skipped, or is still queued; an agent card is not proof that its latest output is fresh.",
           "Paper Trades / Signals: open + closed paper positions and the pending signal queue; PaperTrader needs an entry-eligible LONG plus the evidence gates — score alone never authorizes a trade.",
           "Weights / Weight History / Learner Controls: the current scoring weights, how they've changed, and the knobs governing how the LearnerAgent adapts them.",
           "Learning Log / Learner Brain: per-trade outcome notes and the agent's reasoning behind weight proposals.",
@@ -327,6 +329,14 @@ export default function AgentsPage({ signals, weights, strategy, learningLog, pa
         ]}
         actions={[{ label: saving ? "…" : tradingEnabled ? "⚡ Kill Switch" : "🔴 Enable Trading", onClick: toggleTrading }]}
       />
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", padding: "0 clamp(12px, 4vw, 28px) 12px", fontSize: "11px", color: T.muted }}>
+        <span>Follow the evidence:</span>
+        <Link href="/dashboard/intelligence" style={{ color: T.accent }}>Signals</Link>
+        <span>→</span>
+        <Link href="/dashboard/learning" style={{ color: T.accent }}>Learning evidence</Link>
+        <span>→</span>
+        <Link href="/dashboard/upgrade-path" style={{ color: T.accent }}>Producer readiness</Link>
+      </div>
       <div style={{ padding: "0 clamp(12px, 4vw, 28px) 32px" }}>
 
       {/* Paper portfolio hero */}

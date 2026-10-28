@@ -1,5 +1,9 @@
 # Kairos — Learning Loop
 
+## Where each screen fits in the evidence journey
+
+Symbol Research displays what was recorded for an individual symbol at each run; it does not establish that a score preceded or predicted the later move. Learning owns matured, paired predictive-quality comparisons and keeps insufficient evidence distinct. Strategy Fit is a rule-match/classification view, not a predictive score or realized portfolio result. Backtest is a historical replay under its stated assumptions. Paper and Live Portfolio show their respective book outcomes. Agents & Workflows reports scheduled status, run history, capacity and on-demand controls; it does not imply continuous autonomous execution. The UI follows this separation in `features/research-workflow-ui/FEATURE_ARCHITECTURE.md`.
+
 ## Guardian suggestion outcomes
 
 Live Portfolio → Recommendations & Guardian scorecard measures actual frozen
