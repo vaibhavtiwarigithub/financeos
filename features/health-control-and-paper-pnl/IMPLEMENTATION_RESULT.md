@@ -1,6 +1,6 @@
 # Paper Accuracy Recovery Visibility — Implementation Result
 
-**Status:** Implemented locally; not yet shipped.
+**Status:** Deployed and verified.
 **Date:** 2026-10-28
 **Architecture:** `FEATURE_ARCHITECTURE.md`, approved owner request dated 2026-10-28.
 
@@ -19,8 +19,9 @@ No schema, provider, broker, paper position, order, threshold, score, strategy, 
 ## Verification
 
 - Focused tests: 9 passed.
-- TypeScript/build and production deployment verification: pending.
-- Production GET/UI verification: pending authenticated session.
+- TypeScript (`npx tsc --noEmit --incremental false`) and isolated Next.js production build passed.
+- Commit `82f3d626229cb12189fd2adf7d7adf86e4db050b` is on `origin/main`; Vercel deployment `dpl_3yqx6rg6QuEzxze4J7hhbRkSagKR` is production READY and its GitHub Vercel check passed.
+- Production `/login` returned 200, protected Settings redirected to sign-in (307), and owner-only GET returned the expected unauthenticated 401. The authenticated page response was not inspected because this session had no owner browser login.
 
 ## Known current US latch
 
