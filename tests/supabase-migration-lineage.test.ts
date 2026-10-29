@@ -108,6 +108,21 @@ describe("Supabase migration lineage", () => {
     expect(replay).toMatch(/alerts_resolved_idx\s+on\s+public\.agent_alerts\s*\(\s*resolved\s*,\s*created_at\s+desc\s*\)/i);
   });
 
+  it("restores the sensitive app_settings baseline before the RLS lock-down migration", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(/create\s+table\s+if\s+not\s+exists\s+public\.app_settings\b/i);
+    const lockAt = replay.search(/revoke\s+all\s+on\s+table\s+app_settings\s+from\s+anon\s*,\s*authenticated/i);
+
+    expect(createAt, "fresh replay must include the original app_settings baseline").toBeGreaterThanOrEqual(0);
+    expect(lockAt, "the sensitive-table lock-down migration must remain present").toBeGreaterThan(createAt);
+    expect(replay).toMatch(/create\s+table\s+if\s+not\s+exists\s+public\.app_settings\s*\(\s*key\s+text\s+primary\s+key\s*,\s*value\s+text\s+not\s+null\s*,\s*updated_at\s+timestamptz\s+default\s+now\(\)\s*\)/i);
+    expect(replay).toMatch(/alter\s+table\s+public\.app_settings\s+enable\s+row\s+level\s+security/i);
+  });
+
   it("installs pgvector before the first migration uses its vector type", () => {
     const directory = path.join(process.cwd(), "supabase/migrations");
     const files = readdirSync(directory)
