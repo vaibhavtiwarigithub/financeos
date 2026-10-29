@@ -3,6 +3,7 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "npm install",
+  "ignoreCommand": "node scripts/vercel-ignore-docs.mjs",
   "regions": [
     "iad1"
   ],
