@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * LIVE Supabase integration tests for the autonomous-live money path.
+ * Disposable local Supabase integration tests for the autonomous-live money path.
  *
  * These are the "required tests" from the live-auto fix prompt, implemented as
  * REAL integration tests against the live Supabase project — NOT mocks:
@@ -30,13 +30,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  *
  *   RUN_DB_INTEGRATION=1 npx vitest run tests/db-integration.test.ts
  *
- * NOTE ON WRITES: the positive paths of Test 2 and Test 6 exercise the real RPC,
+ * NOTE ON WRITES: this suite refuses every non-local Supabase URL. The positive
+ * paths of Test 2 and Test 6 exercise the real RPC,
  * which inserts durable `broker_orders` reservation rows (`pending_submit`). This
  * RESERVES budget — it does NOT place a broker order (a separate worker submits
  * fills). All test rows use clearly-synthetic, per-run-unique symbols/markets
- * (`__TEST__…`) and either paper env or a throwaway market so they never collide
- * with real trading state. This is inherent to testing an insert-on-success RPC
- * and is the reason the suite is opt-in and default-skipped.
+ * (`__TEST__…`). The concurrency case uses US market semantics to exercise the
+ * live BUY cap but runs only against the disposable local database. This is
+ * inherent to testing an insert-on-success RPC and is why the suite is opt-in,
+ * default-skipped, and hard-blocked from non-local endpoints.
  */
 
 const RUN = !!process.env.RUN_DB_INTEGRATION;
@@ -98,6 +100,13 @@ describe.skipIf(!RUN)("live Supabase DB integration (opt-in: RUN_DB_INTEGRATION=
         "RUN_DB_INTEGRATION is set but Supabase creds are missing. Provide " +
           "NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and " +
           "NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      );
+    }
+
+    const hostname = new URL(url).hostname;
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      throw new Error(
+        "RUN_DB_INTEGRATION is restricted to the disposable local Supabase instance; refusing a non-local URL."
       );
     }
 
@@ -182,11 +191,10 @@ describe.skipIf(!RUN)("live Supabase DB integration (opt-in: RUN_DB_INTEGRATION=
   // ── Test 6: atomic concurrent reservation (only ONE row) ──────────────────────
   describe("Test 6 — concurrent reservations are atomic", () => {
     it("two simultaneous over-cap reservations create exactly ONE reservation", async () => {
-      // Per-run-unique throwaway market so v_count starts at 0 for this market and
-      // the test is deterministic across repeated runs. live BUY + max_daily_trades=1
-      // means the daily cap admits exactly one order; the RPC's per-market+day
-      // advisory xact lock must serialize the two calls so the 2nd sees the 1st.
-      const market = `__test_conc_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+      // The supported market is required because the RPC validates market/timezone.
+      // The disposable database is reset before each CI run, so no prior live
+      // reservations exist; US live BUY + cap=1 admits exactly one of these calls.
+      const market = "us";
       const args = reserveArgs({
         p_market: market,
         p_broker_env: "live",
