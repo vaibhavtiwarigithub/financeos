@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import nextConfig from "../next.config";
 import { SYSTEM_REFERENCE_DOCUMENTS, findSystemReferenceDocument } from "@/lib/system-reference/registry";
 
 describe("system reference registry", () => {
@@ -15,5 +16,10 @@ describe("system reference registry", () => {
   it("does not resolve an unallowlisted document", () => {
     expect(findSystemReferenceDocument("../../.env.local")).toBeNull();
     expect(findSystemReferenceDocument("architecture")?.path).toBe("ARCHITECTURE.md");
+  });
+
+  it("traces only the documents the owner-gated route can serve", () => {
+    const tracedFiles = nextConfig.outputFileTracingIncludes?.["/api/system-reference/\\[document\\]"];
+    expect(tracedFiles).toEqual(SYSTEM_REFERENCE_DOCUMENTS.map(({ path }) => `./${path}`));
   });
 });
