@@ -22,6 +22,7 @@ import { isEtfSymbol } from "@/lib/asset-classification";
 import { isTradingEnabled } from "@/lib/market-controls";
 import { placeProtectiveStop } from "@/lib/protective/placement-worker";
 import { preflightRow } from "@/lib/brokers/preflight";
+import { decisionContractRef } from "@/lib/trading/decision-contract";
 
 // Fraction of live equity used as the default per-order notional ceiling when
 // strategy_config.max_order_notional is null.
@@ -552,7 +553,14 @@ export async function executeApprovedOrder(supabase: any, input: ExecuteOrderInp
   const { error: journalErr } = await supabase.from("decision_journal").insert({
     entry_type: "broker_order", symbol, market,
     summary: `${broker.id} ${orderEnv.toUpperCase()} order: ${side} ${qty} × ${symbol} (proposal ${proposal_id}) → order ${result.brokerOrderId}`,
-    calculations: { proposal_id, broker: broker.id, env: orderEnv, side, qty, broker_order_id: result.brokerOrderId, actor: actor.kind, auto_run_id: actor.runId ?? null },
+    calculations: {
+      proposal_id, broker: broker.id, env: orderEnv, side, qty,
+      broker_order_id: result.brokerOrderId, actor: actor.kind, auto_run_id: actor.runId ?? null,
+      decision_contract_ref: decisionContractRef({
+        signalId: String((proposal as any).signal_id ?? "") || null,
+        market, symbol, stage: "execution",
+      }),
+    },
     has_verified_facts: true, resolved: false,
   });
   if (journalErr) {

@@ -50,6 +50,20 @@ candidate into a champion. Production migration `20260712015740` and
 `tests/strategy-promotion-route.test.ts` verify this contract. Promotion does
 not enable live trading.
 
+## Research-to-construction-to-execution linkage
+
+New decisions use the versioned `kairos-decision-ref.v1` contract in
+`lib/trading/decision-contract.ts`. Its stable key is market + `signal_id`;
+the immutable `decision_observations` row remains the source of truth for score,
+formula lineage, scorer version and mandate. Research Journal stage records,
+paper constructor/execution stages, live proposal audit JSON, and the shared
+execution kernel's decision-journal record carry only the typed reference,
+while their existing payloads retain stage-specific evidence. This avoids
+copying mutable score/provenance fields or adding schema.
+Legacy records without the reference remain valid and are not backfilled.
+This is traceability, not a new eligibility gate or a claim that any strategy
+predicts returns.
+
 ## Prediction Lab: compare forecasts without changing trades
 
 The formula/feature drill-down can display the five stored dimension scores

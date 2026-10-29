@@ -61,6 +61,7 @@ import {
 } from "@/lib/data/financialdatasets-screener";
 import { US_BUCKETS, screenUsBucket } from "@/lib/data/yahoo-screener";
 import { isListingObservationEntryEligible } from "@/lib/listings/discovery";
+import { decisionContractRef } from "@/lib/trading/decision-contract";
 
 // Webull research belongs to the Evidence Router shadow. Calling its nine MCP
 // tools per symbol inside the scoring deadline caused repeated 30s symbol
@@ -2606,6 +2607,11 @@ export async function processSymbol(
       used_champion: usingChampion,
       features: {
         schemaVersion: "v1",             // P1: version tag for PIT replay and feature-schema migration
+        // Canonical score and formula fields remain in this immutable row;
+        // downstream layers carry only this stable market-scoped reference.
+        decision_contract_ref: decisionContractRef({
+          signalId: insertedSignalId, market, symbol, stage: "research",
+        }),
         formula_lineage: formulaLineage,
         decisionTs: new Date().toISOString(), // P1: precise timestamp this observation was written
         instrument: {
@@ -2785,6 +2791,9 @@ export async function processSymbol(
                   ? `Rejected: score ${analystScore} < threshold ${scoreThreshold ?? 60}`
                   : `Abstained: score passed but direction was ${signalDirection}; score alone cannot authorize entry`,
           detail: {
+            decision_contract_ref: decisionContractRef({
+              signalId: insertedSignalId, market, symbol, stage: "research",
+            }),
             analyst_score: analystScore, score_threshold: scoreThreshold ?? 60,
             breakdown_vetoed: breakdownVetoed,
             direction: signalDirection, screener, discovery, included_dimensions: includedDims,

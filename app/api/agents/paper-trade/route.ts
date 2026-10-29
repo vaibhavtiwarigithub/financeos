@@ -37,6 +37,7 @@ import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObse
 import { runAccountingEnvelope } from "@/lib/monitoring/run-accounting";
 import { refreshRecentCandidatesForCapacity } from "@/lib/research/refresh-recent-candidates";
 import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
+import { attachDecisionContractRef } from "@/lib/trading/decision-contract";
 
 export const maxDuration = 300;
 
@@ -46,7 +47,10 @@ async function logStage(supabase: any, args: { signal_id: string | null; symbol:
   try {
     await supabase.from("pipeline_stage_events").insert({
       signal_id: args.signal_id, symbol: args.symbol, market: args.market,
-      stage: args.stage, outcome: args.outcome, reason: args.reason ?? null, detail: args.detail ?? null,
+      stage: args.stage, outcome: args.outcome, reason: args.reason ?? null,
+      detail: attachDecisionContractRef(args.detail ?? null, {
+        signalId: args.signal_id, market: args.market, symbol: args.symbol, stage: args.stage,
+      }),
     });
   } catch { /* fail-soft — pre-migration schema or transient error */ }
 }

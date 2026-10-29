@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadFreshEntrySignals } from "@/lib/trading/fresh-entry-signals";
+import { attachDecisionContractRef } from "@/lib/trading/decision-contract";
 import { createClient } from "@/lib/supabase/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { loadTradingMandate } from "@/lib/trading-mandate";
@@ -392,7 +393,9 @@ async function buildProposals(supabase: any, isCron: boolean) {
         price_source:        quote.source,
         price_retrieved_at:  quote.retrievedAt,
         risk_check_pass:     riskPass,
-        risk_check_reasons:  { ...riskReasons, sizing_method: { source: kellySizingSource, pct: effectiveSizePct }, trading_mandate: tradingMandate },
+        risk_check_reasons:  attachDecisionContractRef({ ...riskReasons, sizing_method: { source: kellySizingSource, pct: effectiveSizePct }, trading_mandate: tradingMandate }, {
+          signalId: signal.id, market: "us", symbol: signal.symbol, stage: "proposal",
+        }),
         estimated_value:     parseFloat((qty * quote.price).toFixed(2)),
         pct_of_nav:          parseFloat(pctOfNav.toFixed(4)),
         status:              "pending_review",
