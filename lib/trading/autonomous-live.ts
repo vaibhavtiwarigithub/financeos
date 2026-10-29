@@ -72,7 +72,7 @@ export async function runAutonomousLive(
     .select(
       "live_auto_enabled,live_auto_enabled_until,live_auto_policy_version," +
       "live_auto_daily_cap_usd,live_auto_max_per_order_usd,live_auto_min_evidence_confidence," +
-      "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold,position_size_pct," +
+      "live_auto_max_open_positions,live_auto_max_orders_per_day,score_threshold," +
       "live_auto_mode_us,live_auto_mode_india," +
       "max_daily_notional_usd,max_daily_notional_inr,max_daily_trades," +
       "protective_orders_enabled," +
@@ -178,7 +178,6 @@ export async function runAutonomousLive(
     live_auto_max_open_positions:      cfg.live_auto_max_open_positions ?? null,
     live_auto_max_orders_per_day:      cfg.live_auto_max_orders_per_day ?? null,
   };
-  const flatSizePct: number = cfg.position_size_pct ?? 10;
   const mandates = await Promise.all(
     autonomousMarkets.map(async market => [market, await loadTradingMandateStrict(svc, market as "us" | "india")] as const),
   );
@@ -264,35 +263,6 @@ export async function runAutonomousLive(
         navByMarket.india = { nav: inrNav, capturedAt: new Date().toISOString() };
       }
     } catch { /* leave india NAV unset → fail closed */ }
-  }
-
-  // Kelly calibration is market-local. USD and INR trade populations have
-  // different liquidity, volatility, and execution outcomes and must never be
-  // pooled into one sizing estimate.
-  const calibrationByMarket: Record<string, { winRate: number | null; payoffRatio: number | null }> = {};
-  for (const market of autonomousMarkets) {
-    const { data: closedTrades } = await svc
-      .from("paper_trades")
-      .select("pnl_pct")
-      .eq("market", market)
-      .not("closed_at", "is", null)
-      .not("pnl_pct", "is", null)
-      .order("closed_at", { ascending: false })
-      .limit(100);
-    const pnls = (closedTrades ?? []).map((t: any) => Number(t.pnl_pct)).filter(Number.isFinite);
-    let winRate: number | null = null;
-    let payoffRatio: number | null = null;
-    if (pnls.length >= 10) {
-      const wins = pnls.filter((p: number) => p > 0);
-      const losses = pnls.filter((p: number) => p <= 0);
-      if (wins.length > 0 && losses.length > 0) {
-        const avgWin = wins.reduce((a, b) => a + b, 0) / wins.length / 100;
-        const avgLoss = Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) / 100;
-        winRate = wins.length / pnls.length;
-        payoffRatio = avgWin / Math.max(0.001, avgLoss);
-      }
-    }
-    calibrationByMarket[market] = { winRate, payoffRatio };
   }
 
   // Per-market NET open positions (filled BUYs − filled SELLs by symbol; count
@@ -538,9 +508,11 @@ export async function runAutonomousLive(
       nav_captured_at: navByMarket[market]?.capturedAt ?? new Date(0).toISOString(),
       current_price: currentPrice,
       price_stale: priceStale,
-      win_rate: calibrationByMarket[market]?.winRate ?? null,
-      payoff_ratio: calibrationByMarket[market]?.payoffRatio ?? null,
-      flat_size_pct: flatSizePct,
+      setup_type: typeof signal.setup_type === "string" ? signal.setup_type : null,
+      horizon_sessions: exitPlanByMarket[market]?.horizonDays ?? null,
+      mandate_version: mandateByMarket[market]?.version ?? null,
+      // No accepted setup-keyed artifact is currently produced, so fail closed.
+      sizing_edge: null,
       policy,
       market,
     });

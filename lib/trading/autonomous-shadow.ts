@@ -52,7 +52,7 @@ export async function runAutonomousShadow(
       "live_auto_enabled,live_auto_enabled_until,live_auto_policy_version," +
       "live_auto_daily_cap_usd,live_auto_max_per_order_usd," +
       "live_auto_min_evidence_confidence,live_auto_max_open_positions," +
-      "live_auto_max_orders_per_day,score_threshold,position_size_pct," +
+      "live_auto_max_orders_per_day,score_threshold," +
       "max_order_notional_inr,max_daily_notional_inr"
     )
     .limit(1)
@@ -73,7 +73,6 @@ export async function runAutonomousShadow(
     live_auto_max_orders_per_day:      cfg.live_auto_max_orders_per_day ?? null,
   };
   const scoreThreshold: number = cfg.score_threshold ?? 60;
-  const flatSizePct: number    = cfg.position_size_pct ?? 10;
 
   // 2. Market-local day start for budget/order-count windows. The DB helper is
   // DST-safe for US and uses Asia/Kolkata for India; do not substitute UTC.
@@ -119,31 +118,7 @@ export async function runAutonomousShadow(
     } catch { /* leave liveNav=0 → fail closed */ }
   }
 
-  // 4. Kelly calibration from last 100 closed paper_trades for this market.
-  const { data: closedTrades } = await svc
-    .from("paper_trades")
-    .select("pnl_pct")
-    .eq("market", market)
-    .not("closed_at", "is", null)
-    .not("pnl_pct", "is", null)
-    .order("closed_at", { ascending: false })
-    .limit(100);
-
-  let winRate: number | null     = null;
-  let payoffRatio: number | null = null;
-  const pnls = (closedTrades ?? []).map((t: any) => parseFloat(t.pnl_pct));
-  if (pnls.length >= 10) {
-    const wins   = pnls.filter((p: number) => p > 0);
-    const losses = pnls.filter((p: number) => p <= 0);
-    if (wins.length > 0 && losses.length > 0) {
-      const avgWin  = wins.reduce((a, b) => a + b, 0) / wins.length / 100;
-      const avgLoss = Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) / 100;
-      winRate     = wins.length / pnls.length;
-      payoffRatio = avgWin / Math.max(0.001, avgLoss);
-    }
-  }
-
-  // 5. Budget dry-run: today's market-local live spend against the market cap.
+  // 4. Budget dry-run: today's market-local live spend against the market cap.
   const dailyCap = market === "india"
     ? (cfg.max_daily_notional_inr ?? null)
     : policy.live_auto_daily_cap_usd;
@@ -282,9 +257,10 @@ export async function runAutonomousShadow(
         nav_captured_at:  navCapturedAt,
         current_price:    currentPrice,
         price_stale:      priceStale,
-        win_rate:         winRate,
-        payoff_ratio:     payoffRatio,
-        flat_size_pct:    flatSizePct,
+        setup_type: typeof observation?.setup_type === "string" ? observation.setup_type : null,
+        horizon_sessions: null,
+        mandate_version: null,
+        sizing_edge: null,
         policy,
         market,
       });

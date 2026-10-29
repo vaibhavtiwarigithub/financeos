@@ -1439,7 +1439,7 @@
       "event": "added",
       "nodeId": "AUTOSHADOW",
       "label": "AutonomousShadow — PA1/PA2 execution kernel + shadow proposals",
-      "reason": "PA1: shared evaluateAutonomousExecution() 9-gate kernel (lib/trading/execution-kernel.ts) + shadow path runAutonomousShadow() writing trade_proposals with execution_mode='autonomous_shadow'. PA2: computeAutonomousSizing() — no-fallback NAV (4h stale = fail closed), Kelly from paper_trades history, per-order cap clamp. Vercel cron weekdays 07:30 UTC. AUTONOMOUS_LIVE_ENABLED=false means all proposals land manual_review_required in current deployment."
+      "reason": "PA1: shared evaluateAutonomousExecution() 9-gate kernel (lib/trading/execution-kernel.ts) + shadow path runAutonomousShadow() writing trade_proposals with execution_mode='autonomous_shadow'. PA2: computeAutonomousSizing() — no-fallback NAV (4h stale = fail closed), size=0 unless an explicit validated executable edge is supplied, per-order cap clamp. Recent paper-trade win/loss summaries are diagnostic only. Current executable artifacts are rejected for insufficient evidence (US n=8, India n=2); no flat-size fallback. Vercel cron weekdays 07:30 UTC. AUTONOMOUS_LIVE_ENABLED=false and the database toggle is false."
     },
     {
       "date": "2026-07-10",

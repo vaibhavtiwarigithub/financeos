@@ -1383,7 +1383,7 @@ When false, all proposals land on `manual_review_required`. Shadow accumulates e
 - `strategy_config` policy + per-market mode columns
 - `agent_signals` (last 24h, `score_source='deterministic_v1'`, direction=long, markets in autonomous mode)
 - `live_account_snapshots` for NAV (account 605420660, max age 4h)
-- `paper_trades` for Kelly calibration (last 100 closed)
+- recent `paper_trades` summary for diagnostics only; it is not an executable sizing calibration. `computeAutonomousSizing()` returns zero until a fresh accepted artifact matches the required outcome contract (market/setup/horizon).
 
 **Key behavior:** Same 9-gate kernel as shadow, plus:
 1. Checks kill switches (`app_paused`, `security_locked`, `trading_enabled`)

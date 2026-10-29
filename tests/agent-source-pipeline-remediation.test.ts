@@ -136,10 +136,11 @@ describe("agent source pipeline remediation", () => {
   it("keeps dormant autonomous live market-local", () => {
     const live = read("lib/trading/autonomous-live.ts");
     expect(live).toContain("loadTradingMandateStrict(svc");
-    expect(live).toContain('.eq("market", market)');
+    expect(live).toContain('.eq("market", m).eq("broker_env", "live")');
     expect(live).toContain("fetchIndiaQuote(signal.symbol)");
     expect(live).toContain("priceStale = quote?.stale ?? true");
-    expect(live).toContain("calibrationByMarket[market]");
+    expect(live).not.toContain("calibrationByMarket");
+    expect(live).toContain("sizing_edge: null");
   });
 
   it("reports only fresh rotating India scanner coverage", () => {

@@ -1,5 +1,6 @@
 import { AUTONOMOUS_LIVE_ENABLED } from "@/lib/autonomy";
 import { positionSizePct } from "@/lib/risk/sizing";
+import { isExecutableSizingEvidence } from "@/lib/validation/calibration";
 
 export interface LiveAutoPolicy {
   live_auto_enabled: boolean;
@@ -168,11 +169,21 @@ export interface SizingInput {
   nav_max_age_ms?: number;
   current_price: number;
   price_stale: boolean;
-  /** Null when < 10 closed paper_trades available — falls back to flat. */
-  win_rate: number | null;
-  payoff_ratio: number | null;
-  /** From strategy_config.position_size_pct — used as flat fallback. */
-  flat_size_pct: number;
+  setup_type: string | null;
+  horizon_sessions: number | null;
+  mandate_version: number | null;
+  /** Full evidence packet; raw recent-trade aggregates can never stand in for this artifact. */
+  sizing_edge: {
+    market: "us" | "india";
+    setup_type: string;
+    horizon_sessions: number;
+    mandate_version: number;
+    fitted_at: string;
+    dataset_hash: string;
+    p_win: number;
+    payoff_ratio: number;
+    calibration: unknown;
+  } | null;
   policy: LiveAutoPolicy;
   /** Market for this order ("us" | "india"). Used to select the correct currency cap. */
   market?: string;
@@ -181,7 +192,7 @@ export interface SizingInput {
 export interface SizingResult {
   ok: boolean;
   reject_reason?: string;
-  size_method: "kelly" | "flat";
+  size_method: "kelly" | "none";
   size_pct: number;
   proposed_qty: number;
   estimated_notional: number;
@@ -204,8 +215,23 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
     return noSize("no_current_price");
   }
 
-  let size_pct = (input.flat_size_pct / 100) || 0.10;
-  let size_method: "kelly" | "flat" = "flat";
+  const evidence = input.sizing_edge;
+  if (!evidence) return noSize("unvalidated_edge");
+  if (!input.market || !input.setup_type || input.horizon_sessions == null || input.mandate_version == null
+    || evidence.market !== input.market || evidence.setup_type !== input.setup_type
+    || evidence.horizon_sessions !== input.horizon_sessions || evidence.mandate_version !== input.mandate_version
+    || !evidence.dataset_hash.trim()
+    || !Number.isFinite(evidence.p_win) || evidence.p_win <= 0 || evidence.p_win >= 1
+    || !Number.isFinite(evidence.payoff_ratio) || evidence.payoff_ratio <= 0
+    || !isExecutableSizingEvidence(evidence.calibration, input.horizon_sessions, input.mandate_version)) {
+    return noSize("invalid_calibrated_edge");
+  }
+  const fittedAt = Date.parse(evidence.fitted_at);
+  if (!Number.isFinite(fittedAt) || fittedAt > Date.now() || Date.now() - fittedAt > 14 * 24 * 60 * 60 * 1000) {
+    return noSize("stale_calibrated_edge");
+  }
+  const artifactPayoff = (evidence.calibration as { payoff_ratio: number }).payoff_ratio;
+  if (Math.abs(artifactPayoff - evidence.payoff_ratio) > 1e-9) return noSize("invalid_calibrated_edge");
 
   const isIndiaMarket = input.market === "india";
   // Per-order notional cap: USD for US, INR for India. Using the wrong
@@ -214,24 +240,14 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
     ? (input.policy.live_auto_max_per_order_inr ?? null)
     : input.policy.live_auto_max_per_order_usd;
 
-  if (
-    input.win_rate != null &&
-    input.payoff_ratio != null &&
-    input.win_rate > 0 &&
-    input.payoff_ratio > 0
-  ) {
-    const cap = perOrderCap != null
-      ? Math.min(0.10, perOrderCap / input.nav)
-      : 0.10;
-    const kelly = positionSizePct(input.win_rate, input.payoff_ratio, {
-      halfKellyCap: cap,
-      floorPct: 0.02,
-    });
-    if (kelly > 0) {
-      size_pct = kelly;
-      size_method = "kelly";
-    }
-  }
+  const cap = perOrderCap != null
+    ? Math.min(0.10, perOrderCap / input.nav)
+    : 0.10;
+  let size_pct = positionSizePct(evidence.p_win, evidence.payoff_ratio, {
+    halfKellyCap: cap,
+    floorPct: 0.02,
+  });
+  if (!(size_pct > 0)) return noSize("non_positive_calibrated_edge");
 
   if (perOrderCap != null) {
     size_pct = Math.min(size_pct, perOrderCap / input.nav);
@@ -254,7 +270,7 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
   const estimated_notional = parseFloat((qty * input.current_price).toFixed(2));
   return {
     ok: true,
-    size_method,
+    size_method: "kelly",
     size_pct: parseFloat(size_pct.toFixed(6)),
     proposed_qty: qty,
     estimated_notional,
@@ -263,5 +279,5 @@ export function computeAutonomousSizing(input: SizingInput): SizingResult {
 }
 
 function noSize(reason: string): SizingResult {
-  return { ok: false, reject_reason: reason, size_method: "flat", size_pct: 0, proposed_qty: 0, estimated_notional: 0, pct_of_nav: 0 };
+  return { ok: false, reject_reason: reason, size_method: "none", size_pct: 0, proposed_qty: 0, estimated_notional: 0, pct_of_nav: 0 };
 }

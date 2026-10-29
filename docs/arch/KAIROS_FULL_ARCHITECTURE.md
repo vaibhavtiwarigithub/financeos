@@ -2180,7 +2180,7 @@ When false, all proposals land on `manual_review_required`. Shadow accumulates e
 - `strategy_config` policy + per-market mode columns
 - `agent_signals` (last 24h, `score_source='deterministic_v1'`, direction=long, markets in autonomous mode)
 - `live_account_snapshots` for NAV (account <agentic-account-id>, max age 4h)
-- `paper_trades` for Kelly calibration (last 100 closed)
+- recent `paper_trades` summary for diagnostics only; it is not an executable sizing calibration. `computeAutonomousSizing()` returns zero until a fresh accepted artifact matches the required outcome contract (market/setup/horizon).
 
 **Key behavior:** Same 9-gate kernel as shadow, plus:
 1. Checks kill switches (`app_paused`, `security_locked`, `trading_enabled`)
@@ -3511,11 +3511,11 @@ and updates `status` to `queued_auto` (kernel approved) or `manual_review_requir
 | `live_account_snapshots` row missing OR NAV ≤ 0 | `noSize('no_live_nav')` → downgrade to `manual_review_required` |
 | NAV age > 4h (default) | `noSize('stale_nav_Nmin')` → downgrade |
 | Quote unavailable or price ≤ 0 | `noSize('no_current_price')` → downgrade |
-| ≥ 10 closed `paper_trades` with P&L | Kelly (half-Kelly from win_rate × payoff_ratio, capped at min(10%, per-order-cap/NAV), floored at 2%) |
-| < 10 closed trades | Flat `position_size_pct` from `strategy_config` |
+| Matching validated executable edge artifact | Half-Kelly from artifact-matched win rate × payoff ratio, capped at min(10%, per-order-cap/NAV), with the existing 2% minimum for positive edge |
+| Missing, stale, rejected, mismatched, or non-positive edge evidence | Zero notional and `manual_review_required`; no flat-size fallback |
 | `floor(NAV × size_pct / price) < 1` | `noSize('qty_rounds_to_zero')` → downgrade |
 
-Per-order cap clamp: `size_pct = min(size_pct, live_auto_max_per_order_usd / NAV)`.
+Per-order cap clamp: `size_pct = min(size_pct, live_auto_max_per_order_usd / NAV)`. Recent closed-trade summaries remain diagnostic and cannot validate sizing. The current producer still lacks setup-keyed artifacts; until a market/setup/horizon-matched executable artifact is available, autonomous sizing is zero. This is a risk-down gate, not a paper portfolio sizing rule.
 
 `queued_auto` proposals that survive sizing get `qty`, `estimated_value`, `pct_of_nav`, and
 `price_at_proposal` populated. Budget dry-run (informational only; not the atomic reservation):
