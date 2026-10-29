@@ -93,9 +93,6 @@ SELECT observation_id, signal_id, market, symbol, ts,
        applicable_dims, real_dims, missing_dims, degraded_dims, decisive_dim,
        -- Authoritative: the frozen contract the decision was made under.
        COALESCE(round(stored_confidence, 4), structural_coverage) AS data_confidence,
-       -- Diagnostic only. NEVER a gate input; it is the number that disagreed.
-       structural_coverage,
-       CASE WHEN stored_confidence IS NOT NULL THEN 'observation' ELSE 'derived' END AS confidence_source,
        CASE WHEN COALESCE(round(stored_confidence, 4), structural_coverage) IS NULL
             THEN 'unknown' ELSE 'ok' END AS quality_status,
        CASE
@@ -103,7 +100,11 @@ SELECT observation_id, signal_id, market, symbol, ts,
          WHEN COALESCE(round(stored_confidence, 4), structural_coverage) >= 0.75 THEN 'high'
          WHEN COALESCE(round(stored_confidence, 4), structural_coverage) >= 0.5  THEN 'med'
          ELSE 'low'
-       END AS confidence_band
+       END AS confidence_band,
+       -- Additive diagnostics follow the three existing view columns so
+       -- CREATE OR REPLACE preserves the established view column names/order.
+       structural_coverage,
+       CASE WHEN stored_confidence IS NOT NULL THEN 'observation' ELSE 'derived' END AS confidence_source
 FROM resolved;
 
 COMMENT ON VIEW public.v_decision_quality IS

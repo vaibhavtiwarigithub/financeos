@@ -254,4 +254,17 @@ describe("Supabase migration lineage", () => {
     expect(backfill).toMatch(/set\s+realized_pnl_pct\s*=\s*pnl_pct/i);
     expect(backfill).toMatch(/coalesce\(exit_at,\s*closed_at\)/i);
   });
+
+  it("appends decision-quality diagnostics after the established view columns", () => {
+    const migration = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260817200000_decision_quality_single_source.sql"),
+      "utf8",
+    );
+    const projection = migration.match(/\)\s*select\s+observation_id,([\s\S]*?)\s+from\s+resolved;/i)?.[1] ?? "";
+    const establishedColumns = projection.match(/as\s+data_confidence,([\s\S]*?)as\s+confidence_band/i)?.[1] ?? "";
+    expect(establishedColumns).toMatch(/as\s+quality_status/i);
+    expect(projection.indexOf("AS confidence_band")).toBeGreaterThan(projection.indexOf("AS quality_status"));
+    expect(projection.indexOf("       structural_coverage,")).toBeGreaterThan(projection.indexOf("AS confidence_band"));
+    expect(projection.indexOf("AS confidence_source")).toBeGreaterThan(projection.indexOf("       structural_coverage,"));
+  });
 });
