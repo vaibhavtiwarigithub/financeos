@@ -267,4 +267,19 @@ describe("Supabase migration lineage", () => {
     expect(projection.indexOf("       structural_coverage,")).toBeGreaterThan(projection.indexOf("AS confidence_band"));
     expect(projection.indexOf("AS confidence_source")).toBeGreaterThan(projection.indexOf("       structural_coverage,"));
   });
+
+  it("creates archetype IC evidence before its cohort migration", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/003_paper_trading.sql"),
+      "utf8",
+    );
+    const cohortMigration = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260828163000_archetype_ic_runs_cohort.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/create table if not exists archetype_ic_runs\s*\([\s\S]*?unique\s*\(as_of_date, market, setup_type, horizon_days\)/i);
+    expect(baseline).toMatch(/alter table archetype_ic_runs enable row level security/i);
+    expect(baseline).toMatch(/create policy archetype_ic_runs_owner_read/i);
+    expect(cohortMigration).toMatch(/alter table archetype_ic_runs\s+add column if not exists cohort/i);
+  });
 });

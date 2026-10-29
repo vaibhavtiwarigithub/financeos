@@ -71,6 +71,40 @@ CREATE TABLE IF NOT EXISTS paper_performance (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Measure-only, per-archetype rank-IC evidence. The deployed table predates
+-- the tracked migration chain; keep its verified shape reproducible so the
+-- later cohort migration can add its explicit population label.
+CREATE TABLE IF NOT EXISTS archetype_ic_runs (
+  id bigserial PRIMARY KEY,
+  as_of_date date NOT NULL,
+  market text NOT NULL CHECK (market IN ('us', 'india')),
+  setup_type text NOT NULL,
+  horizon_days integer NOT NULL CHECK (horizon_days IN (2, 5, 10, 20, 60, 120)),
+  qualifying_sessions integer NOT NULL CHECK (qualifying_sessions >= 0),
+  observations integer NOT NULL CHECK (observations >= 0),
+  rank_ic numeric,
+  rank_ic_t numeric,
+  champion_rank_ic numeric,
+  ic_delta_vs_champion numeric,
+  effective_observations numeric,
+  status text NOT NULL CHECK (status IN ('insufficient_evidence', 'measured')),
+  reason text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (as_of_date, market, setup_type, horizon_days)
+);
+
+CREATE INDEX IF NOT EXISTS archetype_ic_runs_lookup_idx
+  ON archetype_ic_runs (market, setup_type, horizon_days, as_of_date DESC);
+
+ALTER TABLE archetype_ic_runs ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE archetype_ic_runs FROM anon;
+GRANT SELECT ON TABLE archetype_ic_runs TO authenticated;
+GRANT ALL PRIVILEGES ON TABLE archetype_ic_runs TO service_role;
+GRANT USAGE, SELECT ON SEQUENCE archetype_ic_runs_id_seq TO authenticated, service_role;
+CREATE POLICY archetype_ic_runs_owner_read ON archetype_ic_runs
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.jwt()) ->> 'email' = 'vterminater@gmail.com');
+
 -- RLS: owner only
 ALTER TABLE paper_portfolio ENABLE ROW LEVEL SECURITY;
 ALTER TABLE paper_positions ENABLE ROW LEVEL SECURITY;
