@@ -109,7 +109,16 @@ describe("a failed send never grants silent access", () => {
   });
 
   it("never returns the action link to the browser — it sets a password", () => {
-    const response = ACCESS.slice(ACCESS.indexOf('return NextResponse.json({\n    ok: true,'));
+    const inviteStart = ACCESS.indexOf("async function invite(");
+    const inviteEnd = ACCESS.indexOf("async function resendAccess(", inviteStart);
+    expect(inviteStart).toBeGreaterThan(0);
+    expect(inviteEnd).toBeGreaterThan(inviteStart);
+    const inviteFn = ACCESS.slice(inviteStart, inviteEnd);
+    const responseStart = inviteFn.lastIndexOf("return NextResponse.json({");
+    expect(responseStart, "could not locate the successful invite response").toBeGreaterThan(0);
+    const responseEnd = inviteFn.indexOf("\n  });", responseStart);
+    expect(responseEnd, "could not bound the successful invite response").toBeGreaterThan(responseStart);
+    const response = inviteFn.slice(responseStart, responseEnd);
     expect(response.includes("actionLink")).toBe(false);
     expect(response.includes("action_link")).toBe(false);
   });

@@ -59,6 +59,21 @@ describe("Supabase migration lineage", () => {
     expect(replay).toMatch(/create\s+policy\s+"Users see own journal"[\s\S]*?auth\.uid\(\)\s*=\s*user_id/i);
   });
 
+  it("restores the production agent_memory baseline before its RLS policy migration", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(/create\s+table\s+if\s+not\s+exists\s+public\.agent_memory\b/i);
+    const policiesAt = replay.search(/'agent_memory'[,\s]/i);
+
+    expect(createAt, "fresh replay must include the production agent_memory baseline").toBeGreaterThanOrEqual(0);
+    expect(policiesAt, "fresh replay must retain the agent_memory RLS policy migration").toBeGreaterThan(createAt);
+    expect(replay).toMatch(/embedding\s+extensions\.vector\s*\(\s*1536\s*\)/i);
+    expect(replay).toMatch(/create\s+extension\s+if\s+not\s+exists\s+vector\s+with\s+schema\s+extensions/i);
+  });
+
   it("installs pgvector before the first migration uses its vector type", () => {
     const directory = path.join(process.cwd(), "supabase/migrations");
     const files = readdirSync(directory)
