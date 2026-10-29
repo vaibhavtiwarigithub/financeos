@@ -123,6 +123,23 @@ describe("Supabase migration lineage", () => {
     expect(replay).toMatch(/alter\s+table\s+public\.app_settings\s+enable\s+row\s+level\s+security/i);
   });
 
+  it("restores private live-account snapshots before their grants are revoked", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(/create\s+table\s+if\s+not\s+exists\s+public\.live_account_snapshots\b/i);
+    const lockAt = replay.search(/revoke\s+all\s+on\s+table\s+live_account_snapshots\s+from\s+anon\s*,\s*authenticated/i);
+
+    expect(createAt, "fresh replay must include the original live snapshot baseline").toBeGreaterThanOrEqual(0);
+    expect(lockAt, "the sensitive-table lock-down migration must remain present").toBeGreaterThan(createAt);
+    expect(replay).toMatch(/account_id\s+text\s+not\s+null\s*,\s*equity\s+numeric\s*,\s*buying_power\s+numeric[\s\S]*?positions_json\s+jsonb/i);
+    expect(replay).toMatch(/live_account_snapshots_account_id_unique\s+on\s+public\.live_account_snapshots\s*\(\s*account_id\s*\)/i);
+    expect(replay).toMatch(/alter\s+table\s+public\.live_account_snapshots\s+enable\s+row\s+level\s+security/i);
+    expect(replay).not.toMatch(/account_id\s+text\s+not\s+null\s+default/i);
+  });
+
   it("installs pgvector before the first migration uses its vector type", () => {
     const directory = path.join(process.cwd(), "supabase/migrations");
     const files = readdirSync(directory)
