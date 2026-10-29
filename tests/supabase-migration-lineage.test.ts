@@ -239,4 +239,17 @@ describe("Supabase migration lineage", () => {
     expect(baseline).toMatch(/updated_at\s+timestamptz\s+default\s+now\(\)/i);
     expect(repair).toMatch(/updated_at\s*=\s*now\(\)/i);
   });
+
+  it("creates the realized paper-trade return projection before its backfill", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/003_paper_trading.sql"),
+      "utf8",
+    );
+    const backfill = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260806184656_backfill_paper_trade_realized_pnl_pct.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/realized_pnl_pct\s+numeric/i);
+    expect(backfill).toMatch(/set\s+realized_pnl_pct\s*=\s*pnl_pct/i);
+  });
 });
