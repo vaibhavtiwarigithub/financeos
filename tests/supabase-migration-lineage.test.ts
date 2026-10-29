@@ -282,4 +282,17 @@ describe("Supabase migration lineage", () => {
     expect(baseline).toMatch(/create policy archetype_ic_runs_owner_read/i);
     expect(cohortMigration).toMatch(/alter table archetype_ic_runs\s+add column if not exists cohort/i);
   });
+
+  it("creates the paper-trade high-water field before the exit capture migration", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/003_paper_trading.sql"),
+      "utf8",
+    );
+    const migration = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260911153405_capture_closed_trade_high_water.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/highest_price\s+numeric/i);
+    expect(migration).toMatch(/paper_trades[\s\S]*?highest_price/i);
+  });
 });
