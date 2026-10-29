@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
   pnl_pct numeric,
   realized_pnl_pct numeric,
   highest_price numeric,
+  stop_loss numeric,
+  take_profit numeric,
   outcome text CHECK (outcome IN ('win', 'loss', 'breakeven')),
   -- Signal accuracy breakdown
   fundamental_score numeric,

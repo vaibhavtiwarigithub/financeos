@@ -8,6 +8,11 @@ service-role-only writes (including sequence usage), and no anonymous access.
 This restores the production schema contract for fresh migration replay; it
 does not modify production data or permissions.
 
+The original `paper_trades` baseline also includes nullable numeric `stop_loss`
+and `take_profit` columns. The later attribution capture migration uses them to
+preserve entry risk levels; the baseline fields were verified in production
+before restoring them for fresh replay.
+
 The global score-history reader uses a `created_at DESC` index; cross-symbol
 return readers use `(market, available_at DESC)`; provider-call reconciliation
 uses a `run_id` index. These complement existing per-symbol indexes and avoid

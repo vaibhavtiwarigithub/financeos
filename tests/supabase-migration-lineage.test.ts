@@ -296,6 +296,21 @@ describe("Supabase migration lineage", () => {
     expect(migration).toMatch(/paper_trades[\s\S]*?highest_price/i);
   });
 
+  it("creates entry risk-level fields before the attribution capture migration", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/003_paper_trading.sql"),
+      "utf8",
+    );
+    const migration = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260927212654_capture_entry_risk_levels_for_attribution.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/stop_loss\s+numeric/i);
+    expect(baseline).toMatch(/take_profit\s+numeric/i);
+    expect(migration).toMatch(/public\.paper_trades\.stop_loss/i);
+    expect(migration).toMatch(/public\.paper_trades\.take_profit/i);
+  });
+
   it("creates the security event ledger before viewer-hardening policies target it", () => {
     const baseline = readFileSync(
       path.join(process.cwd(), "supabase/migrations/037_trader_proposals.sql"),
