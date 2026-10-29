@@ -44,8 +44,16 @@ create policy newsletters_authenticated_read
 -- ── 3. Revoke anon/authenticated EXECUTE on SECURITY DEFINER RPCs ─────────────
 -- Internal agent invoker + RLS toggler + auth trigger fn: no client caller.
 revoke execute on function public.kairos_call_agent(text, jsonb, text, integer) from anon, authenticated;
-revoke execute on function public.rls_auto_enable()                            from anon, authenticated;
 revoke execute on function public.handle_new_user()                           from anon, authenticated;
+
+-- The historical production schema had this helper but no tracked migration
+-- creates it. Preserve the hardening when present while allowing clean replay.
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke execute on function public.rls_auto_enable() from anon, authenticated';
+  end if;
+end $$;
 
 -- Evidence-policy RPCs: server (service_role) only; anon must not flip policy.
 revoke execute on function public.activate_evidence_policy(text, uuid, text[], uuid) from anon, authenticated;
@@ -61,8 +69,14 @@ revoke execute on function public.get_daily_ai_count(uuid) from anon;
 -- which anon inherits. Revoke from PUBLIC, re-grant only real callers. ───────────
 revoke execute on function public.kairos_call_agent(text, jsonb, text, integer) from public;
 grant  execute on function public.kairos_call_agent(text, jsonb, text, integer) to service_role;
-revoke execute on function public.rls_auto_enable() from public;
 revoke execute on function public.handle_new_user() from public;
+
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke execute on function public.rls_auto_enable() from public';
+  end if;
+end $$;
 revoke execute on function public.get_daily_ai_count(uuid) from public;
 grant  execute on function public.get_daily_ai_count(uuid) to authenticated, service_role;
 

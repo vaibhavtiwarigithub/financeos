@@ -217,4 +217,13 @@ describe("Supabase migration lineage", () => {
     expect(restoration).toMatch(/kairos-prewarm-us[\s\S]*?2,7,12,17,22,27,32,37,42,47,52,57 12 \* \* \*/i);
     expect(restoration).toMatch(/kairos-prewarm-india[\s\S]*?2,12,22,32,42,52 3 \* \* \*/i);
   });
+
+  it("keeps optional historical RLS helper revocations replay-safe", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260715120000_security_rls_and_rpc_lockdown.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/to_regprocedure\('public\.rls_auto_enable\(\)'\)\s+is\s+not\s+null[\s\S]*?revoke execute on function public\.rls_auto_enable\(\) from anon, authenticated/i);
+    expect(sql).toMatch(/to_regprocedure\('public\.rls_auto_enable\(\)'\)\s+is\s+not\s+null[\s\S]*?revoke execute on function public\.rls_auto_enable\(\) from public/i);
+  });
 });
