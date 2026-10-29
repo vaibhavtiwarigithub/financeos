@@ -1,6 +1,8 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { PIT_POLICY_VERSION } from "@/lib/edges/pit-universe";
 import { sha256Fingerprint } from "@/lib/edges/fingerprint";
+import { benjaminiYekutieli, studentTTwoSidedPValue } from "@/lib/edges/fdr";
+import { neweyWestLag } from "@/lib/edges/evidence";
 import {
   orchestrateOosRun,
   type OrchestrationReport,
@@ -15,7 +17,7 @@ export interface OosVariant {
 }
 
 export interface OosExperimentManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   /** Omitted by the two initial manifests; defaults to promotion_candidate. */
   evidenceClass?: "diagnostic" | "promotion_candidate";
   hypothesis: string;
@@ -50,7 +52,8 @@ export interface OosExperimentManifest {
     requiredBeforePromotion: true;
   };
   multipleTesting: {
-    method: "trial_adjusted_t_margin";
+    method: "benjamini_yekutieli";
+    alpha: number;
     familyDefinition: string;
   };
   variants: OosVariant[];
@@ -63,7 +66,7 @@ function assertIsoDate(value: string, field: string): void {
 }
 
 export function validateOosManifest(manifest: OosExperimentManifest): void {
-  if (manifest.schemaVersion !== 1) throw new Error("Unsupported OOS manifest schema.");
+  if (manifest.schemaVersion !== 2) throw new Error("Unsupported OOS manifest schema.");
   if (!manifest.hypothesis.trim()) throw new Error("hypothesis is required.");
   if (!manifest.edgeId.trim() || !manifest.formulaVersion.trim()) {
     throw new Error("edgeId and formulaVersion are required.");
@@ -85,12 +88,21 @@ export function validateOosManifest(manifest: OosExperimentManifest): void {
   if (manifest.horizonSessions < 1 || manifest.stepSessions !== manifest.horizonSessions) {
     throw new Error("stepSessions must equal horizonSessions to avoid label overlap.");
   }
+  if (manifest.hac.primaryLag !== neweyWestLag(manifest.horizonSessions, manifest.stepSessions)) {
+    throw new Error("primary HAC lag must equal the overlap-derived lag for the declared horizon and step.");
+  }
+  if (manifest.hac.sensitivityLags.includes(manifest.hac.primaryLag)) {
+    throw new Error("HAC sensitivity lags must be distinct from the overlap-derived primary lag.");
+  }
+  if (new Set(manifest.hac.sensitivityLags).size !== manifest.hac.sensitivityLags.length) {
+    throw new Error("HAC sensitivity lags must be unique.");
+  }
   if (manifest.foldCount < 1 || manifest.datesPerFold < 2) {
     throw new Error("At least one fold and two dates per fold are required.");
   }
   const plannedDates = manifest.foldCount * manifest.datesPerFold;
-  if (manifest.minimumEvaluatedDates < 2 || manifest.minimumEvaluatedDates > plannedDates) {
-    throw new Error("minimumEvaluatedDates must be within the predeclared plan.");
+  if (manifest.minimumEvaluatedDates < 3 || manifest.minimumEvaluatedDates > plannedDates) {
+    throw new Error("minimumEvaluatedDates must be at least 3 and within the predeclared plan.");
   }
   if (manifest.trialsConsidered !== manifest.variants.length || manifest.variants.length < 1) {
     throw new Error("trialsConsidered must equal the predeclared variant count.");
@@ -116,6 +128,13 @@ export function validateOosManifest(manifest: OosExperimentManifest): void {
     throw new Error("HAC lags must be non-negative.");
   }
   if (manifest.costPolicy.oneWayBps < 0) throw new Error("Cost policy cannot be negative.");
+  if (manifest.multipleTesting.method !== "benjamini_yekutieli"
+      || !Number.isFinite(manifest.multipleTesting.alpha)
+      || manifest.multipleTesting.alpha <= 0
+      || manifest.multipleTesting.alpha >= 1
+      || !manifest.multipleTesting.familyDefinition.trim()) {
+    throw new Error("A predeclared Benjamini-Yekutieli family and alpha in (0,1) are required.");
+  }
   assertIsoDate(manifest.dataCutoff, "dataCutoff");
 }
 
@@ -251,21 +270,51 @@ export async function completeOosExperiment(opts: {
   )) {
     throw new Error("OOS experiment is incomplete or does not match its immutable plan.");
   }
+  const pValues = opts.reports.map((report) => {
+    const aggregate = report.run?.aggregate;
+    if (!aggregate || aggregate.n < 3 || !Number.isFinite(aggregate.tHac)) return null;
+    return {
+      id: report.variantId!,
+      pValue: studentTTwoSidedPValue(aggregate.tHac, aggregate.n - 1),
+    };
+  });
+  if (pValues.some((value) => value === null)) {
+    throw new Error("The declared FDR family is incomplete: every variant needs a finite matured OOS HAC statistic.");
+  }
+  const fdr = benjaminiYekutieli(
+    pValues as Array<{ id: string; pValue: number }>,
+    opts.manifest.multipleTesting.alpha,
+  );
+  const fdrById = new Map(fdr.map((value) => [value.id, value]));
+  const reportRows = opts.reports.map((report) => ({
+    ...report,
+    inference: {
+      method: "descriptive_hac_t_then_by_v1",
+      primaryLag: report.run?.aggregate?.lag ?? null,
+      overlapDerivedLag: neweyWestLag(opts.manifest.horizonSessions, opts.manifest.stepSessions),
+      degreesOfFreedom: report.run?.aggregate?.n ? report.run.aggregate.n - 1 : null,
+      familySizeDeclared: opts.manifest.trialsConsidered,
+      familySizeEvaluated: fdr.length,
+      alpha: opts.manifest.multipleTesting.alpha,
+      ...(report.variantId ? fdrById.get(report.variantId) ?? { pValue: null, qValue: null, rejected: false } : {}),
+      note: "Exploratory two-sided Student-t reference p-values use HAC t and n-1 df; Benjamini-Yekutieli q-values account for arbitrary dependence in the declared family. This is descriptive and does not establish strategy profitability or promotion readiness.",
+    },
+  }));
   const datasetFingerprint = sha256Fingerprint(
-    opts.reports.map((report) => [report.variantId, report.datasetFingerprint]).sort(),
+    reportRows.map((report) => [report.variantId, report.datasetFingerprint]).sort(),
   );
   const universeFingerprint = sha256Fingerprint(
-    opts.reports.map((report) => [report.variantId, report.universeFingerprint]).sort(),
+    reportRows.map((report) => [report.variantId, report.universeFingerprint]).sort(),
   );
   const runFingerprint = sha256Fingerprint(
-    opts.reports.map((report) => [report.variantId, report.runFingerprint]).sort(),
+    reportRows.map((report) => [report.variantId, report.runFingerprint]).sort(),
   );
   const { data, error } = await client
     .from("backtest_experiments")
     .update({
       variants_run: opts.reports.length,
       completed_at: new Date().toISOString(),
-      result_summary: { schemaVersion: 1, reports: opts.reports },
+      result_summary: { schemaVersion: 2, reports: reportRows, multipleTesting: opts.manifest.multipleTesting },
       dataset_fingerprint: datasetFingerprint,
       universe_fingerprint: universeFingerprint,
       run_fingerprint: runFingerprint,

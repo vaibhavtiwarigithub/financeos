@@ -11,7 +11,7 @@ import { canonicalJson } from "./fingerprint";
 
 function manifest(): OosExperimentManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hypothesis: "A larger PIT cross-section changes measured h5 momentum IC dispersion.",
     author: "human",
     edgeId: "mom_12_1",
@@ -34,10 +34,11 @@ function manifest(): OosExperimentManifest {
     minimumEvaluatedDates: 10,
     dataCutoff: "2026-07-28",
     codeVersion: "abcdef1",
-    hac: { primaryLag: 1, sensitivityLags: [0, 1, 2] },
+    hac: { primaryLag: 0, sensitivityLags: [1, 2, 4] },
     costPolicy: { oneWayBps: 10, includedInIc: false, requiredBeforePromotion: true },
     multipleTesting: {
-      method: "trial_adjusted_t_margin",
+      method: "benjamini_yekutieli",
+      alpha: 0.05,
       familyDefinition: "All universe-size variants in this immutable experiment.",
     },
     variants: [
@@ -65,6 +66,18 @@ describe("OOS experiment manifest", () => {
       ...manifest(),
       membershipCadence: "per_fold" as "per_date",
     })).toThrow("per-date PIT");
+  });
+
+  it("requires overlap-derived primary HAC lag and unique sensitivity lags", () => {
+    expect(() => validateOosManifest({ ...manifest(), hac: { primaryLag: 1, sensitivityLags: [2] } }))
+      .toThrow("overlap-derived lag");
+    expect(() => validateOosManifest({ ...manifest(), hac: { primaryLag: 0, sensitivityLags: [2, 2] } }))
+      .toThrow("must be unique");
+  });
+
+  it("requires enough dates to form the declared reference distribution", () => {
+    expect(() => validateOosManifest({ ...manifest(), minimumEvaluatedDates: 2 }))
+      .toThrow("minimumEvaluatedDates must be at least 3");
   });
 
   it("permits an explicitly diagnostic per-fold plan without upgrading its evidence class", () => {
@@ -101,5 +114,33 @@ describe("OOS experiment manifest", () => {
       reports: [],
       client: {} as any,
     })).rejects.toThrow("exactly one report");
+  });
+
+  it("refuses to shrink the declared FDR family when a variant has no mature statistic", async () => {
+    const m = manifest();
+    const base = {
+      reportSchemaVersion: 3,
+      dataCutoff: m.dataCutoff,
+      planFingerprint: fingerprintOosManifest(m),
+      datasetFingerprint: "dataset",
+      universeFingerprint: "universe",
+      runFingerprint: "run",
+      run: { edgeId: m.edgeId, datesEvaluated: m.minimumEvaluatedDates, aggregate: null } as any,
+      folds: [],
+      membershipCadence: "per_date" as const,
+      approximationsUsed: [],
+      universeErrors: [],
+      universeSnapshots: [],
+      snapshotsConfirmed: 0,
+      symbolsFetched: 400,
+      symbolsMissingCandles: [],
+      sessionsAvailable: 500,
+    };
+    await expect(completeOosExperiment({
+      experimentId: "exp-1",
+      manifest: m,
+      reports: m.variants.map((variant) => ({ ...base, variantId: variant.id } as any)),
+      client: {} as any,
+    })).rejects.toThrow("every variant needs a finite matured OOS HAC statistic");
   });
 });

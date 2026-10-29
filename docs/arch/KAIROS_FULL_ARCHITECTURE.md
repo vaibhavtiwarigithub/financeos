@@ -15582,9 +15582,10 @@ in this session's earlier work:
 - Rank IC / Spearman with the existing floors: `MIN_PREDICTIVE_DATES = 20`,
   `MIN_EFFECTIVE_OBSERVATIONS = 12`, `MIN_CROSS_SECTION = 5` (used across the codebase's other
   dimension diagnostics — reused verbatim, not reinvented).
-- Šidák/multiple-testing correction and Deflated Sharpe / PBO machinery already used by the
-  Alpha Diagnostic Lab and the OOS orchestrator (`lib/edges/oos-experiment.ts`'s
-  `multipleTesting.method: "trial_adjusted_t_margin"`).
+- For formula/edge OOS families, `lib/edges/oos-experiment.ts` schema v2 freezes a
+  Benjamini-Yekutieli FDR alpha and applies dependence-conservative q-values to descriptive
+  HAC t-reference p-values only when the complete declared family has matured. This is not
+  strategy-return DSR/PBO and does not authorize promotion; those remain separate gates.
 - Cost: `MODELED_SLIP_FRACTION` (`lib/analytics/performance-metrics.ts`, fixed 2026-09-02) for
   after-cost turnover, so this feature's cost accounting matches the paper book and the replay
   exactly rather than inventing a fourth cost constant.
@@ -40249,19 +40250,21 @@ The following are hard blockers before promotion can be enabled:
    `runBoundOosVariant()` constructs the provider run from that manifest and
    enforces the data cutoff. The dormant promotion boundary still needs to
    independently verify these identities before it may ever be enabled.
-2. **Liquidity is not trailing ADV.** `resolvePitUniverse()` currently ranks one
-   session's adjusted close times volume. The approved contract says trailing
-   PIT dollar volume. An event-volume spike can therefore enter the universe
-   and alter IC/sigma. Build a cached trailing window or rename and reapprove the
-   selection policy; do not present the current rank as ADV.
+2. **Liquidity uses a complete trailing ADV window.** `resolvePitUniverse()`
+   now ranks mean dollar volume across the exact 20 completed sessions ending
+   at each as-of date; incomplete names/windows fail closed. Grouped aggregates
+   are only entitled for roughly two years, so older US as-of dates remain
+   unavailable rather than receiving a substituted current rank.
 3. **Promotion evidence requires per-date membership.** `per_fold` is a quota
    approximation and must remain diagnostic-only. No promotion writer may
    accept a report carrying that approximation.
-4. **HAC lag selection is not derived.** `neweyWestLag(20, 20) = 1` is a policy
-   choice, not a consequence of non-overlapping labels. Predeclare lag selection
-   and report lag sensitivity before setting a statistical gate. Newey and West
-   explicitly treat lag selection as an estimation problem, and note finite
-   sample size distortions in their simulations.
+4. **Overlap-derived HAC lag is a predeclared baseline, not a full bandwidth
+   estimator.** R20 uses `max(0, ceil(H / step) - 1)` for mechanical label
+   overlap, so `neweyWestLag(20, 20) = 0`. Each immutable plan declares separate
+   sensitivity lags. This does not prove the baseline captures all serial
+   dependence or remove finite-sample distortion; q-values and t-statistics stay
+   descriptive until the null calibration and promotion gates are separately
+   satisfied.
 5. **Fold partition is conditionally irrelevant only.** Aggregate mean/sigma on
    a fixed concatenated series do not depend on fold labels, but purge width,
    entitlement depth, fold consistency, and worst-fold gates change the usable

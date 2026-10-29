@@ -13,8 +13,12 @@ export function provenanceMode(hasExplicitHistoricalRange: boolean): EdgeProvena
 
 export function neweyWestLag(horizonSessions: number, sampleStepSessions: number): number {
   if (!Number.isFinite(horizonSessions) || horizonSessions < 1) return 1;
-  if (!Number.isFinite(sampleStepSessions) || sampleStepSessions < 1) return Math.ceil(horizonSessions);
-  return Math.max(1, Math.ceil(horizonSessions / sampleStepSessions));
+  if (!Number.isFinite(sampleStepSessions) || sampleStepSessions < 1) return Math.max(0, Math.ceil(horizonSessions) - 1);
+  // A forward return from t to t+H overlaps a return from t+S to t+S+H
+  // only while S < H. NW lag counts overlapping observations, not the number
+  // of sessions in a horizon. With non-overlapping H-session observations,
+  // lag 0 is the correct overlap-derived starting point.
+  return Math.max(0, Math.ceil(horizonSessions / sampleStepSessions) - 1);
 }
 
 export function edgeHealthKey(kind: "scout" | "ic", market: Market): string {

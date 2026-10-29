@@ -105,9 +105,13 @@ describe("aggregateOosIc", () => {
     expect(a.sigmaWithinPlan).toBe(false);
   });
 
-  it("uses lag 1 when step equals horizon — non-overlapping needs no correction", () => {
+  it("uses zero overlap-derived lags when step equals horizon", () => {
     const a = aggregateOosIc(series([0.05, 0.04, 0.06]), 20, 20)!;
-    expect(a.lag).toBe(1);
+    expect(a.lag).toBe(0);
+  });
+
+  it("uses the number of overlapping observations when step is shorter than horizon", () => {
+    expect(aggregateOosIc(series([0.05, 0.04, 0.06]), 20, 5)!.lag).toBe(3);
   });
 
   it("records per-fold sign for the consistency diagnostic", () => {

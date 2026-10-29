@@ -19,9 +19,9 @@ describe("edge evidence governance", () => {
   });
 
   it("scales the Newey-West lag to the sampled IC series", () => {
-    expect(neweyWestLag(20, 5)).toBe(4);
-    expect(neweyWestLag(10, 5)).toBe(2);
-    expect(neweyWestLag(5, 5)).toBe(1);
+    expect(neweyWestLag(20, 5)).toBe(3);
+    expect(neweyWestLag(10, 5)).toBe(1);
+    expect(neweyWestLag(5, 5)).toBe(0);
   });
 
   it("labels explicit historical ranges as retrospective", () => {

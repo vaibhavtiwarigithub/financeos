@@ -408,9 +408,10 @@ in this session's earlier work:
 - Rank IC / Spearman with the existing floors: `MIN_PREDICTIVE_DATES = 20`,
   `MIN_EFFECTIVE_OBSERVATIONS = 12`, `MIN_CROSS_SECTION = 5` (used across the codebase's other
   dimension diagnostics — reused verbatim, not reinvented).
-- Šidák/multiple-testing correction and Deflated Sharpe / PBO machinery already used by the
-  Alpha Diagnostic Lab and the OOS orchestrator (`lib/edges/oos-experiment.ts`'s
-  `multipleTesting.method: "trial_adjusted_t_margin"`).
+- For formula/edge OOS families, `lib/edges/oos-experiment.ts` schema v2 now freezes a
+  Benjamini-Yekutieli FDR alpha and applies dependence-conservative q-values to descriptive
+  HAC t-reference p-values only when the complete declared family has matured. This is not
+  strategy-return DSR/PBO and does not authorize promotion; those remain separate gates.
 - Cost: `MODELED_SLIP_FRACTION` (`lib/analytics/performance-metrics.ts`, fixed 2026-09-02) for
   after-cost turnover, so this feature's cost accounting matches the paper book and the replay
   exactly rather than inventing a fourth cost constant.
