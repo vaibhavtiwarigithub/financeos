@@ -105,7 +105,7 @@ jobs:
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
           const fs = require('node:fs');
-          const raw = execFileSync('supabase', ['status', '--env', '--output-format', 'text'], { encoding: 'utf8' });
+          const raw = execFileSync('supabase', ['status', '-o', 'env'], { encoding: 'utf8' });
           const values = {};
           for (const line of raw.split(/\r?\n/)) {
             const match = line.match(/^([A-Z_]+)=(.*)$/);
