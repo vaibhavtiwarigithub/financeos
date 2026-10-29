@@ -93,9 +93,12 @@ jobs:
           # fire at production endpoints during the acceptance test.
           cat > "$RUNNER_TEMP/disable-local-cron.sql" <<'SQL'
           ALTER SYSTEM SET cron.launch_active_jobs = 'off';
+          SQL
+          cat > "$RUNNER_TEMP/reload-local-cron-config.sql" <<'SQL'
           SELECT pg_reload_conf();
           SQL
           supabase db query --local --file "$RUNNER_TEMP/disable-local-cron.sql"
+          supabase db query --local --file "$RUNNER_TEMP/reload-local-cron-config.sql"
           supabase db reset --local --no-seed
       - name: Install application test dependencies
         run: npm ci
