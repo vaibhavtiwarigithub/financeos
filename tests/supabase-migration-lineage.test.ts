@@ -59,6 +59,23 @@ describe("Supabase migration lineage", () => {
     expect(replay).toMatch(/create\s+policy\s+"Users see own journal"[\s\S]*?auth\.uid\(\)\s*=\s*user_id/i);
   });
 
+  it("restores cache tables required by the early RLS repair migration", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const policyMigrationAt = replay.search(/'price_cache'[,\s]/i);
+
+    for (const table of ["price_cache", "risk_analytics_cache"]) {
+      const createAt = replay.search(new RegExp(`create\\s+table\\s+if\\s+not\\s+exists\\s+public\\.${table}\\b`, "i"));
+      expect(createAt, `fresh replay must include the production ${table} baseline`).toBeGreaterThanOrEqual(0);
+      expect(policyMigrationAt, "fresh replay must retain the early cache-policy migration").toBeGreaterThan(createAt);
+    }
+    expect(replay).toMatch(/primary\s+key\s*\(\s*symbol\s*,\s*date\s*\)/i);
+    expect(replay).toMatch(/account_source\s+text\s+not\s+null/i);
+  });
+
   it("restores the production agent_memory baseline before its RLS policy migration", () => {
     const directory = path.join(process.cwd(), "supabase/migrations");
     const files = readdirSync(directory)
