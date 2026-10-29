@@ -1,3 +1,4 @@
+begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 -- Owner approved 2026-10-27: observation-only, atomic paper exit-plan history.
@@ -79,3 +80,4 @@ from public.paper_positions p where p.market in ('us','india') and not exists (
 );
 comment on table public.paper_position_plan_events is
   'Atomic append-only paper stop/target observations. Baseline is current at recorded_at; earlier changes unknown. Trigger-only writes; owner/viewer reads through verified position-history API.';
+commit;

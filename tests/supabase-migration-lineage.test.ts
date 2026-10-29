@@ -326,4 +326,14 @@ describe("Supabase migration lineage", () => {
     expect(baseline).toMatch(/grant usage, select on sequence public\.security_events_id_seq to service_role/i);
     expect(hardening).toMatch(/create policy "security_events_owner_read" on public\.security_events/i);
   });
+
+  it("wraps the paper plan history table lock and schema changes in one transaction", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20261027150134_paper_position_plan_history.sql"),
+      "utf8",
+    ).trim();
+    expect(sql).toMatch(/^begin\s*;/i);
+    expect(sql).toMatch(/set local lock_timeout\s*=\s*'5s'\s*;[\s\S]*?lock table public\.paper_positions in share row exclusive mode/i);
+    expect(sql).toMatch(/commit\s*;$/i);
+  });
 });
