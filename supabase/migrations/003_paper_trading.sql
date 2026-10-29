@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS paper_performance (
   win_count integer DEFAULT 0,
   loss_count integer DEFAULT 0,
   win_rate numeric DEFAULT 0,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- RLS: owner only

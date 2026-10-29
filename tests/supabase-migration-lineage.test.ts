@@ -226,4 +226,17 @@ describe("Supabase migration lineage", () => {
     expect(sql).toMatch(/to_regprocedure\('public\.rls_auto_enable\(\)'\)\s+is\s+not\s+null[\s\S]*?revoke execute on function public\.rls_auto_enable\(\) from anon, authenticated/i);
     expect(sql).toMatch(/to_regprocedure\('public\.rls_auto_enable\(\)'\)\s+is\s+not\s+null[\s\S]*?revoke execute on function public\.rls_auto_enable\(\) from public/i);
   });
+
+  it("creates the paper-performance update timestamp before derived-truth repair uses it", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/003_paper_trading.sql"),
+      "utf8",
+    );
+    const repair = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260720112631_repair_paper_performance_truth.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/updated_at\s+timestamptz\s+default\s+now\(\)/i);
+    expect(repair).toMatch(/updated_at\s*=\s*now\(\)/i);
+  });
 });
