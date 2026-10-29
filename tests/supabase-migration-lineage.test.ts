@@ -43,4 +43,19 @@ describe("Supabase migration lineage", () => {
     expect(sql).toMatch(/\('MASSIVE_API_KEY',\s*''/);
     expect(sql).toMatch(/\('GROQ_API_KEY',\s*''/);
   });
+
+  it("creates the original trade journal contract before mentor migrations reference it", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(/create\s+table(?:\s+if\s+not\s+exists)?\s+(?:public\.)?trade_journal\b/i);
+    const referenceAt = replay.search(/references\s+(?:public\.)?trade_journal\s*\(/i);
+
+    expect(createAt, "fresh replay must include the production trade_journal baseline").toBeGreaterThanOrEqual(0);
+    expect(referenceAt, "mentor dimension migration must retain its trade journal link").toBeGreaterThanOrEqual(0);
+    expect(createAt).toBeLessThan(referenceAt);
+    expect(replay).toMatch(/create\s+policy\s+"Users see own journal"[\s\S]*?auth\.uid\(\)\s*=\s*user_id/i);
+  });
 });

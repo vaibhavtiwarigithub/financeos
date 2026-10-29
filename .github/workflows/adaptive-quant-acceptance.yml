@@ -37,6 +37,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: adaptive-quant-acceptance-${{ github.ref }}
@@ -54,7 +55,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run full application and acceptance suite
-        run: npm test -- --reporter=dot --maxWorkers=2
+        run: npm test -- --reporter=dot --pool=threads --maxWorkers=2
       - name: TypeScript check
         run: npx tsc --noEmit --incremental false
 
@@ -70,6 +71,11 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.122.0
+      - name: Authenticate public Supabase image pulls
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - name: Start isolated local Supabase stack and replay every migration
         shell: bash
         run: |
