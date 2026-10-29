@@ -1,0 +1,119 @@
+name: Adaptive quant acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/api/agents/watchdog/**"
+      - "features/agentic-quant-platform/**"
+      - "features/self-evolving-agent-supervisor/**"
+      - "lib/agents/**"
+      - "lib/learning/**"
+      - "lib/replay/**"
+      - "lib/trading/**"
+      - "supabase/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/adaptive-quant-acceptance.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/api/agents/watchdog/**"
+      - "features/agentic-quant-platform/**"
+      - "features/self-evolving-agent-supervisor/**"
+      - "lib/agents/**"
+      - "lib/learning/**"
+      - "lib/replay/**"
+      - "lib/trading/**"
+      - "supabase/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/adaptive-quant-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adaptive-quant-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run full application and acceptance suite
+        run: npm test -- --reporter=dot
+      - name: TypeScript check
+        run: npx tsc --noEmit --incremental false
+
+  clean-database-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.122.0
+      - name: Start isolated local Supabase stack and replay every migration
+        shell: bash
+        run: |
+          set +e
+          supabase start --exclude studio,mailpit,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1
+          start_status=$?
+          if [ "$start_status" -ne 0 ]; then
+            sed -E 's/(anon key|service_role key|service role key|secret key|SERVICE_ROLE_KEY|ANON_KEY)=?.*/\1=[REDACTED]/Ig' "$RUNNER_TEMP/supabase-start.log"
+            exit "$start_status"
+          fi
+          set -euo pipefail
+          echo "Disposable local Supabase services started; generated local keys are withheld from logs."
+          # Migrations define production cron jobs. Disable pg_cron execution on
+          # the disposable database before replay so no scheduled HTTP jobs can
+          # fire at production endpoints during the acceptance test.
+          cat > "$RUNNER_TEMP/disable-local-cron.sql" <<'SQL'
+          ALTER SYSTEM SET cron.launch_active_jobs = 'off';
+          SELECT pg_reload_conf();
+          SQL
+          supabase db query --local --file "$RUNNER_TEMP/disable-local-cron.sql"
+          supabase db reset --local --no-seed
+      - name: Install application test dependencies
+        run: npm ci
+      - name: Set disposable local-only DB integration environment
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const raw = execFileSync('supabase', ['status', '--env', '--output-format', 'text'], { encoding: 'utf8' });
+          const values = {};
+          for (const line of raw.split(/\r?\n/)) {
+            const match = line.match(/^([A-Z_]+)=(.*)$/);
+            if (match) values[match[1]] = match[2].trim().replace(/^(["'])(.*)\1$/, '$2');
+          }
+          const required = ['API_URL', 'ANON_KEY', 'SERVICE_ROLE_KEY'];
+          for (const key of required) if (!values[key]) throw new Error(`Local Supabase status omitted ${key}`);
+          const env = [
+            `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
+            `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
+            `SUPABASE_SERVICE_ROLE_KEY=${values.SERVICE_ROLE_KEY}`,
+            'RUN_DB_INTEGRATION=1',
+          ];
+          fs.appendFileSync(process.env.GITHUB_ENV, `${env.join('\n')}\n`, { mode: 0o600 });
+          NODE
+      - name: Verify live-order schema and service-role boundary against disposable DB
+        run: npx vitest run tests/db-integration.test.ts --reporter=dot

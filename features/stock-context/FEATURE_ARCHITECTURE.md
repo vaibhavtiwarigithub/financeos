@@ -186,7 +186,7 @@ candidate generation, or any candidate list. This is a hard boundary Codex endor
 ## Files Likely To Change
 
 - `features/stock-context/FEATURE_ARCHITECTURE.md` (this file)
-- `supabase/migrations/20260715150000_symbol_profiles.sql` (new)
+- `supabase/migrations/20260715182820_symbol_profiles.sql` (new; filename version matches production migration history)
 - `lib/data/symbol-profile.ts` (new)
 - `lib/revisit-reason.ts` (new)
 - `tests/revisit-reason.test.ts` (new)

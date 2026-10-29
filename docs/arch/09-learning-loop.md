@@ -1522,3 +1522,15 @@ probability, and the frozen evidence packetâ€”not live browsing or future factsâ
 is the source of evidence. This displays existing persisted output only; it
 does not lengthen prompts, add calls, or affect decisions. It is not a
 comprehensive research report or price target.
+
+## Adaptive platform acceptance gate (2026-10-29)
+
+The 16-case reproducibility, market-isolation, shadow-boundary, challenger,
+execution-safety, database-permission, and migration-replay contract is listed in
+`features/agentic-quant-platform/ACCEPTANCE_MATRIX.md`. Existing focused suites
+remain the source for application invariants. A new GitHub Actions workflow runs
+the application suite/typecheck and a clean, disposable local Supabase replay;
+only that ephemeral DB runs the opt-in synthetic reservation/RPC checks. No
+production DB reset or broker action is part of CI. R27 remains pending until
+the first CI replay succeeds. Passing the matrix is an engineering contract, not
+evidence of predictive alpha or readiness to promote a strategy.

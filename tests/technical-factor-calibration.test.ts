@@ -69,7 +69,7 @@ describe("technical factor calibration", () => {
   it("persists fingerprinted segments without a scoring or trading write path", () => {
     const route = fs.readFileSync(path.join(process.cwd(), "app/api/agents/edge-ic/route.ts"), "utf8");
     const cleanup = fs.readFileSync(path.join(process.cwd(), "app/api/agents/db-cleanup/route.ts"), "utf8");
-    const migration = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/20260721130000_technical_factor_calibration_segments.sql"), "utf8");
+    const migration = fs.readFileSync(path.join(process.cwd(), "supabase/migrations/20260722000655_technical_factor_calibration_segments.sql"), "utf8");
     expect(route).toContain('onConflict: "run_fingerprint"');
     expect(route).toContain('r.segmentType === "market"');
     expect(fs.readFileSync(path.join(process.cwd(), "lib/edges/ic.ts"), "utf8")).toContain("providerCounts");

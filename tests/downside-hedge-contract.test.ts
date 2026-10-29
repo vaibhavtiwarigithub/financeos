@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const route = readFileSync(`${root}/app/api/agents/downside-hedge/route.ts`, "utf8");
-const migration = readFileSync(`${root}/supabase/migrations/20260715160000_downside_hedge.sql`, "utf8");
+const migration = readFileSync(`${root}/supabase/migrations/20260715201120_downside_hedge.sql`, "utf8");
 const monitor = readFileSync(`${root}/app/api/agents/position-monitor/route.ts`, "utf8");
 
 describe("downside hedge safety contract", () => {

@@ -257,7 +257,7 @@ The existing `features` blob must NOT be replaced — it is the canonical v1 sna
 
 **Last committed migration:** `135_mandate_id_fk.sql`
 
-**Note:** There is a naming collision at 113: both `113_broker_orders_kite_gtt.sql` and `113_agent_config_prompt_versioning.sql` exist. This is an existing problem — do not create another `113_*` file.
+**Historical note (resolved 2026-10-29):** the two old `113_*` files are now named with the unique production migration versions `20260708173744_broker_orders_kite_gtt.sql` and `20260708184739_agent_config_prompt_versioning.sql`. Their SQL contents are unchanged.
 
 **Next available migration number: 136**
 
@@ -366,5 +366,5 @@ Already covered in Step 1. Verify that `live_approved` and `measure_only` are in
 | `strategy_versions` RLS | `strategy_versions` | RLS disabled (migration 036). | No change needed now. When lifecycle-gate code reads `state='live_approved'`, confirm the query uses service client (cron/agent paths) or owner-gated routes. | LOW |
 | `model_artifacts` table | `model_artifacts` (migration 062) | RLS status not verified in this review | Verify RLS is not accidentally exposed to anon/authenticated roles since it contains calibrated model coefficients. | MED |
 | New `universe_snapshot_id` FK on `decision_observations` | `decision_observations` | Append-only trigger exists | If `universe_snapshots` table is added in P1, the FK on `decision_observations` must reference it as a nullable FK-by-value (not a hard FK enforced on append) to avoid breaking the append-only trigger. | MED |
-| Migration 113 naming collision | `supabase/migrations/` | TWO files named `113_*.sql` — `113_broker_orders_kite_gtt.sql` and `113_agent_config_prompt_versioning.sql` | This is a pre-existing problem. Supabase applies migrations alphabetically within the same prefix number. Verify both applied correctly. Do not create another `113_*`. | HIGH — pre-existing |
+| Migration version collisions | `supabase/migrations/` | Eight local files previously reused four version prefixes, preventing a deterministic clean replay. | Resolved 2026-10-29 by aligning all eight filenames to their unique versions in production migration history, without modifying SQL. Clean replay still needs to pass in the new disposable CI job. | Verification pending |
 

@@ -8010,7 +8010,7 @@ differs, stop. Autonomy stays `false` throughout. No new capability — only con
 ### Track 4 — target architecture (A–J; phased, data-gated)
 - [x] R25 three layers exist as separate code (`research-agent`/scoring, `portfolio/constructor`, shared `execute-order`/execution kernel) and now share `lib/trading/decision-contract.ts`'s versioned market+signal reference. The immutable `decision_observations` row remains canonical for score/formula/mandate provenance; research, paper pipeline stages, live proposal audit JSON, and the execution kernel's decision-journal record carry the same compact reference. This reuses existing JSON records and `signal_id`; no columns, score inputs, gates, or sizing changed. Historical rows remain readable without a reference.
 - [x] R26 setup-expert framework (B) is collecting real shadow evidence in both markets, outside eligibility/trading. Read-only production query on 2026-10-29 found `quality_momentum` (US, latest 14:31 UTC) and `india_quality_momentum` (India, latest 07:00 UTC), alongside the other routed expert rows. This verifies collection only; score/portfolio benefit remains unvalidated and no expert is promoted.
-- [~] R27 existing focused tests cover major J invariants (purged labels, market isolation, idempotency, shared gateway, kill/cancel, RLS migrations, replay); remaining: create the explicit 16-case acceptance matrix and clean-database replay workflow in CI. Current repository has no TypeScript/Supabase clean-DB CI workflow, so passing local unit tests are not a substitute.
+- [~] R27 the 16-case J acceptance matrix is now explicit in `features/agentic-quant-platform/ACCEPTANCE_MATRIX.md`; CI runs the full Vitest/typecheck suite plus a fresh disposable Supabase migration replay and local-only DB RPC permission/reservation tests. Fixed eight duplicate local migration-version prefixes by renaming those files to the exact unique versions in production migration history; SQL contents are unchanged and the remote DB was only queried read-only. CI's first clean replay must pass before R27 is complete. Local full replay is not available in this desktop because Docker is absent.
 - [~] R28 paired net shadow-book attribution already records common-window baseline/variant, benchmark, costs, drawdown, turnover, confidence interval, and independent-session counts. Remaining: reconcile this with complete per-market portfolio performance truth (cash flows/TWR vs MWR, benchmark beta/alpha and risk metrics) and ensure all approved strategy challengers have a registered, cost-aware matched portfolio producer before claiming benefit.
 
 Docs (`docs/arch/*`, `system-map.json`, `AGENTS.md`, `PRD.md`) reconciled per §7 drift register as each item lands.
@@ -36168,7 +36168,7 @@ candidate generation, or any candidate list. This is a hard boundary Codex endor
 ## Files Likely To Change
 
 - `features/stock-context/FEATURE_ARCHITECTURE.md` (this file)
-- `supabase/migrations/20260715150000_symbol_profiles.sql` (new)
+- `supabase/migrations/20260715182820_symbol_profiles.sql` (new; filename version matches production migration history)
 - `lib/data/symbol-profile.ts` (new)
 - `lib/revisit-reason.ts` (new)
 - `tests/revisit-reason.test.ts` (new)
