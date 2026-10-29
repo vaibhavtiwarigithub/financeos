@@ -2,77 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createHash } from "crypto";
+import { parseRobinhoodCSV } from "@/lib/trades/robinhood-csv";
 
 export const dynamic = "force-dynamic";
-
-// Known symbol renames/mergers
-const SYMBOL_MAP: Record<string, string> = {
-  "FB": "META", "TWTR": "X", "ATVI": "MSFT", "VIAC": "PARA",
-  "CBS": "PARA", "DISCA": "WBD", "DISCK": "WBD", "T": "T",
-};
-
-type RobinhoodRow = {
-  date: string;
-  symbol: string;
-  action: "buy" | "sell";
-  qty: number;
-  price: number;
-};
-
-function normalizeSymbol(raw: string): string {
-  const s = raw.trim().toUpperCase();
-  return SYMBOL_MAP[s] ?? s;
-}
-
-// Parse Robinhood CSV — handles both old and new export formats
-function parseRobinhoodCSV(text: string): RobinhoodRow[] {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
-
-  const header = lines[0].split(",").map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, "_"));
-
-  // Detect column positions
-  const col = (names: string[]) => names.map(n => header.indexOf(n)).find(i => i >= 0) ?? -1;
-  const dateIdx   = col(["activity_date", "date", "process_date"]);
-  const symbolIdx = col(["instrument", "symbol"]);
-  const transIdx  = col(["trans_code", "type", "transaction_type"]);
-  const qtyIdx    = col(["quantity", "qty"]);
-  const priceIdx  = col(["price"]);
-
-  if (dateIdx < 0 || symbolIdx < 0 || transIdx < 0 || qtyIdx < 0 || priceIdx < 0) return [];
-
-  const rows: RobinhoodRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(",").map(c => c.trim().replace(/^"|"$/g, ""));
-    const trans = cells[transIdx]?.trim().toUpperCase() ?? "";
-    // Only keep buy/sell equity transactions
-    if (!["BUY", "B", "SELL", "S", "SHR"].includes(trans) && trans !== "SHR") continue;
-    const isBuy = ["BUY", "B", "SHR"].includes(trans);
-    if (!isBuy && !["SELL", "S"].includes(trans)) continue;
-
-    const rawSymbol = cells[symbolIdx]?.trim();
-    if (!rawSymbol || rawSymbol.length === 0) continue;
-
-    const rawDate = cells[dateIdx]?.trim();
-    if (!rawDate) continue;
-    const parsedDate = new Date(rawDate);
-    if (isNaN(parsedDate.getTime())) continue;
-    const dateStr = parsedDate.toISOString().slice(0, 10);
-
-    const qty = parseFloat(cells[qtyIdx]?.replace(/,/g, "") ?? "0");
-    const price = parseFloat(cells[priceIdx]?.replace(/[$,]/g, "") ?? "0");
-    if (qty <= 0 || price <= 0) continue;
-
-    rows.push({
-      date: dateStr,
-      symbol: normalizeSymbol(rawSymbol),
-      action: isBuy ? "buy" : "sell",
-      qty,
-      price,
-    });
-  }
-  return rows;
-}
 
 export async function POST(req: NextRequest) {
   const gate = await requireOwner();
@@ -111,7 +43,13 @@ export async function POST(req: NextRequest) {
     }
 
     const text = buffer.toString("utf-8");
-    const rows = parseRobinhoodCSV(text);
+    let rows;
+    try {
+      rows = parseRobinhoodCSV(text);
+    } catch (error) {
+      results.push({ filename, status: "parse_error", message: error instanceof Error ? error.message : "Malformed CSV." });
+      continue;
+    }
 
     if (rows.length === 0) {
       results.push({ filename, status: "parse_error", message: "No valid buy/sell transactions found. Check format." });

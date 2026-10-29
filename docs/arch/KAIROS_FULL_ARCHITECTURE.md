@@ -8003,15 +8003,15 @@ differs, stop. Autonomy stays `false` throughout. No new capability — only con
 - [ ] R19 #21 label maturation: exchange-calendar sessions + immutable executable decision price (no future candle)
 - [ ] R20 #23/#24 edge lab: dated PIT universe + delistings, predeclared horizon + FDR, Newey-West lag = overlap
 - [ ] R21 #26 rename feature-registry "active"→"research_validated"; wire only via shadow→paper→promote
-- [ ] R22 #27 autonomous sizing: per market/setup/horizon calibrated artifact; unknown edge → size 0
-- [ ] R23 #20 held-exit direction deterministic (LLM advisory-only schema: veto/rationale/risks)
-- [ ] R24 #29/#30 past-trade: RFC-4180 parse, immutable raw rows, transaction taxonomy, position/lot episodes, session/CA-consistent enrichment
+- [~] R22 #27 autonomous sizing: fail-closed kernel shipped at commit `738c1294` (Vercel `dpl_5swCEUgUdXG72Xftnt4EkpC26rWW`, READY). Missing, invalid, stale, mismatched, or non-positive evidence yields size 0; raw recent-trade summaries and flat fallback were removed from autonomous callers. Production live automation remains OFF and current executable artifacts are rejected (US n=8, India n=2). Remaining: create and mature a properly keyed executable-outcome artifact before any autonomous size can be nonzero. This is a deliberate safety block, not a failed sizing producer.
+- [x] R23 #20 held-exit direction is deterministic: `resolveSignalDirection` derives held exits from the same-market score/threshold and thin-evidence state; LLM direction cannot open, close, or flip a position. Thesis risks/catalysts and disagreement remain advisory. `tests/signal-direction.test.ts` covers override, thin evidence, parse failure, and held-position exit invariants.
+- [~] R24 #29/#30 past-trade import: replaced line/comma splitting with strict RFC-4180 CSV parsing (quoted commas/newlines, escaped quotes, BOM, date validation); malformed trade rows fail the file before inserts. Focused parser tests pass. Remaining: immutable row provenance, transaction taxonomy, position/lot episodes, and corporate-action/session-consistent historical enrichment require a separately verified additive migration and enrichment contract; this parser fix does not reconstruct or rewrite history.
 
 ### Track 4 — target architecture (A–J; phased, data-gated)
-- [ ] R25 skeleton: three-layer contract (alpha model → portfolio constructor → execution policy) interfaces + provenance columns
-- [ ] R26 setup-expert framework (B) with one real expert in shadow
-- [ ] R27 J acceptance-test fixtures; clean-DB replay in CI
-- [ ] R28 performance-truth attribution extension (G)
+- [~] R25 three layers exist as separate code (`research-agent`/scoring, `portfolio/constructor`, shared `execute-order`/execution kernel), with formula lineage, scoring version, mandate and trade-plan provenance persisted in existing records. Remaining: define and enforce one typed cross-layer contract with immutable linkage; do not add duplicate provenance columns before checking existing payloads/schema.
+- [x] R26 setup-expert framework (B) is collecting real shadow evidence in both markets, outside eligibility/trading. Read-only production query on 2026-10-29 found `quality_momentum` (US, latest 14:31 UTC) and `india_quality_momentum` (India, latest 07:00 UTC), alongside the other routed expert rows. This verifies collection only; score/portfolio benefit remains unvalidated and no expert is promoted.
+- [~] R27 existing focused tests cover major J invariants (purged labels, market isolation, idempotency, shared gateway, kill/cancel, RLS migrations, replay); remaining: create the explicit 16-case acceptance matrix and clean-database replay workflow in CI. Current repository has no TypeScript/Supabase clean-DB CI workflow, so passing local unit tests are not a substitute.
+- [~] R28 paired net shadow-book attribution already records common-window baseline/variant, benchmark, costs, drawdown, turnover, confidence interval, and independent-session counts. Remaining: reconcile this with complete per-market portfolio performance truth (cash flows/TWR vs MWR, benchmark beta/alpha and risk metrics) and ensure all approved strategy challengers have a registered, cost-aware matched portfolio producer before claiming benefit.
 
 Docs (`docs/arch/*`, `system-map.json`, `AGENTS.md`, `PRD.md`) reconciled per §7 drift register as each item lands.
 
