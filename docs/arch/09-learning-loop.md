@@ -41,6 +41,15 @@ The former static diagram's fixed schedules, three-candidate limit and automatic
 ten-trade unlock descriptions were removed because they no longer represented
 the running system. Evidence maturity and approval remain separate gates.
 
+Champion promotion is an owner-only, market-scoped transaction. The
+`promote_strategy_champion` RPC locks the candidate and the market promotion
+key, requires a linked passed validation experiment, demotes only that market's
+previous champion, and marks the validated candidate `paper_active`. The
+versions route rejects `force_unvalidated`; it cannot turn an unvalidated
+candidate into a champion. Production migration `20260712015740` and
+`tests/strategy-promotion-route.test.ts` verify this contract. Promotion does
+not enable live trading.
+
 ## Prediction Lab: compare forecasts without changing trades
 
 The formula/feature drill-down can display the five stored dimension scores
