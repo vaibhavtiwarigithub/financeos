@@ -6,6 +6,9 @@ const DOC_ONLY_PATHS = [
   /^WORK_LOG\.md$/i,
   /^features\/.*\.md$/i,
   /^docs\/.*\.md$/i,
+  /^tests\/.+$/i,
+  /^\.github\/workflows\/.+$/i,
+  /^supabase\/migrations\/.+$/i,
 ];
 
 export function shouldSkipDocsOnlyBuild(changedPaths) {
@@ -30,7 +33,7 @@ export function changedPathsFromGit() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const skipBuild = shouldSkipDocsOnlyBuild(changedPathsFromGit());
-    console.log(skipBuild ? "Skipping docs-only deployment." : "Application files changed; build required.");
+    console.log(skipBuild ? "Skipping non-runtime-only deployment." : "Application files changed; build required.");
     process.exit(skipBuild ? 0 : 1);
   } catch (error) {
     console.error("Could not classify changed files; continuing with deployment.", error);

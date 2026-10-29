@@ -10,6 +10,14 @@ describe("Vercel docs-only build filter", () => {
     ])).toBe(true);
   });
 
+  it("skips test, workflow, and database-migration-only commits", () => {
+    expect(shouldSkipDocsOnlyBuild([
+      "tests/vercel-ignore-docs.test.ts",
+      ".github/workflows/adaptive-quant-acceptance.yml",
+      "supabase/migrations/202610290001_example.sql",
+    ])).toBe(true);
+  });
+
   it("continues deploying when any application or deployment file changes", () => {
     expect(shouldSkipDocsOnlyBuild([
       "features/agentic-quant-platform/FEATURE_ARCHITECTURE.md",
