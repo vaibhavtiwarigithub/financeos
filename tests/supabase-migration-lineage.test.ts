@@ -31,4 +31,16 @@ describe("Supabase migration lineage", () => {
     expect(alterAt, "expected the token tracking migration to extend agent_runs").toBeGreaterThanOrEqual(0);
     expect(createAt).toBeLessThan(alterAt);
   });
+
+  it("seeds vault metadata with empty placeholders, never missing secret values", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/011_api_key_vault.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/insert\s+into\s+api_key_vault\s*\(\s*key_name\s*,\s*key_value\b/i);
+    expect(sql).toMatch(/\('ANTHROPIC_API_KEY',\s*''/);
+    expect(sql).toMatch(/\('DEEPSEEK_API_KEY',\s*''/);
+    expect(sql).toMatch(/\('MASSIVE_API_KEY',\s*''/);
+    expect(sql).toMatch(/\('GROQ_API_KEY',\s*''/);
+  });
 });
