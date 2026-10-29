@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 describe("Supabase migration lineage", () => {
@@ -14,5 +14,21 @@ describe("Supabase migration lineage", () => {
 
     expect(new Set(versions).size, "duplicate migration version prevents deterministic clean replay")
       .toBe(versions.length);
+  });
+
+  it("creates agent_runs before the first migration alters it", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const create = /create\s+table(?:\s+if\s+not\s+exists)?\s+(?:public\.)?agent_runs\b/i;
+    const alter = /alter\s+table\s+(?:public\.)?agent_runs\b/i;
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(create);
+    const alterAt = replay.search(alter);
+
+    expect(createAt, "fresh replay must include the original agent_runs baseline").toBeGreaterThanOrEqual(0);
+    expect(alterAt, "expected the token tracking migration to extend agent_runs").toBeGreaterThanOrEqual(0);
+    expect(createAt).toBeLessThan(alterAt);
   });
 });

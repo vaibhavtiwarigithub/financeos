@@ -3,6 +3,21 @@ ALTER TABLE learning_log ADD COLUMN IF NOT EXISTS trade_id UUID REFERENCES paper
 CREATE INDEX IF NOT EXISTS idx_learning_log_trade_id ON learning_log(trade_id) WHERE trade_id IS NOT NULL;
 
 -- Token tracking: record Claude CLI usage per agent run
+-- The production table predates this repository's migration chain. Keep the
+-- clean replay self-contained while leaving already-provisioned databases
+-- unchanged: the table definition matches the original agent_runs baseline.
+CREATE TABLE IF NOT EXISTS public.agent_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  symbols TEXT[],
+  result_summary TEXT,
+  signals_written INTEGER DEFAULT 0,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_input INTEGER;
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_output INTEGER;
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS claude_calls INTEGER DEFAULT 0;
