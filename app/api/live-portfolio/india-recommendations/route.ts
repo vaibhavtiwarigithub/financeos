@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadGuardianOutcomeScorecard } from "@/lib/live-recommendations/guardian-store";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 const HORIZONS = [2, 5, 10, 20] as const;
@@ -24,6 +25,7 @@ export async function GET() {
     for (let i = 0; i < ids.length; i += 200) {
       const { data, error } = await svc.from("observation_labels")
         .select("observation_id,horizon_days,fwd_return,benchmark_return,benchmark_neutral_return,matured_at")
+        .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
         .in("observation_id", ids.slice(i, i + 200)).in("horizon_days", [...HORIZONS]);
       if (error) throw new Error(`India recommendation labels unavailable: ${error.message}`);
       labels.push(...(data ?? []));

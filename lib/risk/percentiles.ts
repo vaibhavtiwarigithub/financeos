@@ -6,6 +6,7 @@
 
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export interface MaeMfePercentiles { stopMaePctile: number; targetMfePctile: number; n: number }
 export interface MaeMfeReadiness { n: number; required: 60; ready: boolean; available: boolean }
@@ -56,6 +57,7 @@ export async function getGlobalMaeMfePercentiles(
     const labels = await fetchAllRows<any>((from, to) => supabase
       .from("observation_labels")
       .select("observation_id,max_adverse_excursion, max_favorable_excursion")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("horizon_days", horizonDays)
       .in("observation_id", ids)
       .order("id", { ascending: true })
@@ -112,6 +114,7 @@ export async function getMaeMfeReadinessByHorizons(
     }
     const labels = await fetchAllRows<any>((from, to) => supabase.from("observation_labels")
       .select("horizon_days,max_adverse_excursion,max_favorable_excursion")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .in("horizon_days", requested).in("observation_id", ids)
       .order("id", { ascending: true }).range(from, to), "MAE/MFE readiness labels");
     for (const day of requested) {

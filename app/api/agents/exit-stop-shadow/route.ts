@@ -12,6 +12,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { runStopShadow, type StopShadowPoint } from "@/lib/trading/exit-stop-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
@@ -39,6 +40,7 @@ async function loadPoints(svc: any, horizonDays: number, marketFilter: string | 
   const rows = await fetchAllRows((from, to) => svc
     .from("observation_labels")
     .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
     .eq("horizon_days", horizonDays)
     .order("id", { ascending: true })
     .range(from, to), "exit stop shadow labels");

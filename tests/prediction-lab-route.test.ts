@@ -110,7 +110,7 @@ describe("Prediction Lab read-only projection", () => {
   });
   it("separates feature cohorts and rejects missing source-session proof", async () => {
     mocks.tables.observation_labels = Array.from({ length: 7 }, (_, i) => ({
-      id: i, horizon_days: 2, matured_at: "2026-10-05T21:00:00Z", benchmark_neutral_return: i / 100,
+      id: i, horizon_days: 2, label_contract_version: "decision_mark_v2", matured_at: "2026-10-05T21:00:00Z", benchmark_neutral_return: i / 100,
       decision_observations: { id: i + 1, ts: "2026-10-01T13:00:00Z", symbol: `S${i}`, market: "us", signal_id: `signal${i}`, entry_eligible: true, direction: "long", decision_context: i === 5 ? "holding_review" : "entry_candidate", technical_score: 20 + i * 10, fundamental_score: 90 - i * 10, analyst_score: 50 + i, availability_mask: { technical: true, fundamental: true }, features: { instrument: { family: "operating_company" }, technical: { rsi14: 20 + i * 10, formula_version: "test-v2" }, formula_lineage: { versions: { technical: "test-v2", fundamental: "fund-test-v1", composite: "comp-test-v1" } } } },
     }));
     mocks.tables.agent_signals = Array.from({ length: 7 }, (_, i) => ({ id: `signal${i}`, market: "us", session_validated: i !== 6, as_of_session: "2026-10-01" }));
@@ -167,7 +167,7 @@ describe("Prediction Lab read-only projection", () => {
   it("pairs recorded technical v2/v1 on identical rows with the stricter formula floor", async () => {
     mocks.tables.observation_labels = Array.from({ length: 15 }, (_, i) => {
       const legacy = 20 + Math.floor(i / 3) * 10, current = legacy + (i % 3 - 1) * 3;
-      return { id: i, horizon_days: 2, matured_at: "2026-10-05T21:00:00Z", benchmark_neutral_return: i / 100,
+      return { id: i, horizon_days: 2, label_contract_version: "decision_mark_v2", matured_at: "2026-10-05T21:00:00Z", benchmark_neutral_return: i / 100,
         decision_observations: { id: i + 1, ts: "2026-10-01T13:00:00Z", symbol: `S${i}`, market: "us", signal_id: `signal${i}`, entry_eligible: true, direction: "long", decision_context: "entry_candidate", technical_score: current, availability_mask: { technical: true }, features: { instrument: { family: "operating_company" }, technical: { formula_version: "technical_dimension_v2_macd", score_trace: { formula_version: "technical_dimension_v2_macd", legacy_formula_version: "technical_dimension_v1", score: current, legacy_score: legacy } } } } };
     });
     mocks.tables.agent_signals = Array.from({ length: 15 }, (_, i) => ({ id: `signal${i}`, market: "us", session_validated: true, as_of_session: "2026-10-01" }));

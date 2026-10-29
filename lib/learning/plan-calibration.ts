@@ -1,4 +1,5 @@
 import { isEntryCandidateLong } from "./entry-cohort";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 const REVIEW_FLOOR = 20;
 const ADJUSTMENT_FLOOR = 60;
@@ -184,6 +185,7 @@ export async function loadPlanCalibration(
     const { data, error } = await supabase
       .from("observation_labels")
       .select("observation_id,horizon_days,fwd_return,benchmark_neutral_return,max_adverse_excursion,max_favorable_excursion")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .in("observation_id", ids.slice(offset, offset + idBatchSize))
       .in("horizon_days", [...SUPPORTED_HORIZONS])
       .limit(idBatchSize * SUPPORTED_HORIZONS.length);

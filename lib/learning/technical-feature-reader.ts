@@ -1,4 +1,5 @@
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { isEntryCandidateLong, isHoldingReview } from "@/lib/learning/entry-cohort";
 import { signalProvenance } from "@/lib/learning/signal-provenance";
 import { researchSessionCloseAt } from "@/lib/trading/market-calendar";
@@ -15,6 +16,7 @@ export async function readTechnicalFeatureDiagnostics(svc: any, market: "us" | "
     let q = svc.from("observation_labels")
       .select("id,observation_id,matured_at,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,technical:features->technical,formula_versions:features->formula_lineage->versions,configuration_hash:features->formula_lineage->>configurationHash,instrument_family:features->instrument->>family,technical_quality:features->quality->technical->>state,fundamental_quality:features->quality->fundamental->>state,sentiment_quality:features->quality->sentiment->>state,macro_quality:features->quality->macro->>state,insider_quality:features->quality->insider->>state,availability_mask,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,signal_id,entry_eligible,direction,decision_context,discovery_source)")
       .eq("horizon_days", horizon).eq("decision_observations.market", market)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .lte("matured_at", asOf)
       .gte("decision_observations.ts", since).lte("decision_observations.ts", asOf);
     if (symbol) q = q.eq("decision_observations.symbol", symbol);

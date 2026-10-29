@@ -14,6 +14,7 @@ import {
 import { coverageByHorizon, MIN_DISTINCT_DATES, type LabelRow } from "@/lib/shadows/label-coverage";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,7 @@ export async function GET(req: NextRequest) {
     data = await fetchAllRows((from, to) => svc
       .from("observation_labels")
       .select("horizon_days,max_favorable_excursion,max_adverse_excursion,fwd_return,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("horizon_days", HORIZON_DAYS)
       .order("id", { ascending: true })
       .range(from, to), "exit geometry labels");

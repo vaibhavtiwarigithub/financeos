@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import {
   evaluatePlanCalibration,
   loadPlanCalibration,
@@ -109,7 +110,8 @@ export async function GET(req: NextRequest) {
     const [{ data: labelRows, error: labelError }, { data: qualityRows, error: qualityError }] = await Promise.all([
       svc.from("observation_labels")
         .select("observation_id,horizon_days,fwd_return,benchmark_return,benchmark_neutral_return," +
-          "max_adverse_excursion,max_favorable_excursion,entry_price,exit_price,matured_at")
+          "max_adverse_excursion,max_favorable_excursion,entry_price,exit_price,matured_at,label_contract_version")
+        .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
         .in("observation_id", obsIds),
       svc.from("v_decision_quality")
         .select("observation_id,real_dims,degraded_dims,decisive_dim,confidence_band,data_confidence")

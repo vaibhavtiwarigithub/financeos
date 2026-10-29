@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { CHART_PATTERN_SHADOW_VERSION, summarizeChartPatternEvidence, type ChartPatternType } from "@/lib/trading/chart-pattern-shadow";
 
 export const dynamic = "force-dynamic";
@@ -91,8 +92,8 @@ export async function GET(req: NextRequest) {
     }
 
     const attempts = await readPages((from, to) => svc.from("chart_pattern_shadow_runs")
-      .select("id,market,symbol,decision_observation_id,detection_status,pattern_type,decision_observations!inner(ts,market,entry_eligible,direction,decision_context,discovery_source,observation_labels(horizon_days,benchmark_neutral_return,matured_at))")
-      .eq("market", market).eq("detector_version", CHART_PATTERN_SHADOW_VERSION).order("id", { ascending: true }).range(from, to), 20_000);
+      .select("id,market,symbol,decision_observation_id,detection_status,pattern_type,decision_observations!inner(ts,market,entry_eligible,direction,decision_context,discovery_source,observation_labels(horizon_days,label_contract_version,benchmark_neutral_return,matured_at))")
+      .eq("market", market).eq("detector_version", CHART_PATTERN_SHADOW_VERSION).eq("decision_observations.observation_labels.label_contract_version", CURRENT_LABEL_CONTRACT_VERSION).order("id", { ascending: true }).range(from, to), 20_000);
     if (!attempts.complete) {
       return NextResponse.json({ error: "pattern evidence exceeds the safe report bound; no verdict computed" }, { status: 503 });
     }

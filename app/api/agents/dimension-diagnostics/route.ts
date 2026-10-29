@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { signalProvenance } from "@/lib/learning/signal-provenance";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import {
   buildAgentFindings,
   buildDimensionFindings,
@@ -40,8 +41,9 @@ async function loadObservations(svc: any, market: Market, horizonDays: number): 
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc
       .from("observation_labels")
-      .select("id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,features,entry_eligible,direction,action,signal_id,decision_context,discovery_source)")
+      .select("id,observation_id,horizon_days,label_contract_version,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,features,entry_eligible,direction,action,signal_id,decision_context,discovery_source)")
       .eq("horizon_days", horizonDays)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("decision_observations.market", market)
       .not("benchmark_neutral_return", "is", null)
       .order("id", { ascending: true })

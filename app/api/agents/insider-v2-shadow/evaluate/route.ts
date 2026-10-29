@@ -5,6 +5,7 @@ import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { HORIZONS, evaluateVariant, type ObsRow, type VariantDef } from "@/lib/score-variants/core";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
   for (const horizon of HORIZONS) {
     const labels = await fetchAllRows((f, t) => svc.from("observation_labels")
       .select("observation_id,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market)")
-      .eq("horizon_days", horizon).eq("decision_observations.market", "us")
+      .eq("horizon_days", horizon).eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION).eq("decision_observations.market", "us")
       .gte("decision_observations.ts", new Date(declaredMs).toISOString())
       .order("observation_id", { ascending: true }).range(f, t), "insider v2 labels") as any[];
 

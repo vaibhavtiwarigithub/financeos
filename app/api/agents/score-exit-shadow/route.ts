@@ -10,6 +10,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createServiceClient } from "@/lib/supabase/service";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 import { producerOutcomeFromResponse, runWithProducerHealth } from "@/lib/shadows/producer-runs";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -62,6 +63,7 @@ async function runAuthorized(req: NextRequest, persist: boolean) {
     const ids = observationIds.slice(i, i + 200);
     const labels = await fetchAllRows<any>((from, to) => svc.from("observation_labels")
       .select("id,observation_id,horizon_days,fwd_return,benchmark_neutral_return,max_adverse_excursion,max_favorable_excursion")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .in("observation_id", ids).in("horizon_days", HORIZONS)
       .not("fwd_return", "is", null).lte("matured_at", new Date().toISOString())
       .order("id", { ascending: true }).range(from, to), `score exit ${market} matured holding labels`);

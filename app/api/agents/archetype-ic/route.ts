@@ -16,6 +16,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { computeArchetypeIc, emptyArchetypeResult, type ArchetypeScoreRow } from "@/lib/learning/archetype-ic";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -46,10 +47,11 @@ async function loadRows(svc: any, market: "us" | "india", horizonDays: number): 
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await svc
       .from("shadow_decisions")
-      .select("setup_type, symbol, ts, score, observation_id, decision_observations!inner(analyst_score, ts, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, benchmark_neutral_return))")
+      .select("setup_type, symbol, ts, score, observation_id, decision_observations!inner(analyst_score, ts, entry_eligible, direction, decision_context, discovery_source, observation_labels!inner(horizon_days, label_contract_version, benchmark_neutral_return))")
       .eq("market", market)
       .not("setup_type", "is", null)
       .not("score", "is", null)
+      .eq("decision_observations.observation_labels.label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .order("id", { ascending: true })
       .range(offset, offset + PAGE - 1);
     if (error) throw new Error(`shadow_decisions read failed: ${error.message}`);

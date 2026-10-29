@@ -16,10 +16,12 @@ import {
   CandleResolver,
   SkipLedger,
   epochDay,
-  forwardWindow,
+  forwardWindowAfterReference,
+  immutableLabelReference,
   rotatingOffset,
   supersededObservationIds,
 } from "@/lib/learning/label-window";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 // Needs Vercel Pro (300s cap) or higher for large backlogs.
@@ -110,7 +112,8 @@ function makeResolver(svc: any): CandleResolver {
 type PendingPage = { rows: any[]; scanned: number; exhausted: boolean };
 
 /** One raw page of eligible observations, minus those already labelled at this
- *  horizon under the current ATR policy version. `scanned` is the RAW count —
+ *  horizon. Outcomes are immutable; a new ATR-policy version never rewrites a
+ *  previously published forward return. `scanned` is the RAW count —
  *  what the scan budget spends — not the unlabelled remainder. */
 async function pendingPage(
   svc: any,
@@ -131,7 +134,7 @@ async function pendingPage(
 
   const { data: labels, error: labelError } = await svc
     .from("observation_labels")
-    .select("observation_id, atr_policy_version")
+    .select("observation_id, label_contract_version")
     .eq("horizon_days", horizonDays)
     .in("observation_id", observations.map((row: any) => row.id));
   if (labelError) return { rows: [], scanned: observations.length, exhausted: true };
@@ -148,9 +151,7 @@ async function pendingPage(
     .lt("ts", dayAfterLast);
   const superseded = supersededObservationIds([...observations, ...(siblings ?? [])]);
 
-  const current = new Set((labels ?? [])
-    .filter((label: any) => label.atr_policy_version === ATR_EXIT_POLICY_VERSION)
-    .map((label: any) => label.observation_id));
+  const current = new Set((labels ?? []).map((label: any) => label.observation_id));
   return {
     rows: observations.filter((row: any) => !current.has(row.id) && !superseded.has(String(row.id))),
     scanned: observations.length,
@@ -189,29 +190,30 @@ async function labelOne(ctx: Ctx, obs: any, horizonDays: number): Promise<boolea
   const market: "us" | "india" = obs.market === "india" ? "india" : "us";
   const symbol = String(obs.symbol ?? "?");
   try {
-    const decisionDate = String(obs.ts).slice(0, 10);
-    const since = new Date(new Date(obs.ts).getTime() - 5 * 86400_000).toISOString().slice(0, 10);
-    const candles = await ctx.resolver.resolve(market, symbol, decisionDate, horizonDays, since);
+    const reference = immutableLabelReference(obs);
+    if (!reference) { ctx.skips.add("missing_decision_mark", market, symbol); return false; }
+    const referenceDate = reference.asOf;
+    const since = new Date(`${referenceDate}T00:00:00Z`).getTime() - 5 * 86400_000;
+    const candles = await ctx.resolver.resolve(market, symbol, referenceDate, horizonDays, new Date(since).toISOString().slice(0, 10));
     if (candles.length === 0) { ctx.skips.add("no_candles", market, symbol); return false; }
 
-    const window = forwardWindow(candles, decisionDate, horizonDays);
+    const window = forwardWindowAfterReference(candles, referenceDate, horizonDays);
     // Not matured yet, or the provider genuinely has no forward sessions — a
     // real, reportable reason rather than a silent zero.
     if (!window) { ctx.skips.add("window_incomplete", market, symbol); return false; }
 
-    const entryPrice = obs.price_at_decision ?? window.entry.close ?? null;
-    if (entryPrice == null) { ctx.skips.add("no_entry_price", market, symbol); return false; }
+    const entryPrice = reference.price;
 
     // Market-local research benchmark over the same window.
     let benchmarkReturn: number | null = null;
     try {
       const benchSymbol = benchmarkSymbolFor(market, "research");
-      const benchCandles = await ctx.resolver.resolve(market, benchSymbol, decisionDate, horizonDays, since);
-      const benchWindow = forwardWindow(benchCandles, decisionDate, horizonDays);
-      if (benchWindow) {
-        const benchEntry = benchWindow.entry.close;
-        const benchExit = benchWindow.after[horizonDays - 1].close;
-        benchmarkReturn = (benchExit - benchEntry) / benchEntry;
+      const benchCandles = await ctx.resolver.resolve(market, benchSymbol, referenceDate, horizonDays, new Date(since).toISOString().slice(0, 10));
+      const benchmarkEntry = benchCandles.find((c) => c.date === referenceDate);
+      const benchmarkExitDate = window.after[horizonDays - 1].date;
+      const benchmarkExit = benchCandles.find((c) => c.date === benchmarkExitDate);
+      if (benchmarkEntry && benchmarkExit && benchmarkEntry.close > 0) {
+        benchmarkReturn = (benchmarkExit.close - benchmarkEntry.close) / benchmarkEntry.close;
       }
     } catch { /* benchmark optional — label still inserted */ }
 
@@ -220,9 +222,12 @@ async function labelOne(ctx: Ctx, obs: any, horizonDays: number): Promise<boolea
     if (!label) { ctx.skips.add("label_unavailable", market, symbol); return false; }
     const atrExitOutcomes = computeAtrExitOutcomes(entryPrice, entryAtr, window.after, horizonDays);
 
-    const { error: insErr } = await ctx.svc.from("observation_labels").upsert({
+    const { error: insErr } = await ctx.svc.from("observation_labels").insert({
       observation_id: obs.id,
       horizon_days: horizonDays,
+      label_contract_version: CURRENT_LABEL_CONTRACT_VERSION,
+      entry_price_as_of: referenceDate,
+      entry_price_source: reference.source,
       fwd_return: label.fwdReturn,
       benchmark_return: benchmarkReturn,
       benchmark_neutral_return: label.benchmarkNeutralReturn,
@@ -236,7 +241,8 @@ async function labelOne(ctx: Ctx, obs: any, horizonDays: number): Promise<boolea
       max_favorable_excursion_atr: label.maxFavorableExcursionAtr,
       atr_exit_outcomes: atrExitOutcomes,
       atr_policy_version: ATR_EXIT_POLICY_VERSION,
-    }, { onConflict: "observation_id,horizon_days" });
+    });
+    if (insErr?.code === "23505") { ctx.skips.add("already_labeled", market, symbol); return false; }
     if (insErr) { ctx.skips.add("insert_failed", market, symbol); return false; }
     if (atrExitOutcomes) ctx.atrLabeled++;
     else ctx.atrUnavailable++;

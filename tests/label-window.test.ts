@@ -3,7 +3,9 @@ import {
   CandleResolver,
   SkipLedger,
   forwardWindow,
+  forwardWindowAfterReference,
   hasForwardCoverage,
+  immutableLabelReference,
   mergeCandles,
   rotatingOffset,
   supersededObservationIds,
@@ -71,6 +73,28 @@ describe("forwardWindow — coverage, not row existence", () => {
     const stale = bars("2026-06-01", 15); // ends well before the decision
     expect(stale.length).toBeGreaterThan(0);
     expect(hasForwardCoverage(stale, "2026-07-23", 2)).toBe(false);
+  });
+});
+
+describe("decision-mark label contract", () => {
+  it("starts only after the frozen reference session, never on a later same-day close", () => {
+    const series = bars("2026-07-20", 8);
+    const window = forwardWindowAfterReference(series, "2026-07-22", 3);
+    expect(window?.after.map((c) => c.date)).toEqual(["2026-07-23", "2026-07-24", "2026-07-27"]);
+  });
+
+  it("requires the immutable decision price and its recorded source session", () => {
+    expect(immutableLabelReference({
+      price_at_decision: 123.45,
+      features: { trade_plan: { reference_as_of: "2026-07-22", reference_source: "alpaca" } },
+    })).toEqual({ price: 123.45, asOf: "2026-07-22", source: "alpaca" });
+    expect(immutableLabelReference({ price_at_decision: null, features: { trade_plan: { reference_as_of: "2026-07-22", reference_source: "alpaca" } } })).toBeNull();
+    expect(immutableLabelReference({ price_at_decision: 123, features: { trade_plan: { reference_as_of: "2026-07-22", reference_source: "unavailable" } } })).toBeNull();
+    expect(immutableLabelReference({ price_at_decision: 123, features: { trade_plan: { reference_as_of: "2026-07-23T00:00:00Z", reference_source: "alpaca" } } })).toBeNull();
+  });
+
+  it("withholds a label when there are fewer than horizon forward sessions", () => {
+    expect(forwardWindowAfterReference(bars("2026-07-20", 4), "2026-07-22", 3)).toBeNull();
   });
 });
 

@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { buildMacroForwardEvidence } from "@/lib/learning/macro-forward-evidence";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -26,8 +27,9 @@ export async function GET(request: NextRequest) {
     const svc = createServiceClient();
     const since = new Date(Date.now() - 400 * 86_400_000).toISOString();
     const labels = await fetchAllRows((from, to) => svc.from("observation_labels")
-      .select("id,horizon_days,benchmark_neutral_return,fwd_return,decision_observations!inner(ts,symbol,market,macro_score,analyst_score,availability_mask,technical_as_of:features->technical->>as_of,formula_lineage:features->formula_lineage)")
+      .select("id,horizon_days,label_contract_version,benchmark_neutral_return,fwd_return,decision_observations!inner(ts,symbol,market,macro_score,analyst_score,availability_mask,technical_as_of:features->technical->>as_of,formula_lineage:features->formula_lineage)")
       .eq("decision_observations.market", market)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .gte("decision_observations.ts", since)
       .in("horizon_days", HORIZONS)
       .not("fwd_return", "is", null)

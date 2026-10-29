@@ -87,7 +87,7 @@ describe("loadCodeVersionObservations", () => {
   it("keeps raw-return-only labels unlabelled and requires matching source-session proof", async () => {
     const decision = { id: 3, ts: "2026-08-08T13:00:00Z", symbol: "TEST", market: "us", signal_id: "sig-1", code_version: "v1", analyst_score: 70, fundamental_score: 80, technical_score: 65, sentiment_score: null, macro_score: null, insider_score: null, availability_mask: {}, entry_eligible: true, direction: "long", action: "scored", decision_context: "entry_candidate", discovery_source: "watchlist" };
     const svc = { from: (table: string) => table === "observation_labels"
-      ? { select: () => ({ eq: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: [{ id: 1, observation_id: 3, horizon_days: 10, benchmark_neutral_return: null, fwd_return: 0.25, decision_observations: decision }], error: null }) }) }) }) }) }
+      ? { select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: [{ id: 1, observation_id: 3, horizon_days: 10, label_contract_version: "decision_mark_v2", benchmark_neutral_return: null, fwd_return: 0.25, decision_observations: decision }], error: null }) }) }) }) }) }) }
       : { select: () => ({ in: async () => ({ data: [{ id: "sig-1", market: "us", session_validated: false, as_of_session: "2026-08-07" }], error: null }) }) } };
     const loaded = await loadCodeVersionObservations(svc, "us", 10);
     expect(loaded).toHaveLength(1);

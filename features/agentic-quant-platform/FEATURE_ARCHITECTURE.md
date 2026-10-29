@@ -835,7 +835,7 @@ Legend: [ ] todo · [~] in progress · [x] done
 - [x] R11 #18 vault: historical PIN implementation removed 2026-10-20. Vault reads/writes use the confirmed canonical owner session via `requireOwner()`; key-value envelope-encryption remains a separate TODO.
 - [x] R12 #34 redacted literal cron secret from migration 022 text (dead — job unscheduled by 052, CRON_SECRET already rotated). NOTE: git history still contains it (rotation, not rewrite, is the real fix — done).
 
-### R13 design note — shared execution service (REVIEW BEFORE CODING)
+### R13 design note — shared execution service (implemented and deployed)
 
 **Problem:** the manual gateway (`app/api/broker/orders/route.ts`) is the hardened path
 (owner+CSRF, approved/unexpired proposal, dup check, symbol/qty validation, active-broker
@@ -864,8 +864,9 @@ differs, stop. Autonomy stays `false` throughout. No new capability — only con
 
 **Depends on:** R14 (per-market NAV — done), R15 (idempotency — done). Blocks R16 (exit plane).
 
-> STATUS: awaiting owner review of this approach before implementation (it modifies the working
-> manual order path).
+> STATUS: implemented and deployed under the approved behavior-preserving migration. The manual
+> gateway and autonomous worker share the hardened execution service; autonomy remains disabled
+> until the remaining mandate and acceptance gates pass.
 
 ### Track 2 — money-path unification (architecture-gated; build after Track 1)
 - [x] R13 #2/#5/#10/#11 shared `lib/trading/execute-order.ts::executeApprovedOrder(svc, input, actor)` — the SINGLE hardened invariant set. Manual gateway delegates (owner actor); autonomous-live delegates (autonomous_worker actor, its own daily caps, no overrides). Autonomy now inherits account allowlist, fresh kill-switch, G1/G3, notional cap, drift, held-SELL, atomic v2 reservation. Serverless caveat RESOLVED: added a direct-REST Robinhood adapter (`lib/brokers/adapters/robinhood.ts`, id `robinhood`) — submit/status/cancel over REST, works in Vercel serverless. Owner sets `strategy_config.active_broker_us='robinhood'` to route live US orders through it (both manual + autonomous). Flag stays false until R16 + acceptance tests.
@@ -876,7 +877,7 @@ differs, stop. Autonomy stays `false` throughout. No new capability — only con
 - [~] R18 #13 learner baseline now from market champion snapshot + full-vector renormalize to 1.0. TODO #15: transactional per-market promote + force_unvalidated→paper-only (strategies/versions route).
 
 ### Track 3 — statistical + evolution integrity (after Track 2)
-- [ ] R19 #21 label maturation: exchange-calendar sessions + immutable executable decision price (no future candle)
+- [~] R19 #21 label maturation: the new `decision_mark_v2` path requires the frozen positive decision price plus its recorded completed-session/source, labels exactly the next H provider sessions (never a same-day/future entry close), aligns benchmark exit to the asset's Hth date, and inserts without rewriting. Existing 38,513 production rows remain tagged `legacy_v1`; all inferential/training readers use v2 only. Additive provenance migration is applied. Remaining: deploy code, then install the DB append-only mutation trigger; verify natural h2+ label runs and mature cohort coverage. Calendar cutoff remains a conservative eligibility bound; exact provider session coverage is authoritative.
 - [ ] R20 #23/#24 edge lab: dated PIT universe + delistings, predeclared horizon + FDR, Newey-West lag = overlap
 - [ ] R21 #26 rename feature-registry "active"→"research_validated"; wire only via shadow→paper→promote
 - [ ] R22 #27 autonomous sizing: per market/setup/horizon calibrated artifact; unknown edge → size 0

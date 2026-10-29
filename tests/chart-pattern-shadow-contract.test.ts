@@ -18,7 +18,8 @@ describe("chart-pattern shadow integration contract", () => {
     expect(route).toContain("market !== \"us\" && market !== \"india\"");
     expect(route).toContain("isEntryCandidateLong({");
     expect(route).toContain("no verdict computed");
-    expect(route).toContain("observation_labels(horizon_days,benchmark_neutral_return,matured_at)");
+    expect(route).toContain("observation_labels(horizon_days,label_contract_version,benchmark_neutral_return,matured_at)");
+    expect(route).toContain("decision_observations.observation_labels.label_contract_version");
     expect(route).toContain("benchmark_price_observations");
     expect(route).toContain("latestBySymbolSession");
   });

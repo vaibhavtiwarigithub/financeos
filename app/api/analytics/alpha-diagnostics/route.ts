@@ -15,6 +15,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import {
   runA0DataTruth, runA1Funnel, runA3Payoff,
   type NavRow, type ClosedLot,
@@ -219,8 +220,9 @@ export async function POST(req: NextRequest) {
       // A2 inputs: scored decisions joined to their matured benchmark-neutral
       // label. Read-only join over persisted ledgers, no provider call.
       loadAllRows<any>((from, to) => svc.from("decision_observations")
-        .select("id, signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels(horizon_days, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
+        .select("id, signal_id, score_source, scoring_version, symbol, ts, analyst_score, entry_eligible, direction, decision_context, discovery_source, observation_labels(horizon_days, label_contract_version, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion)")
         .eq("market", market)
+        .eq("observation_labels.label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
         .not("analyst_score", "is", null)
         .order("ts", { ascending: true })
         .order("id", { ascending: true })

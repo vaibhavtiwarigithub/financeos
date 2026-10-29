@@ -1,12 +1,12 @@
 # Governed Evolution Supervisor v1 — Implementation Result
 
 Date: 2026-10-28
-Status: deployed to production; first natural supervisor-cycle persistence check pending
+Status: deployed to production; first natural supervisor-cycle persistence verified
 
 ## Delivered
 
 - The existing two-hour `/api/agents/watchdog` cycle now runs the native typed StateGraph for safety/producer status, approved challenger/shadow lifecycle, then priority ordering.
-- The supervisor reads current alerts, recent agent runs, per-market challenger states, and the existing US/India validation automation settings.
+- The supervisor reads current alerts, recent agent runs, per-market challenger states, and the existing US/India validation automation settings. The first natural snapshot at 2026-10-28 18:00 UTC persisted as `done`, state `attention`, with `readFailures=[]`; `attention` is a triage queue, not a failed run.
 - The newest producer outcome wins, so recovered old failures are not presented as current failures.
 - A compact snapshot is stored in existing `agent_runs.workload_metrics`; no table, cron, provider, model call, paid service, or schema change was added.
 - Agents & Workflows shows the market-specific snapshot, action queue, validation/shadow counts, and an explicit note that paper-entry brakes do not freeze shadow evidence collection.
@@ -24,7 +24,7 @@ Status: deployed to production; first natural supervisor-cycle persistence check
 - Mainline commit `8f9f30d9ebd3399acb5f5d1ce6a75a75daaf0a14` pushed; local and `origin/main` match.
 - Vercel production deployment `dpl_5p9MP2vP8RTKMy9hxWc5Dd8WaQfp` is READY and aliases the FinanceOS production URL.
 - Production smoke: `/login` returned 200; unauthenticated `/dashboard/agents` returned 307 to `/login` (access control intact).
-- Read-only production query found no `evolution_supervisor` row yet. The next natural two-hour watchdog cycle must create the first persisted snapshot; the trade-affecting watchdog was not manually invoked.
+- Read-only production query verified the natural snapshot above. No trade-affecting watchdog was manually invoked.
 
 ## Limits and next phases
 

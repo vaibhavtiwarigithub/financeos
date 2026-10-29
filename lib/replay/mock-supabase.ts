@@ -36,6 +36,7 @@ export function observationsToTables(observations: LabeledObservation[]): {
   }));
   const observation_labels: Row[] = observations.map((o) => ({
     observation_id: o.id,
+    label_contract_version: o.label_contract_version,
     horizon_days: o.horizon_days,
     fwd_return: o.fwd_return,
     benchmark_return: o.benchmark_return,

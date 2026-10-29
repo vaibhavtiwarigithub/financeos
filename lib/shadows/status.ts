@@ -17,6 +17,7 @@ import {
   type HorizonCoverage,
 } from "@/lib/shadows/label-coverage";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { evaluateGeometry, MAX_AMBIGUOUS_SHARE, type LabelPoint } from "@/lib/trading/exit-geometry-shadow";
 import { loadTradingMandateStrict, type TradingMarket } from "@/lib/trading-mandate";
 import { benefitVerdictFromPairedAttribution, defaultAttribution, validateAttributionRow, type AttributionClass, type AttributionState, type UpgradePathAttributionRow } from "@/lib/shadows/attribution";
@@ -389,6 +390,7 @@ export async function loadLabelCoverageRows(svc: any, market: ShadowMarket): Pro
     let query = svc.from("observation_labels")
       .select("id,horizon_days,fwd_return,max_favorable_excursion,max_adverse_excursion,entry_atr_pct,decision_observations!inner(ts,symbol,market,entry_eligible,direction,decision_context,discovery_source)")
       .eq("decision_observations.market", market)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("horizon_days", PRIMARY_HORIZON_DAYS)
       .lte("matured_at", new Date().toISOString())
       .order("id", { ascending: true })
@@ -720,8 +722,8 @@ export async function getShadowProgramStatuses(svc: any, market: ShadowMarket): 
   // Isolated optional read: a not-yet-applied shadow migration must not turn
   // every other Upgrade Path status into unavailable.
   const chartPatternRes = await svc.from("chart_pattern_shadow_runs")
-    .select("detection_status,pattern_type,created_at,decision_observations!inner(observation_labels(horizon_days,matured_at))")
-    .eq("market", market).gte("created_at", since90).order("created_at", { ascending: false }).limit(10_000);
+    .select("detection_status,pattern_type,created_at,decision_observations!inner(observation_labels(horizon_days,matured_at,label_contract_version))")
+    .eq("market", market).eq("decision_observations.observation_labels.label_contract_version", CURRENT_LABEL_CONTRACT_VERSION).gte("created_at", since90).order("created_at", { ascending: false }).limit(10_000);
 
   const statuses = SHADOW_PROGRAMS.map((program) => {
     const status = base(program);

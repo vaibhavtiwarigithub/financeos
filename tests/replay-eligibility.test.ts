@@ -35,6 +35,7 @@ function buildUniverse(n: number): LabeledObservation[] {
       sentiment_score: 60, macro_score: 60, insider_score: 60,
       direction: "long", entry_eligible: true, decision_context: "entry_candidate", discovery_source: "watchlist", score_threshold: 60, availability_mask: null,
       horizon_days: 10,
+      label_contract_version: "decision_mark_v2",
       fwd_return: win ? 0.01 : -0.01,
       benchmark_return: 0,
       benchmark_neutral_return: win ? 0.01 : -0.01,

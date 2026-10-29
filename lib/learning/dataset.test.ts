@@ -53,7 +53,7 @@ describe("loadLabeledDataset", () => {
         return query(() => ({ data: [], error: null })).withIn((ids: number[]) => {
           batches.push(ids);
           return {
-            data: ids.map(id => ({ observation_id: id, horizon_days: 10, fwd_return: 0.01, benchmark_return: 0, benchmark_neutral_return: 0.01, max_adverse_excursion: -0.01, max_favorable_excursion: 0.02 })),
+            data: ids.map(id => ({ observation_id: id, horizon_days: 10, label_contract_version: "decision_mark_v2", fwd_return: 0.01, benchmark_return: 0, benchmark_neutral_return: 0.01, max_adverse_excursion: -0.01, max_favorable_excursion: 0.02 })),
             error: null,
           };
         });

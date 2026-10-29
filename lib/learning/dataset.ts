@@ -2,6 +2,7 @@
 // decision_observations x observation_labels ledger. No writes here.
 
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION, type LabelContractVersion } from "@/lib/learning/label-contract";
 
 // Keep PostgREST `.in(...)` URLs bounded. Passing the full observation corpus
 // (~6k ids in production) exceeded the request limit, and the old loader then
@@ -32,6 +33,7 @@ export interface LabeledObservation {
   availability_mask: Record<string, boolean> | null;
   // label fields for ONE horizon
   horizon_days: number;
+  label_contract_version: LabelContractVersion;
   fwd_return: number | null;
   benchmark_return: number | null;
   benchmark_neutral_return: number | null;
@@ -74,8 +76,9 @@ export async function loadLabeledDataset(
     const batch = ids.slice(start, start + LABEL_ID_BATCH_SIZE);
     const { data, error } = await supabase
       .from("observation_labels")
-      .select("observation_id, horizon_days, fwd_return, benchmark_return, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion")
+      .select("observation_id, horizon_days, label_contract_version, fwd_return, benchmark_return, benchmark_neutral_return, max_adverse_excursion, max_favorable_excursion")
       .eq("horizon_days", horizonDays)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .in("observation_id", batch);
     if (error) throw new Error(`observation_labels batch ${Math.floor(start / LABEL_ID_BATCH_SIZE) + 1} failed: ${error.message}`);
     labelRows.push(...(data ?? []));
@@ -101,6 +104,7 @@ export async function loadLabeledDataset(
       score_threshold: o.score_threshold != null ? Number(o.score_threshold) : null,
       availability_mask: o.availability_mask ?? null,
       horizon_days: horizonDays,
+      label_contract_version: CURRENT_LABEL_CONTRACT_VERSION,
       fwd_return: l.fwd_return != null ? Number(l.fwd_return) : null,
       benchmark_return: l.benchmark_return != null ? Number(l.benchmark_return) : null,
       benchmark_neutral_return: l.benchmark_neutral_return != null ? Number(l.benchmark_neutral_return) : null,

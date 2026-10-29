@@ -27,6 +27,33 @@ export type ForwardWindow = {
   after: LabelCandle[];
 };
 
+/** A research decision is anchored to the frozen completed-session mark stored
+ * on decision_observations, not to the first candle found after the decision
+ * timestamp. This prevents a same-day close (which was not known at decision
+ * time) from becoming the entry bar. */
+export function forwardWindowAfterReference(
+  candles: LabelCandle[],
+  referenceDate: string,
+  horizonDays: number,
+): ForwardWindow | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate) || !Number.isInteger(horizonDays) || horizonDays < 1) return null;
+  const after = candles.filter((c) => c.date > referenceDate).sort((a, b) => a.date.localeCompare(b.date));
+  if (after.length < horizonDays) return null;
+  // The legacy ForwardWindow shape keeps its entry field. The anchor close is
+  // intentionally not substituted for the immutable decision price; callers
+  // use only `after` to calculate candidate outcomes.
+  return { entry: after[0], after: after.slice(0, horizonDays) };
+}
+
+export function immutableLabelReference(observation: any): { price: number; asOf: string; source: string } | null {
+  const price = Number(observation?.price_at_decision);
+  const plan = observation?.features?.trade_plan;
+  const asOf = typeof plan?.reference_as_of === "string" ? plan.reference_as_of : "";
+  const source = typeof plan?.reference_source === "string" ? plan.reference_source.trim() : "";
+  if (!Number.isFinite(price) || price <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(asOf) || !source || source === "unavailable") return null;
+  return { price, asOf, source };
+}
+
 /**
  * The entry bar plus `horizonDays` forward sessions, or null when the series
  * does not actually cover that window. This is the coverage test — never
@@ -156,7 +183,8 @@ export class CandleResolver {
 export type SkipReason =
   | "no_candles"
   | "window_incomplete"
-  | "no_entry_price"
+  | "missing_decision_mark"
+  | "already_labeled"
   | "label_unavailable"
   | "insert_failed"
   | "exception";

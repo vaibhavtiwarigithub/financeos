@@ -11,6 +11,7 @@ import {
   type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { replacementCapacity } from "./rotation-capacity";
 import type { AllocationPolicy } from "@/lib/allocation/profiles";
 import { LEVERAGED_SLEEVE_SYMBOLS } from "./leveraged-sleeve-risk";
@@ -262,10 +263,11 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
   const since = new Date(Date.now() - 400 * 86400000).toISOString();
   const rows = await fetchAllRows((from, to) => supabase
     .from("decision_observations")
-    .select("ts,symbol,analyst_score,entry_eligible,direction,decision_context,discovery_source,observation_labels!inner(horizon_days,fwd_return)")
+    .select("ts,symbol,analyst_score,entry_eligible,direction,decision_context,discovery_source,observation_labels!inner(horizon_days,label_contract_version,fwd_return)")
     .eq("market", args.market)
     .gte("ts", since)
     .eq("observation_labels.horizon_days", args.horizonDays)
+    .eq("observation_labels.label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
     .order("ts", { ascending: true }).order("id", { ascending: true })
     .range(from, to), "rotation score-edge evidence");
   const outcomes: RotationScoreOutcome[] = [];

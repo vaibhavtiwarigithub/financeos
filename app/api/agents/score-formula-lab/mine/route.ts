@@ -6,6 +6,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { mineFormulaCandidates, miningRationale, MINING_HORIZONS, MINING_DIMS, WEIGHT_GRID_STEP } from "@/lib/score-variants/mining";
 import type { Dim, ObsRow } from "@/lib/score-variants/core";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -53,7 +54,7 @@ export async function POST() {
     for (const horizon of MINING_HORIZONS) {
       const labels = await fetchAllRows((from, to) => svc.from("observation_labels")
         .select("observation_id,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,fundamental_score,technical_score,sentiment_score,insider_score,availability_mask,entry_eligible,direction,decision_context,discovery_source)")
-        .eq("horizon_days", horizon).eq("decision_observations.market", market)
+        .eq("horizon_days", horizon).eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION).eq("decision_observations.market", market)
         .order("observation_id", { ascending: true }).range(from, to), "formula mining labels") as any[];
       const rows = toObsRows(labels);
       const dataFingerprint = fingerprint(rows, market, horizon);

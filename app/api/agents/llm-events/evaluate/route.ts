@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { COUNCIL_HORIZONS, medianScore } from "@/lib/llm-council/core";
 import { evaluatePairs, pairEventScores, type ObservationRow } from "@/lib/llm-events/evaluate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
   for (const horizon of COUNCIL_HORIZONS) {
     const labels = await fetchAllRows((from, to) => svc.from("observation_labels")
       .select("observation_id,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score)")
-      .eq("horizon_days", horizon).eq("decision_observations.market", "india").gte("decision_observations.ts", earliest)
+      .eq("horizon_days", horizon).eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION).eq("decision_observations.market", "india").gte("decision_observations.ts", earliest)
       .order("observation_id", { ascending: true }).range(from, to), "llm event labels") as any[];
 
     const eligible: Array<{ id: number; symbol: string; ts: string; analyst: number | null; outcome: number | null }> = [];

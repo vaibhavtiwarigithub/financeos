@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import {
   ATR_EXIT_POLICY_VERSION,
   aggregateAtrExitEvidence,
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest) {
     const { data, error } = await svc
       .from("observation_labels")
       .select("fwd_return, atr_exit_outcomes")
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("horizon_days", horizonDays)
       .eq("atr_policy_version", ATR_EXIT_POLICY_VERSION)
       .in("observation_id", ids.slice(offset, offset + 500));

@@ -9,6 +9,7 @@ import { availabilityAlignedLabel, AVAILABILITY_LABEL_VERSION } from "@/lib/llm-
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { loadStoredResearchBenchmark } from "@/lib/analytics/benchmark-history";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -75,8 +76,9 @@ export async function POST(req: NextRequest) {
     for (let start = 0; start < obsIds.length; start += 100) {
       const chunk = obsIds.slice(start, start + 100);
       marketLabels.push(...await fetchAllRows<any>((from, to) => svc.from("observation_labels")
-        .select("observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,entry_eligible,direction,decision_context,discovery_source)")
+        .select("observation_id,horizon_days,label_contract_version,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,analyst_score,score_threshold,entry_eligible,direction,decision_context,discovery_source)")
         .in("observation_id", chunk).in("horizon_days", [...COUNCIL_HORIZONS])
+        .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
         .eq("decision_observations.market", market)
         .order("observation_id", { ascending: true }).order("horizon_days", { ascending: true }).range(from, to), `${market} council labels`));
     }

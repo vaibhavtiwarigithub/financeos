@@ -10,6 +10,7 @@ import {
 import { quantileDiagnostics } from "@/lib/learning/factor-quantiles";
 import { isEntryCandidateLong } from "@/lib/learning/entry-cohort";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -65,6 +66,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await svc
         .from("observation_labels")
         .select("observation_id,benchmark_neutral_return,horizon_days,decision_observations!inner(symbol,ts,market,entry_eligible,direction,technical_score,decision_context,discovery_source)")
+        .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
         .eq("horizon_days", horizonDays)
         .eq("decision_observations.market", "us")
         .not("benchmark_neutral_return", "is", null)

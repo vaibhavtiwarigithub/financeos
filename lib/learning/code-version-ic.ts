@@ -23,6 +23,7 @@ import {
   type DiagnosticObservation,
 } from "./dimension-diagnostics";
 import { normalCdf } from "@/lib/validation/feature-check";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export type Market = "us" | "india";
 
@@ -85,9 +86,10 @@ export async function loadCodeVersionObservations(
     const { data, error } = await svc
       .from("observation_labels")
       .select(
-        "id,observation_id,horizon_days,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,signal_id,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,decision_context,discovery_source)",
+        "id,observation_id,horizon_days,label_contract_version,benchmark_neutral_return,decision_observations!inner(id,ts,symbol,market,signal_id,code_version,analyst_score,fundamental_score,technical_score,sentiment_score,macro_score,insider_score,availability_mask,entry_eligible,direction,action,decision_context,discovery_source)",
       )
       .eq("horizon_days", horizonDays)
+      .eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION)
       .eq("decision_observations.market", market)
       .order("id", { ascending: true })
       .range(offset, offset + PAGE - 1);

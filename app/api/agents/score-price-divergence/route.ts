@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { buildDivergenceEvents, normalizeDivergenceObservations, SCORE_PRICE_DIVERGENCE_POLICY } from "@/lib/learning/score-price-divergence";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -60,7 +61,7 @@ async function runShadow(market: Market) {
   for (let i = 0; i < observationIds.length; i += 400) {
     const { data: labels, error } = await svc.from("observation_labels")
       .select("observation_id,horizon_days,fwd_return,benchmark_return,benchmark_neutral_return,max_adverse_excursion,max_favorable_excursion,matured_at")
-      .in("observation_id", observationIds.slice(i, i + 400)).in("horizon_days", [5, 10, 20]);
+      .in("observation_id", observationIds.slice(i, i + 400)).in("horizon_days", [5, 10, 20]).eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION);
     if (error) throw new Error(`divergence outcome read failed: ${error.message}`);
     const outcomeRows = (labels ?? []).flatMap((label: any) => (eventByObservation.get(Number(label.observation_id)) ?? []).map(eventId => ({ event_id: eventId, horizon_days: label.horizon_days, end_observation_id: label.observation_id, fwd_return: label.fwd_return, benchmark_return: label.benchmark_return, benchmark_neutral_return: label.benchmark_neutral_return, max_adverse_excursion: label.max_adverse_excursion, max_favorable_excursion: label.max_favorable_excursion, matured_at: label.matured_at })));
     if (outcomeRows.length) {

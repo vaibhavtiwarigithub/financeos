@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { verifyCronSecret } from "@/lib/auth/cron";
 
 export const dynamic = "force-dynamic";
@@ -53,7 +54,7 @@ async function runReadiness() {
     // 60 s function limit, so `readiness_runs` stopped being written after 2026-09-25 (daily Vercel timeout).
     const { count: labelCount } = await svc.from("observation_labels")
       .select("id, decision_observations!inner(market)", { count: "exact", head: true })
-      .eq("decision_observations.market", market);
+      .eq("decision_observations.market", market).eq("label_contract_version", CURRENT_LABEL_CONTRACT_VERSION);
     checks.push({ key: `${market}_forward_labels`, pass: (labelCount ?? 0) >= 60, requiredFor: "autonomous",
       detail: `${labelCount ?? 0} labels on latest observation cohort; need >=60` });
 
