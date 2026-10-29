@@ -21,13 +21,41 @@ alter table public.decision_observations
   add column if not exists score_source           text,
   add column if not exists scoring_version        text,
   add column if not exists setup_type             text,
-  add column if not exists rank_score             numeric check (rank_score     is null or (rank_score     >= 0 and rank_score     <= 100)) not valid,
-  add column if not exists final_score            numeric check (final_score    is null or (final_score    >= 0 and final_score    <= 100)) not valid,
-  add column if not exists evidence_confidence    numeric check (evidence_confidence    is null or (evidence_confidence    >= 0 and evidence_confidence    <= 1)) not valid,
-  add column if not exists contradiction_penalty  numeric check (contradiction_penalty  is null or (contradiction_penalty  >= 0 and contradiction_penalty  <= 1)) not valid,
-  add column if not exists p_win                  numeric check (p_win          is null or (p_win          >= 0 and p_win          <= 1)) not valid,
+  add column if not exists rank_score             numeric,
+  add column if not exists final_score            numeric,
+  add column if not exists evidence_confidence    numeric,
+  add column if not exists contradiction_penalty  numeric,
+  add column if not exists p_win                  numeric,
   add column if not exists expected_return_bps    numeric,
   add column if not exists universe_snapshot_id   bigint;
+
+-- PostgreSQL accepts NOT VALID on ADD CONSTRAINT, not on an inline column
+-- CHECK. Keep these guards unvalidated for historical rows but enforced for
+-- every new or updated row, matching the deployed production contract.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.decision_observations'::regclass and conname = 'dobs_rank_score_range') then
+    alter table public.decision_observations add constraint dobs_rank_score_range
+      check (rank_score is null or (rank_score >= 0 and rank_score <= 100)) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.decision_observations'::regclass and conname = 'dobs_final_score_range') then
+    alter table public.decision_observations add constraint dobs_final_score_range
+      check (final_score is null or (final_score >= 0 and final_score <= 100)) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.decision_observations'::regclass and conname = 'dobs_evidence_confidence_range') then
+    alter table public.decision_observations add constraint dobs_evidence_confidence_range
+      check (evidence_confidence is null or (evidence_confidence >= 0 and evidence_confidence <= 1)) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.decision_observations'::regclass and conname = 'dobs_contradiction_penalty_range') then
+    alter table public.decision_observations add constraint dobs_contradiction_penalty_range
+      check (contradiction_penalty is null or (contradiction_penalty >= 0 and contradiction_penalty <= 1)) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.decision_observations'::regclass and conname = 'dobs_p_win_range') then
+    alter table public.decision_observations add constraint dobs_p_win_range
+      check (p_win is null or (p_win >= 0 and p_win <= 1)) not valid;
+  end if;
+end
+$$;
 
 -- The append-only trigger (dobs_block_mutation, migration 059) blocks UPDATE/DELETE.
 -- New nullable columns added above do NOT affect INSERT — trigger still fires correctly.

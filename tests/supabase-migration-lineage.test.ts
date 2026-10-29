@@ -153,4 +153,18 @@ describe("Supabase migration lineage", () => {
     expect(vectorUseAt, "trade embedding schema must use the installed vector type").toBeGreaterThanOrEqual(0);
     expect(extensionAt).toBeLessThan(vectorUseAt);
   });
+
+  it("creates scoring range guards with valid PostgreSQL NOT VALID syntax", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/136_scoring_p0_schema.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/add\s+column\s+if\s+not\s+exists\s+rank_score\s+numeric\s*,[\s\S]*?add\s+column\s+if\s+not\s+exists\s+final_score\s+numeric/i);
+    expect(sql).toMatch(/add\s+constraint\s+dobs_rank_score_range[\s\S]*?check\s*\(\s*rank_score[\s\S]*?\)\s+not\s+valid/i);
+    expect(sql).toMatch(/add\s+constraint\s+dobs_final_score_range[\s\S]*?check\s*\(\s*final_score[\s\S]*?\)\s+not\s+valid/i);
+    expect(sql).toMatch(/add\s+constraint\s+dobs_evidence_confidence_range[\s\S]*?not\s+valid/i);
+    expect(sql).toMatch(/add\s+constraint\s+dobs_contradiction_penalty_range[\s\S]*?not\s+valid/i);
+    expect(sql).toMatch(/add\s+constraint\s+dobs_p_win_range[\s\S]*?not\s+valid/i);
+    expect(sql).not.toMatch(/add\s+column[^;]+check\s*\([^;]+\)\s+not\s+valid/i);
+  });
 });
