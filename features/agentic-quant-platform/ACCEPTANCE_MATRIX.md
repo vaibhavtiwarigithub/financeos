@@ -27,9 +27,12 @@ disposable Supabase replay. No production database or broker is contacted.
 ## Status
 
 - The code-level matrix is mapped to existing focused regression suites.
-- The clean replay lane is now defined and configured to run on matching PRs and
-  `main` changes. It is not considered passed until its first GitHub Actions run
-  completes successfully.
+- The clean replay lane is configured for matching PRs and `main` changes. It
+  passed with the full application contracts and TypeScript check in GitHub
+  Actions run `40965947947` on commit
+  `20e531a4e564224cf87e9209749d9216fd387c4f`; that run replayed the complete
+  migration chain and passed the disposable local RPC permission/reservation
+  checks.
 - The local desktop cannot run the Supabase stack because Docker is unavailable;
   this does not weaken the CI gate. No linked/production reset or migration command
   is used by this workflow.
