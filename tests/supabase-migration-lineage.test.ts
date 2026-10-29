@@ -194,4 +194,27 @@ describe("Supabase migration lineage", () => {
     expect(createAt, "fresh strategy_config must include the global pause master").toBeGreaterThanOrEqual(0);
     expect(seedAt, "market-controls migration must retain its pause-state seed").toBeGreaterThan(createAt);
   });
+
+  it("replays prewarm schedule changes without assuming out-of-band cron rows", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const indiaScheduleFix = readFileSync(
+      path.join(directory, "20260714050000_fix_india_prewarm_schedule.sql"),
+      "utf8",
+    );
+    const weekendScheduleFix = readFileSync(
+      path.join(directory, "20260714070000_weekend_warming.sql"),
+      "utf8",
+    );
+    const restoration = readFileSync(
+      path.join(directory, "20261029170000_restore_evidence_prewarm_crons.sql"),
+      "utf8",
+    );
+
+    expect(indiaScheduleFix).toMatch(/if\s+v_jobid\s+is\s+not\s+null\s+then[\s\S]*?cron\.alter_job/i);
+    expect(weekendScheduleFix).toMatch(/if\s+v_jobid\s+is\s+not\s+null\s+then\s+perform\s+cron\.alter_job/i);
+    expect(restoration).toMatch(/if\s+not\s+exists\s*\(\s*select\s+1\s+from\s+cron\.job\s+where\s+jobname\s*=\s*'kairos-prewarm-us'\s*\)[\s\S]*?cron\.schedule/i);
+    expect(restoration).toMatch(/if\s+not\s+exists\s*\(\s*select\s+1\s+from\s+cron\.job\s+where\s+jobname\s*=\s*'kairos-prewarm-india'\s*\)[\s\S]*?cron\.schedule/i);
+    expect(restoration).toMatch(/kairos-prewarm-us[\s\S]*?2,7,12,17,22,27,32,37,42,47,52,57 12 \* \* \*/i);
+    expect(restoration).toMatch(/kairos-prewarm-india[\s\S]*?2,12,22,32,42,52 3 \* \* \*/i);
+  });
 });
