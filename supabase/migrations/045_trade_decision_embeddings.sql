@@ -1,7 +1,10 @@
 -- Migration 045: trade_decision_embeddings
 -- RAG store for LearnerAgent semantic search over enriched trade history.
 -- Uses Voyage finance-2 embeddings (1024-dim). HNSW index for ANN queries.
--- pgvector extension already enabled (confirmed 2026-07-03).
+-- The production extension is installed in `extensions`. Ensure clean local
+-- replay has it before using the vector type; existing production installs are
+-- unchanged because this is idempotent.
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 
 CREATE TABLE IF NOT EXISTS trade_decision_embeddings (
   id                  bigserial PRIMARY KEY,

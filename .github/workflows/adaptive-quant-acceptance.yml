@@ -55,7 +55,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run full application and acceptance suite
-        run: npm test -- --reporter=dot --pool=threads --maxWorkers=2
+        run: npm test -- --reporter=verbose --pool=threads --maxWorkers=1
       - name: TypeScript check
         run: npx tsc --noEmit --incremental false
 
