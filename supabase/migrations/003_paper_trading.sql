@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
   sentiment_score numeric,
   macro_score numeric,
   executed_at timestamptz DEFAULT now(),
-  closed_at timestamptz
+  closed_at timestamptz,
+  exit_at timestamptz
 );
 
 -- Daily NAV snapshots for chart

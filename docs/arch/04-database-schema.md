@@ -748,6 +748,7 @@ Closed paper trade ledger (append-only in practice; never hard-deleted).
 | `agent_label` | text | `claude` \| `deepseek` (P&L comparison) |
 | `opened_at` | timestamptz | |
 | `closed_at` | timestamptz | |
+| `exit_at` | timestamptz | Canonical exit timestamp used by the realized-return compatibility backfill; falls back to `closed_at` for legacy rows. |
 
 ### `paper_order_events`
 Immutable append-only event log for every paper order state change.

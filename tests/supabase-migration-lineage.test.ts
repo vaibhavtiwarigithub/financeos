@@ -250,6 +250,8 @@ describe("Supabase migration lineage", () => {
       "utf8",
     );
     expect(baseline).toMatch(/realized_pnl_pct\s+numeric/i);
+    expect(baseline).toMatch(/exit_at\s+timestamptz/i);
     expect(backfill).toMatch(/set\s+realized_pnl_pct\s*=\s*pnl_pct/i);
+    expect(backfill).toMatch(/coalesce\(exit_at,\s*closed_at\)/i);
   });
 });
