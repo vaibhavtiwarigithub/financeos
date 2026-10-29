@@ -336,4 +336,14 @@ describe("Supabase migration lineage", () => {
     expect(sql).toMatch(/set local lock_timeout\s*=\s*'5s'\s*;[\s\S]*?lock table public\.paper_positions in share row exclusive mode/i);
     expect(sql).toMatch(/commit\s*;$/i);
   });
+
+  it("hardens historical trigger helpers only when their untracked baseline exists", () => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20261027222643_pin_trigger_function_search_paths.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/to_regprocedure\('public\.agentic_position_ledger_block_mutation\(\)'\) is not null[\s\S]*?alter function public\.agentic_position_ledger_block_mutation\(\)/i);
+    expect(sql).toMatch(/to_regprocedure\('public\.live_exit_ladder_shadow_block_mutation\(\)'\) is not null[\s\S]*?alter function public\.live_exit_ladder_shadow_block_mutation\(\)/i);
+    expect(sql).toMatch(/alter function public\.india_news_snapshots_append_only\(\)[\s\S]*?alter function public\.prevent_profile_role_self_change\(\)/i);
+  });
 });
