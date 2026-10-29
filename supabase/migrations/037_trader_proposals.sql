@@ -63,6 +63,24 @@ create index if not exists tp_status_idx on trade_proposals(status, created_at d
 create index if not exists tp_symbol_idx on trade_proposals(symbol, status);
 create index if not exists tp_expiry_idx on trade_proposals(approval_expires_at) where status = 'pending_review';
 
+-- Append-only-in-practice security event ledger used by the proposal/risk flow.
+-- The owner-read policy is added by the later viewer-hardening migration.
+create table if not exists public.security_events (
+  id bigserial primary key,
+  event_type text not null,
+  severity text not null check (severity in ('low', 'medium', 'high', 'critical')),
+  description text not null,
+  context jsonb,
+  proposal_id integer references public.trade_proposals(id),
+  resolved boolean default false,
+  created_at timestamptz default now()
+);
+
+alter table public.security_events enable row level security;
+create policy service_role_all on public.security_events
+  for all to service_role using (true) with check (true);
+grant usage, select on sequence public.security_events_id_seq to service_role;
+
 -- Decision journal: links decisions to evidence and outcomes
 create table if not exists decision_journal (
   id              bigserial primary key,

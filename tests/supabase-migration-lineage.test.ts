@@ -295,4 +295,20 @@ describe("Supabase migration lineage", () => {
     expect(baseline).toMatch(/highest_price\s+numeric/i);
     expect(migration).toMatch(/paper_trades[\s\S]*?highest_price/i);
   });
+
+  it("creates the security event ledger before viewer-hardening policies target it", () => {
+    const baseline = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/037_trader_proposals.sql"),
+      "utf8",
+    );
+    const hardening = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/20260914140000_viewer_phase0_close_blanket_rls.sql"),
+      "utf8",
+    );
+    expect(baseline).toMatch(/create table if not exists public\.security_events\s*\([\s\S]*?proposal_id integer references public\.trade_proposals\(id\)/i);
+    expect(baseline).toMatch(/severity text not null check \(severity in \('low', 'medium', 'high', 'critical'\)\)/i);
+    expect(baseline).toMatch(/alter table public\.security_events enable row level security/i);
+    expect(baseline).toMatch(/grant usage, select on sequence public\.security_events_id_seq to service_role/i);
+    expect(hardening).toMatch(/create policy "security_events_owner_read" on public\.security_events/i);
+  });
 });

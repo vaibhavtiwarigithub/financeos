@@ -2,6 +2,12 @@
 
 ## Read-path indexes and explicit API privileges
 
+`security_events` is created in the tracked `037_trader_proposals.sql` baseline
+before the viewer-hardening migration adds its owner-read policy. It has RLS,
+service-role-only writes (including sequence usage), and no anonymous access.
+This restores the production schema contract for fresh migration replay; it
+does not modify production data or permissions.
+
 The global score-history reader uses a `created_at DESC` index; cross-symbol
 return readers use `(market, available_at DESC)`; provider-call reconciliation
 uses a `run_id` index. These complement existing per-symbol indexes and avoid
