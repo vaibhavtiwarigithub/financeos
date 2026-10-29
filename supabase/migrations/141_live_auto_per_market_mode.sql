@@ -12,6 +12,3 @@ ALTER TABLE public.strategy_config
 -- 2. Fix missing market column on trade_proposals (was omitted from migration 139)
 ALTER TABLE public.trade_proposals
   ADD COLUMN IF NOT EXISTS market TEXT;
-
-CREATE INDEX IF NOT EXISTS trade_proposals_market_exec_idx
-  ON public.trade_proposals (market, execution_mode, created_at DESC);

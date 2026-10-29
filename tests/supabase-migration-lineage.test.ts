@@ -167,4 +167,18 @@ describe("Supabase migration lineage", () => {
     expect(sql).toMatch(/add\s+constraint\s+dobs_p_win_range[\s\S]*?not\s+valid/i);
     expect(sql).not.toMatch(/add\s+column[^;]+check\s*\([^;]+\)\s+not\s+valid/i);
   });
+
+  it("creates the trade-proposal execution index after its columns exist", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const executionColumnAt = replay.search(/add\s+column\s+if\s+not\s+exists\s+execution_mode\s+text/i);
+    const indexAt = replay.search(/create\s+index\s+if\s+not\s+exists\s+trade_proposals_market_exec_idx/i);
+
+    expect(executionColumnAt, "fresh replay must create execution_mode before indexing it").toBeGreaterThanOrEqual(0);
+    expect(indexAt, "the market/execution index must remain in the migration chain").toBeGreaterThan(executionColumnAt);
+    expect(replay).toMatch(/trade_proposals_market_exec_idx\s+on\s+public\.trade_proposals\s*\(\s*market\s*,\s*execution_mode\s*,\s*created_at\s+desc\s*\)/i);
+  });
 });

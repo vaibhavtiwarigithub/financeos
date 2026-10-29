@@ -15,6 +15,11 @@ ALTER TABLE public.trade_proposals
   ADD COLUMN IF NOT EXISTS auto_run_id     uuid,
   ADD COLUMN IF NOT EXISTS auto_decided_at timestamptz;
 
+-- Migration 141 also adds trade_proposals.market. Build this index only after
+-- both columns exist so a clean replay does not depend on out-of-band DDL.
+CREATE INDEX IF NOT EXISTS trade_proposals_market_exec_idx
+  ON public.trade_proposals (market, execution_mode, created_at DESC);
+
 -- 2. broker_orders reservation columns (out-of-band 139) ----------------------
 ALTER TABLE public.broker_orders
   ADD COLUMN IF NOT EXISTS approved_by_user   boolean,
