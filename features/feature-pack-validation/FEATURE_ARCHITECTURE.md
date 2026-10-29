@@ -28,6 +28,14 @@ legacy active inputs and measure-only alternate crossover rules.
 > architecture and invited misuse. The lifecycle is now
 > `proposed -> quarantined -> measure_only -> retired`; legacy rows migrate to
 > `measure_only`. This changes no scoring or trade behavior.
+
+> Reconciled with the approved A–J platform checklist (2026-10-29): keep this
+> registry observational. `research_validated` is not a feature score or trade
+> permission and is therefore not a registry state. Strategy challengers use
+> the existing shadow → paper → owner-promotion lifecycle in `strategy_versions`
+> and `shadow_decisions`; no automatic feature-to-strategy bridge exists. A
+> future bridge needs immutable formula/version linkage plus the full PIT/OOS,
+> matched-cohort and cost gates before it may create a challenger.
 >
 > Money-path regression corrected (2026-08-10): commit `82c932a3` collected the
 > planned fields but also added them directly to `deterministic_v1`. EMA-200,
