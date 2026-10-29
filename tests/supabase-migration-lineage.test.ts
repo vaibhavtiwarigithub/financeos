@@ -181,4 +181,17 @@ describe("Supabase migration lineage", () => {
     expect(indexAt, "the market/execution index must remain in the migration chain").toBeGreaterThan(executionColumnAt);
     expect(replay).toMatch(/trade_proposals_market_exec_idx\s+on\s+public\.trade_proposals\s*\(\s*market\s*,\s*execution_mode\s*,\s*created_at\s+desc\s*\)/i);
   });
+
+  it("creates the global app pause control before market controls seed from it", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const files = readdirSync(directory)
+      .filter((file) => file.endsWith(".sql"))
+      .sort((left, right) => left.localeCompare(right));
+    const replay = files.map((file) => readFileSync(path.join(directory, file), "utf8")).join("\n");
+    const createAt = replay.search(/app_paused\s+boolean\s+not\s+null\s+default\s+false/i);
+    const seedAt = replay.search(/select\s+app_paused\s+from\s+public\.strategy_config/i);
+
+    expect(createAt, "fresh strategy_config must include the global pause master").toBeGreaterThanOrEqual(0);
+    expect(seedAt, "market-controls migration must retain its pause-state seed").toBeGreaterThan(createAt);
+  });
 });

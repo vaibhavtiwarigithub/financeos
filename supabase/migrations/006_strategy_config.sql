@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS strategy_config (
   min_analyst_score integer NOT NULL DEFAULT 60,
   direction_filter text NOT NULL DEFAULT 'long',
   max_positions integer NOT NULL DEFAULT 5,
+  app_paused boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
