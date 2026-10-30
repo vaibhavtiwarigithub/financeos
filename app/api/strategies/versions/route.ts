@@ -31,8 +31,21 @@ export async function GET(req: NextRequest) {
         .select("id, passed, p_improvement, n_effective, fail_reason, created_at").in("id", ids);
       validationById = Object.fromEntries((data ?? []).map((e: any) => [e.id, e]));
     }
+    const versionIds = (versions ?? []).map((v: any) => Number(v.id));
+    let forwardByVersion: Record<number, any> = {};
+    if (versionIds.length > 0) {
+      const { data, error: forwardError } = await supabase.from("strategy_promotion_evaluations")
+        .select("id,strategy_version_id,status,reason,horizon_sessions,observations,qualifying_sessions,effective_windows,candidate_mean_net_return,baseline_mean_net_return,paired_difference_mean,paired_difference_t,paired_difference_ci_lower_95,evaluation_start,evaluation_end,evaluated_at")
+        .in("strategy_version_id", versionIds).order("evaluated_at", { ascending: false }).limit(500);
+      if (forwardError) return NextResponse.json({ error: forwardError.message }, { status: 500 });
+      for (const evaluation of data ?? []) {
+        const id = Number(evaluation.strategy_version_id);
+        if (forwardByVersion[id] == null) forwardByVersion[id] = evaluation;
+      }
+    }
     return NextResponse.json({ market, versions: (versions ?? []).map((v: any) => ({
       ...v, validation: v.validation_experiment_id ? validationById[v.validation_experiment_id] ?? null : null,
+      forward_evaluation: forwardByVersion[Number(v.id)] ?? null,
     })) });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

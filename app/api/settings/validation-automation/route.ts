@@ -9,7 +9,7 @@ export async function GET() {
   const gate = await requireOwner();
   if (gate) return gate;
   const { data, error } = await createServiceClient().from("strategy_validation_automation").select("*").order("market");
-  if (error) return NextResponse.json({ policies: [], degraded: true, reason: "Migration 170 is required." });
+  if (error) return NextResponse.json({ policies: [], degraded: true, reason: "Autonomous strategy-selection migration is required." });
   return NextResponse.json({ policies: data ?? [], degraded: false });
 }
 
@@ -17,8 +17,8 @@ export async function PATCH(req: NextRequest) {
   const gate = await requireOwner();
   if (gate) return gate;
   const body = await req.json().catch(() => ({}));
-  if (!MARKETS.has(body.market) || typeof body.enabled !== "boolean" || typeof body.auto_shadow_enabled !== "boolean") {
-    return NextResponse.json({ error: "market, enabled, and auto_shadow_enabled are required." }, { status: 400 });
+  if (!MARKETS.has(body.market) || typeof body.enabled !== "boolean" || typeof body.auto_shadow_enabled !== "boolean" || typeof body.auto_promote_enabled !== "boolean") {
+    return NextResponse.json({ error: "market, enabled, auto_shadow_enabled, and auto_promote_enabled are required." }, { status: 400 });
   }
   const client = await createClient();
   const { data: { user } } = await client.auth.getUser();
@@ -26,6 +26,7 @@ export async function PATCH(req: NextRequest) {
     market: body.market,
     enabled: body.enabled,
     auto_shadow_enabled: body.auto_shadow_enabled,
+    auto_promote_enabled: body.auto_promote_enabled,
     max_active_shadows: 1,
     updated_by: user?.id ?? null,
     updated_at: new Date().toISOString(),

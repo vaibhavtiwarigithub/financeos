@@ -1,4 +1,4 @@
-﻿# Project Decisions â€” Kairos
+# Project Decisions â€” Kairos
 
 ## Purpose
 
@@ -1939,3 +1939,14 @@ invent cash-flow history or bypass owner broker authentication.
 - constraints: no additional schedule, schema, provider/model call, paid service, model/prompt/score/roster changes, paper or live trade behavior, champion promotion, or live authority. Existing validation sweep remains the sole owner of challenger validation and shadow routing. A paper-entry block must not stop research/shadow evaluation.
 - roi: one truthful, market-specific control view and earlier detection of lifecycle stalls; predictive or return benefit is not assumed.
 - shippedAt: pending verification.
+
+### Decision 80: Automatic evidence-gated paper scoring challenger selection
+
+Date: 2026-10-30
+Status: Owner-approved for bounded paper scoring only
+Category: Learning / Research / Paper safety
+
+Context: Vaibhav directed Kairos LLM agents to discover, test, and select strategies without per-candidate owner participation. The existing learner already creates immutable market-local dimension-weight challengers, but passing those challengers still required human promotion and did not use matured forward shadow evidence.
+Decision: Supersede the owner-promotion-only parts of Decisions 4 and 13 for **dimension-weight scoring challengers in the paper research/scoring pipeline only**. The deterministic selector may replace the paper scoring champion only after historical validation and a fixed 20-window matched, horizon-spaced forward evaluation shows positive candidate net return, positive paired difference, lower 95% confidence bound above zero, and t-stat >= 2.093. It must preserve incumbent on insufficient or failed evidence, serialize selection per market, and write immutable evaluations/events. Live scoring, broker decisions, execution, risk limits, and any rule-based entry/exit strategy remain outside this change.
+Reason: Automated evaluation removes per-candidate manual activation while requiring a reproducible test against matured outcomes rather than LLM confidence or historical fit alone.
+Rollback: Disable `auto_promote_enabled` by market; restore the prior paper champion through the audited champion path. Historical evidence remains immutable.

@@ -5,9 +5,11 @@ type Row = Record<string, unknown>;
 
 function query(result: (range?: [number, number]) => { data: Row[] | null; error: { message: string } | null }) {
   let requestedRange: [number, number] | undefined;
+  let requestedGte: [string, string] | undefined;
   const chain: any = {
     select: () => chain,
     eq: () => chain,
+    gte: (column: string, value: string) => { requestedGte = [column, value]; return chain; },
     order: () => chain,
     range: (from: number, to: number) => { requestedRange = [from, to]; return chain; },
     in: (_column: string, ids: number[]) => Promise.resolve(resultForIds(ids)),
@@ -15,6 +17,7 @@ function query(result: (range?: [number, number]) => { data: Row[] | null; error
   };
   let resultForIds = (_ids: number[]) => result();
   chain.withIn = (fn: typeof resultForIds) => { resultForIds = fn; return chain; };
+  chain.getGte = () => requestedGte;
   return chain;
 }
 
@@ -75,5 +78,21 @@ describe("loadLabeledDataset", () => {
     };
 
     await expect(loadLabeledDataset(supabase, "us", 10)).rejects.toThrow("observation_labels batch 1 failed: request too large");
+  });
+
+  it("can bound decision reads to a challenger creation timestamp", async () => {
+    const observations = [observation(1)];
+    const observationQuery = query(() => ({ data: observations, error: null }));
+    const supabase = {
+      from(table: string) {
+        if (table === "decision_observations") return observationQuery;
+        return query(() => ({ data: [], error: null })).withIn((ids: number[]) => ({
+          data: ids.map(id => ({ observation_id: id, horizon_days: 10, label_contract_version: "decision_mark_v2", fwd_return: 0.01, benchmark_return: 0, benchmark_neutral_return: 0.01, max_adverse_excursion: -0.01, max_favorable_excursion: 0.02 })),
+          error: null,
+        }));
+      },
+    };
+    await loadLabeledDataset(supabase, "us", 10, { fromTimestamp: "2026-01-01T00:00:00Z" });
+    expect(observationQuery.getGte()).toEqual(["ts", "2026-01-01T00:00:00Z"]);
   });
 });

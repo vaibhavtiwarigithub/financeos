@@ -1,5 +1,100 @@
 # Strategy Portfolio Lab
 
+## Autonomous Strategy Discovery Addendum — owner direction 2026-10-30
+
+The owner has clarified that strategy research must run without per-candidate
+selection or approval. The old manual-start and owner-promotion rules below are
+superseded for the *research and paper* lifecycle by this addendum. They remain
+in force for live trading and for any action outside the verified account/risk
+mandate.
+
+### Required autonomous lifecycle
+
+1. On a bounded scheduled cadence, the configured Kairos LLM proposes a small
+   number of falsifiable strategy hypotheses using only the versioned app data
+   packet and the allowlisted deterministic rule grammar. The model may not emit
+   executable code, change risk limits, or bypass the compiler. Preserve model,
+   prompt, grammar, data cutoff, and hypothesis fingerprints.
+2. Reject malformed, unsupported, duplicate, cross-market, or over-capacity
+   candidates automatically. Run deterministic point-in-time replay, realistic
+   costs, benchmark/no-trade comparisons, stress/regime slices, and multiple-
+   testing accounting. Historical cache diagnostics alone are never promotion
+   evidence.
+3. Automatically start qualifying versions in bounded forward shadow. The
+   natural market-local research pipeline collects decisions and matured
+   outcomes; do not add a high-frequency schedule or write transient quotes to
+   Postgres just to generate more rows.
+4. A deterministic selector evaluates the frozen candidate against the
+   incumbent on matched opportunities and matured, non-overlapping forward
+   evidence. It can retain, pause, retire, or select a *paper* challenger only
+   after predeclared sample, confidence, net-of-cost, drawdown, robustness, and
+   integrity gates all pass. Insufficient or conflicting results leave the
+   incumbent unchanged. Keep immutable audit events and an immediate rollback
+   to the prior paper champion.
+5. Surface status, blockers, evidence, and the selected version on Learning;
+   owner participation is observational and is not a per-candidate gate.
+
+### Execution boundary
+
+- This addendum authorizes autonomous discovery, validation, shadow operation,
+  and evidence-gated paper-strategy selection. It does not authorize a live
+  strategy promotion or broker action by itself.
+- Live activation still requires the complete owner-approved mandate and every
+  account, reconciliation, quote, idempotency, protective-order, exposure,
+  kill-switch, and lease prerequisite in `features/agentic-quant-platform`.
+- Strategy selection is distinct from dimension-weight selection. Existing
+  `strategy_versions.is_champion` is consumed by the scoring-weight resolver;
+  it must not be relabeled as an entry/exit strategy champion. The selected
+  rule strategy needs its own explicit, market-scoped consumer in the paper
+  execution path before it can be described as “used.”
+- LLM-generated prose never counts as evidence. LLMs generate hypotheses and
+  summarize stored results; deterministic evaluators alone own state changes.
+- No changes to the existing deterministic score, council roster/prompts,
+  position sizing limits, account settings, or live enablement are implied.
+
+### Acceptance and implementation status
+
+- No owner action is needed to register/start each candidate; the scheduled
+  producer performs those actions under the bounded policy.
+- US and India candidate families, labels, benchmarks, and selections remain
+  isolated.
+- Duplicate schedule delivery is idempotent; a failure to read or persist
+  evidence fails closed and raises System Health.
+- A candidate cannot reach paper selection on historical-fit results alone.
+- Losing, immature, or data-degraded candidates never replace the incumbent.
+- The existing 2026-10-30 implementation does **not** satisfy this addendum:
+  templates are fixed, registration and shadow start are owner-operated, and
+  the outputs do not feed paper strategy execution. Implementation and
+  production verification are outstanding.
+
+## Implementation checkpoint — 2026-10-30
+
+The first autonomous lifecycle slice now closes the existing **LLM dimension-
+weight challenger** loop: LearnerAgent already creates market-local immutable
+challengers; deterministic walk-forward validation and natural shadow decisions
+already exist. The new weekly selector records append-only maturity snapshots,
+compares each challenger with the active scoring baseline on the same matured
+observation IDs, uses exactly the first 20 horizon-spaced windows, and invokes a
+database-serialized selector only after the forward gate passes. It automatically
+retires a fully matured failed weight challenger, retains the incumbent on
+insufficient labels, and promotes a pass to the **paper scoring champion**.
+Historical labels already contain the app's cost adjustment; the selector must
+not subtract cost twice. The owner UI reports maturity and automatic selection
+status, and the old validation-only manual promotion path is closed by the new
+database gate. This cannot alter live settings or place orders.
+
+This checkpoint does **not** complete the wider strategy-rule platform above.
+The existing price-rule template lab still has owner-operated registration and
+shadow start, and its rule decisions/outcomes have no selected-rule consumer in
+PaperTrader. The automatic selector described in this checkpoint applies to
+dimension-weight challengers only; it must not be presented as autonomous entry/
+exit pattern discovery or as proof of realized portfolio P&L. Rule-level LLM
+hypothesis generation, bounded point-in-time replay, automatic rule shadow
+registration, a matched forward portfolio evaluator, and a separate paper-only
+rule strategy consumer remain unimplemented and require their own validated
+acceptance path. No forward shadow candidate has been run or promoted by coding
+tests.
+
 > Status: Approved for P0 implementation. Owner reconfirmed the shared
 > paper/live evidence requirement on 2026-09-13; this remains non-executing:
 > no score, paper fill, live proposal, exit, sizing, or broker activation.

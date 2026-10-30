@@ -817,6 +817,24 @@ target spec into one governed roadmap. Owner directive: work every item until do
   no research→money jump, no duplicate orders, one shared gateway, kill cancels resting orders, RLS
   matrix, clean-DB replay). Feature is not "done" until these pass.
 
+### Owner direction — autonomous strategy discovery (2026-10-30)
+
+The owner has explicitly asked Kairos to discover, validate, and select strategy
+hypotheses without per-candidate owner involvement. This supersedes older
+owner-review requirements for **research and paper strategy selection only**.
+LLMs can generate bounded hypotheses from the as-of app packet; deterministic
+PIT replay, costs, forward labels, matched comparisons, uncertainty and risk
+gates remain the only promotion evidence. The app must preserve an incumbent
+when evidence is immature, negative, or degraded, and record a reversible,
+append-only transition when a paper challenger earns selection.
+
+This is separate from the existing dimension-weight champion, which must not be
+misrepresented as an entry/exit strategy. The current Strategy Portfolio Lab
+does not route its rule outputs to PaperTrader and still requires manual
+registration/start; the autonomous research-to-paper lifecycle is therefore
+not complete. Live activation continues to require the independently verified
+mandate and all existing execution-kernel safeguards.
+
 ## Remediation checklist (work top-to-bottom; update status inline)
 
 Legend: [ ] todo · [~] in progress · [x] done

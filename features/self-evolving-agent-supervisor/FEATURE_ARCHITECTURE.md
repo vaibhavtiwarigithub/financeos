@@ -47,3 +47,30 @@ The supervisor uses the existing `StateGraph` runner. Its nodes inspect and prio
 ## Deferred phases
 
 V1 is the supervisory control plane, not a claim that the full self-evolving quant system is complete. Further work remains separately gated by evidence: truly point-in-time causal portfolio replay, out-of-sample strategy comparison at matched opportunity sets, improved setup-specific challenger generation, and statistically supported promotion review. No prompt/genome adaptation or automatic promotion is enabled by this document.
+
+## Owner direction — autonomous strategy lifecycle (2026-10-30)
+
+The later owner instruction supersedes V1's “promotion is never automatic”
+statement for research and paper strategy selection. Kairos should run the
+candidate lifecycle without asking the owner to choose each model-generated
+hypothesis or start each shadow. The LLM proposes bounded, versioned hypotheses;
+the deterministic compiler, replay, forward evidence gates, and selector decide
+whether to retain, reject, shadow, or select for paper. The owner is informed by
+the Learning/System Health surfaces, not asked to operate each transition.
+
+This does not permit LLM output to bypass evidence gates or alter live policy.
+Live use remains independently gated by the complete approved mandate and
+execution prerequisites. Existing V1 implementation does not yet fulfill this
+direction; see the autonomous strategy discovery addendum in
+`features/strategy-portfolio-lab/FEATURE_ARCHITECTURE.md` and the work log claim.
+
+### Implementation checkpoint — 2026-10-30
+
+The current code change closes the automatic lifecycle only for LearnerAgent's
+dimension-weight challengers: evidence snapshots, fixed matured forward test,
+automatic paper-scoring-champion selection/retirement, and Learning status. It
+does not yet implement LLM-generated entry/exit-rule discovery or a consumer
+that applies selected rule strategies to PaperTrader. The watchdog remains
+read-only and does not call models or trading routes. See the remaining rule
+strategy gaps in the Strategy Portfolio Lab architecture; do not mark the whole
+self-evolving system complete on the basis of this slice.

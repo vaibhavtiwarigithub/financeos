@@ -53,7 +53,8 @@ export interface WalkForwardFold {
 export async function loadLabeledDataset(
   supabase: any,
   market: "us" | "india",
-  horizonDays: 2 | 5 | 10 | 20
+  horizonDays: 2 | 5 | 10 | 20,
+  options?: { fromTimestamp?: string }
 ): Promise<LabeledObservation[]> {
   // Paginated: `.limit(5000)` returned PostgREST's 1,000-row maximum, so the
   // learner was training on 19% of the US cohort (5,223 rows) chosen by ts
@@ -62,12 +63,14 @@ export async function loadLabeledDataset(
   // Errors PROPAGATE. The previous `if (obsErr || !obsRows?.length) return []`
   // collapsed a failed read and a genuinely empty cohort into the same answer,
   // so a broken query trained the learner on nothing and looked like a quiet day.
-  const obsRows = await fetchAllRows((from, to) => supabase
-    .from("decision_observations")
-    .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, decision_context, discovery_source, score_threshold, availability_mask")
-    .eq("market", market)
-    .order("id", { ascending: true })
-    .range(from, to), "decision_observations");
+  const obsRows = await fetchAllRows((from, to) => {
+    let query = supabase
+      .from("decision_observations")
+      .select("id, ts, market, symbol, analyst_score, fundamental_score, technical_score, sentiment_score, macro_score, insider_score, direction, entry_eligible, decision_context, discovery_source, score_threshold, availability_mask")
+      .eq("market", market);
+    if (options?.fromTimestamp) query = query.gte("ts", options.fromTimestamp);
+    return query.order("id", { ascending: true }).range(from, to);
+  }, "decision_observations");
   if (!obsRows.length) return [];
 
   const ids = obsRows.map((r: any) => r.id);
