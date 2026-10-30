@@ -3,16 +3,20 @@ import { expectedNewestSession } from "@/lib/data/completed-candles";
 
 const h = vi.hoisted(() => ({
   fetchUsCandles: vi.fn(async () => ({ candles: [], source: "yahoo" })),
-  priceCacheUpsert: vi.fn(async () => ({ error: null })),
+  fetchYahooCandles: vi.fn(async (_symbol: string, _forceRefresh?: boolean) => []),
+  fetchUpstoxCandles: vi.fn(async (_symbol: string, _days?: number, _opts?: { forceRefresh?: boolean }) => []),
+  priceCacheUpsert: vi.fn(async (_rows: any[]) => ({ error: null })),
 }));
 
 // Stub the provider edges so prewarmPriceCache can run without network.
 vi.mock("@/lib/data/candles", () => ({
   fetchUsCandles: h.fetchUsCandles,
+  fetchYahooCandles: h.fetchYahooCandles,
   fetchMassiveCandles: vi.fn(async () => []),
   fetchEodhdCandles: vi.fn(async () => []),
   fetchTwelveDataCandles: vi.fn(async () => []),
 }));
+vi.mock("@/lib/data/upstox", () => ({ fetchUpstoxCandles: h.fetchUpstoxCandles }));
 vi.mock("@/lib/supabase/service", () => ({
   createServiceClient: () => ({ from: () => ({ upsert: h.priceCacheUpsert }) }),
 }));
@@ -20,6 +24,8 @@ vi.mock("@/lib/supabase/service", () => ({
 beforeEach(() => {
   h.fetchUsCandles.mockReset();
   h.fetchUsCandles.mockResolvedValue({ candles: [], source: "yahoo" });
+  h.fetchYahooCandles.mockReset().mockResolvedValue([]);
+  h.fetchUpstoxCandles.mockReset().mockResolvedValue([]);
   h.priceCacheUpsert.mockReset();
   h.priceCacheUpsert.mockResolvedValue({ error: null });
 });
@@ -145,6 +151,64 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
 
     await prewarmPriceCache(["RELIANCE.NS"], supabase, { market: "india", deadlineAt: Date.now() - 1 });
     expect(capturedGte).toBe(expectedNewestSession("india", new Date()));
+  });
+
+  it("uses fresh Upstox bars for India and forces the provider cache", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchUpstoxCandles.mockResolvedValue([
+      { date: currentSession, open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+    ] as any);
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = async () => ({ data: [], error: null });
+        chain.upsert = async (rows: any[]) => { h.priceCacheUpsert(rows); return { error: null }; };
+        return chain;
+      },
+    };
+
+    const result = await prewarmPriceCache(["BRITANNIA.NS"], supabase, { market: "india" });
+
+    expect(result).toMatchObject({ ok: 1, failed: 0 });
+    expect(h.fetchUpstoxCandles).toHaveBeenCalledWith("BRITANNIA.NS", 160, { forceRefresh: true });
+    expect(h.fetchYahooCandles).not.toHaveBeenCalled();
+    expect(h.fetchUsCandles).not.toHaveBeenCalled();
+    expect(h.priceCacheUpsert.mock.calls[0][0][0]).toMatchObject({
+      symbol: "BRITANNIA.NS", provider: "upstox", price_basis: "raw",
+    });
+  });
+
+  it("falls back to Yahoo for India only when it has the required session", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchYahooCandles.mockResolvedValue([
+      { date: currentSession, open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+    ] as any);
+    const supabase = {
+      from: () => {
+        const chain: any = {};
+        chain.select = () => chain;
+        chain.in = () => chain;
+        chain.gte = () => chain;
+        chain.limit = async () => ({ data: [], error: null });
+        chain.upsert = async (rows: any[]) => { h.priceCacheUpsert(rows); return { error: null }; };
+        return chain;
+      },
+    };
+
+    const result = await prewarmPriceCache(["TNPL.NS"], supabase, { market: "india" });
+
+    expect(result).toMatchObject({ ok: 1, failed: 0 });
+    expect(h.fetchUpstoxCandles).toHaveBeenCalledOnce();
+    expect(h.fetchYahooCandles).toHaveBeenCalledWith("TNPL.NS", true);
+    expect(h.fetchUsCandles).not.toHaveBeenCalled();
+    expect(h.priceCacheUpsert.mock.calls[0][0][0]).toMatchObject({
+      symbol: "TNPL.NS", provider: "yahoo", price_basis: "adjusted",
+    });
   });
 
   it("reports a rejected canonical write as failed rather than claiming a fresh cache", async () => {

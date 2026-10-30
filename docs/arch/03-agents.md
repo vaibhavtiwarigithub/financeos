@@ -53,6 +53,11 @@ the existing validated Robinhood bid/ask reader on failure. This fallback has no
 session range and cannot prove an unobserved stop touch or live protection.
 Post-close price prewarm passes its required market session into the shared
 candle resolver, so a recent-but-behind first provider cannot block fallback.
+The resolver is market-specific: US uses its validated US chain; India forces
+the existing Upstox daily-candle adapter, then falls back to Yahoo only when the
+required India session is present. India prewarm must never send NSE symbols
+through US-suffixed EOD provider endpoints. Cache provenance records Upstox bars
+as raw and Yahoo bars as adjusted, consistent with each adapter's returned OHLC.
 
 ## Assessment publication and entry freshness
 
@@ -213,6 +218,13 @@ universe, and forces their observations to remain entry-ineligible. Neither the
 directory collector nor this sample writes the watchlist, alters scores/weights,
 creates paper eligibility, or places orders. See
 `features/new-symbol-and-ipo-discovery/FEATURE_ARCHITECTURE.md`.
+
+The other-listed parser explicitly accepts Nasdaq's live `TXSE` MIC identifier
+as Texas Stock Exchange while keeping `M` mapped to NYSE Texas; unknown exchange
+codes still fail closed. The official Nasdaq directory definitions describe the
+legacy exchange codes, while the official TXSE directory confirms the exchange
+and its daily public-symbol list ([Nasdaq definitions](https://www.nasdaqtrader.com/Trader.aspx?id=SymbolDirDefs),
+[TXSE symbol directory](https://www.txse.com/symbols)).
 
 > 2026-10-03: **SEC listing discovery has never produced a candidate (fixed).** After the 2026-09-24 header fix the run reported `available, filing_count 0` every day because the parser only accepted ISO dates while the real SEC daily index writes `YYYYMMDD` (a live 2026-09-30 index holds 12 S-1/F-1/424B4 filings); the test fixture used ISO dates, so tests stayed green. The parser now normalizes both. Also: the prewarm route drops research-disabled unheld names (same rule as the freshness monitor), and the viewer price route paginates (PostgREST caps one response at 1,000 rows; `limit(2500)` returned the oldest 1,000 bars on long windows).
 >

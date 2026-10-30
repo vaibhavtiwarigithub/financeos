@@ -7,7 +7,7 @@
  * (the Claude CLI needs a console and the Codex shim hangs with one, so run them as two supervisors: see the setup notes in WORK_LOG)
  * - each config gets `lanes` parallel lanes (Kairos allows 3 concurrent leases per worker)
  * - a lane re-runs immediately after a job, sleeps when the queue is empty
- * - quota/auth problems pause that worker's lanes so a failing client cannot burn through the whole queue
+ * - quota/auth problems stop that worker's lanes and require an explicit restart after owner action
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, renameSync, openSync, closeSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -56,6 +56,10 @@ async function lane(name, config, state) {
       log(`${name} job ${result.outcome}`);
       if (state.failStreak >= 3) { state.failStreak = 0; state.pausedUntil = Date.now() + 10 * 60_000; log(`${name} paused 10 min: repeated client_failed`); }
       continue;
+    }
+    if (result.kind === 'pause' && result.ownerAction) {
+      log(`${name} stopped: ${result.why}; owner action required before restart`);
+      return;
     }
     if (result.kind === 'pause') { state.pausedUntil = Date.now() + result.ms; log(`${name} paused ${Math.round(result.ms / 60000)} min: ${result.why}`); continue; }
     log(`${name} worker pass failed`);

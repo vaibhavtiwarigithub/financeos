@@ -32,6 +32,12 @@ Test wrong-worker, revoked token, duplicate/conflicting submission, expired/reis
 4. For recurring collection, schedule this command locally at a modest interval (for example every 5 minutes during expected research windows). The app queues at most its configured daily symbol limit; when no job exists, the runner exits. Windows Task Scheduler runs only while the machine/session conditions you configure permit. No supported cloud executor currently consumes personal ChatGPT or Claude memberships.
 5. Claude Code Pro works by the same local process only after `claude auth status` confirms an authenticated Claude subscription session. The owner session was verified on 2026-10-12. The registered Sonnet 4.6 worker has not passed its production synthetic test; do not use it for real-symbol collection until Settings shows a completed synthetic batch. Revoke a worker in Settings to invalidate its credential immediately.
 
+The existing hidden local supervisor runs one lane group per provider config and
+records only safe outcomes. Authentication or quota failures stop that provider's
+lanes and require an explicit restart after the owner resolves the account issue;
+the supervisor must not retry those failures on a timer. A healthy provider's
+separate supervisor continues independently.
+
 Council master enablement remains a separate, explicit switch after every selected worker passes the synthetic test and API providers are configured where applicable. It turns on shadow collection only, not trading. Hybrid code, migration `20261012033836`, and the delayed evaluator are merged in PR #66 and production-deployed. Production readback on 2026-10-12 shows the council `enabled=true` in `api` mode with DeepSeek Flash as its sole participant/orchestrator, a $1 daily API budget, and a registered but unselected Claude Sonnet 4.6 subscription worker. All three Claude production synthetic attempts are partial/failed; the most recent has no score, no reported token counts, and no linked research run. Do not infer Claude readiness, select this worker, or change the existing API-mode setting. A future synthetic test needs owner approval and safe local diagnostic capture. Subscription forecasts remain excluded from decision-time IC; the separate delayed cohort can be evaluated only after labels mature. No research accuracy claim is established.
 
 References: https://platform.claude.com/docs/en/api/claude-code/routines-fire ; https://code.claude.com/docs/en/routines ; https://learn.chatgpt.com/docs/non-interactive-mode ; https://learn.chatgpt.com/docs/auth

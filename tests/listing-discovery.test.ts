@@ -142,10 +142,12 @@ describe("daily US symbol-directory discovery contract", () => {
     const files = directories("1007202621:31", [
       "TEST|Test ETF|N|TEST|Y|100|N|", "BAD|Example Warrant|N|BAD|N|100|N|", "UNK|Mystery Corporation|N|UNK|N|100|N|",
       "ADR|Example American Depositary Shares|F|ADR|N|100|N|", "TXSE|Example common shares|M|TXSE|N|100|N|",
+      "TEXQ|Texas Exchange Common Stock|TXSE|TEXQ|N|100|N|",
     ].join("\n"));
     const parsed = parseUsSymbolDirectory(files.nasdaq, files.other, new Date("2026-10-07T23:00:00Z"));
     expect(parsed.researchable.find(row => row.symbol === "ADR")).toMatchObject({ exchange: "TXSE", instrumentType: "adr" });
     expect(parsed.researchable.find(row => row.symbol === "TXSE")).toMatchObject({ exchange: "NYSE Texas", instrumentType: "operating_company" });
+    expect(parsed.researchable.find(row => row.symbol === "TEXQ")).toMatchObject({ exchange: "Texas Stock Exchange", exchangeCode: "TXSE" });
     expect(parsed.researchable.some(row => row.symbol === "BAD")).toBe(false);
     expect(parsed.researchable.some(row => row.symbol === "UNK")).toBe(false);
     expect(() => parseUsSymbolDirectory(files.nasdaq, files.other.replace("|F|ADR|N|100|N|", "|X|ADR|N|100|N|"), new Date("2026-10-07T23:00:00Z"))).toThrow(/unsupported exchange/i);

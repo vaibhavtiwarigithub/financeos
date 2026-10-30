@@ -75,7 +75,11 @@ async function getInstrumentKey(svc: any, symbol: string): Promise<string | null
 
 // India daily candles via Upstox v3 historical-candle. Returns oldest-first
 // (EMA/RSI need chronological), day-cached under the upstox provider budget.
-export async function fetchUpstoxCandles(symbol: string, days = 160): Promise<Candle[]> {
+export async function fetchUpstoxCandles(
+  symbol: string,
+  days = 160,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<Candle[]> {
   if (!token()) return [];
   try {
     const svc = createServiceClient();
@@ -88,6 +92,7 @@ export async function fetchUpstoxCandles(symbol: string, days = 160): Promise<Ca
       timeoutMs: 8000,
       headers: await authHeaders(),
       isThrottled: (j) => j?.status !== "success",
+      ...(opts.forceRefresh ? { forceRefresh: true } : {}),
     });
     const rows: any[] = json?.data?.candles ?? [];
     return rows

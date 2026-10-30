@@ -27,6 +27,10 @@ export type ParsedSymbolDirectory = {
 
 const EXCHANGES: Record<string, string> = {
   A: "NYSE American", F: "TXSE", M: "NYSE Texas", N: "NYSE", P: "NYSE Arca", V: "Investors Exchange", Z: "Cboe BZX", Q: "Nasdaq",
+  // Nasdaq's live otherlisted feed began emitting the exchange's MIC identifier
+  // in addition to legacy one-character codes. Keep it distinct from M, which
+  // denotes NYSE Texas, not the Texas Stock Exchange (TXSE).
+  TXSE: "Texas Stock Exchange",
 };
 const SYMBOL = /^[A-Z0-9][A-Z0-9.-]{0,9}$/;
 const EXCLUDED_NAME = /\b(WARRANTS?|RIGHTS?|UNITS?|PREFERRED|DEBENTURE|NOTE\s+DUE|BOND|ETN|EXCHANGE-TRADED NOTES?|CLOSED[- ]END FUNDS?)\b/i;

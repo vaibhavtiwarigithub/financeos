@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
-import { fetchUsCandles } from "@/lib/data/candles";
+import { fetchUsCandles, fetchYahooCandles } from "@/lib/data/candles";
+import { fetchUpstoxCandles } from "@/lib/data/upstox";
 import { avCachedFetch } from "@/lib/av-cache";
 import { spansRequestedWindow } from "@/lib/data/history-span";
 
@@ -142,6 +143,7 @@ async function fetchAvDailyCandles(symbol: string): Promise<Candle[]> {
  */
 const PROVIDER_PRICE_BASIS: Record<string, "adjusted" | "raw" | "unknown"> = {
   yahoo: "adjusted",
+  upstox: "raw",
   massive: "adjusted",
   eodhd: "adjusted",
   // No adjustment parameter is sent, and it has not been verified against the
@@ -279,12 +281,20 @@ export async function prewarmPriceCache(
         // `pending` holds only symbols whose cached bar is behind freshCutoff, so
         // a real call is warranted: the same-day av_cache would otherwise hand back
         // the pre-close payload the morning research run stored.
-        const { candles: resolved, source: warmSource } = await fetchUsCandles(
-          sym,
-          () => fetchAvDailyCandles(sym),
-          1,
-          { forceRefresh: true, requiredSession: freshCutoff },
-        );
+        // Keep the prewarmer on the same market-specific provider chain as
+        // research. The US resolver appends `.US` for some fallbacks; using it
+        // for an NSE ticker can return a different listing or no data at all.
+        // Upstox is India's primary settled-bar source, with keyless Yahoo as
+        // the same fallback used by the India research path.
+        const resolvedForMarket = opts.market === "india"
+          ? await fetchIndiaPrewarmCandles(sym, freshCutoff)
+          : await fetchUsCandles(
+            sym,
+            () => fetchAvDailyCandles(sym),
+            1,
+            { forceRefresh: true, requiredSession: freshCutoff },
+          );
+        const { candles: resolved, source: warmSource } = resolvedForMarket;
         // `fetchUsCandles` rejects materially stale feeds, but its recency
         // guard deliberately allows a long weekend. Prewarm has a stronger
         // contract: it is successful only when the exact market session the
@@ -326,6 +336,19 @@ export async function prewarmPriceCache(
     failedSymbols: failedSymbols.sort(),
     skippedSymbols,
   };
+}
+
+async function fetchIndiaPrewarmCandles(
+  symbol: string,
+  requiredSession: string,
+): Promise<{ candles: Candle[]; source: string }> {
+  const hasSession = (candles: Candle[]) => candles.some((candle) => candle.date === requiredSession);
+  const upstox = await fetchUpstoxCandles(symbol, 160, { forceRefresh: true });
+  if (hasSession(upstox)) return { candles: upstox, source: "upstox" };
+
+  const yahoo = await fetchYahooCandles(symbol, true);
+  if (hasSession(yahoo)) return { candles: yahoo, source: "yahoo" };
+  return { candles: yahoo.length ? yahoo : upstox, source: yahoo.length ? "yahoo" : upstox.length ? "upstox" : "unavailable" };
 }
 
 // Normalize candles to % return from first close
