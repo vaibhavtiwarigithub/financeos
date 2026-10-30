@@ -49,8 +49,14 @@ portfolio risk limits, exits, broker settings, or live execution.
   production slot limit remains one per market.
 - Secret scan: GitGuardian reported no secrets in changed files.
 - `git diff --check`: passed.
-- Commit, GitHub acceptance run, Vercel deployment SHA/status, and authenticated
-  production route verification: pending release.
+- Mainline commit: `d529769d5274d59cf1fba10b29f638c5fa00aa9c`
+  (`Build autonomous paper strategy discovery loop`), pushed to `origin/main`.
+- GitHub combined status: Vercel check succeeded for the exact commit.
+- Vercel production deployment: `dpl_5funHD9Tdhv9iZ8HYCWXm3xgeStc`, exact
+  commit SHA, state `READY`; aliases include `financeos-phi.vercel.app`.
+- Safe production checks through authenticated Vercel CLI: `/login` returned
+  HTTP 200; unauthenticated `GET /api/strategies/template-shadows` returned
+  HTTP 401 as expected.
 - Natural weekly Learner and daily Research/PaperTrader observation: pending
   their existing schedules. No cron, model inference, research, paper-trade,
   or order path was manually invoked.
