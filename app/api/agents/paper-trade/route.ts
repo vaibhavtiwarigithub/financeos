@@ -29,6 +29,7 @@ import { canOpenPaperName } from "@/lib/trading/paper-entry-policy";
 import { assessLiquidityFloor, assessParticipation, averageTurnover, isQuietNameStaleQuote, type AdvEstimate } from "@/lib/trading/liquidity-floor";
 import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
+import { reportIssue } from "@/lib/system-health";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
 import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
 import { paperAllocationSpend, paperDailyCapQuantity, paperIntendedSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
@@ -299,14 +300,54 @@ export async function POST(req: NextRequest) {
             : "us";
           return rowMarket === market;
         });
+        let strategyQualifiedSymbols = new Set<string>();
+        try {
+          const strategyPolicy = await supabase.from("strategy_validation_automation")
+            .select("enabled,auto_shadow_enabled,auto_rule_paper_select_enabled").eq("market", market).maybeSingle();
+          if (strategyPolicy.error) throw new Error(strategyPolicy.error.message);
+          if (strategyPolicy.data?.enabled === true && strategyPolicy.data?.auto_shadow_enabled === true
+            && strategyPolicy.data?.auto_rule_paper_select_enabled === true) {
+            const selection = await supabase.from("strategy_template_paper_selection")
+              .select("config_id").eq("market", market).maybeSingle();
+            if (selection.error) throw new Error(selection.error.message);
+            if (selection.data?.config_id) {
+            const config = await supabase.from("strategy_template_shadow_configs")
+              .select("id,state,market,rule_spec").eq("id", selection.data.config_id).maybeSingle();
+            if (config.error) throw new Error(config.error.message);
+            if (config.data?.state === "shadow" && config.data.market === market
+              && config.data.rule_spec?.market === market && Array.isArray(config.data.rule_spec?.universe)) {
+              const currentSignalSessions = [...new Set(marketRows.map((row: any) => String(row.created_at ?? "").slice(0, 10)).filter((date: string) => /^\\d{4}-\\d{2}-\\d{2}$/.test(date)))];
+              if (currentSignalSessions.length) {
+                const decisions = await supabase.from("strategy_template_shadow_decisions")
+                  .select("symbol,signal_session,would_enter").eq("config_id", config.data.id)
+                  .eq("market", market).eq("would_enter", true)
+                  .in("signal_session", currentSignalSessions)
+                  .in("symbol", config.data.rule_spec.universe);
+                if (decisions.error) throw new Error(decisions.error.message);
+                const qualified = new Set((decisions.data ?? []).map((row: any) => String(row.symbol).trim().toUpperCase()));
+                strategyQualifiedSymbols = new Set(marketRows.map((row: any) => String(row.symbol).trim().toUpperCase())
+                  .filter((symbol: string) => qualified.has(symbol)));
+              }
+            }
+            }
+          }
+        } catch (error: any) {
+          // Strategy ranking is additive and fail-open: the established scorer,
+          // eligibility checks and risk gates continue unchanged. Surface a
+          // degraded selector rather than pretending strategy coverage worked.
+          await reportIssue({ issueKey: `paper-rule-strategy-read:${market}`, severity: "warn", category: "data_integrity",
+            title: `${String(market).toUpperCase()} paper strategy preference unavailable`,
+            detail: String(error?.message ?? error).slice(0, 400),
+            autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString() }, supabase);
+        }
         const result = selectBestPaperSignals(
           marketRows,
           market as "us" | "india",
           hasMarketCol ? 10 : 5,
-          { heldSymbols: openAlphaNamesByMarket.get(market), topUpLimit: 8 },
+          { heldSymbols: openAlphaNamesByMarket.get(market), topUpLimit: 8, strategyQualifiedSymbols },
         );
-        selected.push(...result.selected);
-        selected.push(...result.topUpCandidates);
+        selected.push(...result.selected.map((row: any) => ({ ...row, _strategyPriority: strategyQualifiedSymbols.has(String(row.symbol).trim().toUpperCase()) })));
+        selected.push(...result.topUpCandidates.map((row: any) => ({ ...row, _strategyPriority: strategyQualifiedSymbols.has(String(row.symbol).trim().toUpperCase()) })));
         duplicateIds.push(...result.duplicateIds);
         duplicateIds.push(...result.excludedIds);
       }
@@ -319,7 +360,8 @@ export async function POST(req: NextRequest) {
       }
       signals.length = 0;
       signals.push(...selected);
-      signals.sort((a, b) => Number(b.analyst_score) - Number(a.analyst_score));
+      signals.sort((a, b) => Number(b._strategyPriority === true) - Number(a._strategyPriority === true)
+        || Number(b.analyst_score) - Number(a.analyst_score));
     }
 
     // Tradable-universe policy: drop leveraged/inverse ETFs + owner-blocklisted

@@ -28,6 +28,12 @@ export async function GET(req: NextRequest) {
   const { data: templates, error: templateError } = await svc.from("strategy_templates")
     .select("id,name,description,rules").order("name");
   if (templateError) return NextResponse.json({ error: "strategy_template_read_failed" }, { status: 500 });
+  const { data: automation, error: automationError } = await svc.from("strategy_validation_automation")
+    .select("enabled,auto_shadow_enabled,max_active_shadows,auto_rule_paper_select_enabled").eq("market", market).maybeSingle();
+  if (automationError) return NextResponse.json({ error: "strategy_automation_read_failed" }, { status: 500 });
+  const { data: paperSelection, error: selectionError } = await svc.from("strategy_template_paper_selection")
+    .select("market,config_id,evaluation_id,updated_at").eq("market", market).maybeSingle();
+  if (selectionError) return NextResponse.json({ error: "strategy_paper_selection_read_failed" }, { status: 503 });
   const templateOptions = (templates ?? []).map((template: any) => {
     const compiled = compileStrategyTemplate(template, {
       market, universe: [market === "india" ? "RELIANCE.NS" : "VOO"], horizonSessions: 10,
@@ -37,13 +43,16 @@ export async function GET(req: NextRequest) {
 
   let enriched: any[];
   try { enriched = await Promise.all((configs ?? []).map(async (config: any) => {
-    const [events, decisionsResult] = await Promise.all([
+    const [events, decisionsResult, latestPaperEvaluation] = await Promise.all([
       fetchAllRows((from, to) => svc.from("strategy_template_shadow_events").select("event,reason,evidence_snapshot,created_at")
         .eq("config_id", config.id).order("created_at", { ascending: false }).range(from, to), "strategy template events"),
       svc.from("strategy_template_shadow_decisions").select("id,would_enter,baseline_entry_eligible,signal_session", { count: "exact" })
         .eq("config_id", config.id).order("signal_session", { ascending: false }).limit(1000),
+      svc.from("strategy_template_paper_evaluations").select("status,selector_version,evidence,created_at")
+        .eq("config_id", config.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (decisionsResult.error) throw new Error(`strategy template decisions read failed: ${decisionsResult.error.message}`);
+    if (latestPaperEvaluation.error) throw new Error(`strategy paper evaluation read failed: ${latestPaperEvaluation.error.message}`);
     const decisions: any[] = decisionsResult.data ?? [];
     const decisionIds = decisions.map((row: any) => Number(row.id));
     const outcomes = decisionIds.length ? await fetchAllRows((from, to) => svc.from("strategy_template_shadow_outcomes")
@@ -69,6 +78,7 @@ export async function GET(req: NextRequest) {
     const latestBacktest = events.find((row: any) => row.event === "backtest_completed" || row.event === "created")?.evidence_snapshot?.historical_evidence ?? null;
     return {
       ...config,
+      latestPaperEvaluation: latestPaperEvaluation.data ?? null,
       evidence: {
         state: outcomeByDecision.size ? "descriptive_only" : "insufficient_evidence",
         decisionCount: decisionsResult.count ?? decisions.length,
@@ -86,7 +96,10 @@ export async function GET(req: NextRequest) {
     console.error("[strategy-template-shadows] evidence read failed:", error?.message ?? error);
     return NextResponse.json({ error: "strategy_shadow_evidence_read_failed" }, { status: 500 });
   }
-  return NextResponse.json({ market, configs: enriched, templates: templateOptions, status: "ready", limits: { maxActive: 3, used: (configs ?? []).filter((row: any) => row.state !== "retired").length, maxUniverseSymbols: MAX_BACKTEST_SYMBOLS, maxBarsPerSymbol: MAX_BARS_PER_SYMBOL } });
+  return NextResponse.json({ market, configs: enriched, templates: templateOptions, automation: automation ?? null,
+    paperSelection: paperSelection ?? null, status: "ready", limits: { maxActive: 3,
+      used: (configs ?? []).filter((row: any) => row.state !== "retired").length,
+      maxUniverseSymbols: MAX_BACKTEST_SYMBOLS, maxBarsPerSymbol: MAX_BARS_PER_SYMBOL } });
 }
 
 export async function POST(req: NextRequest) {

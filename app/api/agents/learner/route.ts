@@ -16,6 +16,9 @@ import { runAutomatedValidation } from "@/lib/validation/automation";
 import { reportIssue } from "@/lib/system-health";
 import { fetchIndiaQuote } from "@/lib/india-data";
 import { summarizeDivergenceOutcomes } from "@/lib/learning/score-price-divergence";
+import { autonomouslyStartTemplateShadow, validateAutonomousPriceRules } from "@/lib/strategy-replay/autonomous-template-discovery";
+import { evaluateAndPersistAutonomousRuleShadows } from "@/lib/strategy-replay/autonomous-template-selector";
+import { compileStrategyTemplate } from "@/lib/strategy-replay/template-compiler";
 
 export const dynamic = "force-dynamic";
 // The weekly tool loop can legitimately take several provider round-trips.
@@ -163,7 +166,7 @@ export async function POST(req: NextRequest) {
       { data: recentRuns },
       { count: liveTradesClosed },
     ] = await Promise.all([
-      svc.from("agent_config").select("model, enabled").eq("agent_name", "learner").single(),
+      svc.from("agent_config").select("model, enabled, prompt_version").eq("agent_name", "learner").single(),
       svc.from("learner_runs").select("id").eq("run_date", new Date().toISOString().slice(0, 10)).eq("market", LEARN_MARKET).maybeSingle(),
       scopeMkt(svc.from("paper_trades").select("outcome", { count: "exact" }).not("closed_at", "is", null)),
       svc.from("learner_config").select("*"),
@@ -241,6 +244,8 @@ export async function POST(req: NextRequest) {
     } catch { /* resilient — absent tables/columns (pre-Phase-2/3) just mean the guard can't trip yet */ }
 
     let learnerResult: any = null;
+    let ruleTournament: any = null;
+    let effectiveLearnerModel = agentModel;
 
     if (agentEnabled && !existingRun) {
       const { count: signalCount } = await svc.from("agent_signals").select("*", { count: "exact", head: true });
@@ -316,6 +321,7 @@ export async function POST(req: NextRequest) {
         return { source: "insufficient_data", n: 0, correlation: 0, ledgerSkipReason };
       }
 
+      let strategyProposalAttempted = false;
       async function toolExecutor(call: ToolCall): Promise<string> {
         switch (call.name) {
 
@@ -485,6 +491,94 @@ export async function POST(req: NextRequest) {
               weight_snapshot: null, trades_evaluated: 0,
             });
             return JSON.stringify({ saved: true, claim, confidence, category });
+          }
+
+          case "query_strategy_template_catalog": {
+            const { data: templates, error } = await svc.from("strategy_templates")
+              .select("id,name,description,rules").order("name");
+            if (error) return JSON.stringify({ error: `strategy catalog read failed: ${error.message}` });
+            const catalog = (templates ?? []).map((template: any) => {
+              const compiled = compileStrategyTemplate(template, {
+                market: LEARN_MARKET,
+                universe: [LEARN_MARKET === "india" ? "RELIANCE.NS" : "VOO"],
+                horizonSessions: 10,
+              });
+              return { id: template.id, name: template.name, description: template.description,
+                supported: compiled.ok, unsupportedReasons: compiled.ok ? [] : compiled.errors };
+            });
+            const { data: configs, error: configError } = await svc.from("strategy_template_shadow_configs")
+              .select("id,state,config_fingerprint,rule_spec").eq("market", LEARN_MARKET).neq("state", "retired");
+            if (configError) return JSON.stringify({ error: `strategy capacity read failed: ${configError.message}` });
+            const { data: automation, error: automationError } = await svc.from("strategy_validation_automation")
+              .select("max_active_shadows,enabled,auto_shadow_enabled,auto_rule_paper_select_enabled")
+              .eq("market", LEARN_MARKET).maybeSingle();
+            if (automationError) return JSON.stringify({ error: `strategy automation policy read failed: ${automationError.message}` });
+            const evaluations = await svc.from("strategy_template_paper_evaluations")
+              .select("config_id,status,evidence,created_at").eq("market", LEARN_MARKET)
+              .order("created_at", { ascending: false }).limit(30);
+            if (evaluations.error) return JSON.stringify({ error: `strategy forward-evaluation read failed: ${evaluations.error.message}` });
+            const latestByConfig = new Map<string, any>();
+            for (const row of evaluations.data ?? []) if (!latestByConfig.has(row.config_id)) latestByConfig.set(row.config_id, row);
+            const { data: priorRuns, error: priorRunError } = await svc.from("learner_runs")
+              .select("run_date,reasoning_chain").eq("market", LEARN_MARKET).order("run_date", { ascending: false }).limit(10);
+            if (priorRunError) return JSON.stringify({ error: `prior strategy proposal history read failed: ${priorRunError.message}` });
+            const recentAttempts: Array<Record<string, unknown>> = [];
+            for (const run of priorRuns ?? []) {
+              const chain = Array.isArray(run.reasoning_chain) ? run.reasoning_chain : [];
+              for (const step of chain) {
+                if (step?.tool !== "propose_strategy_template" || !step.args || typeof step.args !== "object") continue;
+                const args = step.args as Record<string, unknown>;
+                const validated = validateAutonomousPriceRules(args.rules);
+                const horizon = Number(args.horizon_sessions);
+                const assetClass = String(args.asset_class ?? "");
+                if (!validated.ok || ![2, 5, 10, 20].includes(horizon)
+                  || !["us_equity", "adr", "etf", "metal", "leveraged_etf", "india"].includes(assetClass)) continue;
+                let resultStatus = "unknown";
+                try {
+                  const parsed = JSON.parse(String(step.result ?? ""));
+                  if (["started", "already_registered", "capacity_full", "no_researched_symbols", "not_supported", "historical_gate_failed", "automation_disabled", "error"].includes(parsed?.status)) resultStatus = parsed.status;
+                } catch { /* keep the safe status label */ }
+                recentAttempts.push({ runDate: run.run_date, assetClass, horizonSessions: horizon,
+                  rules: validated.rules, resultStatus });
+              }
+            }
+            const maxSlots = Math.max(0, Math.min(3, Number(automation?.max_active_shadows ?? 0)));
+            return JSON.stringify({ market: LEARN_MARKET, catalog, occupiedSlots: configs?.length ?? 0,
+              automation: { enabled: automation?.enabled === true, autoShadowEnabled: automation?.auto_shadow_enabled === true,
+                autoRulePaperSelectEnabled: automation?.auto_rule_paper_select_enabled === true },
+              maxSlots, availableSlots: Math.max(0, maxSlots - (configs?.length ?? 0)), recentAttempts: recentAttempts.slice(0, 20),
+              activePatterns: (configs ?? []).map((row: any) => ({ id: row.id, state: row.state,
+                label: row.rule_spec?.label, latestForwardEvaluation: latestByConfig.get(row.id) ?? null })),
+              supportedTemplateCount: catalog.filter((row: any) => row.supported).length,
+              guard: "Use prior candidate outcomes to avoid duplicate hypotheses, not to tune against the same forward holdout. Kairos binds new candidates to recently researched market-local symbols, runs a deterministic costed holdout, and auto-starts a bounded shadow only if the data gate passes. A deterministic selector alone may later set a paper-only ranking preference after fixed paired-forward gates; it cannot change dimension/council scores, sizing, exits, live trading, or orders." });
+          }
+
+          case "propose_strategy_template": {
+            if (strategyProposalAttempted) return JSON.stringify({ error: "Only one strategy proposal attempt is allowed per weekly market run." });
+            strategyProposalAttempted = true;
+            const rules = call.arguments.rules;
+            const assetClass = String(call.arguments.asset_class ?? "");
+            const horizon = Number(call.arguments.horizon_sessions);
+            const supportedAssetClasses = ["us_equity", "adr", "etf", "metal", "leveraged_etf", "india"];
+            if (!supportedAssetClasses.includes(assetClass)) return JSON.stringify({ error: "asset_class must be an explicit supported market-local family" });
+            if (![2, 5, 10, 20].includes(horizon)) return JSON.stringify({ error: "horizon_sessions must be 2, 5, 10 or 20" });
+            const rationale = String(call.arguments.rationale ?? "").trim();
+            if (rationale.length < 20) return JSON.stringify({ error: "rationale must cite the market-local evidence reviewed and a falsifiable hypothesis" });
+            try {
+              const result = await autonomouslyStartTemplateShadow(svc, {
+                market: LEARN_MARKET,
+                assetClass: assetClass as "us_equity" | "adr" | "etf" | "metal" | "leveraged_etf" | "india",
+                rules,
+                horizonSessions: horizon as 2 | 5 | 10 | 20,
+                rationale,
+                requestedModel: effectiveLearnerModel,
+                promptVersion: (agentCfg as any)?.prompt_version ?? "unversioned",
+                runId: runId == null ? null : String(runId),
+              });
+              return JSON.stringify(result);
+            } catch (error: any) {
+              return JSON.stringify({ error: `autonomous strategy proposal failed: ${String(error?.message ?? error).slice(0, 240)}` });
+            }
           }
 
           case "update_signal_weight": {
@@ -825,6 +919,8 @@ AVAILABLE TOOLS:
 10. update_signal_weight — propose a bounded paper scoring-weight challenger. It creates an immutable CHALLENGER in strategy_versions. The deterministic validation and forward-shadow selector keep the incumbent unless a fixed 20-window matched, horizon-spaced test passes positive net-return, positive paired-difference, 95% lower-confidence-bound-above-zero and t>=2.093 gates. This can affect paper scoring only; it never changes live settings or execution. Gated: phase gate + per-dim config + auto-guard.
 11. semantic_search_decisions — vector similarity search over enriched trade decisions (RAG). Find past trades matching a situation ("rate-hike sell-off", "earnings miss hold", "momentum break"). Returns top-K decisions with outcome_score. Use AFTER query_trade_decisions to drill into specific scenarios.
 12. finish — complete run with summary, hypotheses array, and Mermaid diagram
+13. query_strategy_template_catalog — inspect the supported, frozen market-local price-rule grammar, capacity, and existing patterns
+14. propose_strategy_template — propose one or two conditions from the bounded price-rule grammar, select one market-local asset class, choose a 2/5/10/20-session horizon, and give a falsifiable evidence-based rationale. The app validates the parameter grid, binds symbols to recent research in that same asset family, applies the deterministic costed holdout, and automatically starts a bounded non-executing shadow when eligible. No code, raw predicates, arbitrary symbols, PaperTrader changes, or live changes are allowed. Use at most one proposal per weekly run.
 
 MERMAID DIAGRAM REQUIREMENTS — the finish.mermaid MUST follow this structure:
 flowchart TD
@@ -851,12 +947,15 @@ REASONING APPROACH:
 8. Read past learnings to avoid repeating old hypotheses
 9. Form hypotheses with evidence + confidence (ground in both paper trades AND real trade history)
 10. Mutate weights only if: N≥10 trades + confidence ≥ dim_min_confidence + not auto-guarded
+11. Inspect the strategy grammar and prior forward-evaluation results. Propose one falsifiable supported price-rule candidate per weekly run when the fixed grammar and fresh evidence support one; explicitly abstain when no defensible candidate exists. Avoid duplicates and do not tune against a repeatedly inspected forward holdout. Choose one asset family only; use no more than two conditions and only preregistered thresholds. Kairos owns the deterministic shadow tournament and may set only the separate paper ranking preference after its fixed gates.
 11. Call finish with complete structured Mermaid`;
 
-      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors to load background context, then check learner_config for current state. Query all enabled signal dimensions for correlation with P&L, the deterministic plan calibration, and score/price divergence evidence. Check macro context to understand if external factors explain performance. Divergence has no mutation authority by itself. Form grounded hypotheses. Only mutate weights if evidence is sufficient. Finish with a complete Mermaid diagram showing ALL inputs consumed this run.`;
+      const initialMessage = `Run your weekly ${LEARN_MARKET.toUpperCase()} learning analysis under this immutable user Trading Mandate: ${JSON.stringify(tradingMandate)}. You may propose challengers but cannot change the mandate; any proposed horizon must remain inside ${tradingMandate.min_hold_days}-${tradingMandate.max_hold_days} market days. Start with read_priors, inspect query_strategy_template_catalog including prior matured rule outcomes and recent rejected/failed proposals, then inspect learner_config, enabled dimensions, the deterministic plan calibration, score/price divergence, and macro context. Do not mutate weights without their existing server-verified gates. For strategy discovery, do not repeat any existing or recently attempted rule and do not tune to the repeatedly inspected forward outcomes; use those outcomes only to identify broad failure modes and form a new falsifiable hypothesis. If and only if the fixed grammar supports a defensible novel hypothesis, call propose_strategy_template once; otherwise abstain with no new trial. Respect the current market-local slot limit shown by the catalog. Choose one asset family only, no more than two allowlisted conditions, no code or raw RuleSpec. Kairos binds recent market-local symbols, performs the deterministic integrity/cost screen, and may start an automatic bounded forward shadow. The weekly deterministic tournament can later affect only a separate paper signal ranking preference after fixed paired-forward gates. Historical fit or LLM confidence is never promotion evidence. Finish with a complete Mermaid diagram showing all inputs consumed this run.`;
 
       const LEARNER_TOOLS = [
         { name: "read_priors", description: "Read human-written Bayesian market principles as background context", parameters: { type: "object", properties: { category: { type: "string", enum: ["fundamental", "technical", "macro", "insider", "general"] } } } },
+        { name: "query_strategy_template_catalog", description: "Read the supported frozen daily-price grammar, market-local slot limit, existing hypotheses, recent attempted/rejected proposals, and latest matured forward tournament metrics. Use this to avoid repeats and diagnose failures; never tune thresholds to the repeated forward holdout.", parameters: { type: "object", properties: {} } },
+        { name: "propose_strategy_template", description: "Propose at most one novel falsifiable bounded price-rule candidate per weekly market run, or abstain. Use one or two allowlisted keys and exact preregistered values, one asset family, and a rationale grounded in the same-market evidence reviewed. Kairos binds recent symbols, compiles and cost-tests it, and automatically starts a bounded forward shadow only after integrity gates pass. A later deterministic paired-forward tournament alone may create a separate paper ranking preference; this cannot alter scores, sizes, exits, live settings, or orders.", parameters: { type: "object", properties: { asset_class: { type: "string", enum: ["us_equity", "adr", "etf", "leveraged_etf", "metal", "india"] }, rules: { type: "object", minProperties: 1, maxProperties: 2, additionalProperties: false, properties: { rsi_min: { type: "number", enum: [55, 60, 65, 70] }, rsi_max: { type: "number", enum: [25, 30, 35, 40] }, pct_from_52w_high_max: { type: "number", enum: [5, 10, 15, 20] }, pct_below_52w_high_min: { type: "number", enum: [10, 15, 20, 25, 30] }, above_ma50: { type: "boolean", enum: [true] }, above_ma200: { type: "boolean", enum: [true] }, ma50_above_ma200: { type: "boolean", enum: [true] } } }, horizon_sessions: { type: "integer", enum: [2, 5, 10, 20] }, rationale: { type: "string", minLength: 20, maxLength: 500 } }, required: ["asset_class", "rules", "horizon_sessions", "rationale"] } },
         { name: "query_learner_config", description: "Read current signal weights, strategy config, dimension enable/freeze config, and auto-guard status", parameters: { type: "object", properties: {} } },
         { name: "query_signals_with_outcomes", description: "Get signals joined with trade outcomes. Filter by days, min score, or asset_class", parameters: { type: "object", properties: { days: { type: "number" }, min_analyst_score: { type: "number" }, asset_class: { type: "string", enum: ["us_equity", "adr", "etf", "metal"] } } } },
         { name: "query_score_correlation", description: "Pearson correlation between a score dimension and P&L. Skipped if dimension disabled in config.", parameters: { type: "object", properties: { dimension: { type: "string", enum: ["fundamental_score", "technical_score", "sentiment_score", "macro_score", "insider_score", "analyst_score"] }, days: { type: "number" } }, required: ["dimension"] } },
@@ -891,6 +990,7 @@ REASONING APPROACH:
           task: "summarize",
           agentLabel: "learner",
           runId: runId ?? undefined,
+          onResolvedModel: (model) => { effectiveLearnerModel = model; },
         });
 
         const finishCall = loopResult.toolCalls.find(c => c.name === "finish");
@@ -928,7 +1028,7 @@ REASONING APPROACH:
           weight_mutations: weightMutations,
           reasoning_chain: reasoningChain,
           mermaid_per_run: mermaid,
-          model_used: agentModel,
+          model_used: effectiveLearnerModel,
           win_rate_snapshot: winRateSnapshot,
           tokens_in: loopResult.tokensIn,
           tokens_out: loopResult.tokensOut,
@@ -950,9 +1050,27 @@ REASONING APPROACH:
           signals_analyzed: signalCount ?? 0,
           trades_analyzed: outcomes.length,
           mermaid_per_run: `flowchart TD\n  ERROR["❌ Agent loop error\\n${String(agentErr).slice(0, 100)}"]`,
-          model_used: agentModel, tokens_in: 0, tokens_out: 0,
+          model_used: effectiveLearnerModel, tokens_in: 0, tokens_out: 0,
         }, { onConflict: "run_date,market" });
       }
+    }
+
+    // Deterministic market-local tournament runs even if the LLM call failed.
+    // It reads immutable matured labels and can affect only the separate paper
+    // strategy selector; insufficient or broken evidence never selects.
+    try {
+      ruleTournament = await evaluateAndPersistAutonomousRuleShadows(svc, LEARN_MARKET);
+    } catch (error: any) {
+      const detail = String(error?.message ?? error).slice(0, 500);
+      console.error(`[learner] autonomous strategy tournament failed for ${LEARN_MARKET}:`, detail);
+      await reportIssue({
+        issueKey: `autonomous-rule-tournament:${LEARN_MARKET}`,
+        severity: "critical", category: "data_integrity",
+        title: `${LEARN_MARKET.toUpperCase()} autonomous strategy tournament failed`,
+        detail: `Rule-shadow outcomes were not evaluated or persisted; no strategy selection should be inferred. ${detail}`,
+        autoExpireAt: new Date(Date.now() + 14 * 24 * 3600_000).toISOString(),
+      }, svc);
+      ruleTournament = { status: "error", detail };
     }
 
     // `outcomes` contains only orphan rows reconciled during this run. Keep that
@@ -993,6 +1111,7 @@ REASONING APPROACH:
       success: true, closed: outcomes.length, priceFailures: priceFailures.length,
       outcomes, positionReassessments, autoGuardTripped,
       learner: learnerResult ?? { skipped: true, reason: "Already ran today or disabled" },
+      autonomousStrategyTournament: ruleTournament ?? { status: "not_run" },
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

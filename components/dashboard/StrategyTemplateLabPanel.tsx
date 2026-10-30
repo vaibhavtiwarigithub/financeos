@@ -10,9 +10,9 @@ type Evidence = {
   ruleSelected: Metric; deterministicEligible: Metric; latestBacktest: any; latestEvent: any;
   overlap: Record<string, Metric>;
 };
-type Config = { id: string; kind: string; state: string; template_ids: string[]; rule_version: string; trial_family_id: string; config_fingerprint: string; created_at: string; rule_spec: any; evidence: Evidence };
+type Config = { id: string; kind: string; state: string; template_ids: string[]; rule_version: string; trial_family_id: string; config_fingerprint: string; created_at: string; rule_spec: any; evidence: Evidence; latestPaperEvaluation?: any };
 type Template = { id: string; name: string; description: string; rules: Record<string, unknown>; supported: boolean; unsupportedReasons: string[] };
-type ReadState = { status: "ready" | "not_deployed" | "error"; configs: Config[]; templates: Template[]; limits?: { maxActive: number; used: number; maxUniverseSymbols: number }; message?: string };
+type ReadState = { status: "ready" | "not_deployed" | "error"; configs: Config[]; templates: Template[]; automation?: { enabled: boolean; auto_shadow_enabled: boolean; auto_rule_paper_select_enabled: boolean; max_active_shadows: number } | null; paperSelection?: { config_id: string; updated_at: string } | null; limits?: { maxActive: number; used: number; maxUniverseSymbols: number }; message?: string };
 
 function fmt(value: unknown, digits = 2) { return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(digits)}%` : "—"; }
 function metricLine(label: string, metric?: Metric) {
@@ -40,7 +40,7 @@ export default function StrategyTemplateLabPanel() {
       if (body.status === "not_deployed") setState({ status: "not_deployed", configs: [], templates: [], message: "The strategy-shadow ledger is not deployed. No rule decisions or outcomes are being collected." });
       else if (response.ok && body.status === "ready") {
         const options = Array.isArray(body.templates) ? body.templates : [];
-        setState({ status: "ready", configs: Array.isArray(body.configs) ? body.configs : [], templates: options, limits: body.limits });
+        setState({ status: "ready", configs: Array.isArray(body.configs) ? body.configs : [], templates: options, automation: body.automation ?? null, paperSelection: body.paperSelection ?? null, limits: body.limits });
         setTemplateId((current) => current && options.some((item: Template) => item.id === current && item.supported) ? current : options.find((item: Template) => item.supported)?.id ?? "");
       } else setState({ status: "error", configs: [], templates: [], message: "Strategy lab status could not be read. Retry; this is not evidence the queue is empty." });
     } catch { setState({ status: "error", configs: [], templates: [], message: "Strategy lab status could not be read. Check connection and retry; this is not evidence the queue is empty." }); }
@@ -91,18 +91,21 @@ export default function StrategyTemplateLabPanel() {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
       <div>
         <h3 id="strategy-template-lab-title" style={{ color: T.text, fontSize: 16, margin: 0 }}>Strategy discovery & forward tournament · {market === "india" ? "India" : "US"}</h3>
-        <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "6px 0 0", maxWidth: 900 }}>A frozen deterministic rule is backtested on point-in-time-available cached bars, then compared with the current entry screen on the same future symbol sessions. It is research-only: no score, position, paper fill, live proposal, or order can consume this result.</p>
+        <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "6px 0 0", maxWidth: 900 }}>The weekly market-local Learner discovers bounded price-rule hypotheses. Deterministic replay screens them, normal research runs collect forward outcomes, and the evidence gate can select a paper-only ranking preference. No manual candidate approval is required. Existing dimension scores, sizing, live decisions, and orders stay outside this rule-strategy lane.</p>
       </div>
       <button type="button" onClick={() => setAttempt((value) => value + 1)} disabled={loading} style={{ color: T.sub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", cursor: loading ? "wait" : "pointer", fontSize: 12 }}>{loading ? "Checking…" : "Refresh"}</button>
     </div>
     {!state ? <p style={{ color: T.muted, fontSize: 12, marginTop: 14 }}>Checking whether the strategy producer is deployed…</p> : <>
       <div role="status" style={{ marginTop: 14, padding: 12, background: T.surface, border: `1px solid ${statusColor}55`, borderRadius: 6, color: statusColor, fontSize: 12, lineHeight: 1.6 }}>
-        <strong>{state.status === "ready" ? "Research-only producer ready" : state.status === "not_deployed" ? "Not collecting yet" : "Status unavailable"}</strong>{state.message ? ` — ${state.message}` : state.status === "ready" ? ` — ${state.limits?.used ?? state.configs.filter((row) => row.state !== "retired").length}/${state.limits?.maxActive ?? 3} active or draft configuration slots used for this market.` : ""}
+        <strong>{state.status === "ready" ? "Strategy research producer ready" : state.status === "not_deployed" ? "Not collecting yet" : "Status unavailable"}</strong>{state.message ? ` — ${state.message}` : state.status === "ready" ? ` — weekly discovery ${state.automation?.enabled && state.automation?.auto_shadow_enabled ? "enabled" : "paused"}; paper selection ${state.automation?.auto_rule_paper_select_enabled ? "enabled" : "paused"}; ${state.limits?.used ?? state.configs.filter((row) => row.state !== "retired").length}/${state.limits?.maxActive ?? 3} market-local slots used.` : ""}
       </div>
       {state.status === "ready" && <>
+        <div role="status" style={{ marginTop: 10, padding: 10, border: `1px solid ${T.border}`, borderRadius: 6, color: state.paperSelection?.config_id ? T.green : T.muted, fontSize: 11 }}>
+          {state.paperSelection?.config_id ? `Evidence-qualified rule is the paper candidate ranking preference (${state.paperSelection.config_id.slice(0, 8)}…). Updated ${new Date(state.paperSelection.updated_at).toLocaleString()}.` : "No rule has passed the forward gate; deterministic score ranking remains in use."}
+        </div>
         <div style={{ marginTop: 14, padding: 14, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 7 }}>
-          <div style={{ color: T.text, fontWeight: 650, fontSize: 13 }}>Register a predeclared strategy hypothesis</div>
-          <p style={{ color: T.muted, fontSize: 11, lineHeight: 1.5, margin: "5px 0 10px" }}>Only complete price-based templates supported by the deterministic grammar can run. Unsupported fundamental, sentiment, or insider clauses remain visible in the list but cannot be stripped or approximated.</p>
+          <div style={{ color: T.text, fontWeight: 650, fontSize: 13 }}>Optional manual research tools</div>
+          <p style={{ color: T.muted, fontSize: 11, lineHeight: 1.5, margin: "5px 0 10px" }}>The scheduled LearnerAgent handles routine discovery automatically. These controls are optional for owner-directed template diagnostics. Rules outside Kairos's deterministic daily-price grammar remain unavailable; no unsupported fundamental, macro, sentiment, or insider condition is silently approximated.</p>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(180px, 1.5fr) 110px auto", gap: 8, alignItems: "end" }}>
             <label style={{ color: T.sub, fontSize: 11 }}>Price rule<select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={fieldStyle}>
               {templates.map((item) => <option key={item.id} value={item.id} disabled={!item.supported}>{item.name}{item.supported ? "" : " · unavailable inputs"}</option>)}
@@ -140,6 +143,9 @@ export default function StrategyTemplateLabPanel() {
                 <MetricCard label="Forward labels" value={`${config.evidence?.maturedCount ?? 0} / ${config.evidence?.displayedDecisionWindow ?? 0}`} sub={`${config.evidence?.pendingCount ?? 0} pending in window · ${config.evidence?.decisionCount ?? 0} total decisions`} />
                 <MetricCard label="Trial family" value={config.trial_family_id} sub={`fingerprint ${config.config_fingerprint.slice(0, 12)}…`} />
               </div>
+              {config.latestPaperEvaluation && <div style={{ marginTop: 8, color: config.latestPaperEvaluation.status === "select" ? T.green : config.latestPaperEvaluation.status === "retire" ? T.red : T.amber, fontSize: 11 }}>
+                Forward gate: {config.latestPaperEvaluation.status} · {config.latestPaperEvaluation.evidence?.pairedSessions ?? 0} paired sessions · {config.latestPaperEvaluation.evidence?.nonoverlapWindows ?? 0} non-overlap windows · excess {fmt(config.latestPaperEvaluation.evidence?.meanPairedExcessPct)} · t {typeof config.latestPaperEvaluation.evidence?.oneSidedT === "number" ? config.latestPaperEvaluation.evidence.oneSidedT.toFixed(2) : "—"} / required {typeof config.latestPaperEvaluation.evidence?.requiredT === "number" ? config.latestPaperEvaluation.evidence.requiredT.toFixed(2) : "—"}
+              </div>}
               <div style={{ marginTop: 8, border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px" }}>
                 <div style={{ color: T.text, fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Same-session forward outcome groups · descriptive only</div>
                 {metricLine("Rule would enter", config.evidence?.ruleSelected)}
@@ -152,7 +158,7 @@ export default function StrategyTemplateLabPanel() {
             </article>;
           })}
         </div> : <p style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>No frozen strategy hypothesis is registered for this market yet.</p>}
-        <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.45, marginTop: 12 }}>A natural research run appends at most one decision per configuration/symbol/session. Mature outcomes stay separate from dimension, council, and trading ledgers. Small samples remain descriptive; there is no automatic strategy selection or promotion.</p>
+      <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.45, marginTop: 12 }}>Natural research runs append one immutable decision per configuration, symbol, and session. Weekly evaluation compares mature net-of-cost rule returns with the deterministic entry cohort on paired sessions, strides by the declared horizon to reduce overlap, adjusts the t-stat bar for the declared trial family, and requires positive return plus no worse drawdown. Only a passed strategy ranks its already-qualified signals ahead of other already-qualified paper candidates. It cannot bypass scoring eligibility, portfolio construction, sizing, stop/target controls, or any live gate.</p>
       </>}
     </>}
   </section>;

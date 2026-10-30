@@ -22,6 +22,8 @@ export interface PaperSignalSelectionOptions {
   /** Held alpha names are ranked separately so qualified top-ups do not crowd out new entries. */
   heldSymbols?: ReadonlySet<string>;
   topUpLimit?: number;
+  /** Explicit, current-session match from an evidence-qualified rule strategy. */
+  strategyQualifiedSymbols?: ReadonlySet<string>;
 }
 
 function candidateMarket(signal: PaperSignalCandidate): "us" | "india" {
@@ -58,6 +60,9 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
 
   const selected = [...best.values()]
     .sort((a, b) => {
+      const strategyPriority = Number(options.strategyQualifiedSymbols?.has(String(b.symbol).trim().toUpperCase()) ?? false)
+        - Number(options.strategyQualifiedSymbols?.has(String(a.symbol).trim().toUpperCase()) ?? false);
+      if (strategyPriority !== 0) return strategyPriority;
       const scoreDiff = Number(b.analyst_score) - Number(a.analyst_score);
       if (scoreDiff !== 0) return scoreDiff;
       if (a.created_at !== b.created_at) return b.created_at.localeCompare(a.created_at);
@@ -66,6 +71,9 @@ export function selectBestPaperSignals<T extends PaperSignalCandidate>(
     .slice(0, Math.max(0, limit));
   const topUpCandidates = [...heldBest.values()]
     .sort((a, b) => {
+      const strategyPriority = Number(options.strategyQualifiedSymbols?.has(String(b.symbol).trim().toUpperCase()) ?? false)
+        - Number(options.strategyQualifiedSymbols?.has(String(a.symbol).trim().toUpperCase()) ?? false);
+      if (strategyPriority !== 0) return strategyPriority;
       const scoreDiff = Number(b.analyst_score) - Number(a.analyst_score);
       if (scoreDiff !== 0) return scoreDiff;
       if (a.created_at !== b.created_at) return b.created_at.localeCompare(a.created_at);

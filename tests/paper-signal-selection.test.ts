@@ -82,6 +82,12 @@ describe("paper signal selection", () => {
     expect(result.duplicateIds).toContain("held-old");
   });
 
+  it("gives a validated current-session strategy match priority among already eligible paper signals", () => {
+    const rows = [row("higher-score", "AAA", 94, "2026-07-22T10:00:00Z"), row("rule-match", "BBB", 72, "2026-07-22T10:00:00Z")];
+    const result = selectBestPaperSignals(rows, "us", 1, { strategyQualifiedSymbols: new Set(["BBB"]) });
+    expect(result.selected.map((signal) => signal.id)).toEqual(["rule-match"]);
+  });
+
   it("does not mix a held symbol's US top-up into the India pipeline", () => {
     const rows = [
       row("us", "ABC", 95, "2026-07-22T10:00:00Z", "us"),

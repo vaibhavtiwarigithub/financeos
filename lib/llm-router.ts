@@ -840,6 +840,7 @@ export async function runAgentLoop(opts: {
   agentLabel?: string
   runId?: string
   symbol?: string
+  onResolvedModel?: (model: string) => void
 }): Promise<AgentLoopResult> {
   let model = resolveModel(opts.model ?? "fast")
   // Tool loops have typed implementations only for Anthropic and DeepSeek.
@@ -854,6 +855,7 @@ export async function runAgentLoop(opts: {
       detail: `Single-shot calls support ${requested}, but runAgentLoop currently supports Claude and DeepSeek only.`,
     }).catch(() => {})
   }
+  opts.onResolvedModel?.(model)
   const maxIter = opts.maxIterations ?? 12
   const start = Date.now()
   let result: AgentLoopResult | undefined
@@ -885,6 +887,7 @@ export async function runAgentLoop(opts: {
       if (!model.startsWith("claude") || !isAuthMissing(err)) throw err
       const requested = model
       model = "deepseek-flash"
+      opts.onResolvedModel?.(model)
       await reportIssue({
         issueKey: `provider-key-missing:${requested}`,
         severity: "critical", category: "models",

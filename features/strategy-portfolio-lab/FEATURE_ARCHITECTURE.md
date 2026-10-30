@@ -62,10 +62,17 @@ mandate.
   evidence fails closed and raises System Health.
 - A candidate cannot reach paper selection on historical-fit results alone.
 - Losing, immature, or data-degraded candidates never replace the incumbent.
-- The existing 2026-10-30 implementation does **not** satisfy this addendum:
-  templates are fixed, registration and shadow start are owner-operated, and
-  the outputs do not feed paper strategy execution. Implementation and
-  production verification are outstanding.
+- The bounded code path now implements this lifecycle: weekly LearnerAgent
+  proposals are constrained by the frozen rule grammar; Kairos validates,
+  historical-screens, registers, and starts eligible shadows; natural research
+  appends decisions/outcomes; and the weekly deterministic evaluator can set a
+  market-local paper ranking preference after its fixed forward gates. The
+  consumer only ranks candidates already accepted by deterministic eligibility.
+- Release and evidence maturity remain separate. The new schema migration,
+  clean replay, deployment, and natural-cycle behavior must be verified before
+  calling the flow production-ready. No candidate has passed the forward gate;
+  longer horizons can remain insufficient for months. This is not a return
+  claim.
 
 ## Implementation checkpoint — 2026-10-30
 
@@ -192,3 +199,40 @@ combination compiler; P3 only after promotion-grade OOS evidence exists.
 - Every candidate and combination has frozen source/config/trial provenance.
 - Comparison never sums USD and INR evidence.
 - Disabling or retiring a shadow preserves history and immediately stops new rows.
+
+## Autonomous implementation checkpoint — 2026-10-30
+
+The owner-approved 2026-10-30 autonomous addendum supersedes the manual
+registration/start and owner-review requirements above for the bounded research
+and paper lane. Current implementation now connects the weekly market-local
+Learner proposal to strict rule-grid validation, frozen-universe historical
+screening, automatic forward-shadow start, the existing natural ResearchAgent
+collector, and a weekly deterministic tournament. The tournament pairs
+costed rule and deterministic-baseline sleeve outcomes on the same signal
+sessions and retains incomplete-label dates in the original signal-session grid.
+It samples one forward label per declared holding horizon, uses the exact
+one-sided Student-t critical value with Bonferroni allocation across declared
+trials, and records all evaluations immutably. A pass requires at least 60
+complete paired sessions and 20 horizon-spaced matured labels, positive rule
+and paired excess returns, positive excess in both sample halves, at least 60%
+positive horizon-spaced windows, and drawdown no worse than the paired baseline.
+For a 20-session horizon, this requires at least 400 observed signal sessions;
+missing labels do not shift the sampling grid.
+
+PaperTrader reads only the selected market-local rule and same-session rule
+decisions. A qualified rule match is a tie-break/ranking preference among
+signals that already passed deterministic research eligibility. It cannot
+bypass the score threshold, portfolio constructor, caps, sizing, exits, kill
+switch, or any live path. US and India remain separate. Failed reads disable
+only the extra preference and raise System Health; ordinary deterministic
+selection continues. The selector remains OFF in effect until forward labels
+pass the fixed gate; this does not claim current strategy evidence or returns.
+
+Implementation artifacts: `lib/strategy-replay/autonomous-template-discovery.ts`,
+`lib/strategy-replay/autonomous-template-selector.ts`, migration
+`20261030205231_autonomous_rule_paper_selector.sql`, LearnerAgent weekly hooks,
+PaperTrader's same-session ranking preference, and the Learning panel's
+selection/evidence status. Production schema application, acceptance CI,
+deployment, and natural-run verification must be recorded in
+`AUTONOMOUS_IMPLEMENTATION_RESULT.md` before this flow is called
+production-ready.
