@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import PerformanceTruth from "@/components/dashboard/PerformanceTruth";
 import StrategyGovernancePanel from "@/components/dashboard/StrategyGovernancePanel";
+import StrategyTemplateLabPanel from "@/components/dashboard/StrategyTemplateLabPanel";
 import DimensionDiagnosticsSummary from "@/components/dashboard/DimensionDiagnosticsSummary";
 import DimensionIcPanel from "@/components/dashboard/DimensionIcPanel";
 import IcRegressionPanel from "@/components/dashboard/IcRegressionPanel";
@@ -197,7 +198,7 @@ export default function LearningPage({
         {market === "us" && <ScoreVariantsPanel set="insider_v2" />}
       </LearningSection>
       <LearningSection id="strategy-evidence" title="Strategy governance" description="Review strategy lifecycle, validation and promotion gates; no automatic adoption from this page.">
-        <StrategyGovernancePanel />
+        <StrategyTemplateLabPanel /><StrategyGovernancePanel />
       </LearningSection>
       <LearningSection id="market-evidence" title="Market context & event studies" description="Separate macro conditions, earnings-event evidence and index-sleeve comparisons from stock-score tests.">
         <MacroContextPanel market={market} /><EventIcPanel /><IndexSleevePanel />

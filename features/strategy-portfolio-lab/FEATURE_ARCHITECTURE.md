@@ -5,6 +5,55 @@
 > no score, paper fill, live proposal, exit, sizing, or broker activation.
 > Date: 2026-08-02
 
+## Implementation reconciliation — 2026-10-30
+
+The production strategy-template shadow path is **not operational**. A read-only
+query confirmed `strategy_templates` and `register_trial(...)` exist, while
+`strategy_template_shadow_configs`, `strategy_template_shadow_events`, and
+`create_strategy_template_shadow_config(...)` are absent. The old migration
+preflight remains authoritative: production migration lineage diverges from
+this checkout, so do not force migration history or apply the feature schema
+until the canonical deployment migration set is recovered and reconciled.
+
+Code now includes a strict, deterministic daily-rule compiler and the Learning
+page exposes producer deployment state separately from an empty experiment
+queue. The API compiles from the stored template row; callers cannot submit an
+arbitrary rule spec. It refuses unsupported rule keys and the not-yet-approved
+combination compiler. Focused compiler/schema-status tests pass. These code
+changes do **not** mean that shadows are collecting or that a strategy has been
+measured.
+
+The seven current production templates were inspected. None is currently
+compilable in full: the technical templates also include unsupported 52-week or
+Bollinger rules, while the others include fundamental, insider, sentiment, or
+valuation rules that daily OHLCV alone cannot reproduce. The compiler rejects
+the whole template rather than silently discarding conditions. No candidate is
+eligible to enter a meaningful tournament until its complete point-in-time
+inputs are available and its source semantics are represented by a versioned
+deterministic rule.
+
+### Remaining gates
+
+1. Recover/reconcile the authoritative production migration lineage. Do not
+   bypass it with raw SQL, a new timestamp that hides the missing history, or a
+   migration-history repair.
+2. Provide complete, point-in-time source fields for any template rules that
+   require more than daily OHLCV, or explicitly define new templates whose
+   entire rule set can be calculated from the approved historical feed.
+3. Deploy the immutable config/event ledger and lifecycle RPC through the
+   reconciled migration process; verify per-market capacity and append-only
+   invariants.
+4. Connect registered configs to the existing deterministic validator and
+   matched, cost-aware portfolio replay; persist decision overlap and matured
+   net outcomes against the same deterministic dimension baseline.
+5. Run a natural forward shadow cohort and retain insufficient status until
+   labels mature. No automatic strategy selection, score changes, champion
+   promotion, paper/live position change, or order is permitted.
+
+The separate `systematic-pattern-discovery` proposal remains parked. It is not
+enabled by this bounded template-lab implementation because its survivorship,
+historical source, and multiple-testing prerequisites remain unresolved.
+
 ## Decision
 
 Turn a selected Strategy Library template into an immutable, market-local strategy
