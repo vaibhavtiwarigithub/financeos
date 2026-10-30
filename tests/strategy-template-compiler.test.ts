@@ -18,6 +18,30 @@ describe("strict strategy-template compiler", () => {
     expect(result.spec.execution).toBe("next_open");
     expect(result.spec.exit).toEqual({ op: "held_sessions", cmp: ">=", value: 10 });
     expect(result.spec.universe).toEqual(["SPY"]);
+    expect(result.ok && result.compilerVersion).toBe("template-rule-compiler-v2");
+  });
+
+  it("compiles the existing Trend Follow template without dropping its 52-week-high rule", () => {
+    const result = compileStrategyTemplate(source({
+      above_ma200: true,
+      ma50_above_ma200: true,
+      pct_from_52w_high_max: 15,
+    }), { market: "us", universe: ["SPY"], horizonSessions: 10 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.compilerVersion).toBe("template-rule-compiler-v2");
+    expect(result.spec.entry).toEqual({ op: "and", terms: [
+      { op: "cmp2", left: { fn: "close" }, cmp: ">", right: { fn: "sma", period: 200 } },
+      { op: "cmp2", left: { fn: "sma", period: 50 }, cmp: ">", right: { fn: "sma", period: 200 } },
+      { op: "cmp", left: { fn: "pct_below_rolling_high", period: 252 }, cmp: "<=", right: 15 },
+    ] });
+  });
+
+  it("rejects a malformed 52-week-high threshold", () => {
+    const result = compileStrategyTemplate(source({ pct_from_52w_high_max: 101 }), {
+      market: "us", universe: ["SPY"], horizonSessions: 10,
+    });
+    expect(result).toMatchObject({ ok: false, errors: ["pct_from_52w_high_max must be a finite percentage from 0 to 100"] });
   });
 
   it("refuses unsupported fundamental or sentiment rules instead of silently dropping them", () => {

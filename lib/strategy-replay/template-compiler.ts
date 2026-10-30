@@ -20,11 +20,14 @@ export interface TemplateCompileOptions {
 }
 
 export type TemplateCompileResult =
-  | { ok: true; spec: RuleSpec; compilerVersion: "template-rule-compiler-v1" }
+  | { ok: true; spec: RuleSpec; compilerVersion: "template-rule-compiler-v2" }
   | { ok: false; errors: string[] };
 
-const COMPILER_VERSION = "template-rule-compiler-v1" as const;
-const SUPPORTED_KEYS = new Set(["rsi_min", "rsi_max", "above_ma50", "above_ma200", "ma50_above_ma200"]);
+const COMPILER_VERSION = "template-rule-compiler-v2" as const;
+const SUPPORTED_KEYS = new Set([
+  "rsi_min", "rsi_max", "above_ma50", "above_ma200", "ma50_above_ma200",
+  "pct_from_52w_high_max",
+]);
 
 const validSymbol = (symbol: string, market: "us" | "india") => {
   const normalized = symbol.trim().toUpperCase();
@@ -69,6 +72,20 @@ export function compileStrategyTemplate(
       case "ma50_above_ma200":
         if (value !== true) errors.push("ma50_above_ma200 must be true when present");
         else entryTerms.push({ op: "cmp2", left: { fn: "sma", period: 50 }, cmp: ">", right: { fn: "sma", period: 200 } });
+        break;
+      case "pct_from_52w_high_max":
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+          errors.push("pct_from_52w_high_max must be a finite percentage from 0 to 100");
+        } else {
+          // Match the template's existing classification contract: distance from
+          // the trailing high is measured in percentage points and must be <= max.
+          entryTerms.push({
+            op: "cmp",
+            left: { fn: "pct_below_rolling_high", period: 252 },
+            cmp: "<=",
+            right: value,
+          });
+        }
         break;
     }
   }

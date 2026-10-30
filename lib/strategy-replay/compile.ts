@@ -103,6 +103,24 @@ function rangePct(bars: Bar[], end: number, period: number): number | null {
   return bars[end].close > 0 ? widest / bars[end].close : null;
 }
 
+/**
+ * Percent distance from the trailing high, measured using the decision bar's
+ * close and the maximum high over the last `period` complete bars (inclusive).
+ * Null before the full window is available. The caller must execute at next_open
+ * because this calculation includes the current bar's close/high.
+ */
+function pctBelowRollingHigh(bars: Bar[], end: number, period: number): number | null {
+  if (!Number.isInteger(period) || period < 1 || end + 1 < period) return null;
+  let highest = Number.NEGATIVE_INFINITY;
+  for (let i = end - period + 1; i <= end; i++) {
+    if (!Number.isFinite(bars[i].high)) return null;
+    highest = Math.max(highest, bars[i].high);
+  }
+  const close = bars[end]?.close;
+  if (!(highest > 0) || !Number.isFinite(close)) return null;
+  return ((highest - close) / highest) * 100;
+}
+
 function isNarrowestRange(bars: Bar[], end: number, period: number): number | null {
   if (end + 1 < period) return null;
   const today = bars[end].high - bars[end].low;
@@ -129,6 +147,7 @@ function indicatorValue(ind: Indicator, ctx: EvalCtx): number | null {
     case "rsi": return rsi(closes, idx, ind.period);
     case "rsi_wilder": return wilderRsi(closes, idx, ind.period);
     case "range_pct": return rangePct(bars, idx, ind.period);
+    case "pct_below_rolling_high": return pctBelowRollingHigh(bars, idx, ind.period);
     case "is_narrowest_range": return isNarrowestRange(bars, idx, ind.period);
     case "return_pct_from_entry":
       return ctx.entryPrice && ctx.entryPrice > 0

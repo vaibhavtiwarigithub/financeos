@@ -82,6 +82,8 @@ export type Indicator =
   | { fn: "rsi_wilder"; period: number }
   /** True range of the last `period` bars, as a fraction of close. */
   | { fn: "range_pct"; period: number }
+  /** Percent below the highest high in the trailing window, including the decision bar. */
+  | { fn: "pct_below_rolling_high"; period: number }
   /** Narrowest range in `period` bars (NR-n family): 1 when today's range is the
    *  smallest of the window, else 0. */
   | { fn: "is_narrowest_range"; period: number }
@@ -155,5 +157,5 @@ function indicatorUsesClose(i: Indicator): boolean {
   // sma/rsi/range are derived FROM closes, so a predicate using them on the
   // signal bar also consumes that bar's close.
   return i.fn === "close" || i.fn === "sma" || i.fn === "rsi" || i.fn === "rsi_wilder"
-    || i.fn === "range_pct" || i.fn === "is_narrowest_range";
+    || i.fn === "range_pct" || i.fn === "pct_below_rolling_high" || i.fn === "is_narrowest_range";
 }

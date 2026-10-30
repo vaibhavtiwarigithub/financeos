@@ -41,6 +41,24 @@ describe("look-ahead guard", () => {
     }))).toEqual([]);
   });
 
+  it("requires a full 252-bar window for distance from rolling high and matches percentage points", () => {
+    const series: Bar[] = Array.from({ length: 252 }, (_, i) => ({
+      session: `d${i}`, open: 100, high: 100, low: 84, close: i === 251 ? 85 : 100,
+    }));
+    const predicate = { op: "cmp" as const, left: { fn: "pct_below_rolling_high" as const, period: 252 }, cmp: "<=" as const, right: 15 };
+    expect(evaluate(predicate, { bars: series, idx: 250 })).toBeNull();
+    expect(evaluate(predicate, { bars: series, idx: 251 })).toBe(true);
+    expect(evaluate({ ...predicate, right: 14.99 }, { bars: series, idx: 251 })).toBe(false);
+  });
+
+  it("rejects same-close execution for a rolling-high predicate that uses the signal bar", () => {
+    const errs = validateSpec(baseSpec({
+      execution: "same_close",
+      entry: { op: "cmp", left: { fn: "pct_below_rolling_high", period: 252 }, cmp: "<=", right: 15 },
+    }));
+    expect(errs.some((e) => e.includes("look-ahead"))).toBe(true);
+  });
+
   it("fills next_open at the NEXT session's open, never the signal close", () => {
     const series = bars();
     const r = compileSpec({ spec: baseSpec(), bars: { AAA: series }, initialCash: 10000 });

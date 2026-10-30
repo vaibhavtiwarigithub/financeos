@@ -189,6 +189,20 @@ Paid prompt challengers, new strategy cohorts, calibrated inference and causal
 portfolio-level baseline/variant replay remain later, separately gated work.
 
 Implementation contract: `features/prediction-lab/FEATURE_ARCHITECTURE.md`.
+
+### Strategy-template compiler coverage
+
+The strategy-template compiler is versioned. `template-rule-compiler-v2`
+supports the production Trend Follow template's `pct_from_52w_high_max` rule by
+mapping it to distance from the highest daily high over 252 available sessions.
+The signal-bar high/close are included, the feature is undecidable until the
+full window exists, and execution remains at the next session's open. This is
+an explicit trading-session approximation of a 52-week high, not a calendar
+lookback. Same-close execution is rejected because the feature consumes the
+signal bar. Regression tests cover exact threshold behavior and warmup. This
+only makes one technical template representable; production shadow collection
+remains blocked by migration-lineage reconciliation described in the Strategy
+Portfolio Lab architecture. No strategy is promoted or inferred profitable.
 > 2026-10-03: **US regime features are null on 5,721 observations (2026-08-17 .. 2026-10-03).** `features.regime.{trend, volTercile, realizedVol}` come from the US benchmark series, which was frozen at 2026-08-03 by an ascending+limit(260) read of `price_cache` (fixed 2026-10-03). `decision_observations` is immutable, so those rows stay null: any regime-conditioned analysis, archetype grading or calibration must exclude US rows from 2026-08-17 to the fix date (rows from the first post-fix research run onward are populated). No other feature group dropped >=30 points of coverage between July and the last week (checked across technical/fundamental/sentiment/macro/quality keys).
 >
 

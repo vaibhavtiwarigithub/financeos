@@ -23,14 +23,18 @@ combination compiler. Focused compiler/schema-status tests pass. These code
 changes do **not** mean that shadows are collecting or that a strategy has been
 measured.
 
-The seven current production templates were inspected. None is currently
-compilable in full: the technical templates also include unsupported 52-week or
-Bollinger rules, while the others include fundamental, insider, sentiment, or
-valuation rules that daily OHLCV alone cannot reproduce. The compiler rejects
-the whole template rather than silently discarding conditions. No candidate is
-eligible to enter a meaningful tournament until its complete point-in-time
-inputs are available and its source semantics are represented by a versioned
-deterministic rule.
+The seven current production templates were inspected. The `Trend Follow`
+template is now compilable in full using daily OHLCV: close above MA200, MA50
+above MA200, and no more than 15 percentage points below the highest daily high
+over the trailing 252 available sessions. The latter uses a rolling 252-session
+high (including the signal bar), so it is a reproducible trading-session proxy
+for a 52-week high, not an exchange-calendar-year calculation. The compiler is
+versioned `template-rule-compiler-v2`; the new operator requires a complete
+window and a next-session-open execution. The remaining six templates are not
+compilable in full because they include unsupported Bollinger or
+fundamental/insider/sentiment/valuation rules. The compiler rejects those
+templates rather than silently dropping conditions. Compilability is not
+evidence of profitability and does not register or run a shadow.
 
 ### Remaining gates
 
