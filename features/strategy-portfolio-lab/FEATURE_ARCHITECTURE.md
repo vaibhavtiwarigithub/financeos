@@ -15,6 +15,18 @@ preflight remains authoritative: production migration lineage diverges from
 this checkout, so do not force migration history or apply the feature schema
 until the canonical deployment migration set is recovered and reconciled.
 
+Follow-up recovery audit on 2026-10-30 checked every fetched local/remote Git
+ref plus GitHub commit search for the missing migration versions; no source
+files were found. The existing production `strategy_versions`,
+`shadow_decisions`, `experiment_runs`, and `validation_experiments` contain
+relevant fields, but a catalog query found no database triggers on those tables.
+They therefore cannot replace the approved immutable config and append-only
+lifecycle ledger without weakening its guarantees. No raw SQL, MCP DDL, forced
+push, or migration-history edit is an acceptable workaround. The required
+external input is the original authoritative migration source/repository, or a
+separately reviewed baseline-recovery architecture backed by an authoritative
+schema export; until then the production writer must remain disabled.
+
 Code now includes a strict, deterministic daily-rule compiler and the Learning
 page exposes producer deployment state separately from an empty experiment
 queue. The API compiles from the stored template row; callers cannot submit an
