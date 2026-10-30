@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   if (body.kind === "combination") {
-    return NextResponse.json({ error: "combination_compiler_not_ready", detail: "P2 combinations are not enabled; only a single predeclared template can be compiled." }, { status: 409 });
+    return NextResponse.json({ error: "combination_compiler_not_ready", detail: "The approved P2 combination compiler is not implemented; only a single predeclared template can be compiled." }, { status: 409 });
   }
   const market = body.market === "india" ? "india" : body.market === "us" ? "us" : null;
   const ids = Array.isArray(body.template_ids) ? body.template_ids : [];
