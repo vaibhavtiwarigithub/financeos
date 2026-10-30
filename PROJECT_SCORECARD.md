@@ -1,6 +1,6 @@
 ## 2026-10-30 milestone — strategy discovery workflow
 
-The approved non-executing workflow is implemented and production schema verified. Engineering flow is deployed and production schema verified; predictive performance is not yet established because no forward config is active and no labels have matured. Local tests/typecheck/build and GitHub clean DB replay passed; GitHub application-contracts job is still queued despite run-level success.
+The approved non-executing workflow is implemented and production schema verified. Engineering flow is deployed and production schema verified; predictive performance is not yet established because no forward config is active and no labels have matured. Local tests/typecheck/build and both GitHub acceptance jobs passed.
 
 # Project Scorecard â€” Kairos
 
