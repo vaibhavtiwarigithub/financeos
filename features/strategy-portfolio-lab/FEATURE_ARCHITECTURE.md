@@ -7,64 +7,37 @@
 
 ## Implementation reconciliation — 2026-10-30
 
-The production strategy-template shadow path is **not operational**. A read-only
-query confirmed `strategy_templates` and `register_trial(...)` exist, while
-`strategy_template_shadow_configs`, `strategy_template_shadow_events`, and
-`create_strategy_template_shadow_config(...)` are absent. The old migration
-preflight remains authoritative: production migration lineage diverges from
-this checkout, so do not force migration history or apply the feature schema
-until the canonical deployment migration set is recovered and reconciled.
+The approved P0 flow is implemented in a forward-only migration and the
+Learning → Strategy discovery & forward tournament panel. Production migration
+lineage was read directly: the latest applied migration was `20261029161600`,
+and the four strategy-shadow objects were absent. The new migration follows that
+version; it does not edit or mark older migrations as applied. Current apply,
+deployment, and natural-run verification evidence is recorded in
+`IMPLEMENTATION_RESULT.md`.
 
-Follow-up recovery audit on 2026-10-30 checked every fetched local/remote Git
-ref plus GitHub commit search for the missing migration versions; no source
-files were found. The existing production `strategy_versions`,
-`shadow_decisions`, `experiment_runs`, and `validation_experiments` contain
-relevant fields, but a catalog query found no database triggers on those tables.
-They therefore cannot replace the approved immutable config and append-only
-lifecycle ledger without weakening its guarantees. No raw SQL, MCP DDL, forced
-push, or migration-history edit is an acceptable workaround. The required
-external input is the original authoritative migration source/repository, or a
-separately reviewed baseline-recovery architecture backed by an authoritative
-schema export; until then the production writer must remain disabled.
+The workflow is intentionally bounded: compile the three fully price-based
+templates supported by the deterministic grammar, run a 70/30 temporal
+historical comparison on cached daily bars, and register a frozen diagnostic
+draft with the trial-family ledger. Historical cache data are
+survivorship-selected and may be retrospectively adjusted; results are
+diagnostics, not promotion evidence. The universe is limited to ten symbols and
+three active or draft configurations per market. Unsupported rule fields stay
+visible and are never dropped.
 
-Code now includes a strict, deterministic daily-rule compiler and the Learning
-page exposes producer deployment state separately from an empty experiment
-queue. The API compiles from the stored template row; callers cannot submit an
-arbitrary rule spec. It refuses unsupported rule keys and the not-yet-approved
-combination compiler. Focused compiler/schema-status tests pass. These code
-changes do **not** mean that shadows are collecting or that a strategy has been
-measured.
+An owner explicitly starts a forward shadow after the priced historical
+holdout gate. Natural market-local ResearchAgent runs append one immutable
+decision per configuration/symbol/session. Outcomes mature from next-session
+open through the exact declared horizon exit, with modeled entry/exit cost and
+source/basis provenance. The Learning panel compares the rule with deterministic
+entry eligibility on the same observations and reports label maturity, overlap
+groups, and benchmark trend/volatility price proxies. Those proxies are not
+macroeconomic regimes. No result enters scoring, paper positions, proposals,
+sizing, exits, or broker paths; there is no automatic promotion.
 
-The seven current production templates were inspected. The `Trend Follow`
-template is now compilable in full using daily OHLCV: close above MA200, MA50
-above MA200, and no more than 15 percentage points below the highest daily high
-over the trailing 252 available sessions. The latter uses a rolling 252-session
-high (including the signal bar), so it is a reproducible trading-session proxy
-for a 52-week high, not an exchange-calendar-year calculation. The compiler is
-versioned `template-rule-compiler-v2`; the new operator requires a complete
-window and a next-session-open execution. The remaining six templates are not
-compilable in full because they include unsupported Bollinger or
-fundamental/insider/sentiment/valuation rules. The compiler rejects those
-templates rather than silently dropping conditions. Compilability is not
-evidence of profitability and does not register or run a shadow.
-
-### Remaining gates
-
-1. Recover/reconcile the authoritative production migration lineage. Do not
-   bypass it with raw SQL, a new timestamp that hides the missing history, or a
-   migration-history repair.
-2. Provide complete, point-in-time source fields for any template rules that
-   require more than daily OHLCV, or explicitly define new templates whose
-   entire rule set can be calculated from the approved historical feed.
-3. Deploy the immutable config/event ledger and lifecycle RPC through the
-   reconciled migration process; verify per-market capacity and append-only
-   invariants.
-4. Connect registered configs to the existing deterministic validator and
-   matched, cost-aware portfolio replay; persist decision overlap and matured
-   net outcomes against the same deterministic dimension baseline.
-5. Run a natural forward shadow cohort and retain insufficient status until
-   labels mature. No automatic strategy selection, score changes, champion
-   promotion, paper/live position change, or order is permitted.
+The broad `systematic-pattern-discovery` proposal remains separate and parked.
+This lab does not ingest arbitrary external strategies, optimize thresholds, or
+search combinations. It provides a measured, versioned starting point without
+claiming a profitable edge.
 
 The separate `systematic-pattern-discovery` proposal remains parked. It is not
 enabled by this bounded template-lab implementation because its survivorship,

@@ -62,6 +62,7 @@ import {
 import { US_BUCKETS, screenUsBucket } from "@/lib/data/yahoo-screener";
 import { isListingObservationEntryEligible } from "@/lib/listings/discovery";
 import { decisionContractRef } from "@/lib/trading/decision-contract";
+import { collectTemplateShadowEvidence } from "@/lib/strategy-replay/template-shadow-collector";
 
 // Webull research belongs to the Evidence Router shadow. Calling its nine MCP
 // tools per symbol inside the scoring deadline caused repeated 30s symbol
@@ -2698,6 +2699,27 @@ export async function processSymbol(
       console.error("[research-agent] decision_observations insert failed:", obsErr.message);
     }
     insertedObsId = obsRow?.id ?? null;
+
+    // Approved deterministic template strategies learn in their own shadow
+    // ledger on the same completed research candles. This is fail-open for
+    // canonical research, but a collector failure is surfaced in System Health.
+    if (insertedObsId && !isCrypto) {
+      const issueKey = `strategy-template-shadow-collector:${market}`;
+      try {
+        await collectTemplateShadowEvidence({
+          supabase, market, symbol, candles, source: candleResult.source,
+          observationId: Number(insertedObsId), baselineEntryEligible: entryEligible,
+        });
+        await resolveIssue(issueKey, supabase).catch(() => {});
+      } catch (error: any) {
+        console.error(`[research-agent] strategy template shadow collection failed for ${market}/${symbol}:`, error?.message ?? error);
+        await reportIssue({
+          issueKey, severity: "warn", category: "data_collection",
+          title: `${market.toUpperCase()} strategy shadow collection is degraded`,
+          detail: `The normal research result remains intact, but template decisions/outcomes could not be stored for ${symbol}: ${String(error?.message ?? error).slice(0, 500)}`,
+        }, supabase).catch(() => {});
+      }
+    }
 
     // Measure-only pattern evidence reuses the completed candles already fetched
     // for technical research. No future label is written back to this decision.

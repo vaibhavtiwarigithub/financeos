@@ -1,4 +1,8 @@
-﻿# Project Build Log â€” Kairos
+## 2026-10-30 — Bounded strategy discovery flow
+
+Implemented the approved Strategy Portfolio Lab from deterministic price-only templates through historical diagnostics, explicit forward shadow collection, and matured matched outcome reporting in Learning. Production migration and ACL are verified. The producer is inert until the owner registers and starts a template; it does not affect scoring or trading. Detailed evidence: `features/strategy-portfolio-lab/IMPLEMENTATION_RESULT.md`.
+
+# Project Build Log â€” Kairos
 
 ## Purpose
 

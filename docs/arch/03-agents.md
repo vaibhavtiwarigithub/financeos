@@ -1,5 +1,16 @@
 # Kairos — Agents
 
+## Bounded strategy-template shadows (2026-10-30)
+
+The natural market-local ResearchAgent now calls the Strategy Portfolio Lab
+collector after inserting a decision observation. For each owner-started,
+market-local frozen template shadow, it stores one deterministic rule decision
+per symbol/session and matures the net next-open return after the predeclared
+horizon. This is a measure-only side effect: collector errors are surfaced in
+System Health, while canonical research continues; no scorer, paper trader,
+portfolio, broker, or execution agent consumes its output. It adds no schedule
+or model inference. See `features/strategy-portfolio-lab/IMPLEMENTATION_RESULT.md`.
+
 ## Discovery and decision horizons
 
 Settings → Trading contains market-local paper allocation profiles (Conservative,

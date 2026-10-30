@@ -143,6 +143,28 @@ describe("forced horizon exit", () => {
     });
     expect(r.events.some((e) => e.kind === "exit")).toBe(true);
   });
+
+  it("exits exactly N sessions after the next-open entry", () => {
+    const r = compileSpec({
+      spec: baseSpec({ horizonSessions: 3, exit: { op: "never" } }),
+      bars: { AAA: bars() }, initialCash: 10000,
+    });
+    const entry = r.events.find((event) => event.kind === "entry")!;
+    const exit = r.events.find((event) => event.kind === "exit")!;
+    expect(entry.session).toBe(SESSIONS[1]);
+    expect(exit.session).toBe(SESSIONS[4]);
+  });
+
+  it("reserves the horizon when the evaluation window ends on the final available bar", () => {
+    const series = bars();
+    const r = compileSpec({
+      spec: baseSpec({ horizonSessions: 3 }),
+      bars: { AAA: series }, initialCash: 10000,
+      fromSession: SESSIONS[0], throughSession: SESSIONS[4],
+    });
+    expect(r.events.filter((event) => event.kind === "entry").every((event) => event.session <= SESSIONS[4])).toBe(true);
+    expect(r.events.filter((event) => event.kind === "exit").every((event) => event.session <= SESSIONS[4])).toBe(true);
+  });
 });
 
 describe("NAV marker", () => {

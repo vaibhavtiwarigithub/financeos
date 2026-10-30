@@ -26,7 +26,7 @@ export type TemplateCompileResult =
 const COMPILER_VERSION = "template-rule-compiler-v2" as const;
 const SUPPORTED_KEYS = new Set([
   "rsi_min", "rsi_max", "above_ma50", "above_ma200", "ma50_above_ma200",
-  "pct_from_52w_high_max",
+  "pct_from_52w_high_max", "pct_below_52w_high_min",
 ]);
 
 const validSymbol = (symbol: string, market: "us" | "india") => {
@@ -85,6 +85,13 @@ export function compileStrategyTemplate(
             cmp: "<=",
             right: value,
           });
+        }
+        break;
+      case "pct_below_52w_high_min":
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+          errors.push(`${key} must be a finite percentage from 0 to 100`);
+        } else {
+          entryTerms.push({ op: "cmp", left: { fn: "pct_below_rolling_high", period: 252 }, cmp: ">=", right: value });
         }
         break;
     }

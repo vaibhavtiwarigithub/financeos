@@ -29,6 +29,10 @@ export interface CompileInput {
   /** Bars per symbol, ascending by session, already point-in-time. */
   bars: Record<string, Bar[]>;
   initialCash: number;
+  /** Optional inclusive replay window. Earlier bars remain available as indicator warm-up. */
+  fromSession?: string;
+  /** Optional inclusive last executable session. Used to reserve horizon at test-window end. */
+  throughSession?: string;
 }
 
 /**
@@ -48,6 +52,8 @@ export interface CompileInput {
 
 export interface CompileResult {
   events: SimulationEvent[];
+  /** Flat-state rule decisions, including false decisions, for paired evaluation. */
+  decisions: Array<{ symbol: string; session: string; wouldEnter: boolean }>;
   /** Sessions skipped because an indicator had insufficient warm-up. */
   warmupSkipped: number;
   /** Decision sessions where the rule could actually be evaluated. */
@@ -219,9 +225,10 @@ export function evaluate(p: Predicate, ctx: EvalCtx): boolean | null {
 export function compileSpec(input: CompileInput): CompileResult {
   const { spec, bars } = input;
   const errors = validateSpec(spec);
-  if (errors.length) return { events: [], warmupSkipped: 0, decisionSessions: 0, errors };
+  if (errors.length) return { events: [], decisions: [], warmupSkipped: 0, decisionSessions: 0, errors };
 
   const events: SimulationEvent[] = [];
+  const decisions: Array<{ symbol: string; session: string; wouldEnter: boolean }> = [];
   let warmupSkipped = 0;
   const decisionSet = new Set<string>();
 
@@ -231,6 +238,12 @@ export function compileSpec(input: CompileInput): CompileResult {
   for (const symbol of spec.universe) {
     const series = bars[symbol];
     if (!series || series.length < 2) continue;
+    const firstAfterWindow = input.throughSession
+      ? series.findIndex((bar) => bar.session > input.throughSession!)
+      : -1;
+    const throughIndex = input.throughSession
+      ? (firstAfterWindow === -1 ? series.length - 1 : firstAfterWindow - 1)
+      : series.length - 1;
 
     // The exit MUST carry an explicit quantity. portfolio-simulator.ts:136
     // rejects a quantity-less exit as `invalid_exit` rather than assuming the
@@ -244,6 +257,7 @@ export function compileSpec(input: CompileInput): CompileResult {
       // `next_open` acts on the FOLLOWING bar, so the last bar can never trade.
       const fillIdx = spec.execution === "next_open" ? i + 1 : i;
       if (fillIdx >= series.length) break;
+      if (input.throughSession && series[fillIdx].session > input.throughSession) break;
       const fillPrice = spec.execution === "next_open"
         ? series[fillIdx].open : series[i].close;
       if (!(fillPrice > 0)) continue;
@@ -254,6 +268,9 @@ export function compileSpec(input: CompileInput): CompileResult {
           bars: series, idx: i, entryPrice: open.entryPrice, heldSessions: held,
         };
         const wantExit = evaluate(spec.exit, ctx);
+        // `entryIdx` is the signal bar; the position itself opens at the next
+        // session's open. Therefore `held >= N` executes at signalIndex + N + 1,
+        // exactly N sessions after entryIndex = signalIndex + 1.
         const forced = held >= spec.horizonSessions;
         if (wantExit === true || forced) {
           events.push({
@@ -273,6 +290,10 @@ export function compileSpec(input: CompileInput): CompileResult {
       const wantEntry = evaluate(spec.entry, ctx);
       if (wantEntry === null) { warmupSkipped++; continue; }
       decisionSet.add(series[i].session);
+      decisions.push({ symbol, session: series[i].session, wouldEnter: wantEntry });
+      if (input.fromSession && series[i].session < input.fromSession) continue;
+      // Leave room to enter and force-close at the exact predeclared horizon.
+      if (input.throughSession && throughIndex >= 0 && fillIdx + spec.horizonSessions > throughIndex) continue;
       if (wantEntry === true) {
         // Fraction of AVAILABLE cash. The 1e-9 shave keeps a 100% allocation
         // clear of the simulator's `total > cash + 1e-9` boundary rather than
@@ -309,5 +330,5 @@ export function compileSpec(input: CompileInput): CompileResult {
   events.sort((a, b) =>
     a.session !== b.session ? a.session.localeCompare(b.session) : a.id.localeCompare(b.id));
 
-  return { events, warmupSkipped, decisionSessions: decisionSet.size, errors: [] };
+  return { events, decisions, warmupSkipped, decisionSessions: decisionSet.size, errors: [] };
 }

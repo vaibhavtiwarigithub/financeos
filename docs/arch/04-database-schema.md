@@ -1,5 +1,21 @@
 # Kairos — Database Schema
 
+## Strategy template measurement ledger (2026-10-30)
+
+The Strategy Portfolio Lab uses `strategy_template_shadow_configs` for frozen
+market-local rules, `strategy_template_shadow_events` for append-only lifecycle
+and historical diagnostic snapshots, `strategy_template_shadow_decisions` for
+one decision per config/symbol/session, and `strategy_template_shadow_outcomes`
+for delayed net labels after the declared horizon. Config identity is immutable;
+state changes go through the owner-only lifecycle RPC and require a priced
+30-session historical benchmark holdout before starting/resuming collection.
+Owner reads are RLS-scoped; service-role writes are explicit; evidence rows are
+append-only. Full DDL is in the forward-only migration
+`20261030173804_strategy_template_shadow_flow.sql`.
+The follow-up `20261030173857_strategy_template_shadow_service_acl.sql` removes
+default mutation privileges: the service role can read configs/events and insert
+immutable decision/outcome rows, but cannot update/delete/truncate them.
+
 ## Read-path indexes and explicit API privileges
 
 `security_events` is created in the tracked `037_trader_proposals.sql` baseline

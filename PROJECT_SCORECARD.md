@@ -1,4 +1,8 @@
-﻿# Project Scorecard â€” Kairos
+## 2026-10-30 milestone — strategy discovery workflow
+
+The approved non-executing workflow is implemented and production schema verified. Engineering coverage is ready for owner-selected shadow collection; predictive performance is not yet established because no forward config is active and no labels have matured. Build/release verification remains pending.
+
+# Project Scorecard â€” Kairos
 
 ## Purpose
 

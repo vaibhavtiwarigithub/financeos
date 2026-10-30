@@ -1,5 +1,21 @@
 # Kairos — Learning Loop
 
+## Strategy pattern measurement flow (2026-10-30)
+
+Learning now includes the bounded Strategy Portfolio Lab. It tests only
+predeclared, fully price-supported rules against cached historical daily bars
+using a fixed 70/30 temporal split and costed next-open replay. The historical
+screen records survivorship and price-adjustment limitations and can only make
+a candidate eligible for an explicit forward shadow, never promote it.
+
+Once started by the owner, ResearchAgent appends decisions alongside the
+deterministic entry-eligible baseline on the same researched symbol sessions.
+Labels mature after the strategy horizon; the view shows matured/pending counts,
+same-session overlap buckets, per-bucket net return and hit-rate, plus benchmark
+trend/volatility price-proxy groups. Insufficient samples remain insufficient.
+This evidence is separate from dimension/LLM score IC and realized portfolio
+P&L; no production scoring, trade policy, position, or execution path reads it.
+
 ## Where each screen fits in the evidence journey
 
 Symbol Research displays what was recorded for an individual symbol at each run; it does not establish that a score preceded or predicted the later move. Learning owns matured, paired predictive-quality comparisons and keeps insufficient evidence distinct. Strategy Fit is a rule-match/classification view, not a predictive score or realized portfolio result. Backtest is a historical replay under its stated assumptions. Paper and Live Portfolio show their respective book outcomes. Agents & Workflows reports scheduled status, run history, capacity and on-demand controls; it does not imply continuous autonomous execution. The UI follows this separation in `features/research-workflow-ui/FEATURE_ARCHITECTURE.md`.
