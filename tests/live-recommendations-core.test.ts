@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { atr14, classifyResponse, evaluateArms, holdingChange, markRecommendation, revisionNote, simulateArm, type Bar, type Snap } from "@/lib/live-recommendations/core";
+import { hypotheticalReductionImpact } from "@/lib/live-recommendations/display";
 
 const bar = (date: string, o: number, h: number, l: number, c: number): Bar => ({ date, open: o, high: h, low: l, close: c });
 const snap = (date: string, qty: number, accountId = "A"): Snap => ({ date, qty, avgCost: 10, accountId });
@@ -45,6 +46,15 @@ describe("markRecommendation", () => {
   it("detects a stop touch from the session low", () => {
     const m = markRecommendation({ kind: "guardian_stop", issuedDate: "2026-10-02", referencePrice: 100, levelPrice: 96, bars, spyBars: spy });
     expect(m.levelTouched).toBe(true); expect(m.levelTouchedOn).toBe("2026-10-03"); expect(m.pnlIfLevelPct).toBe(-4);
+  });
+});
+
+describe("hypotheticalReductionImpact", () => {
+  it("shows the value protected by a reduction when price falls", () => expect(hypotheticalReductionImpact(4, 100, 90)).toBe(40));
+  it("shows foregone upside as a negative impact when price rises", () => expect(hypotheticalReductionImpact(4, 100, 110)).toBe(-40));
+  it("does not invent a dollar impact when quantity or a valid price is missing", () => {
+    expect(hypotheticalReductionImpact(null, 100, 90)).toBeNull();
+    expect(hypotheticalReductionImpact(4, 0, 90)).toBeNull();
   });
 });
 

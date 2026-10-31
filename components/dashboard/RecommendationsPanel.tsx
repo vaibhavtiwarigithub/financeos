@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import GuardianOutcomeScorecard from "./GuardianOutcomeScorecard";
 import type { GuardianOutcomePayload } from "@/types";
+import { hypotheticalReductionImpact } from "@/lib/live-recommendations/display";
 
 // Live Portfolio: every recommendation shown for the live book, what was done about it, and how it fared against the symbol and SPY, plus
 // the Guardian scorecard and the daily stop-rule revision note. Owner-only stored rows (/api/live-portfolio/recommendations). Display only:
@@ -13,7 +14,7 @@ type Mark = {
   symbol_return_pct: number | null; benchmark_return_pct: number | null; excess_pct: number | null; pnl_pct: number | null; pnl_basis: "actual" | "hypothetical" | null;
   level_touched: boolean | null; level_touched_on: string | null; pnl_if_level_pct: number | null;
 };
-type Row = { id: number; kind: string; account_id: string; symbol: string; issued_at: string; reference_price: number | null; level_price: number | null; rationale: string | null; mark: Mark | null; guardian_contract?: { version?: string } | null };
+type Row = { id: number; kind: string; account_id: string; symbol: string; issued_at: string; reference_price: number | null; level_price: number | null; qty_suggested: number | null; rationale: string | null; mark: Mark | null; guardian_contract?: { version?: string } | null };
 type Arm = { id: string; label: string; n: number; meanRetPct: number | null; stoppedShare: number | null; savedPts: number; costPts: number };
 type Payload = { error?: string; asOf: string; rows: Row[]; revision: { revised_on: string; sample: number; distinct_symbols: number; arms: Arm[]; note: string } | null; guardianPlanEvents: number; guardianOutcomes?: GuardianOutcomePayload };
 
@@ -42,13 +43,14 @@ const sortVal = (r: Row, k: SortKey): number | string | null => {
     case "ret": return m?.symbol_return_pct ?? null; case "spy": return m?.benchmark_return_pct ?? null; case "excess": return m?.excess_pct ?? null;
   }
 };
-type Filter = "all" | "taken" | "not_taken" | "unanswered" | "guardian";
+type Filter = "all" | "taken" | "not_taken" | "unanswered" | "guardian" | "downside";
 const FILTERS: Array<{ id: Filter; label: string; test: (r: Row) => boolean }> = [
   { id: "all", label: "All", test: () => true },
   { id: "taken", label: "Taken", test: (r) => ["taken", "followed"].includes(r.mark?.status ?? "") },
   { id: "not_taken", label: "Not taken", test: (r) => ["not_taken", "ignored"].includes(r.mark?.status ?? "") },
   { id: "unanswered", label: "Expired / open", test: (r) => ["expired_unanswered", "pending", "watching"].includes(r.mark?.status ?? "") },
-  { id: "guardian", label: "Guardian", test: (r) => r.kind !== "buy_idea" },
+  { id: "guardian", label: "Guardian stops", test: (r) => r.kind === "guardian_stop" },
+  { id: "downside", label: "Sell / reduce", test: (r) => r.kind !== "buy_idea" },
 ];
 
 export default function RecommendationsPanel() {
@@ -84,9 +86,10 @@ export default function RecommendationsPanel() {
     const taken = by(["taken"]); const notTaken = by(["not_taken", "expired_unanswered"]);
     const allStops = all.filter((r) => r.kind === "guardian_stop");
     const stops = allStops.filter(r => !r.guardian_contract);
+    const downside = all.filter((r) => r.kind !== "buy_idea").sort((a, b) => Date.parse(b.issued_at) - Date.parse(a.issued_at));
     return { total: all.length, ideas: ideas.length, taken: taken.length, notTaken: by(["not_taken"]).length, expired: by(["expired_unanswered"]).length, open: by(["pending"]).length,
       takenExcess: avg(taken.map((r) => r.mark?.excess_pct)), notTakenExcess: avg(notTaken.map((r) => r.mark?.excess_pct)),
-      alerts: allStops.length, stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length };
+      alerts: allStops.length, stops, touched: stops.filter((r) => r.mark?.level_touched).length, exits: all.filter((r) => r.kind === "exit_signal").length, downside };
   }, [data]);
 
   const head = (c: (typeof COLS)[number]) => (
@@ -130,6 +133,37 @@ export default function RecommendationsPanel() {
             {kpiCell("Not taken", String(kpi.notTaken + kpi.expired), kpi.notTakenExcess == null ? "no result yet" : `avg ${pct(kpi.notTakenExcess)} vs SPY if bought`, tone(kpi.notTakenExcess))}
             {kpiCell("Expired, no decision", String(kpi.expired), `${kpi.open} still open`, kpi.expired ? T.amber : T.text)}
             {kpiCell("Guardian stop records", String(kpi.alerts), `${kpi.touched} legacy levels touched · ${data.guardianPlanEvents} plan events (not alerts)`)}
+          </div>
+
+          <div style={{ marginTop: 16, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, background: "#13151C" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ color: T.text, fontWeight: 750, fontSize: 13 }}>Sell / reduce ideas and downside follow-up</div>
+              <div style={{ color: kpi.downside.length ? T.amber : T.muted, fontSize: 11 }}>{kpi.downside.length} stored recommendations{kpi.downside[0] ? ` · latest ${kpi.downside[0].issued_at.slice(0, 10)}` : ""}</div>
+            </div>
+            <div style={{ color: T.sub, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>
+              These are explicit Guardian stops or exit-ladder reductions for live holdings. A falling price or a lower score alone is not treated as a sell idea. Response is inferred from account snapshots and can miss same-day round trips.
+            </div>
+            {kpi.downside.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: 12, marginTop: 10 }}>No downside/reduction recommendations are stored. This does not prove that no holding needed review; it means no qualifying recommendation was recorded.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                {kpi.downside.map((r) => {
+                  const impact = r.kind === "exit_signal" && ["ignored", "not_taken"].includes(r.mark?.status ?? "")
+                    ? hypotheticalReductionImpact(r.qty_suggested, r.reference_price, r.mark?.last_price ?? null) : null;
+                  return <div key={`downside-${r.id}`} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: "6px 12px", fontSize: 11 }}>
+                    <div><div style={{ color: T.muted }}>Issued</div><div style={{ color: T.text }}>{r.issued_at.slice(0, 10)}</div></div>
+                    <div><div style={{ color: T.muted }}>Symbol / idea</div><div style={{ color: T.text, fontWeight: 700 }}>{r.symbol} · {KIND[r.kind] ?? r.kind}</div></div>
+                    <div><div style={{ color: T.muted }}>Response</div><div>{status(r)}</div></div>
+                    <div><div style={{ color: T.muted }}>Signal → latest close</div><div style={{ color: T.text }}>{px(r.reference_price)} → {px(r.mark?.last_price)}</div></div>
+                    <div><div style={{ color: T.muted }}>Proposed reduction</div><div style={{ color: T.text }}>{r.qty_suggested != null ? `${Number(r.qty_suggested).toLocaleString()} shares` : r.level_price != null ? `stop ${px(r.level_price)}` : "quantity not recorded"}</div></div>
+                    <div><div style={{ color: T.muted }}>Move since idea / vs SPY</div><div style={{ color: tone(r.mark?.symbol_return_pct) }}>{pct(r.mark?.symbol_return_pct)} / {pct(r.mark?.excess_pct)}</div></div>
+                    {impact != null && <div style={{ gridColumn: "1 / -1", color: tone(impact), fontWeight: 650 }}>If the suggested quantity had been reduced at the recorded signal price: {impact >= 0 ? "$" : "−$"}{Math.abs(impact).toFixed(2)} hypothetical value difference versus holding it to the latest close.</div>}
+                    {r.mark?.response_detail && <div style={{ gridColumn: "1 / -1", color: T.muted }}>{r.mark.response_detail}</div>}
+                    {r.kind === "exit_signal" && impact != null && <div style={{ gridColumn: "1 / -1", color: T.muted }}>Counterfactual only: not actual realized P/L or proof the recommendation caused an outcome. It excludes fees, spread, slippage, taxes, later trades, and intraday price path.</div>}
+                  </div>;
+                })}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 16 }}>

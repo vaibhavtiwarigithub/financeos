@@ -9,6 +9,15 @@ const panel = readFileSync("components/dashboard/RecommendationsPanel.tsx", "utf
 const migration = readFileSync("supabase/migrations/20261014162931_live_recommendation_tracker.sql", "utf8");
 
 describe("live recommendation tracker wiring", () => {
+  it("surfaces explicit sell/reduce ideas separately from the buy-heavy timeline", () => {
+    const panel = readFileSync("components/dashboard/RecommendationsPanel.tsx", "utf8");
+    expect(panel).toContain("Sell / reduce ideas and downside follow-up");
+    expect(panel).toContain("r.kind !== \"buy_idea\"");
+    expect(panel).toContain("hypothetical value difference versus holding it");
+    expect(panel).toContain("not actual realized P/L");
+    expect(panel).toContain("qty_suggested");
+  });
+
   it("never touches orders, stops or Guardian settings", () => {
     for (const forbidden of ["place_order", "submitOrder", "robinhood"]) expect(job).not.toContain(forbidden);
     const store = readFileSync("lib/live-recommendations/guardian-store.ts", "utf8");
@@ -32,7 +41,7 @@ describe("live recommendation tracker wiring", () => {
   });
   it("keeps the client panel free of server-only imports", () => {
     const imports = [...panel.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
-    expect(imports.every((i) => ["react", "@/types", "./GuardianOutcomeScorecard"].includes(i))).toBe(true);
+    expect(imports.every((i) => ["react", "@/types", "./GuardianOutcomeScorecard", "@/lib/live-recommendations/display"].includes(i))).toBe(true);
   });
   it("uses one market-scoped, owner-only exact-stop display in both pipelines", () => {
     const indiaRead = readFileSync("app/api/live-portfolio/india-recommendations/route.ts", "utf8");

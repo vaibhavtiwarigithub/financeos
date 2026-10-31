@@ -83,6 +83,21 @@ India buy-response history from current holdings. See
 contract, limitations, and separate future work for a persistent India
 recommendation/response ledger.
 
+## Downside/reduction visibility follow-up (2026-10-31)
+The US scorecard now has a dedicated, always-visible **Sell / reduce ideas and
+downside follow-up** block sourced only from stored `guardian_stop` and
+`exit_signal` rows. It reports the issue reference, latest mark, suggested
+quantity/stop, observed response and benchmark-relative move. For an ignored
+quantity-based exit signal, it may show `qty × (signal reference − latest
+close)` as a hypothetical value difference versus holding the suggested
+quantity. Positive means a lower marked value would have been avoided at the
+signal price; negative means upside would have been given up. This is not
+realized P/L, an executable fill estimate, or causal attribution, and excludes
+costs, taxes, intraday path and later account activity. It never derives a sell
+from a declining score or price, and does not change recommendation production
+or trading behavior. Empty/stale stored downside coverage is shown as a
+coverage limitation rather than evidence that no sell was warranted.
+
 ## What the owner asked for (2026-10-14)
 On the Live Portfolio page, show ALL recommendations; record whether each was taken or not; track how each fared against its symbol; revise the Guardian daily from that evidence; count how many times the Guardian alerted, the price to sell at, and current P/L depending on what was done.
 
