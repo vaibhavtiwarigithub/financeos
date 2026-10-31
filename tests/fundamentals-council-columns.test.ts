@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildCouncilLatest } from "@/lib/research/council-latest";
+import { dailyBarAsOfLabel } from "@/lib/research/daily-bar-as-of";
 
 const run = (id: string, symbol: string, market: string, decision_ts: string, status = "completed", consensus_score: number | string | null = null) => ({ id, symbol, market, decision_ts, status, consensus_score });
 const fc = (run_id: string, model_requested: string, final_score: number) => ({ run_id, model_requested, final_score });
 
 describe("Fundamentals page: LLM council columns (3 members + composite)", () => {
+  it("labels the research reference as a dated completed close, not a live quote", () => {
+    const page = readFileSync("app/dashboard/research/page.tsx", "utf8");
+    expect(page).toContain('label: "Last Close", csvLabel: "Last Completed Daily Close"');
+    expect(page).toContain("not a live/intraday quote");
+    expect(page).toContain("(bar ${asOf})");
+    expect(dailyBarAsOfLabel("2026-10-29T00:00:00.000Z")).toBe("2026-10-29");
+    expect(dailyBarAsOfLabel("2026-02-30")).toBeNull();
+    expect(dailyBarAsOfLabel(null)).toBeNull();
+  });
   it("takes the newest run per symbol AND market, never crossing markets", () => {
     const m = buildCouncilLatest(
       [run("a", "AAA", "us", "2026-10-12T14:00:00Z", "completed", 50), run("b", "AAA", "us", "2026-10-13T14:00:00Z", "completed", 60), run("c", "AAA", "india", "2026-10-13T05:00:00Z", "completed", 70)],

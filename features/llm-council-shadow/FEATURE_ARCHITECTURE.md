@@ -120,6 +120,19 @@ make personal subscriptions into a cloud API or promise uninterrupted service.
 
 **Status:** Owner-approved to build on 2026-09-30. Shadow-only until evidence and a later explicit decision permit a trading integration. This supersedes the deferred annotation-only proposal dated 2026-08-20.
 
+## 2026-10-31: overdue batch finalization
+
+The normal subscription batch finalizer runs when a job submits or when the
+next council collection sweeps batches. A worker that continues polling after
+a batch deadline could therefore leave old queued jobs and their runs marked
+running until a later collection. The claim RPC now advances at most ten oldest
+expired batches for that worker during each natural claim. The existing
+advancer marks only deadline-past queued/leased jobs expired, persists any
+member forecasts already returned, and reports the run as partial; it does not
+reset attempts, requeue work, or create an inference call. Existing provider
+worker state remains an operational concern, and expired members stay missing
+until a future naturally created observation is scored.
+
 ## Purpose
 
 For selected, already-researched symbols, collect genuinely independent model forecasts, let the selected models challenge and revise those forecasts for a bounded number of rounds, and produce a reproducible composite score plus an orchestrator-written synthesis. Preserve exactly what each model saw, its source timestamps, model identity, token usage, and cost. Then compare every model's score and the composite with realized, benchmark-neutral returns at multiple forward horizons.

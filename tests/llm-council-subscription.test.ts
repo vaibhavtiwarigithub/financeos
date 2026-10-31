@@ -87,6 +87,17 @@ describe("subscription worker boundary", () => {
     expect(sql).toContain("if exists(select 1 from public.llm_council_jobs");
     expect(sql).toContain("j.lease_id is distinct from p_lease");
   });
+  it("finalizes only already-expired batches during a natural worker claim", () => {
+    const sql = readFileSync("supabase/migrations/20261031051000_finalize_expired_council_batches_on_claim.sql", "utf8");
+    expect(sql).toContain("y.status='running' and y.deadline<=now()");
+    expect(sql).toContain("x.batch_id=y.id and x.worker_id=w.id");
+    expect(sql).toContain("limit 10");
+    expect(sql).toContain("for update of y skip locked");
+    expect(sql).toContain("perform public.council_subscription_advance(expired_batch.id)");
+    expect(sql).toContain("lease_until=least(b.deadline,now()+interval '10 minutes')");
+    expect(sql).not.toContain("attempts=0");
+    expect(sql).not.toContain("status='queued' where id");
+  });
   it("keeps Kairos and provider credentials out of model subprocesses", () => {
     // The worker is a standalone ESM executable. Run it through Node itself so
     // Vitest does not try to transform the .mjs script with its TS test loader.

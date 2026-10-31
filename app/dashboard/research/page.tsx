@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMarket } from "@/lib/market-context";
+import { dailyBarAsOfLabel } from "@/lib/research/daily-bar-as-of";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
@@ -208,9 +209,9 @@ const ALL_COLS: ColDef[] = [
     tooltip: "Screener bucket: Momentum (RSI>60 + uptrend + rev>10%), Value (cheap P/E + positive FCF), Both, or —. Derived at render time from breakdown data." },
 
   // ── Price at research ─────────────────────────────────────────────────────
-  { key: "price_at_research", label: "Price@R", csvLabel: "Price at Research (close)",
+  { key: "price_at_research", label: "Last Close", csvLabel: "Last Completed Daily Close",
     width: 66, defaultHidden: false,
-    tooltip: "Closing price at the time this research run executed (from technical_breakdown.price). Available for runs after 2026-08-10.",
+    tooltip: "Most recent completed daily-bar close used in the research snapshot, with the bar date shown in each cell. This is not a live or intraday quote.",
     breakdownSource: "technical", breakdownField: "price" },
 
   // ── Fundamental sub-indicators (inputs to F-Score) ────────────────────────
@@ -831,6 +832,11 @@ export default function FundamentalsPage() {
         else if (c.key === "market")       v = r.market;
         else if (c.key === "direction")    v = r.direction ?? "";
         else if (c.key === "trade_why")    v = r.trade_why ? [r.trade_why.headline, ...r.trade_why.bullets].join(" | ") : "";
+        else if (c.key === "price_at_research") {
+          const raw = getCell(r, c);
+          const asOf = dailyBarAsOfLabel(r.technical_breakdown?.as_of);
+          v = raw == null ? "" : `${String(raw)}${asOf ? ` (bar ${asOf})` : " (bar date unavailable)"}`;
+        }
         else if (c.score)                  v = String((r as any)[c.key] ?? "");
         else {
           const raw = getCell(r, c);
@@ -1477,6 +1483,16 @@ export default function FundamentalsPage() {
                       const rawScore = (row as any)[col.key];
                       const v = rawScore == null ? null : Number(rawScore);
                       content = <span title={col.key.startsWith("council_") && row.council_as_of ? `LLM council (shadow), research run ${String(row.council_as_of).slice(0, 16).replace("T", " ")} UTC` : undefined} style={{ fontWeight: 700, color: v == null || isNaN(v) ? T.muted : scoreColor(v) }}>{v == null || isNaN(v) ? "—" : col.key.startsWith("council_") ? Math.round(v) : v}</span>;
+                    } else if (col.key === "price_at_research") {
+                      const raw = getCell(row, col);
+                      const price = typeof raw === "number" || typeof raw === "string" ? raw : null;
+                      const asOfDate = dailyBarAsOfLabel(row.technical_breakdown?.as_of);
+                      content = price == null
+                        ? <span title="No completed daily close was recorded in this research snapshot" style={{ color: T.muted }}>—</span>
+                        : <span title={`Last completed daily-bar close${asOfDate ? ` as of ${asOfDate}` : "; bar date unavailable"}; not a live/intraday quote`} style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.25 }}>
+                            <span style={{ color: T.text }}>{fmtVal(price)}</span>
+                            <span style={{ color: T.muted, fontSize: 9 }}>{asOfDate ?? "date n/a"}</span>
+                          </span>;
                     } else if (col.breakdownSource) {
                       // Breakdown cell
                       const raw = getCell(row, col);

@@ -106,3 +106,37 @@ Composite scoring, council tables/routes, paper trader, risk gates.
 
 ## Approval
 Pending. Reply "Approved, implement" (with answers to the 3 decisions, or "defaults") to start.
+
+## 2026-10-31: After-hours event risk is still an unvalidated research gap
+
+The existing India event-extraction shadow and earnings-risk observations do
+not validate a US after-hours/news signal for SOXL/SOXS/TQQQ/SQQQ. The event
+extractor is India-first; its IC rows are currently insufficient, and the US
+leveraged shadow has no paired point-in-time event/news record matched to
+after-hours prices and the following regular-session confirmation. Do not
+describe VIX, news, or an overnight gap as a proven predictor, and do not use
+this gap to loosen an entry brake or buy inverse leverage at the open.
+
+A future **measure-only** extension should freeze, per event, its source,
+publication/availability time, affected issuer/underlying, taxonomy and source
+snapshot hash; pair it only with the first eligible after-hours bar, next
+regular-session opening gap and the existing 5/15/30-minute leveraged setup
+confirmation; then compare event days with matched no-event days and the
+existing intraday-only baseline by symbol/direction. Measure forward returns,
+missed/false alerts, coverage, spread and timestamp quality. Keep SOXL vs SOXS
+and TQQQ vs SQQQ as separate instruments; do not assume symmetric returns or
+reverse a score by multiplying its sign. Require matured, matched, genuinely
+non-overlapping sessions and out-of-sample validation before any proposal to
+change scoring or policy. This design must remain disconnected from scores,
+entry gates and execution until separately approved.
+
+An Oct 31 read-only probe confirmed Alpaca historical IEX 5-minute bars can
+return some extended-hours records for SOXL/SOXS, but the sample is sparse and
+does not establish all-venue coverage or a point-in-time event/news feed. The
+official API distinguishes the IEX single-exchange feed from SIP consolidated
+US exchange data ([Alpaca Market Data FAQ](https://docs.alpaca.markets/us/v1.1/docs/market-data-faq));
+the bars endpoint supports timestamped 1–59 minute bars and explicit feed
+selection ([Historical Bars API](https://docs.alpaca.markets/us/reference/stockbars)).
+Consequently this probe is a feasibility check, not paired evidence or proof
+that the app has a validated after-hours dataset. No new schedule, provider
+subscription, model call, table, score, or trade path was added in this update.
