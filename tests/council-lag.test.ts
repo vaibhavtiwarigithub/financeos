@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
+import { findStalledWorkers, findTerminalCouncilGaps, findUnscoredResearch } from "@/lib/monitoring/council-lag";
 
 const now = new Date("2026-10-13T12:00:00Z");
 const obs = (id: number, symbol: string, ts: string, market: "us" | "india" = "us") => ({ id, symbol, ts, market });
 
 describe("council silence detection", () => {
+  it("flags only terminal local-member jobs and retains symbol/status context", () => {
+    const gaps = findTerminalCouncilGaps({ jobs: [
+      { family: "claude", model: "claude-sonnet-5-5", market: "india", symbol: "RELIANCE.NS", runId: "1", status: "expired", created_at: "2026-10-13T08:00:00Z" },
+      { family: "codex", model: "gpt-5.6-luna", market: "us", symbol: "SOXS", runId: "2", status: "failed", created_at: "2026-10-13T09:00:00Z" },
+      { family: "deepseek", model: "deepseek-flash", market: "us", symbol: "SOXL", runId: "3", status: "failed", created_at: "2026-10-13T09:00:00Z" },
+      { family: "codex", model: "gpt-5.6-luna", market: "us", symbol: "SOXS", runId: "4", status: "failed", created_at: "2026-10-13T09:00:00Z", hasCompletedForecast: true },
+    ] });
+    expect(gaps.get("india:claude")).toMatchObject({ count: 1, symbols: ["RELIANCE.NS"], statuses: ["expired"] });
+    expect(gaps.get("us:codex")).toMatchObject({ count: 1, symbols: ["SOXS"], statuses: ["failed"] });
+    expect(gaps.has("us:deepseek")).toBe(false);
+  });
+
   it("flags a symbol whose newest observation is past grace and has no council run", () => {
     const found = findUnscoredResearch({ now, observations: [obs(1, "AAA", "2026-10-13T09:00:00Z"), obs(2, "BBB", "2026-10-13T09:00:00Z")], scoredObservationIds: new Set([2]) });
     expect(found.get("us")).toMatchObject({ count: 1, example: "AAA" });

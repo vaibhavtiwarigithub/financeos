@@ -1,4 +1,4 @@
-import { COUNCIL_QUEUE_GRACE_MIN, COUNCIL_UNSCORED_GRACE_MIN, findStalledWorkers, findUnscoredResearch } from "@/lib/monitoring/council-lag";
+import { COUNCIL_QUEUE_GRACE_MIN, COUNCIL_TERMINAL_JOB_WINDOW_HOURS, COUNCIL_UNSCORED_GRACE_MIN, findStalledWorkers, findTerminalCouncilGaps, findUnscoredResearch } from "@/lib/monitoring/council-lag";
 import { resolveExpiredIssues, resolveStaleInformationalIssues } from "@/lib/system-health";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { findCouncilDivergence, type DivergenceRun } from "@/lib/monitoring/council-divergence";
@@ -432,6 +432,56 @@ async function runCheck() {
               autoExpireAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
             }, svc);
           } else await resolveIssue(key, svc);
+        }
+      }
+
+      // A queued-worker alert clears when jobs leave the queue, but a terminal
+      // failure/expiry is still a missing member score. Keep that distinct from
+      // healthy completion and make the affected market/model/symbols actionable.
+      const terminalSince = new Date(now.getTime() - COUNCIL_TERMINAL_JOB_WINDOW_HOURS * 3_600_000).toISOString();
+      const terminalJobs = await fetchAllRows((from, to) => svc.from("llm_council_jobs")
+        .select("created_at,status,round,expected_model,worker_id,llm_council_workers(family),llm_council_batches!inner(synthetic,run_id)")
+        .gte("created_at", terminalSince).in("status", ["failed", "expired"])
+        .eq("round", 0)
+        .eq("llm_council_batches.synthetic", false)
+        .order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to), "terminal council jobs");
+      const failedRunIds = [...new Set(terminalJobs.map((job: any) => {
+        const batch = Array.isArray(job.llm_council_batches) ? job.llm_council_batches[0] : job.llm_council_batches;
+        return batch?.run_id;
+      }).filter((id: unknown): id is string => typeof id === "string"))];
+      const terminalRuns: any[] = [];
+      for (let i = 0; i < failedRunIds.length; i += 200) {
+        const { data, error } = await svc.from("llm_council_runs").select("id,market,symbol").in("id", failedRunIds.slice(i, i + 200));
+        if (error) throw error;
+        terminalRuns.push(...(data ?? []));
+      }
+      const runById = new Map(terminalRuns.map((run) => [run.id, run]));
+      const completedForecasts = new Set<string>();
+      for (let i = 0; i < failedRunIds.length; i += 200) {
+        const { data, error } = await svc.from("llm_council_model_forecasts").select("run_id,model_requested")
+          .in("run_id", failedRunIds.slice(i, i + 200)).eq("status", "completed");
+        if (error) throw error;
+        for (const forecast of data ?? []) completedForecasts.add(`${forecast.run_id}:${forecast.model_requested}`);
+      }
+      const terminalGaps = findTerminalCouncilGaps({ jobs: terminalJobs.map((job: any) => {
+        const worker = Array.isArray(job.llm_council_workers) ? job.llm_council_workers[0] : job.llm_council_workers;
+        const batch = Array.isArray(job.llm_council_batches) ? job.llm_council_batches[0] : job.llm_council_batches;
+        const run = runById.get(batch?.run_id);
+        return { family: String(worker?.family ?? councilMemberOf(job.expected_model) ?? "unknown"), model: String(job.expected_model ?? "unknown"), market: String(run?.market ?? "unknown"), symbol: String(run?.symbol ?? ""), runId: String(batch?.run_id ?? ""), status: String(job.status ?? ""), created_at: String(job.created_at ?? ""), hasCompletedForecast: completedForecasts.has(`${batch?.run_id}:${job.expected_model}`) };
+      }) });
+      for (const market of ["us", "india"] as const) {
+        if (market === "india" && !indiaEnabled) continue;
+        for (const family of ["claude", "codex"] as const) {
+          const key = `council-member-terminal:${market}:${family}`;
+          const hit = terminalGaps.get(`${market}:${family}`);
+          councilSignals[key] = hit ?? null;
+          if (hit) await reportIssue({
+            issueKey: key, severity: "warn", category: "cron",
+            title: `${family === "claude" ? "Claude" : "Codex"} council scores missing for ${hit.count} ${market.toUpperCase()} symbol run(s)`,
+            detail: [`${hit.count} selected member job(s) ended ${hit.statuses.join("/")} in the last ${COUNCIL_TERMINAL_JOB_WINDOW_HOURS} hours; examples: ${hit.symbols.join(", ") || "symbol unavailable"}.`, `Oldest affected job: ${hit.oldest.slice(0, 16)} UTC. Terminal jobs are not retried automatically; inspect the worker/provider failure and the affected council runs.`].join(" · "),
+            autoExpireAt: new Date(now.getTime() + 72 * 3_600_000).toISOString(),
+          }, svc);
+          else await resolveIssue(key, svc);
         }
       }
     }

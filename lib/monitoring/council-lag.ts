@@ -8,12 +8,38 @@
 
 export type CouncilObservation = { id: number; market: "us" | "india"; symbol: string; ts: string };
 export type QueuedCouncilJob = { family: string; created_at: string; last_seen_at?: string | null };
+export type TerminalCouncilJob = { family: string; model: string; market: string; symbol: string; runId: string; status: string; created_at: string; hasCompletedForecast?: boolean };
 
 export const COUNCIL_UNSCORED_GRACE_MIN = 90;
 export const COUNCIL_QUEUE_GRACE_MIN = 120;
 export const COUNCIL_WORKER_HEARTBEAT_GRACE_MIN = 30;
+export const COUNCIL_TERMINAL_JOB_WINDOW_HOURS = 24;
 
 export type StalledWorkerSummary = { count: number; oldest: string; active: boolean; lastSeenAt: string | null };
+export type TerminalCouncilGap = { count: number; symbols: string[]; statuses: string[]; oldest: string };
+
+// Terminal membership failures mean the run can never receive that member's score. Keep them
+// visible in System Health; do not retry here, because retries consume subscription/API quota.
+export function findTerminalCouncilGaps(args: { jobs: TerminalCouncilJob[]; limitSymbols?: number }) {
+  const byMember = new Map<string, TerminalCouncilGap>();
+  const countedRuns = new Set<string>();
+  for (const job of args.jobs) {
+    if ((job.status !== "failed" && job.status !== "expired") || job.hasCompletedForecast) continue;
+    const member = job.family.toLowerCase();
+    if (member !== "claude" && member !== "codex") continue;
+    const key = `${job.market}:${member}`;
+    const runKey = `${key}:${job.runId}:${job.model}`;
+    if (countedRuns.has(runKey)) continue;
+    countedRuns.add(runKey);
+    const current = byMember.get(key) ?? { count: 0, symbols: [], statuses: [], oldest: job.created_at };
+    current.count += 1;
+    if (job.symbol && !current.symbols.includes(job.symbol) && current.symbols.length < (args.limitSymbols ?? 5)) current.symbols.push(job.symbol);
+    if (!current.statuses.includes(job.status)) current.statuses.push(job.status);
+    if (job.created_at < current.oldest) current.oldest = job.created_at;
+    byMember.set(key, current);
+  }
+  return byMember;
+}
 
 export function findUnscoredResearch(args: { now: Date; observations: CouncilObservation[]; scoredObservationIds: Set<number>; graceMin?: number }) {
   const grace = (args.graceMin ?? COUNCIL_UNSCORED_GRACE_MIN) * 60_000;

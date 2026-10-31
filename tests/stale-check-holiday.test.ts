@@ -39,3 +39,13 @@ describe("stale-check also watches the leveraged doors and stalled producers", (
     expect(src).toContain("producer-stalled:");
   });
 });
+
+describe("stale-check surfaces terminal council member gaps", () => {
+  it("reads only real failed or expired jobs and creates per-market, per-member alerts", () => {
+    const src = readFileSync("app/api/alerts/stale-check/route.ts", "utf8");
+    expect(src).toContain('.in("status", ["failed", "expired"])');
+    expect(src).toContain("council-member-terminal:${market}:${family}");
+    expect(src).toContain("findTerminalCouncilGaps");
+    expect(src).toContain("Terminal jobs are not retried automatically");
+  });
+});
