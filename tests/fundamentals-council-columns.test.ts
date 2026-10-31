@@ -25,6 +25,14 @@ describe("Fundamentals page: LLM council columns (3 members + composite)", () =>
     const two = buildCouncilLatest([run("y", "BBB", "us", "2026-10-13T14:00:00Z", "partial", null)], [fc("y", "deepseek-flash", 30), fc("y", "gpt-5.6-luna", 40)]);
     expect(two.get("BBB:us")).toMatchObject({ council_score: null, council_deepseek: 30, council_codex: 40, council_claude: null });
   });
+  it("includes a completed hybrid worker result while its peer remains queued, without a partial median", () => {
+    const rows = buildCouncilLatest(
+      [run("hybrid", "CCC", "us", "2026-10-30T14:00:00Z", "running", null)],
+      [fc("hybrid", "deepseek-flash", 61)],
+      [{ run_id: "hybrid", expected_model: "gpt-5.6-luna", status: "completed", round: 0, result: { score: 74 } }],
+    );
+    expect(rows.get("CCC:us")).toMatchObject({ council_score: null, council_deepseek: 61, council_codex: 74, council_claude: null });
+  });
   it("the table has exactly the four requested columns, in the Scores view, sortable, exported, with a formula panel", () => {
     const page = readFileSync("app/dashboard/research/page.tsx", "utf8");
     for (const key of ["council_score", "council_deepseek", "council_claude", "council_codex"]) {

@@ -12,7 +12,7 @@ export type CouncilExpectedMember = {
 type Config = { participant_models?: unknown; subscription_worker_ids?: unknown } | null;
 type Forecast = { model_requested: string; execution_source: string; final_score: unknown };
 type Worker = { id: string; expected_model: string; family: string };
-type Job = { worker_id: string; round?: number; status: string; failure_code: string | null };
+type Job = { worker_id: string; round?: number; status: string; failure_code: string | null; result?: unknown };
 
 const models = (value: unknown): string[] => Array.isArray(value)
   ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
@@ -21,6 +21,11 @@ const scoreOf = (forecast: Forecast | undefined): number | null => {
   if (forecast?.final_score == null) return null;
   const value = Number(forecast.final_score);
   return Number.isFinite(value) ? value : null;
+};
+const jobScoreOf = (job: Job | undefined): number | null => {
+  if (!job || job.status !== "completed" || !job.result || typeof job.result !== "object") return null;
+  const value = (job.result as Record<string, unknown>).score;
+  return value == null || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100 ? null : Number(value);
 };
 
 /** Report every configured participant, including missing/expired subscription results. */
@@ -36,8 +41,10 @@ export function buildCouncilMemberState(config: Config, forecasts: Forecast[], w
     const worker = workers.find(w => w.id === id);
     const model = worker?.expected_model ?? "unregistered worker";
     const forecast = forecasts.find(f => f.model_requested === model && f.execution_source === "subscription");
-    const score = scoreOf(forecast);
     const job = jobs.filter(j => j.worker_id === id).sort((a, b) => (b.round ?? 0) - (a.round ?? 0))[0];
+    // A completed hybrid member result may precede the batch's terminal transition.
+    // Expose its accepted score while preserving the all-members consensus gate.
+    const score = scoreOf(forecast) ?? jobScoreOf(job);
     out.push({ model, member: worker ? councilMemberOf(model) : null, source: "subscription", score,
       status: score != null ? "completed" : job?.status === "completed" ? "missing_result" : job?.status ?? "not_queued",
       reason: score != null ? null : job?.failure_code ?? (job?.status === "completed" ? "Completed job has no stored forecast" : worker ? null : "Worker registration missing") });

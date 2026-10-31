@@ -48,11 +48,59 @@ export async function GET(req: NextRequest) {
   const workerIds = [...new Set(runRows.flatMap((r) => Array.isArray(r.config_snapshot?.subscription_worker_ids) ? r.config_snapshot.subscription_worker_ids : []))];
   const [workerResult, batchResult] = await Promise.all([
     workerIds.length ? svc.from("llm_council_workers").select("id,family,expected_model").in("id", workerIds) : Promise.resolve({ data: [], error: null }),
-    runRows.length ? svc.from("llm_council_batches").select("run_id,llm_council_jobs(worker_id,round,status,failure_code)").in("run_id", runRows.map((r) => r.id)) : Promise.resolve({ data: [], error: null }),
+    runRows.length ? svc.from("llm_council_batches").select("run_id,llm_council_jobs(worker_id,expected_model,actual_model,round,status,failure_code,result,submitted_at)").in("run_id", runRows.map((r) => r.id)) : Promise.resolve({ data: [], error: null }),
   ]);
   if (workerResult.error || batchResult.error) return NextResponse.json({ error: "Council member status unavailable" }, { status: 503 });
   const jobsByRun = new Map<string, any[]>();
   for (const batch of batchResult.data ?? []) jobsByRun.set(batch.run_id, [...(jobsByRun.get(batch.run_id) ?? []), ...(batch.llm_council_jobs ?? [])]);
+
+  // Worker results are immutable and accepted before a hybrid batch becomes terminal.
+  // Surface those completed scores immediately; never derive a composite from a subset.
+  const workersById = new Map((workerResult.data ?? []).map((w: any) => [w.id, w]));
+  const membersByRun = new Map<string, any[]>();
+  for (const run of runRows) {
+    const rows = (byRun.get(run.id) ?? []).map((f) => ({
+      member: councilMemberOf(f.model_requested), model: f.model_used ?? f.model_requested,
+      source: f.execution_source, score: num(f.final_score), confidence: num(f.confidence),
+      rationale: typeof f.final_rationale === "string" ? f.final_rationale.slice(0, 600) : null,
+      bull: typeof f.bull_case === "string" ? f.bull_case.slice(0, 300) : null,
+      bear: typeof f.bear_case === "string" ? f.bear_case.slice(0, 300) : null,
+      citations: Array.isArray(f.evidence_citations) ? f.evidence_citations.slice(0, 3).map((citation: any) => ({
+        claim: typeof citation?.claim === "string" ? citation.claim.slice(0, 160) : "",
+        source: typeof citation?.source === "string" ? citation.source.slice(0, 160) : "",
+        asOf: typeof citation?.as_of === "string" ? citation.as_of.slice(0, 40) : "unknown",
+      })) : [],
+      availableAt: f.available_at,
+    }));
+    const persisted = new Set(rows.filter((f) => f.source === "subscription").map((f) => f.model));
+    const latestByWorker = new Map<string, any>();
+    for (const job of jobsByRun.get(run.id) ?? []) {
+      const prior = latestByWorker.get(job.worker_id);
+      if (!prior || Number(job.round ?? 0) > Number(prior.round ?? 0)) latestByWorker.set(job.worker_id, job);
+    }
+    for (const job of latestByWorker.values()) {
+      const worker = workersById.get(job.worker_id) as any;
+      const model = job.expected_model ?? worker?.expected_model;
+      if (!model || persisted.has(model) || job.status !== "completed" || !job.result || typeof job.result !== "object") continue;
+      const result = job.result as Record<string, unknown>;
+      const score = num(result.score);
+      if (score == null || score < 0 || score > 100) continue;
+      rows.push({
+        member: councilMemberOf(model), model: job.actual_model ?? model, source: "subscription", score,
+        confidence: num(result.confidence),
+        rationale: typeof result.rationale === "string" ? result.rationale.slice(0, 600) : null,
+        bull: typeof result.bull_case === "string" ? result.bull_case.slice(0, 300) : null,
+        bear: typeof result.bear_case === "string" ? result.bear_case.slice(0, 300) : null,
+        citations: Array.isArray(result.evidence_citations) ? result.evidence_citations.slice(0, 3).map((citation: any) => ({
+          claim: typeof citation?.claim === "string" ? citation.claim.slice(0, 160) : "",
+          source: typeof citation?.source === "string" ? citation.source.slice(0, 160) : "",
+          asOf: typeof citation?.as_of === "string" ? citation.as_of.slice(0, 40) : "unknown",
+        })) : [],
+        availableAt: job.submitted_at ?? null,
+      });
+    }
+    membersByRun.set(run.id, rows);
+  }
 
   return NextResponse.json({
     symbol, market, shadowOnly: true,
@@ -67,22 +115,7 @@ export async function GET(req: NextRequest) {
       cohort: r.cohort ?? null,
       promptVersion: r.prompt_version ?? null,
       completedAt: r.completed_at,
-      members: (byRun.get(r.id) ?? []).map((f) => ({
-        member: councilMemberOf(f.model_requested),
-        model: f.model_used ?? f.model_requested,
-        source: f.execution_source,
-        score: num(f.final_score),
-        confidence: num(f.confidence),
-        rationale: typeof f.final_rationale === "string" ? f.final_rationale.slice(0, 600) : null,
-        bull: typeof f.bull_case === "string" ? f.bull_case.slice(0, 300) : null,
-        bear: typeof f.bear_case === "string" ? f.bear_case.slice(0, 300) : null,
-        citations: Array.isArray(f.evidence_citations) ? f.evidence_citations.slice(0, 3).map((citation: any) => ({
-          claim: typeof citation?.claim === "string" ? citation.claim.slice(0, 160) : "",
-          source: typeof citation?.source === "string" ? citation.source.slice(0, 160) : "",
-          asOf: typeof citation?.as_of === "string" ? citation.as_of.slice(0, 40) : "unknown",
-        })) : [],
-        availableAt: f.available_at,
-      })),
+      members: membersByRun.get(r.id) ?? [],
       memberStates: buildCouncilMemberState(r.config_snapshot, byRun.get(r.id) ?? [], workerResult.data ?? [], jobsByRun.get(r.id) ?? []),
     })),
   });

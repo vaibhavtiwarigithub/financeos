@@ -81,4 +81,21 @@ describe("symbol council evidence route", () => {
     expect(h.selectByTable.llm_council_runs).toContain("prompt_version");
     expect(h.selectByTable.llm_council_model_forecasts).toContain("evidence_citations");
   });
+  it("surfaces accepted completed job results while a hybrid peer remains pending", async () => {
+    h.runs[0].status = "running";
+    h.runs[0].consensus_score = null;
+    h.runs[0].config_snapshot = { cohort_key: "all_research_v1", subscription_worker_ids: ["w-codex"] };
+    h.forecasts = [];
+    h.workers = [{ id: "w-codex", family: "codex", expected_model: "gpt-5.6-luna" }];
+    h.batches = [{ run_id: "run-1", llm_council_jobs: [{
+      worker_id: "w-codex", expected_model: "gpt-5.6-luna", actual_model: "gpt-5.6-luna", round: 0,
+      status: "completed", failure_code: null, submitted_at: "2026-10-30T14:02:00Z",
+      result: { score: 74, confidence: 0.7, rationale: "Job forecast rationale", bull_case: "Bull", bear_case: "Bear", evidence_citations: [] },
+    }] }];
+    const response = await GET(new NextRequest("https://test.invalid/api/research/council?symbol=GOOGL&market=us"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.runs[0].members).toContainEqual(expect.objectContaining({ model: "gpt-5.6-luna", source: "subscription", score: 74 }));
+    expect(body.runs[0].members).toHaveLength(1);
+  });
 });

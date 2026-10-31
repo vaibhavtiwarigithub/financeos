@@ -34,4 +34,14 @@ describe("council member completeness", () => {
     expect(rows[1]).toMatchObject({ score: null, status: "expired", reason: "deadline_expired" });
     expect(rows[2]).toMatchObject({ score: null, status: "missing_result", reason: "Completed job has no stored forecast" });
   });
+  it("shows an accepted hybrid job score before its batch is terminal", () => {
+    const rows = buildCouncilMemberState(config, [
+      { model_requested: "deepseek-flash", execution_source: "api", final_score: 66 },
+    ], workers, [
+      { worker_id: "w-claude", round: 0, status: "queued", failure_code: null },
+      { worker_id: "w-codex", round: 0, status: "completed", failure_code: null, result: { score: 74, confidence: 0.7 } },
+    ]);
+    expect(rows.find(x => x.member === "codex")).toMatchObject({ score: 74, status: "completed", reason: null });
+    expect(rows.find(x => x.member === "claude")).toMatchObject({ score: null, status: "queued" });
+  });
 });

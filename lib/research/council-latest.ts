@@ -15,6 +15,7 @@ export type CouncilLatestRow = {
 
 type RunRow = { id: string; symbol: string; market: string; decision_ts: string; status: string; consensus_score: number | string | null };
 type ForecastRow = { run_id: string; model_requested: string; final_score: number | string | null };
+type SubscriptionJobRow = { run_id: string; expected_model: string; status: string; round?: number; result: unknown };
 
 const num = (v: unknown): number | null => (v == null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
@@ -23,15 +24,28 @@ const num = (v: unknown): number | null => (v == null ? null : Number.isFinite(N
  * has no stored consensus, so the deterministic median of all THREE members is used, and only when all three exist
  * (a median of two would invent a council opinion).
  */
-export function buildCouncilLatest(runs: RunRow[], forecasts: ForecastRow[]): Map<string, CouncilLatestRow> {
+export function buildCouncilLatest(runs: RunRow[], forecasts: ForecastRow[], subscriptionJobs: SubscriptionJobRow[] = []): Map<string, CouncilLatestRow> {
   const newest = new Map<string, RunRow>();
   for (const run of runs) {
     const key = `${run.symbol}:${run.market}`;
     const cur = newest.get(key);
     if (!cur || String(run.decision_ts) > String(cur.decision_ts)) newest.set(key, run);
   }
+  const completedForecasts = [...forecasts];
+  const forecastKeys = new Set(forecasts.map(f => `${f.run_id}:${f.model_requested}`));
+  const latestJob = new Map<string, SubscriptionJobRow>();
+  for (const job of subscriptionJobs) {
+    const key = `${job.run_id}:${job.expected_model}`;
+    const prior = latestJob.get(key);
+    if (!prior || Number(job.round ?? 0) > Number(prior.round ?? 0)) latestJob.set(key, job);
+  }
+  for (const [key, job] of latestJob) {
+    if (forecastKeys.has(key) || job.status !== "completed" || !job.result || typeof job.result !== "object") continue;
+    const score = num((job.result as Record<string, unknown>).score);
+    if (score != null && score >= 0 && score <= 100) completedForecasts.push({ run_id: job.run_id, model_requested: job.expected_model, final_score: score });
+  }
   const byRun = new Map<string, ForecastRow[]>();
-  for (const f of forecasts) { const l = byRun.get(f.run_id) ?? []; l.push(f); byRun.set(f.run_id, l); }
+  for (const f of completedForecasts) { const l = byRun.get(f.run_id) ?? []; l.push(f); byRun.set(f.run_id, l); }
   const out = new Map<string, CouncilLatestRow>();
   for (const [key, run] of newest) {
     const members: Record<CouncilMember, number | null> = { deepseek: null, claude: null, codex: null };
@@ -69,5 +83,15 @@ export async function loadCouncilLatest(svc: any, sinceDays = 7): Promise<Map<st
     if (error) throw new Error(`council forecasts query failed: ${error.message}`);
     forecasts.push(...((data ?? []) as ForecastRow[]));
   }
-  return buildCouncilLatest(runs, forecasts);
+  const subscriptionJobs: SubscriptionJobRow[] = [];
+  for (let i = 0; i < newestIds.length; i += 200) {
+    const { data, error } = await svc.from("llm_council_batches")
+      .select("run_id,llm_council_jobs(expected_model,status,round,result)")
+      .in("run_id", newestIds.slice(i, i + 200));
+    if (error) throw new Error(`council subscription results query failed: ${error.message}`);
+    for (const batch of data ?? []) for (const job of batch.llm_council_jobs ?? []) {
+      subscriptionJobs.push({ run_id: batch.run_id, ...job });
+    }
+  }
+  return buildCouncilLatest(runs, forecasts, subscriptionJobs);
 }

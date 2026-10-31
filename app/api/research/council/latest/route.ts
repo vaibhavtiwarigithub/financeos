@@ -35,6 +35,29 @@ export async function GET(req: NextRequest) {
     if (fError) return NextResponse.json({ error: fError.message }, { status: 500 });
     forecasts.push(...(data ?? []));
   }
+  // Hybrid batches can contain completed member results while another selected
+  // worker is still queued. Read the accepted subscription result directly so its
+  // score is visible before the batch closes; keep the composite all-member-only.
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error: batchError } = await svc.from("llm_council_batches")
+      .select("run_id,llm_council_jobs(expected_model,status,round,result)")
+      .in("run_id", ids.slice(i, i + 200));
+    if (batchError) return NextResponse.json({ error: batchError.message }, { status: 500 });
+    for (const batch of data ?? []) {
+      const existing = new Set(forecasts.filter((f: any) => f.run_id === batch.run_id).map((f: any) => f.model_requested));
+      const latest = new Map<string, any>();
+      for (const job of batch.llm_council_jobs ?? []) {
+        const prior = latest.get(job.expected_model);
+        if (!prior || Number(job.round ?? 0) > Number(prior.round ?? 0)) latest.set(job.expected_model, job);
+      }
+      for (const [model_requested, job] of latest) {
+        const score = job.result && typeof job.result === "object" ? num((job.result as Record<string, unknown>).score) : null;
+        if (!existing.has(model_requested) && job.status === "completed" && score != null && score >= 0 && score <= 100) {
+          forecasts.push({ run_id: batch.run_id, model_requested, final_score: score });
+        }
+      }
+    }
+  }
   const byRun = new Map<string, any[]>();
   for (const f of forecasts) { const l = byRun.get(f.run_id) ?? []; l.push(f); byRun.set(f.run_id, l); }
 
