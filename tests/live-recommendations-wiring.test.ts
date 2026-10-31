@@ -19,6 +19,10 @@ describe("live recommendation tracker wiring", () => {
     expect(panel).toContain("Partial target reached");
     expect(panel).toContain("Frozen level-only result");
     expect(panel).toContain("frozen at stop · level-only");
+    expect(panel).toContain("parseExitTriggerLevels(r.rationale)");
+    expect(panel).toContain("Guardian level {levelDisplay(r)}");
+    expect(panel).toContain("Guardian target:");
+    expect(panel).toContain("A level touch alone does not freeze actual account P/L");
     const outcomes = readFileSync("components/dashboard/GuardianOutcomeScorecard.tsx", "utf8");
     expect(outcomes).toContain("The modeled stop result freezes at the first stop touch");
     expect(outcomes).toContain("current holdings P/L elsewhere can keep changing");

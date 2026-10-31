@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import GuardianOutcomeScorecard from "./GuardianOutcomeScorecard";
 import type { GuardianOutcomePayload } from "@/types";
-import { hypotheticalReductionImpact } from "@/lib/live-recommendations/display";
+import { hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
 
 // Live Portfolio: every recommendation shown for the live book, what was done about it, and how it fared against the symbol and SPY, plus
 // the Guardian scorecard and the daily stop-rule revision note. Owner-only stored rows (/api/live-portfolio/recommendations). Display only:
@@ -35,11 +35,19 @@ const COLS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
   { key: "ref", label: "Price then", numeric: true }, { key: "level", label: "Stop / level", numeric: true }, { key: "status", label: "What happened", numeric: false },
   { key: "pnl", label: "P/L now / stop frozen", numeric: true }, { key: "ret", label: "Symbol", numeric: true }, { key: "spy", label: "SPY", numeric: true }, { key: "excess", label: "vs SPY", numeric: true },
 ];
+const levelDisplay = (r: Row) => {
+  if (r.level_price != null) return px(r.level_price);
+  if (r.kind !== "exit_signal") return "—";
+  const levels = parseExitTriggerLevels(r.rationale);
+  if (levels.target != null) return `${px(levels.target)} target${levels.runnerStop != null ? ` · runner stop ${px(levels.runnerStop)}` : ""}`;
+  if (levels.stop != null) return `${px(levels.stop)} stop`;
+  return "—";
+};
 const sortVal = (r: Row, k: SortKey): number | string | null => {
   const m = r.mark;
   switch (k) {
     case "date": return Date.parse(r.issued_at); case "symbol": return r.symbol; case "kind": return KIND[r.kind] ?? r.kind; case "ref": return r.reference_price;
-    case "level": return r.level_price; case "status": return m ? STATUS[m.status]?.label ?? m.status : null; case "pnl": return m?.pnl_pct ?? null;
+    case "level": return r.level_price ?? (r.kind === "exit_signal" ? parseExitTriggerLevels(r.rationale).target ?? parseExitTriggerLevels(r.rationale).stop : null); case "status": return m ? STATUS[m.status]?.label ?? m.status : null; case "pnl": return m?.pnl_pct ?? null;
     case "ret": return m?.symbol_return_pct ?? null; case "spy": return m?.benchmark_return_pct ?? null; case "excess": return m?.excess_pct ?? null;
   }
 };
@@ -102,12 +110,16 @@ export default function RecommendationsPanel() {
   const plTag = (m: Mark | null, r?: Row) => (m?.pnl_basis === "actual" ? "current unrealized estimate" : m?.pnl_basis === "hypothetical" ? (r?.kind === "exit_signal" ? "since exit signal" : "if bought") : "");
   const eventDetail = (r: Row) => {
     if (r.kind === "guardian_stop") return r.mark?.level_touched
-      ? `Guardian stop ${px(r.level_price)} was touched on ${r.mark.level_touched_on ?? "the recorded session"}. Frozen level-only result: ${pct(r.mark.pnl_if_level_pct)}; this is not a confirmed fill.`
+      ? `Guardian suggested stop ${px(r.level_price)} was touched on ${r.mark.level_touched_on ?? "the recorded session"}. Frozen level-only result (reference-to-stop): ${pct(r.mark.pnl_if_level_pct)}; this is not a confirmed fill or realized account P/L.`
       : `Guardian suggested stop: ${px(r.level_price)}. No stop touch is verified in the stored marks.`;
     if (r.kind === "exit_signal") {
-      const action = r.rationale?.split(":", 1)[0];
+      const action = r.rationale?.split(":", 1)[0]?.trim();
+      const levels = parseExitTriggerLevels(r.rationale);
       const label = action === "partial_target" ? "Partial target reached" : action === "stop_full" || action === "target_full" ? "Full exit trigger recorded" : "Exit-ladder action recorded";
-      return `${label}: ${r.rationale ?? "sell/reduce signal"}. Trigger price and proposed quantity are frozen at the signal; no confirmed fill or cost basis is recorded, so realized P/L at that trigger is unavailable.`;
+      const target = levels.target == null ? "" : ` Guardian target: ${px(levels.target)}.`;
+      const stop = levels.stop == null ? "" : ` Guardian stop: ${px(levels.stop)}.`;
+      const runner = levels.runnerStop == null ? "" : ` Runner stop after partial: ${px(levels.runnerStop)}.`;
+      return `${label}: ${r.rationale ?? "sell/reduce signal"}.${target}${stop}${runner} The trigger levels and proposed quantity are recorded. A level touch alone does not freeze actual account P/L: that requires a confirmed broker fill and matched cost basis. While the position remains open, current P/L continues to move.`;
     }
     return null;
   };
@@ -200,7 +212,7 @@ export default function RecommendationsPanel() {
                         <td style={{ padding: "6px 8px", fontWeight: 700 }}>{r.symbol}</td>
                         <td style={{ padding: "6px 8px", color: T.sub }}>{KIND[r.kind] ?? r.kind}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{px(r.reference_price)}</td>
-                        <td style={{ padding: "6px 8px", textAlign: "right" }}>{px(r.level_price)}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "right" }}>{levelDisplay(r)}</td>
                         <td style={{ padding: "6px 8px" }}><div>{status(r)}</div>{eventDetail(r) && <div style={{ color: T.muted, fontSize: 10, lineHeight: 1.4, marginTop: 3 }}>{eventDetail(r)}</div>}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: tone(stopFrozen(r) ? r.mark?.pnl_if_level_pct : r.mark?.pnl_pct) }}>
                           {stopFrozen(r) ? <><div>{pct(r.mark?.pnl_if_level_pct)}</div><span style={{ color: T.muted, fontSize: 10 }}>frozen at stop · level-only</span><div style={{ color: T.sub, fontSize: 10, marginTop: 3 }}>Current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</div></>
@@ -223,7 +235,7 @@ export default function RecommendationsPanel() {
                     </div>
                     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, fontSize: 12, color: T.sub }}>
                       <span>Then {px(r.reference_price)}</span>
-                      {r.level_price != null && <span>Level {px(r.level_price)}</span>}
+                      {levelDisplay(r) !== "—" && <span>Guardian level {levelDisplay(r)}</span>}
                       {stopFrozen(r) ? <span style={{ color: tone(r.mark?.pnl_if_level_pct) }}>Frozen stop result {pct(r.mark?.pnl_if_level_pct)} (level-only) · current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>
                         : <span style={{ color: tone(r.mark?.pnl_pct) }}>P/L {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>}
                       <span>SPY {pct(r.mark?.benchmark_return_pct)}</span>

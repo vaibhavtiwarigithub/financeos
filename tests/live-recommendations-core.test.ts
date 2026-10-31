@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { atr14, classifyResponse, evaluateArms, holdingChange, markRecommendation, revisionNote, simulateArm, type Bar, type Snap } from "@/lib/live-recommendations/core";
-import { hypotheticalReductionImpact } from "@/lib/live-recommendations/display";
+import { hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
 
 const bar = (date: string, o: number, h: number, l: number, c: number): Bar => ({ date, open: o, high: h, low: l, close: c });
 const snap = (date: string, qty: number, accountId = "A"): Snap => ({ date, qty, avgCost: 10, accountId });
@@ -55,6 +55,20 @@ describe("hypotheticalReductionImpact", () => {
   it("does not invent a dollar impact when quantity or a valid price is missing", () => {
     expect(hypotheticalReductionImpact(null, 100, 90)).toBeNull();
     expect(hypotheticalReductionImpact(4, 0, 90)).toBeNull();
+  });
+});
+
+describe("parseExitTriggerLevels", () => {
+  it("extracts the Guardian target and runner stop from the stored shadow rationale", () => {
+    expect(parseExitTriggerLevels("partial_target: target: 101.25 >= 100.00 — banking 0.5, runner protected at 98.50"))
+      .toEqual({ target: 100, stop: null, runnerStop: 98.5 });
+  });
+  it("extracts the Guardian stop for regular and intraday stop reasons", () => {
+    expect(parseExitTriggerLevels("stop_full: stop hit intraday: 96.25 <= 97.00").stop).toBe(97);
+    expect(parseExitTriggerLevels("stop_full: stop: 96.25 <= 97.00 (entry 101.00)").stop).toBe(97);
+  });
+  it("does not invent levels from unrelated exit reasons", () => {
+    expect(parseExitTriggerLevels("score_exit: score below threshold")).toEqual({ target: null, stop: null, runnerStop: null });
   });
 });
 
