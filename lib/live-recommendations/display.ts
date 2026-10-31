@@ -4,6 +4,18 @@ export function hypotheticalReductionImpact(qty: number | null, signalPrice: num
   return Math.round(qty * (signalPrice - lastPrice) * 100) / 100;
 }
 
+/** P/L value used by both the recommendation table cell and its P/L sort. */
+export function displayedRecommendationPnl(row: {
+  kind: string;
+  pnlPct: number | null;
+  levelTouched: boolean | null;
+  pnlIfLevelPct: number | null;
+}): number | null {
+  return row.kind === "guardian_stop" && row.levelTouched === true
+    ? row.pnlIfLevelPct
+    : row.pnlPct;
+}
+
 export type ExitTriggerLevels = { target: number | null; stop: number | null; runnerStop: number | null };
 
 /** Read the immutable price levels already written into the exit-ladder reason string. */

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import GuardianOutcomeScorecard from "./GuardianOutcomeScorecard";
 import type { GuardianOutcomePayload } from "@/types";
-import { hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
+import { displayedRecommendationPnl, hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
 
 // Live Portfolio: every recommendation shown for the live book, what was done about it, and how it fared against the symbol and SPY, plus
 // the Guardian scorecard and the daily stop-rule revision note. Owner-only stored rows (/api/live-portfolio/recommendations). Display only:
@@ -47,7 +47,7 @@ const sortVal = (r: Row, k: SortKey): number | string | null => {
   const m = r.mark;
   switch (k) {
     case "date": return Date.parse(r.issued_at); case "symbol": return r.symbol; case "kind": return KIND[r.kind] ?? r.kind; case "ref": return r.reference_price;
-    case "level": return r.level_price ?? (r.kind === "exit_signal" ? parseExitTriggerLevels(r.rationale).target ?? parseExitTriggerLevels(r.rationale).stop : null); case "status": return m ? STATUS[m.status]?.label ?? m.status : null; case "pnl": return m?.pnl_pct ?? null;
+    case "level": return r.level_price ?? (r.kind === "exit_signal" ? parseExitTriggerLevels(r.rationale).target ?? parseExitTriggerLevels(r.rationale).stop : null); case "status": return m ? STATUS[m.status]?.label ?? m.status : null; case "pnl": return m ? displayedRecommendationPnl({ kind: r.kind, pnlPct: m.pnl_pct, levelTouched: m.level_touched, pnlIfLevelPct: m.pnl_if_level_pct }) : null;
     case "ret": return m?.symbol_return_pct ?? null; case "spy": return m?.benchmark_return_pct ?? null; case "excess": return m?.excess_pct ?? null;
   }
 };
@@ -124,6 +124,7 @@ export default function RecommendationsPanel() {
     return null;
   };
   const stopFrozen = (r: Row) => r.kind === "guardian_stop" && r.mark?.level_touched === true;
+  const displayedPnl = (r: Row) => r.mark ? displayedRecommendationPnl({ kind: r.kind, pnlPct: r.mark.pnl_pct, levelTouched: r.mark.level_touched, pnlIfLevelPct: r.mark.pnl_if_level_pct }) : null;
 
   const kpiCell = (label: string, value: string, sub?: string, color: string = T.text) => (
     <div style={{ background: "#13151C", border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", minWidth: 0 }}>
@@ -214,8 +215,8 @@ export default function RecommendationsPanel() {
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{px(r.reference_price)}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{levelDisplay(r)}</td>
                         <td style={{ padding: "6px 8px" }}><div>{status(r)}</div>{eventDetail(r) && <div style={{ color: T.muted, fontSize: 10, lineHeight: 1.4, marginTop: 3 }}>{eventDetail(r)}</div>}</td>
-                        <td style={{ padding: "6px 8px", textAlign: "right", color: tone(stopFrozen(r) ? r.mark?.pnl_if_level_pct : r.mark?.pnl_pct) }}>
-                          {stopFrozen(r) ? <><div>{pct(r.mark?.pnl_if_level_pct)}</div><span style={{ color: T.muted, fontSize: 10 }}>frozen at stop · level-only</span><div style={{ color: T.sub, fontSize: 10, marginTop: 3 }}>Current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</div></>
+                        <td style={{ padding: "6px 8px", textAlign: "right", color: tone(displayedPnl(r)) }}>
+                          {stopFrozen(r) ? <><div>{pct(displayedPnl(r))}</div><span style={{ color: T.muted, fontSize: 10 }}>frozen at stop · level-only</span><div style={{ color: T.sub, fontSize: 10, marginTop: 3 }}>Current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</div></>
                             : <>{pct(r.mark?.pnl_pct)} <span style={{ color: T.muted, fontSize: 10 }}>{plTag(r.mark, r)}</span></>}
                         </td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: tone(r.mark?.symbol_return_pct) }}>{pct(r.mark?.symbol_return_pct)}</td>
@@ -236,7 +237,7 @@ export default function RecommendationsPanel() {
                     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, fontSize: 12, color: T.sub }}>
                       <span>Then {px(r.reference_price)}</span>
                       {levelDisplay(r) !== "—" && <span>Guardian level {levelDisplay(r)}</span>}
-                      {stopFrozen(r) ? <span style={{ color: tone(r.mark?.pnl_if_level_pct) }}>Frozen stop result {pct(r.mark?.pnl_if_level_pct)} (level-only) · current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>
+                      {stopFrozen(r) ? <span style={{ color: tone(displayedPnl(r)) }}>Frozen stop result {pct(displayedPnl(r))} (level-only) · current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>
                         : <span style={{ color: tone(r.mark?.pnl_pct) }}>P/L {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>}
                       <span>SPY {pct(r.mark?.benchmark_return_pct)}</span>
                       <span style={{ color: tone(r.mark?.excess_pct) }}>vs SPY {pct(r.mark?.excess_pct)}</span>

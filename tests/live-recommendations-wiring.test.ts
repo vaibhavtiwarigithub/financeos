@@ -19,6 +19,8 @@ describe("live recommendation tracker wiring", () => {
     expect(panel).toContain("Partial target reached");
     expect(panel).toContain("Frozen level-only result");
     expect(panel).toContain("frozen at stop · level-only");
+    expect(panel).toContain('case "pnl": return m ? displayedRecommendationPnl');
+    expect(panel).toContain("displayedRecommendationPnl({ kind: r.kind");
     expect(panel).toContain("parseExitTriggerLevels(r.rationale)");
     expect(panel).toContain("Guardian level {levelDisplay(r)}");
     expect(panel).toContain("Guardian target:");

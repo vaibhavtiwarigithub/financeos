@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { atr14, classifyResponse, evaluateArms, holdingChange, markRecommendation, revisionNote, simulateArm, type Bar, type Snap } from "@/lib/live-recommendations/core";
-import { hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
+import { displayedRecommendationPnl, hypotheticalReductionImpact, parseExitTriggerLevels } from "@/lib/live-recommendations/display";
 
 const bar = (date: string, o: number, h: number, l: number, c: number): Bar => ({ date, open: o, high: h, low: l, close: c });
 const snap = (date: string, qty: number, accountId = "A"): Snap => ({ date, qty, avgCost: 10, accountId });
@@ -55,6 +55,16 @@ describe("hypotheticalReductionImpact", () => {
   it("does not invent a dollar impact when quantity or a valid price is missing", () => {
     expect(hypotheticalReductionImpact(null, 100, 90)).toBeNull();
     expect(hypotheticalReductionImpact(4, 0, 90)).toBeNull();
+  });
+});
+
+describe("displayedRecommendationPnl", () => {
+  it("uses the frozen level result for a touched Guardian stop", () => {
+    expect(displayedRecommendationPnl({ kind: "guardian_stop", pnlPct: -12, levelTouched: true, pnlIfLevelPct: -7 })).toBe(-7);
+  });
+  it("uses current P/L for untouched stops and other recommendation kinds", () => {
+    expect(displayedRecommendationPnl({ kind: "guardian_stop", pnlPct: -4, levelTouched: false, pnlIfLevelPct: null })).toBe(-4);
+    expect(displayedRecommendationPnl({ kind: "exit_signal", pnlPct: 3, levelTouched: true, pnlIfLevelPct: -7 })).toBe(3);
   });
 });
 
