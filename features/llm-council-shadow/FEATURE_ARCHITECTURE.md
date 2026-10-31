@@ -142,9 +142,12 @@ from the worker's classifier (for example `model_unavailable`,
 provider-session material remain local and are never sent to Kairos. The
 existing `failure_code` text column and immutable job submission RPC are reused;
 there is no schema change, inference retry, or attempt to restore terminal
-scores. System Health counts these safe codes per market/member so repeated
-failures can be triaged from evidence rather than collapsed into
-`client_failed`.
+scores. The supervisor stops immediately on authentication, quota/capacity,
+unsupported-model, or invalid-client-configuration outcomes, and pauses for ten
+minutes after three consecutive other failures. This prevents newly classified
+failures from bypassing the existing queue-protection behavior. System Health
+counts these safe codes per market/member so repeated failures can be triaged
+from evidence rather than collapsed into `client_failed`.
 
 ## Purpose
 

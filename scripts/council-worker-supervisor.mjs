@@ -52,9 +52,9 @@ async function lane(name, config, state) {
     if (result.kind === 'idle') { await sleep(60_000); continue; }
     if (result.kind === 'job') {
       // A client that keeps failing (usage limit, throttling) must not burn through the whole queue: 3 in a row pauses the worker.
-      state.failStreak = result.outcome === 'client_failed' ? (state.failStreak ?? 0) + 1 : 0;
+      state.failStreak = result.outcome === 'forecast_submitted' ? 0 : (state.failStreak ?? 0) + 1;
       log(`${name} job ${result.outcome}`);
-      if (state.failStreak >= 3) { state.failStreak = 0; state.pausedUntil = Date.now() + 10 * 60_000; log(`${name} paused 10 min: repeated client_failed`); }
+      if (state.failStreak >= 3) { state.failStreak = 0; state.pausedUntil = Date.now() + 10 * 60_000; log(`${name} paused 10 min: repeated failed jobs`); }
       continue;
     }
     if (result.kind === 'pause' && result.ownerAction) {
