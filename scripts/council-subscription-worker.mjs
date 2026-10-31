@@ -45,10 +45,12 @@ export function clientFailureCategory(error) {
   return 'unclassified_cli_failure';
 }
 export function persistedFailureCode(category) {
-  if (category === 'authentication_required') return 'authentication_required';
-  if (category === 'subscription_quota_or_capacity') return 'quota_exhausted';
-  if (category === 'structured_output_rejected' || category === 'invalid_cli_output') return 'invalid_output';
-  return 'client_failed';
+  // Persist only the finite category emitted by clientFailureCategory. Raw
+  // provider diagnostics stay local and are never sent to the Kairos API.
+  const allowed = new Set(['authentication_required', 'subscription_quota_or_capacity', 'model_unavailable',
+    'structured_output_rejected', 'invalid_cli_output', 'client_timeout', 'client_unavailable',
+    'client_output_limit', 'reported_model_mismatch', 'invalid_client_configuration', 'unclassified_cli_failure']);
+  return allowed.has(category) ? category : 'client_failed';
 }
 export function safeLocalDiagnostic(error, synthetic = false) {
   if (!synthetic) return null;
@@ -215,8 +217,8 @@ export async function main() {
     console.error(`[council-worker] client failure: ${category}`);
     const detail = safeLocalDiagnostic(e, Boolean(job.synthetic));
     if (detail) console.error(`[council-worker] local synthetic diagnostic: ${detail}`);
-    // Persist only failure codes accepted by the deployed worker API. The
-    // finer category is local diagnostics, not part of the public contract.
+    // Persist only a finite category allowlist accepted by the worker API.
+    // Raw provider diagnostics remain local and are never submitted.
     result = { actual_model: job.expected_model, failure_code: persistedFailureCode(category) };
   }
   const submission = { action: 'submit', job_id: job.job_id, lease_id: job.lease_id, input_sha256: job.input_sha256, ...result };

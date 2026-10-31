@@ -73,6 +73,8 @@ describe("subscription worker boundary", () => {
     const r = validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "authentication_required" }, job, packet);
     expect(r.result).toBeNull(); expect(r.tokens_out).toBeNull();
     expect(validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "client_failed" }, job, packet).failure_code).toBe("client_failed");
+    expect(validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "model_unavailable" }, job, packet).failure_code).toBe("model_unavailable");
+    expect(() => validateSubscriptionResult({ ...body, forecast: undefined, failure_code: "provider says quota exceeded" }, job, packet)).toThrow("invalid_failure_code");
     expect(() => validateSubscriptionResult({ ...body, tokens_in: -1 }, job, packet)).toThrow("invalid_usage");
   });
   it("initial answers never see peers; debate preserves the frozen packet", () => {
@@ -141,7 +143,7 @@ describe("subscription worker boundary", () => {
         diagnostic({ diagnostic: "FROZEN SNAPSHOT TEST-NO-REAL-ASSET" }, true),
       ]));
     `], { encoding: "utf8" }));
-    expect(result.slice(0, 8)).toEqual(["subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "unclassified_cli_failure", "authentication_required", "quota_exhausted", "invalid_output", "client_failed"]);
+    expect(result.slice(0, 8)).toEqual(["subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "unclassified_cli_failure", "authentication_required", "subscription_quota_or_capacity", "structured_output_rejected", "unclassified_cli_failure"]);
     expect(result[8]).toBeNull();
     expect(result[9]).not.toMatch(/very-secret-value|person@example.com|vaibh|private/);
     expect(result[10]).toBe("CLI diagnostic echoed synthetic prompt; content redacted");
@@ -166,7 +168,7 @@ describe("subscription worker boundary", () => {
     expect(result.good.actual_model).toBe("claude-sonnet-4-6");
     expect(result.mismatch).toBe(true);
     expect(result.cliError).toEqual({ category: "unclassified_cli_failure", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
-    expect(result.invalidResult).toEqual({ category: "invalid_cli_output", failure: "invalid_output", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
+    expect(result.invalidResult).toEqual({ category: "invalid_cli_output", failure: "invalid_cli_output", diagnostic: "CLI diagnostic echoed synthetic prompt; content redacted" });
   });
   it("finds a native Windows executable and diagnoses Claude's stdout error envelope", () => {
     const moduleUrl = pathToFileURL(resolve("scripts/council-subscription-worker.mjs")).href;

@@ -8,7 +8,7 @@
 
 export type CouncilObservation = { id: number; market: "us" | "india"; symbol: string; ts: string };
 export type QueuedCouncilJob = { family: string; created_at: string; last_seen_at?: string | null };
-export type TerminalCouncilJob = { family: string; model: string; market: string; symbol: string; runId: string; status: string; created_at: string; hasCompletedForecast?: boolean };
+export type TerminalCouncilJob = { family: string; model: string; market: string; symbol: string; runId: string; status: string; failure_code?: string | null; created_at: string; hasCompletedForecast?: boolean };
 
 export const COUNCIL_UNSCORED_GRACE_MIN = 90;
 export const COUNCIL_QUEUE_GRACE_MIN = 120;
@@ -16,7 +16,7 @@ export const COUNCIL_WORKER_HEARTBEAT_GRACE_MIN = 30;
 export const COUNCIL_TERMINAL_JOB_WINDOW_HOURS = 24;
 
 export type StalledWorkerSummary = { count: number; oldest: string; active: boolean; lastSeenAt: string | null };
-export type TerminalCouncilGap = { count: number; symbols: string[]; statuses: string[]; oldest: string };
+export type TerminalCouncilGap = { count: number; symbols: string[]; statuses: string[]; failureCodes: Record<string, number>; oldest: string };
 
 // Terminal membership failures mean the run can never receive that member's score. Keep them
 // visible in System Health; do not retry here, because retries consume subscription/API quota.
@@ -31,10 +31,12 @@ export function findTerminalCouncilGaps(args: { jobs: TerminalCouncilJob[]; limi
     const runKey = `${key}:${job.runId}:${job.model}`;
     if (countedRuns.has(runKey)) continue;
     countedRuns.add(runKey);
-    const current = byMember.get(key) ?? { count: 0, symbols: [], statuses: [], oldest: job.created_at };
+    const current = byMember.get(key) ?? { count: 0, symbols: [], statuses: [], failureCodes: {}, oldest: job.created_at };
     current.count += 1;
     if (job.symbol && !current.symbols.includes(job.symbol) && current.symbols.length < (args.limitSymbols ?? 5)) current.symbols.push(job.symbol);
     if (!current.statuses.includes(job.status)) current.statuses.push(job.status);
+    const code = job.failure_code && /^[a-z][a-z0-9_]{0,63}$/.test(job.failure_code) ? job.failure_code : job.status;
+    current.failureCodes[code] = (current.failureCodes[code] ?? 0) + 1;
     if (job.created_at < current.oldest) current.oldest = job.created_at;
     byMember.set(key, current);
   }

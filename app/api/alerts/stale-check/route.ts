@@ -440,7 +440,7 @@ async function runCheck() {
       // healthy completion and make the affected market/model/symbols actionable.
       const terminalSince = new Date(now.getTime() - COUNCIL_TERMINAL_JOB_WINDOW_HOURS * 3_600_000).toISOString();
       const terminalJobs = await fetchAllRows((from, to) => svc.from("llm_council_jobs")
-        .select("created_at,status,round,expected_model,worker_id,llm_council_workers(family),llm_council_batches!inner(synthetic,run_id)")
+        .select("created_at,status,round,expected_model,worker_id,failure_code,llm_council_workers(family),llm_council_batches!inner(synthetic,run_id)")
         .gte("created_at", terminalSince).in("status", ["failed", "expired"])
         .eq("round", 0)
         .eq("llm_council_batches.synthetic", false)
@@ -467,7 +467,7 @@ async function runCheck() {
         const worker = Array.isArray(job.llm_council_workers) ? job.llm_council_workers[0] : job.llm_council_workers;
         const batch = Array.isArray(job.llm_council_batches) ? job.llm_council_batches[0] : job.llm_council_batches;
         const run = runById.get(batch?.run_id);
-        return { family: String(worker?.family ?? councilMemberOf(job.expected_model) ?? "unknown"), model: String(job.expected_model ?? "unknown"), market: String(run?.market ?? "unknown"), symbol: String(run?.symbol ?? ""), runId: String(batch?.run_id ?? ""), status: String(job.status ?? ""), created_at: String(job.created_at ?? ""), hasCompletedForecast: completedForecasts.has(`${batch?.run_id}:${job.expected_model}`) };
+        return { family: String(worker?.family ?? councilMemberOf(job.expected_model) ?? "unknown"), model: String(job.expected_model ?? "unknown"), market: String(run?.market ?? "unknown"), symbol: String(run?.symbol ?? ""), runId: String(batch?.run_id ?? ""), status: String(job.status ?? ""), failure_code: typeof job.failure_code === "string" ? job.failure_code : null, created_at: String(job.created_at ?? ""), hasCompletedForecast: completedForecasts.has(`${batch?.run_id}:${job.expected_model}`) };
       }) });
       for (const market of ["us", "india"] as const) {
         if (market === "india" && !indiaEnabled) continue;
@@ -478,7 +478,7 @@ async function runCheck() {
           if (hit) await reportIssue({
             issueKey: key, severity: "warn", category: "cron",
             title: `${family === "claude" ? "Claude" : "Codex"} council scores missing for ${hit.count} ${market.toUpperCase()} symbol run(s)`,
-            detail: [`${hit.count} selected member job(s) ended ${hit.statuses.join("/")} in the last ${COUNCIL_TERMINAL_JOB_WINDOW_HOURS} hours; examples: ${hit.symbols.join(", ") || "symbol unavailable"}.`, `Oldest affected job: ${hit.oldest.slice(0, 16)} UTC. Terminal jobs are not retried automatically; inspect the worker/provider failure and the affected council runs.`].join(" · "),
+            detail: [`${hit.count} selected member job(s) ended ${hit.statuses.join("/")} in the last ${COUNCIL_TERMINAL_JOB_WINDOW_HOURS} hours; examples: ${hit.symbols.join(", ") || "symbol unavailable"}.`, `Recorded terminal categories: ${Object.entries(hit.failureCodes).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([code, count]) => `${code}=${count}`).join(", ")}.`, `Oldest affected job: ${hit.oldest.slice(0, 16)} UTC. Terminal jobs are not retried automatically; inspect the worker/provider failure and the affected council runs.`].join(" · "),
             autoExpireAt: new Date(now.getTime() + 72 * 3_600_000).toISOString(),
           }, svc);
           else await resolveIssue(key, svc);

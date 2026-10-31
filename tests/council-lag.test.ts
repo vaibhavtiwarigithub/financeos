@@ -8,13 +8,13 @@ const obs = (id: number, symbol: string, ts: string, market: "us" | "india" = "u
 describe("council silence detection", () => {
   it("flags only terminal local-member jobs and retains symbol/status context", () => {
     const gaps = findTerminalCouncilGaps({ jobs: [
-      { family: "claude", model: "claude-sonnet-5-5", market: "india", symbol: "RELIANCE.NS", runId: "1", status: "expired", created_at: "2026-10-13T08:00:00Z" },
-      { family: "codex", model: "gpt-5.6-luna", market: "us", symbol: "SOXS", runId: "2", status: "failed", created_at: "2026-10-13T09:00:00Z" },
+      { family: "claude", model: "claude-sonnet-5-5", market: "india", symbol: "RELIANCE.NS", runId: "1", status: "expired", failure_code: "deadline_expired", created_at: "2026-10-13T08:00:00Z" },
+      { family: "codex", model: "gpt-5.6-luna", market: "us", symbol: "SOXS", runId: "2", status: "failed", failure_code: "model_unavailable", created_at: "2026-10-13T09:00:00Z" },
       { family: "deepseek", model: "deepseek-flash", market: "us", symbol: "SOXL", runId: "3", status: "failed", created_at: "2026-10-13T09:00:00Z" },
       { family: "codex", model: "gpt-5.6-luna", market: "us", symbol: "SOXS", runId: "4", status: "failed", created_at: "2026-10-13T09:00:00Z", hasCompletedForecast: true },
     ] });
     expect(gaps.get("india:claude")).toMatchObject({ count: 1, symbols: ["RELIANCE.NS"], statuses: ["expired"] });
-    expect(gaps.get("us:codex")).toMatchObject({ count: 1, symbols: ["SOXS"], statuses: ["failed"] });
+    expect(gaps.get("us:codex")).toMatchObject({ count: 1, symbols: ["SOXS"], statuses: ["failed"], failureCodes: { model_unavailable: 1 } });
     expect(gaps.has("us:deepseek")).toBe(false);
   });
 

@@ -21,7 +21,12 @@ export function validateSubscriptionResult(body: any, job: any, snapshot: unknow
     return value;
   };
   const failure = body.failure_code;
-  if (failure != null && !["quota_exhausted", "authentication_required", "invalid_output", "client_failed", "abstained"].includes(failure)) throw new Error("invalid_failure_code");
+  // A closed allowlist preserves useful transport diagnostics without ever
+  // accepting CLI stderr, provider prose, paths, or arbitrary payload text.
+  if (failure != null && !["quota_exhausted", "authentication_required", "invalid_output", "client_failed", "abstained",
+    "subscription_quota_or_capacity", "model_unavailable", "structured_output_rejected", "invalid_cli_output",
+    "client_timeout", "client_unavailable", "client_output_limit", "reported_model_mismatch",
+    "invalid_client_configuration", "unclassified_cli_failure"].includes(failure)) throw new Error("invalid_failure_code");
   const result = failure ? null : validateForecastCitations(parseForecast(typeof body.forecast === "string" ? body.forecast : JSON.stringify(body.forecast)), snapshot);
   const normalized = { result, actual_model: body.actual_model, tokens_in: tokens(body.tokens_in), tokens_out: tokens(body.tokens_out), failure_code: failure ?? null };
   return { ...normalized, result_hash: sha256(JSON.stringify(normalized)) };

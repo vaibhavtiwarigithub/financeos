@@ -133,6 +133,19 @@ reset attempts, requeue work, or create an inference call. Existing provider
 worker state remains an operational concern, and expired members stay missing
 until a future naturally created observation is scored.
 
+## 2026-10-31: safe terminal worker diagnostics
+
+Local subscription workers now submit only a fixed allowlisted `failure_code`
+from the worker's classifier (for example `model_unavailable`,
+`subscription_quota_or_capacity`, `client_timeout`, or
+`unclassified_cli_failure`). Raw CLI stderr, prompts, account data, paths, and
+provider-session material remain local and are never sent to Kairos. The
+existing `failure_code` text column and immutable job submission RPC are reused;
+there is no schema change, inference retry, or attempt to restore terminal
+scores. System Health counts these safe codes per market/member so repeated
+failures can be triaged from evidence rather than collapsed into
+`client_failed`.
+
 ## Purpose
 
 For selected, already-researched symbols, collect genuinely independent model forecasts, let the selected models challenge and revise those forecasts for a bounded number of rounds, and produce a reproducible composite score plus an orchestrator-written synthesis. Preserve exactly what each model saw, its source timestamps, model identity, token usage, and cost. Then compare every model's score and the composite with realized, benchmark-neutral returns at multiple forward horizons.
