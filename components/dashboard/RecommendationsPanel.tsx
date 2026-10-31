@@ -33,7 +33,7 @@ type SortKey = "date" | "symbol" | "kind" | "ref" | "level" | "status" | "pnl" |
 const COLS: Array<{ key: SortKey; label: string; numeric: boolean }> = [
   { key: "date", label: "Date", numeric: true }, { key: "symbol", label: "Symbol", numeric: false }, { key: "kind", label: "Type", numeric: false },
   { key: "ref", label: "Price then", numeric: true }, { key: "level", label: "Stop / level", numeric: true }, { key: "status", label: "What happened", numeric: false },
-  { key: "pnl", label: "P/L now", numeric: true }, { key: "ret", label: "Symbol", numeric: true }, { key: "spy", label: "SPY", numeric: true }, { key: "excess", label: "vs SPY", numeric: true },
+  { key: "pnl", label: "P/L now / stop frozen", numeric: true }, { key: "ret", label: "Symbol", numeric: true }, { key: "spy", label: "SPY", numeric: true }, { key: "excess", label: "vs SPY", numeric: true },
 ];
 const sortVal = (r: Row, k: SortKey): number | string | null => {
   const m = r.mark;
@@ -99,7 +99,19 @@ export default function RecommendationsPanel() {
     </th>
   );
   const status = (r: Row) => { const s = r.mark ? STATUS[r.mark.status] : null; return <span title={r.mark?.response_detail ?? ""} style={{ color: s?.color ?? T.muted, fontWeight: 600 }}>{s?.label ?? "Not marked yet"}</span>; };
-  const plTag = (m: Mark | null) => (m?.pnl_basis === "actual" ? "unrealized estimate" : m?.pnl_basis === "hypothetical" ? "if bought" : "");
+  const plTag = (m: Mark | null, r?: Row) => (m?.pnl_basis === "actual" ? "current unrealized estimate" : m?.pnl_basis === "hypothetical" ? (r?.kind === "exit_signal" ? "since exit signal" : "if bought") : "");
+  const eventDetail = (r: Row) => {
+    if (r.kind === "guardian_stop") return r.mark?.level_touched
+      ? `Guardian stop ${px(r.level_price)} was touched on ${r.mark.level_touched_on ?? "the recorded session"}. Frozen level-only result: ${pct(r.mark.pnl_if_level_pct)}; this is not a confirmed fill.`
+      : `Guardian suggested stop: ${px(r.level_price)}. No stop touch is verified in the stored marks.`;
+    if (r.kind === "exit_signal") {
+      const action = r.rationale?.split(":", 1)[0];
+      const label = action === "partial_target" ? "Partial target reached" : action === "stop_full" || action === "target_full" ? "Full exit trigger recorded" : "Exit-ladder action recorded";
+      return `${label}: ${r.rationale ?? "sell/reduce signal"}. Trigger price and proposed quantity are frozen at the signal; no confirmed fill or cost basis is recorded, so realized P/L at that trigger is unavailable.`;
+    }
+    return null;
+  };
+  const stopFrozen = (r: Row) => r.kind === "guardian_stop" && r.mark?.level_touched === true;
 
   const kpiCell = (label: string, value: string, sub?: string, color: string = T.text) => (
     <div style={{ background: "#13151C", border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", minWidth: 0 }}>
@@ -189,8 +201,11 @@ export default function RecommendationsPanel() {
                         <td style={{ padding: "6px 8px", color: T.sub }}>{KIND[r.kind] ?? r.kind}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{px(r.reference_price)}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{px(r.level_price)}</td>
-                        <td style={{ padding: "6px 8px" }}>{status(r)}</td>
-                        <td style={{ padding: "6px 8px", textAlign: "right", color: tone(r.mark?.pnl_pct) }}>{pct(r.mark?.pnl_pct)} <span style={{ color: T.muted, fontSize: 10 }}>{plTag(r.mark)}</span></td>
+                        <td style={{ padding: "6px 8px" }}><div>{status(r)}</div>{eventDetail(r) && <div style={{ color: T.muted, fontSize: 10, lineHeight: 1.4, marginTop: 3 }}>{eventDetail(r)}</div>}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "right", color: tone(stopFrozen(r) ? r.mark?.pnl_if_level_pct : r.mark?.pnl_pct) }}>
+                          {stopFrozen(r) ? <><div>{pct(r.mark?.pnl_if_level_pct)}</div><span style={{ color: T.muted, fontSize: 10 }}>frozen at stop · level-only</span><div style={{ color: T.sub, fontSize: 10, marginTop: 3 }}>Current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</div></>
+                            : <>{pct(r.mark?.pnl_pct)} <span style={{ color: T.muted, fontSize: 10 }}>{plTag(r.mark, r)}</span></>}
+                        </td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: tone(r.mark?.symbol_return_pct) }}>{pct(r.mark?.symbol_return_pct)}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: tone(r.mark?.benchmark_return_pct) }}>{pct(r.mark?.benchmark_return_pct)}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right", color: tone(r.mark?.excess_pct) }}>{pct(r.mark?.excess_pct)}</td>
@@ -209,10 +224,12 @@ export default function RecommendationsPanel() {
                     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, fontSize: 12, color: T.sub }}>
                       <span>Then {px(r.reference_price)}</span>
                       {r.level_price != null && <span>Level {px(r.level_price)}</span>}
-                      <span style={{ color: tone(r.mark?.pnl_pct) }}>P/L {pct(r.mark?.pnl_pct)} {plTag(r.mark)}</span>
+                      {stopFrozen(r) ? <span style={{ color: tone(r.mark?.pnl_if_level_pct) }}>Frozen stop result {pct(r.mark?.pnl_if_level_pct)} (level-only) · current {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>
+                        : <span style={{ color: tone(r.mark?.pnl_pct) }}>P/L {pct(r.mark?.pnl_pct)} {plTag(r.mark, r)}</span>}
                       <span>SPY {pct(r.mark?.benchmark_return_pct)}</span>
                       <span style={{ color: tone(r.mark?.excess_pct) }}>vs SPY {pct(r.mark?.excess_pct)}</span>
                     </div>
+                    {eventDetail(r) && <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>{eventDetail(r)}</div>}
                     {r.mark?.response_detail && <div style={{ color: T.muted, fontSize: 11, marginTop: 6 }}>{r.mark.response_detail}</div>}
                   </div>
                 ))}
@@ -231,8 +248,8 @@ export default function RecommendationsPanel() {
                   <div key={r.id} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, fontSize: 12, color: T.sub, lineHeight: 1.6 }}>
                     <span style={{ color: T.text, fontWeight: 750 }}>{r.symbol}</span>: sell at <b style={{ color: T.text }}>{px(r.level_price)}</b> (suggested {r.issued_at.slice(0, 10)}, cost {px(r.reference_price)}).
                     {" "}Now {px(m?.last_price)}{dist != null ? `, ${dist.toFixed(1)}% above the stop` : ""}.
-                    {" "}{m?.level_touched ? `Level touched on ${m.level_touched_on}; level-only return ${pct(m.pnl_if_level_pct)} (not a modeled or confirmed fill).` : "No stop touch verified in this mark."}
-                    {" "}You: {m ? (STATUS[m.status]?.label ?? m.status) : "—"}. Current P/L {pct(m?.pnl_pct)} {plTag(m)}.
+                    {" "}{m?.level_touched ? `Stop level touched on ${m.level_touched_on}; frozen level-only result ${pct(m.pnl_if_level_pct)} (not a confirmed fill).` : "No stop touch verified in this mark."}
+                    {" "}You: {m ? (STATUS[m.status]?.label ?? m.status) : "—"}. Current position P/L {pct(m?.pnl_pct)} {plTag(m)}.
                   </div>
                 );
               })}

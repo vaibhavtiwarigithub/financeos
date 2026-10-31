@@ -16,6 +16,12 @@ describe("live recommendation tracker wiring", () => {
     expect(panel).toContain("hypothetical value difference versus holding it");
     expect(panel).toContain("not actual realized P/L");
     expect(panel).toContain("qty_suggested");
+    expect(panel).toContain("Partial target reached");
+    expect(panel).toContain("Frozen level-only result");
+    expect(panel).toContain("frozen at stop · level-only");
+    const outcomes = readFileSync("components/dashboard/GuardianOutcomeScorecard.tsx", "utf8");
+    expect(outcomes).toContain("The modeled stop result freezes at the first stop touch");
+    expect(outcomes).toContain("current holdings P/L elsewhere can keep changing");
   });
 
   it("never touches orders, stops or Guardian settings", () => {

@@ -98,6 +98,18 @@ from a declining score or price, and does not change recommendation production
 or trading behavior. Empty/stale stored downside coverage is shown as a
 coverage limitation rather than evidence that no sell was warranted.
 
+Follow-up display clarification: the recommendation timeline's **What happened**
+field now calls out a touched Guardian stop and its frozen level-only return,
+or an exit-ladder target/stop action with its recorded trigger price and proposed
+quantity. For a touched Guardian stop, the main outcome value freezes at the
+suggested level while the still-open position's separate current unrealized P/L
+continues to be shown. The exact-stop evaluator already freezes its modeled exit
+on the first daily touch and accounts conservatively for a gap through the stop.
+Target signals freeze the trigger price and proposed quantity, but cost basis and
+broker fill are not guaranteed in the recommendation row; the UI therefore shows
+the subsequent value-vs-hold counterfactual separately and does not call it
+realized P/L. No stop/target levels are changed and no order is placed.
+
 ## What the owner asked for (2026-10-14)
 On the Live Portfolio page, show ALL recommendations; record whether each was taken or not; track how each fared against its symbol; revise the Guardian daily from that evidence; count how many times the Guardian alerted, the price to sell at, and current P/L depending on what was done.
 

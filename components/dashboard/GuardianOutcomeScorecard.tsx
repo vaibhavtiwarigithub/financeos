@@ -22,7 +22,7 @@ export default function GuardianOutcomeScorecard({ data }: { data: GuardianOutco
       <span style={{ fontSize: 10, color: T.amber, letterSpacing: ".06em" }}>EXACT SUGGESTIONS · MEASUREMENT ONLY</span>
     </div>
     <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "8px 0" }}>
-      Compare the frozen suggested stop with continuing to hold the same shares. Both start at the next regular session’s open after the suggestion date—not your original purchase price. Same-day intraday moves are unobserved.
+      Compare the frozen suggested stop with continuing to hold the same shares. Both start at the next regular session’s open after the suggestion date—not your original purchase price. The modeled stop result freezes at the first stop touch (using the worse of the open or stop for a gap); current holdings P/L elsewhere can keep changing unless a broker fill actually closes the shares. Same-day intraday moves are unobserved. Target-trigger reductions appear separately in Sell / reduce follow-up; missing cost basis or fill evidence is never presented as realized P/L.
     </p>
     <div role="group" aria-label="Guardian outcome horizon" style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "12px 0" }}>
       {([2, 5, 10, 20] as const).map(h => <button key={h} type="button" aria-pressed={horizon === h} onClick={() => setHorizon(h)}
