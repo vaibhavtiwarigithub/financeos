@@ -140,3 +140,46 @@ selection ([Historical Bars API](https://docs.alpaca.markets/us/reference/stockb
 Consequently this probe is a feasibility check, not paired evidence or proof
 that the app has a validated after-hours dataset. No new schedule, provider
 subscription, model call, table, score, or trade path was added in this update.
+
+## 2026-11-01: India event evidence must arrive before the next research session
+
+### Approved implementation amendment
+
+Production review on 2026-11-01 found that both India news snapshot passes
+currently run after the decision sessions (12:15 and 12:45 UTC), and both
+event-extraction passes also run after those sessions (13:10 and 13:40 UTC).
+This leaves overnight, weekend, and late-after-close documents unavailable to
+the next morning's existing event evaluation. The Oct 31 SDBL licensing
+announcement was published after the Oct 31 12:45 UTC snapshot, so its absence
+from the Oct 30 research packet is a timing limitation rather than evidence
+that the existing run failed.
+
+Move one existing snapshot pass and its paired extraction pass to pre-open:
+
+- `kairos-india-news-shadow-2`: daily 02:45 UTC (08:15 IST).
+- `kairos-llm-events-2`: daily 03:10 UTC (08:40 IST), after the snapshot and
+  before the first scheduled India research slot at 04:00 UTC (09:30 IST).
+- Keep the other snapshot and extraction passes at 12:15 and 13:10 UTC.
+- Keep the existing 14:30 UTC evaluator unchanged.
+
+Use the existing job names, endpoints, tables, feeds, model, budgets, and
+idempotency keys. Unschedule each existing job before rescheduling it so the
+migration cannot leave duplicate jobs. This changes no daily job count and
+adds no provider calls. Keep the extraction and resulting scores strictly
+measure-only; do not add an event-score reader to ResearchAgent, the council,
+composite, portfolio, or execution paths. Latest-first queue ordering stays
+unchanged. If backlog/budget prevents a fresh item from being processed, retain
+the existing truthful deferred/not-attempted diagnostics; do not increase
+budgets or bypass validation.
+
+### Verification and limitations
+
+Verify the active `cron.job` entries after migration, including their exact
+UTC schedules and unchanged job count. On the next natural India session,
+confirm a pre-open snapshot and extraction run finish before research and that
+published/fetched timestamps are preserved. Confirm event IC remains
+measurement-only and no score/trading consumer was introduced. This repairs
+availability timing, not prediction quality: a catalyst may still arrive after
+the snapshot, be absent from free feeds, be missed due to backlog, or be
+unreadable from a headline-only attachment. No score or trade should be
+retroactively changed based on the new evidence.

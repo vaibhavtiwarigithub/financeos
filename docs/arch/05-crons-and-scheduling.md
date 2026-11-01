@@ -24,6 +24,18 @@ The benchmark initial pass remains 10:15 UTC. The bounded retry is 11:35 UTC
 market-local slot instead of adding another provider pass. Current benchmark
 prices alone do not prove the materialized portfolio comparison is current.
 
+## India event evidence pre-open pass (2026-11-01)
+
+The existing India news and event shadows now reuse one of their two daily
+passes before the first India research slot: `kairos-india-news-shadow-2` at
+02:45 UTC (08:15 IST), followed by `kairos-llm-events-2` at 03:10 UTC
+(08:40 IST). The first snapshot/extraction pair remains at 12:15/13:10 UTC and
+the existing event evaluator remains at 14:30 UTC. These are the same jobs,
+feeds, and endpoints; the number of scheduled invocations and provider calls is
+unchanged. The event shadow remains measure-only and is not consumed by scores,
+the council, or trading. Migration `20261101090000_india_event_prewindow.sql`
+reschedules the existing jobs idempotently.
+
 ## Leveraged ETF pre-entry research (2026-10-16)
 
 `kairos-research-leveraged-us` calls
