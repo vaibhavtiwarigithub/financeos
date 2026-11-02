@@ -65,6 +65,7 @@ export const CONFIGURABLE_MODELS = [
   "deepseek-flash",
   "deepseek-v4-pro",
   "gpt-5.6-luna",
+  "gpt-6-luna",
   "claude-sonnet-4-6",
   "gpt-4o-mini",
   "gpt-4o",

@@ -9,6 +9,7 @@
   ],
   "git": {
     "deploymentEnabled": {
+      "codex/model-catalog-review-2026-11": false,
       "worktree-agent-*": false,
       "claude/**": false
     }
