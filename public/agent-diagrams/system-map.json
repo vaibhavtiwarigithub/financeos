@@ -926,12 +926,12 @@
     },
     "STRATLAB": {
       "label": "Strategy discovery & forward tournament",
-      "description": "Learning → Strategy discovery & forward tournament. Compiles only the finite price-only daily-bar grammar; unsupported template clauses are displayed and rejected, never silently omitted. Owner chooses at most ten symbols and a declared horizon for a temporal 70/30 historical diagnostic with next-open execution, equal-weight symbol sleeves, modeled costs, and benchmark pairing. Registration freezes the exact config and trial family; no arbitrary rules or threshold mining. Only an explicit owner start admits it to shadow. Natural ResearchAgent sessions persist immutable per-config decisions and next-open-to-horizon outcomes. Learning reports matched deterministic entry eligibility, matured coverage, overlap and benchmark-trend/volatility price proxies. Historic cache is survivorship-selected and not promotion evidence. No output flows into scoring, paper/live positions, sizing, exits, proposals, or brokers; no auto-promotion.",
+      "description": "Weekly Learner first screens fixed supported reference seeds and bounded nonredundant confirmation pairs; it preregisters all screened trials using the server fingerprint and first historical cutoff. Unsupported source clauses and actual run outcomes are visible in Learning. Optional bounded model proposals share the existing model loop, which now reads versioned dimension/source/council evidence and at most two fixed public methodology pages. Eligible candidates may start in the existing forward slot. Only fixed paired-forward gates can select a paper ranking preference among already-qualified signals; no source/formula/live adoption from historical fit.",
       "addedAt": "2026-10-30",
       "addReason": "Owner requested a complete, measurable, non-executing discovery → backtest → forward-shadow → outcome-learning loop before any strategy can be considered for review.",
       "status": "active",
-      "changedAt": null,
-      "changeReason": null,
+      "changedAt": "2026-11-03",
+      "changeReason": "Owner approved existing-strategy, combination and dimension improvement expansion; correct previous owner-start-only description.",
       "removedAt": null,
       "removeReason": null
     }
@@ -2196,6 +2196,13 @@
       "nodeId": "STRATLAB",
       "label": "Bounded fixed-rule strategy discovery, temporal historical diagnostic, explicit owner-started forward shadow, matured matched outcomes in Learning",
       "reason": "Implements the approved non-executing workflow with frozen config/trial provenance and no score, position, sizing, exit, proposal, or order consumer. Production tables/RPC and append-only ACL were applied and verified; no shadow was started automatically."
+    },
+    {
+      "date": "2026-11-03",
+      "event": "changed",
+      "nodeId": "STRATLAB",
+      "label": "Automatic reference seeds, confirmation trials, versioned dimension/source evidence and audited failure outcomes",
+      "reason": "Reuse existing weekly learner, compiler, replay, trial ledger, research collector and paper selector. Fix evidence payload and server hash contract; no extra schedule or money-path authority."
     }
   ]
 }

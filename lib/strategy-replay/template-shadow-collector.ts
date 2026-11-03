@@ -1,10 +1,12 @@
 import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 import type { Candle } from "@/lib/data/technicals";
-import { compileSpec, type Bar } from "./compile";
+import { evaluateEntryAtClose, type Bar } from "./compile";
 import type { RuleSpec } from "./rule-spec";
+import {validateSpec} from "./rule-spec";
+import { attachObservedScores } from "./observed-scores";
 
-export const TEMPLATE_SHADOW_COLLECTOR_VERSION = "template-shadow-forward-v1";
-export const TEMPLATE_SHADOW_PRICE_PROVENANCE = "completed-research-candle-v1";
+export const TEMPLATE_SHADOW_COLLECTOR_VERSION = "template-shadow-forward-v2";
+export const TEMPLATE_SHADOW_PRICE_PROVENANCE = "completed-candle-preclose-observation-v2";
 
 export function priceBasisForResearchSource(source: string): "adjusted" | "raw" | "unknown" {
   switch (source.toLowerCase()) {
@@ -30,13 +32,14 @@ export interface TemplateShadowCollectorResult {
   outcomesInserted: number;
   skippedForWarmup: number;
   skippedForBasisMismatch: number;
+  skippedForMissingObservation: number;
 }
 
 /** Called only by the natural market research producer; it cannot affect a trade. */
 export async function collectTemplateShadowEvidence(input: TemplateShadowCollectorInput): Promise<TemplateShadowCollectorResult> {
   const out: TemplateShadowCollectorResult = {
     activeConfigs: 0, decisionsInserted: 0, outcomesInserted: 0,
-    skippedForWarmup: 0, skippedForBasisMismatch: 0,
+    skippedForWarmup: 0, skippedForBasisMismatch: 0, skippedForMissingObservation: 0,
   };
   const { data: configs, error: configError } = await input.supabase
     .from("strategy_template_shadow_configs")
@@ -51,22 +54,24 @@ export async function collectTemplateShadowEvidence(input: TemplateShadowCollect
     const basis = priceBasisForResearchSource(input.source);
     if (basis === "unknown") throw new Error(`template shadow source has no approved price basis for ${input.market}/${symbol}`);
     if (input.candles.length < 2) throw new Error(`template shadow needs at least two completed candles for ${input.market}/${symbol}`);
-    const bars = normalizeBars(input.candles);
+    let bars = normalizeBars(input.candles);
     if (!validBars(bars, input.candles.length)) throw new Error(`template shadow received invalid completed candles for ${input.market}/${symbol}`);
+    bars = await attachObservedScores(input.supabase,input.market,symbol,bars);
     const latest = bars[bars.length - 1];
-    const compiled = compileSpec({ spec: config.rule_spec, bars: { [symbol]: bars }, initialCash: 100_000 });
-    if (compiled.errors.length) throw new Error(`template shadow rule invalid ${config.id}: ${compiled.errors.join("; ")}`);
-    const decision = compiled.decisions.find((row) => row.symbol === symbol && row.session === latest.session);
-    if (!decision) { out.skippedForWarmup++; continue; }
+    const errors=validateSpec(config.rule_spec);
+    if (errors.length) throw new Error(`template shadow rule invalid ${config.id}: ${errors.join("; ")}`);
+    const decision = evaluateEntryAtClose(config.rule_spec,bars);
+    if (decision===null) out.skippedForWarmup++;
+    if (decision!==null && latest.observation) {
     const { data: writtenDecision, error: decisionError } = await input.supabase.from("strategy_template_shadow_decisions").upsert({
       config_id: config.id,
       strategy_version_id: config.strategy_version_id,
       market: input.market,
       symbol,
       signal_session: latest.session,
-      observation_id: input.observationId,
-      would_enter: decision.wouldEnter,
-      baseline_entry_eligible: input.baselineEntryEligible,
+      observation_id: latest.observation.id,
+      would_enter: decision,
+      baseline_entry_eligible: latest.observation.baselineEntryEligible,
       decision_close: latest.close,
       decision_price_basis: basis,
       decision_provenance: TEMPLATE_SHADOW_PRICE_PROVENANCE,
@@ -75,9 +80,11 @@ export async function collectTemplateShadowEvidence(input: TemplateShadowCollect
     }, { onConflict: "config_id,symbol,signal_session", ignoreDuplicates: true }).select("id");
     if (decisionError) throw new Error(`template shadow decision write failed: ${decisionError.message}`);
     if ((writtenDecision ?? []).length) out.decisionsInserted++;
+    } else if(!latest.observation) out.skippedForMissingObservation++;
 
     const { data: pending, error: pendingError } = await input.supabase.from("strategy_template_shadow_decisions")
       .select("id,signal_session,decision_price_basis").eq("config_id", config.id).eq("symbol", symbol)
+      .eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE)
       .order("signal_session", { ascending: false }).limit(750);
     if (pendingError) throw new Error(`template shadow pending read failed: ${pendingError.message}`);
     const pendingRows = pending ?? [];

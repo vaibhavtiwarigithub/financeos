@@ -1,5 +1,13 @@
 # Kairos — Agents
 
+## Automatic reference discovery and dimension review (2026-11-03)
+
+Each existing weekly Learner cycle attempts a fixed catalog of supported reference strategies before its optional model proposal. Ordinary US equity/ETF families and India are separate; known leveraged/inverse funds are excluded from the ordinary ETF family. Up to six seeds and four nonredundant confirmation pairs share a 45-second between-trial budget and cached source reads. Unsupported conditions stay visible. Existing per-market shadow limits remain authoritative. Each attempted performance screen is preregistered using the database constructor's fingerprint and a frozen historical cutoff. No source/formula/trading adoption is inferred from historical eligibility.
+
+The child `strategy_discovery` run persists capability and attempt outcomes in existing `agent_runs.workload_metrics`. Learning exposes its last actual run, statuses and blockers. The parent Learner stores current-version dimension diagnostic and evidence-router source-comparison context and exposes it through a tool. Its version `learner-reference-dimension-v2` permits at most two bounded, fixed public methodology reads (SEC, ALFRED, Alpaca, Kite) within the unchanged 18-iteration model loop. Missing member evidence, source permissions and historical vintages remain blockers. Formula hypotheses reuse the existing restricted compiler and observational feature registry; source hypotheses remain research records until paired measurements support a separately governed adoption.
+
+The India recent-candidate expiry counter skips supported special sessions while counting five regular sessions; it refuses an admission on the special session itself or any unsupported calendar year.
+
 ## Bounded strategy-template shadows (2026-10-30)
 
 The natural market-local ResearchAgent now calls the Strategy Portfolio Lab

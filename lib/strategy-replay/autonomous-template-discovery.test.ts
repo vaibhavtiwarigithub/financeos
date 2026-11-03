@@ -28,6 +28,7 @@ describe("autonomous strategy rule boundary", () => {
     expect(isEligibleResearchSymbol("RELIANCE.NS", "india")).toBe(true);
     expect(isEligibleResearchSymbol("NVDA", "india")).toBe(false);
     expect(isEligibleResearchSymbol("RELIANCE.NS", "us")).toBe(false);
+    expect(isEligibleResearchSymbol("SBIN.NS", "us")).toBe(false);
     expect(isEligibleResearchSymbol("TEST-USD", "us")).toBe(false);
   });
 });

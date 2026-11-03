@@ -17,7 +17,7 @@ export function candidateExpirySession(market: "us" | "india", firstSession: str
   while (remaining > 0) {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
     const day = getMarketDayStatus(market, cursor);
-    if (!day.calendarSupported || day.kind === "special_session") throw new Error("Candidate expiry requires a supported regular-session calendar");
+    if (!day.calendarSupported) throw new Error("Candidate expiry requires a supported regular-session calendar");
     if (day.kind === "trading_day") remaining--;
   }
   return cursor.toISOString().slice(0, 10);

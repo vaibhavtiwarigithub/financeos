@@ -21,6 +21,10 @@ describe("recent qualified candidate calendar and scope", () => {
   it("uses the India calendar, including the October 20 holiday", () => {
     expect(candidateExpirySession("india", "2026-10-16")).toBe("2026-10-23");
   });
+  it("skips the known Muhurat special session and holiday when retaining five regular sessions", () => {
+    expect(candidateExpirySession("india", "2026-11-03")).toBe("2026-11-09");
+    expect(candidateExpirySession("india", "2026-11-04")).toBe("2026-11-11");
+  });
   it("fails closed on unsupported years, special sessions and malformed sessions", () => {
     for (const date of ["2026-12-31", "2027-01-04", "2026-02-30", "bad", "2026-10-18"]) {
       expect(() => candidateExpirySession("us", date)).toThrow();

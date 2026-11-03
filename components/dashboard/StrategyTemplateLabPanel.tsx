@@ -21,7 +21,7 @@ function metricLine(label: string, metric?: Metric) {
 
 export default function StrategyTemplateLabPanel() {
   const { market } = useMarket();
-  const [state, setState] = useState<ReadState | null>(null);
+  const [state, setState] = useState<(ReadState & { discovery?: { started_at: string; status: string; result_summary: string; workload_metrics?: { discovery?: { attempted?: Array<{ parentIds: string[]; rules?: Record<string,unknown>; assetClass: string; status: string; detail: string }>; deferred?: number; capabilities?: Array<{id:string;name:string;supported:boolean;reasons:string[]}> } } } | null }) | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -91,10 +91,23 @@ export default function StrategyTemplateLabPanel() {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
       <div>
         <h3 id="strategy-template-lab-title" style={{ color: T.text, fontSize: 16, margin: 0 }}>Strategy discovery & forward tournament · {market === "india" ? "India" : "US"}</h3>
-        <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "6px 0 0", maxWidth: 900 }}>The weekly market-local Learner discovers bounded price-rule hypotheses. Deterministic replay screens them, normal research runs collect forward outcomes, and the evidence gate can select a paper-only ranking preference. No manual candidate approval is required. Existing dimension scores, sizing, live decisions, and orders stay outside this rule-strategy lane.</p>
+        <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "6px 0 0", maxWidth: 900 }}>The weekly market-local Learner tests reference strategies, recorded dimension scores and bounded combinations. Deterministic replay screens them, normal research runs collect forward outcomes, and the evidence gate can select a paper-only ranking preference. No manual candidate approval is required. Existing dimension scores, sizing, live decisions, and orders stay outside this rule-strategy lane.</p>
       </div>
       <button type="button" onClick={() => setAttempt((value) => value + 1)} disabled={loading} style={{ color: T.sub, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", cursor: loading ? "wait" : "pointer", fontSize: 12 }}>{loading ? "Checking…" : "Refresh"}</button>
     </div>
+    {state?.status === "ready" && <div style={{marginTop:12,padding:12,background:T.surface,borderRadius:6,color:T.sub,fontSize:12,lineHeight:1.6}}>
+      <strong style={{color:T.text}}>Automatic reference discovery: {state.discovery?.status ?? "awaiting first scheduled cycle"}</strong>
+      <div>{state.discovery ? `${new Date(state.discovery.started_at).toLocaleString()} · ${state.discovery.result_summary}` : "No discovery cycle has been recorded. An empty candidate list does not establish that strategies were tested."}</div>
+      <div>Existing strategies, fixed recorded-score hypotheses and supported confirmation pairs are screened before the optional LLM proposal. Unsupported dimensions require retained, timestamped inputs; historical fit is not forward validation.</div>
+      {!!state.discovery?.workload_metrics?.discovery?.attempted?.length && <details style={{marginTop:8}}><summary style={{cursor:"pointer"}}>Recorded trial outcomes</summary>
+        {state.discovery.workload_metrics.discovery.attempted.map((row,index)=><div key={index} style={{padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <strong>{row.assetClass} · {row.status}</strong> · {row.parentIds.length ? row.parentIds.join(" + ") : JSON.stringify(row.rules ?? {})}<div>{row.detail}</div>
+        </div>)}
+      </details>}
+      {!!state.discovery?.workload_metrics?.discovery?.capabilities?.some(row=>!row.supported) && <details><summary style={{cursor:"pointer"}}>Unsupported reference strategies</summary>
+        {state.discovery.workload_metrics.discovery.capabilities.filter(row=>!row.supported).map(row=><div key={row.id}>{row.name}: {row.reasons.join("; ")}</div>)}
+      </details>}
+    </div>}
     {!state ? <p style={{ color: T.muted, fontSize: 12, marginTop: 14 }}>Checking whether the strategy producer is deployed…</p> : <>
       <div role="status" style={{ marginTop: 14, padding: 12, background: T.surface, border: `1px solid ${statusColor}55`, borderRadius: 6, color: statusColor, fontSize: 12, lineHeight: 1.6 }}>
         <strong>{state.status === "ready" ? "Strategy research producer ready" : state.status === "not_deployed" ? "Not collecting yet" : "Status unavailable"}</strong>{state.message ? ` — ${state.message}` : state.status === "ready" ? ` — weekly discovery ${state.automation?.enabled && state.automation?.auto_shadow_enabled ? "enabled" : "paused"}; paper selection ${state.automation?.auto_rule_paper_select_enabled ? "enabled" : "paused"}; ${state.limits?.used ?? state.configs.filter((row) => row.state !== "retired").length}/${state.limits?.maxActive ?? 3} market-local slots used.` : ""}

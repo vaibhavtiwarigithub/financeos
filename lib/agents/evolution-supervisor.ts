@@ -44,6 +44,7 @@ export interface EvolutionAutomationInput {
 const EVOLUTION_STAGES = new Set([
   "research",
   "learner",
+  "strategy_discovery",
   "validation_sweep",
   "llm_council_evaluate",
   "dimension_diagnostics",

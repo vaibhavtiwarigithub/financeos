@@ -1,7 +1,7 @@
 # Existing strategies, combinations, and autonomous discovery
 
 Date: 2026-11-03
-Status: architecture ready for review; expansion is not implemented.
+Status: owner-approved 2026-11-03 ("finish all pending work"); implementation in progress.
 Owner direction: start with existing dimension/strategy knowledge, combine bounded candidates, discover new hypotheses, backtest automatically, and diagnose failure without owner operation of each trial.
 
 ## 1. User intention
@@ -130,4 +130,4 @@ Primary research: Bailey et al., The Probability of Backtest Overfitting, https:
 
 ## 10. Approval gate
 
-This expands the shipped price-only optional-proposal workflow to automatic existing-strategy seeds, combinations, dimension observations and failure-driven research. Architecture is ready for review. I will not write code until you approve this architecture.
+This expands the shipped price-only optional-proposal workflow to automatic existing-strategy seeds, combinations, dimension observations and failure-driven research. Owner approved implementation on 2026-11-03 with "finish all pending work". Runtime completion and natural evidence gates must be recorded independently.

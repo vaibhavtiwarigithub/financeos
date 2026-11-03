@@ -3,7 +3,7 @@ import type { RuleSpec, Predicate } from "./rule-spec";
 /**
  * Strict compiler for the small subset of reference templates that can be
  * represented by Kairos' frozen daily-bar grammar. This intentionally refuses
- * fundamentals, sentiment, macro, volume and unsupported technical rules rather
+ * unrecorded fundamentals, sentiment, macro, volume and unsupported technical rules rather
  * than silently compiling a weaker strategy than the template describes.
  */
 export interface StrategyTemplateSource {
@@ -20,7 +20,7 @@ export interface TemplateCompileOptions {
 }
 
 export type TemplateCompileResult =
-  | { ok: true; spec: RuleSpec; compilerVersion: "template-rule-compiler-v2" }
+  | { ok: true; spec: RuleSpec; compilerVersion: "template-rule-compiler-v2" | "template-observed-score-compiler-v3" }
   | { ok: false; errors: string[] };
 
 const COMPILER_VERSION = "template-rule-compiler-v2" as const;
@@ -28,10 +28,12 @@ const SUPPORTED_KEYS = new Set([
   "rsi_min", "rsi_max", "above_ma50", "above_ma200", "ma50_above_ma200",
   "pct_from_52w_high_max", "pct_below_52w_high_min",
 ]);
+const SCORE_RULES = /^(fundamental|technical|sentiment|macro|insider)_score_(min|max)$/;
 
 const validSymbol = (symbol: string, market: "us" | "india") => {
   const normalized = symbol.trim().toUpperCase();
   if (market === "india") return /^[A-Z0-9&_-]+\.NS$/.test(normalized) || /^[A-Z0-9&_-]+\.BO$/.test(normalized);
+  if (/\.(NS|BO)$/.test(normalized)) return false;
   return /^[A-Z][A-Z0-9.-]{0,9}$/.test(normalized);
 };
 
@@ -42,7 +44,7 @@ export function compileStrategyTemplate(
   const errors: string[] = [];
   const rules = template.rules ?? {};
   const keys = Object.keys(rules).sort();
-  const unsupported = keys.filter((key) => !SUPPORTED_KEYS.has(key));
+  const unsupported = keys.filter((key) => !SUPPORTED_KEYS.has(key) && !SCORE_RULES.test(key));
   if (unsupported.length) errors.push(`unsupported template rules: ${unsupported.join(", ")}`);
   if (keys.length === 0) errors.push("template has no executable deterministic rules");
   if (!options.universe.length || options.universe.length > 100) errors.push("universe must contain 1–100 symbols");
@@ -54,6 +56,12 @@ export function compileStrategyTemplate(
   const entryTerms: Predicate[] = [];
   for (const key of keys) {
     const value = rules[key];
+    const scoreRule=key.match(SCORE_RULES);
+    if(scoreRule){
+      if(typeof value!=="number" || !Number.isFinite(value) || value<0 || value>100)errors.push(`${key} must be a finite score from 0 to 100`);
+      else entryTerms.push({op:"cmp",left:{fn:"observed_score",dimension:scoreRule[1] as "fundamental"|"technical"|"sentiment"|"macro"|"insider"},cmp:scoreRule[2]==="min" ? ">=" : "<=",right:value});
+      continue;
+    }
     switch (key) {
       case "rsi_min":
       case "rsi_max": {
@@ -98,10 +106,11 @@ export function compileStrategyTemplate(
   }
   if (errors.length) return { ok: false, errors };
 
-  const id = `${template.id}:${options.market}:${COMPILER_VERSION}`;
+  const compilerVersion = keys.some(key=>SCORE_RULES.test(key)) ? "template-observed-score-compiler-v3" as const : COMPILER_VERSION;
+  const id = `${template.id}:${options.market}:${compilerVersion}`;
   return {
     ok: true,
-    compilerVersion: COMPILER_VERSION,
+    compilerVersion,
     spec: {
       id,
       label: `${template.name} · deterministic shadow`,
@@ -114,7 +123,7 @@ export function compileStrategyTemplate(
       entry: entryTerms.length === 1 ? entryTerms[0] : { op: "and", terms: entryTerms },
       exit: { op: "held_sessions", cmp: ">=", value: options.horizonSessions },
       sourceName: `Kairos strategy template ${template.id}`,
-      ruleVersion: COMPILER_VERSION,
+      ruleVersion: compilerVersion,
     },
   };
 }

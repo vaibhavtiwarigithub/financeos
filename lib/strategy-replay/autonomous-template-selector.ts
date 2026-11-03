@@ -1,3 +1,4 @@
+import { TEMPLATE_SHADOW_PRICE_PROVENANCE } from "./template-shadow-collector";
 export const AUTONOMOUS_TEMPLATE_SELECTOR_VERSION = "paired-horizon-spaced-forward-v2";
 export const MIN_PAIRED_SESSIONS = 60;
 export const MIN_NONOVERLAP_WINDOWS = 20;
@@ -53,6 +54,7 @@ export async function evaluateAndPersistAutonomousRuleShadows(supabase: any, mar
       const page = await supabase.from("strategy_template_shadow_decisions")
         .select("id,symbol,signal_session,would_enter,baseline_entry_eligible")
         .eq("config_id", config.id).eq("market", market).order("signal_session", { ascending: true })
+        .eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE)
         .range(offset, offset + 999);
       if (page.error) throw new Error(`forward rule decisions read failed: ${page.error.message}`);
       decisions.push(...(page.data ?? []));

@@ -31,7 +31,8 @@ import { assessPaperTopUp } from "@/lib/trading/paper-topup-policy";
 import { paperPerformanceTruth, resolvedPaperOutcomeCount } from "@/lib/paper-nav";
 import { reportIssue } from "@/lib/system-health";
 import { bindTradePrices, buildExecutionRiskPlanProvenance, resolveExecutionRiskReward } from "@/lib/trading/trade-plan";
-import { admitMarketLocalSlot, isMarketSessionOpen } from "@/lib/trading/market-calendar";
+import { admitMarketLocalSlot, isMarketSessionOpen, lastCompletedMarketSession } from "@/lib/trading/market-calendar";
+import {TEMPLATE_SHADOW_PRICE_PROVENANCE} from "@/lib/strategy-replay/template-shadow-collector";
 import { paperAllocationSpend, paperDailyCapQuantity, paperIntendedSpend, paperEntryQuantity } from "@/lib/trading/paper-quantity";
 import { annotateEarningsRisk, recordEarningsRiskObservation } from "@/lib/risk/earnings-risk";
 import { benchmarkReturnPct, fetchBenchmarkObservation, isConfirmedBenchmarkObservation } from "@/lib/paper/benchmark-observation";
@@ -316,11 +317,13 @@ export async function POST(req: NextRequest) {
             if (config.error) throw new Error(config.error.message);
             if (config.data?.state === "shadow" && config.data.market === market
               && config.data.rule_spec?.market === market && Array.isArray(config.data.rule_spec?.universe)) {
-              const currentSignalSessions = [...new Set(marketRows.map((row: any) => String(row.created_at ?? "").slice(0, 10)).filter((date: string) => /^\\d{4}-\\d{2}-\\d{2}$/.test(date)))];
+              // Rules consume the preceding completed daily bar, not today's research timestamp.
+              const currentSignalSessions = [lastCompletedMarketSession(market)];
               if (currentSignalSessions.length) {
                 const decisions = await supabase.from("strategy_template_shadow_decisions")
                   .select("symbol,signal_session,would_enter").eq("config_id", config.data.id)
                   .eq("market", market).eq("would_enter", true)
+                  .eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE)
                   .in("signal_session", currentSignalSessions)
                   .in("symbol", config.data.rule_spec.universe);
                 if (decisions.error) throw new Error(decisions.error.message);

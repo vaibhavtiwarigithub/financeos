@@ -22,6 +22,7 @@ export interface Bar {
   high: number;
   low: number;
   close: number;
+  observation?: { id:number;ts:string;market:"us"|"india";session:string;sessionCloseAt:number;codeVersion:string|null;values:Record<string,number>;baselineEntryEligible:boolean };
 }
 
 export interface CompileInput {
@@ -137,16 +138,32 @@ function isNarrowestRange(bars: Bar[], end: number, period: number): number | nu
 }
 
 interface EvalCtx {
+  market?: "us"|"india";
   bars: Bar[];
   idx: number;
   entryPrice?: number;
   heldSessions?: number;
 }
 
+/** A close-time observation does not require a future fill bar or simulated flat position. */
+export function evaluateEntryAtClose(spec: RuleSpec,bars:Bar[]):boolean|null {
+  if(validateSpec(spec).length || !bars.length)return null;
+  return evaluate(spec.entry,{market:spec.market,bars,idx:bars.length-1});
+}
+
 function indicatorValue(ind: Indicator, ctx: EvalCtx): number | null {
   const { bars, idx } = ctx;
   const closes = bars.map((b) => b.close);
   switch (ind.fn) {
+    case "observed_score": {
+      const observation=bars[idx].observation;
+      if(!observation || !ctx.market)return null;
+      const ts=Date.parse(observation.ts);
+      if(!Number.isFinite(ts) || !Number.isFinite(observation.sessionCloseAt) || ts>observation.sessionCloseAt
+        || observation.market!==ctx.market || observation.session!==bars[idx].session)return null;
+      const value=observation.values[`${ind.dimension}_score`];
+      return typeof value==="number" && Number.isFinite(value) && value>=0 && value<=100 ? value : null;
+    }
     case "close": return bars[idx].close;
     case "open": return bars[idx].open;
     case "sma": return sma(closes, idx, ind.period);
@@ -265,6 +282,7 @@ export function compileSpec(input: CompileInput): CompileResult {
       if (open) {
         const held = i - open.entryIdx;
         const ctx: EvalCtx = {
+          market:spec.market,
           bars: series, idx: i, entryPrice: open.entryPrice, heldSessions: held,
         };
         const wantExit = evaluate(spec.exit, ctx);
@@ -286,7 +304,7 @@ export function compileSpec(input: CompileInput): CompileResult {
         continue;
       }
 
-      const ctx: EvalCtx = { bars: series, idx: i };
+      const ctx: EvalCtx = { bars: series, idx: i,market:spec.market };
       const wantEntry = evaluate(spec.entry, ctx);
       if (wantEntry === null) { warmupSkipped++; continue; }
       decisionSet.add(series[i].session);

@@ -20,6 +20,7 @@ export interface TemplateBacktestResult {
   warmup: number;
   inSample: ReplayMetrics | null;
   holdout: ReplayMetrics | null;
+  walkForward?:Array<{trainingThrough:string;from:string;through:string;metrics:ReplayMetrics}>;
   limitation: string;
 }
 
@@ -104,7 +105,18 @@ export function runTemplateBacktest(input: TemplateBacktestInput): TemplateBackt
   result.inSample = train;
   result.holdout = test;
   result.status = "diagnostic_only";
-  result.limitation = "Fixed-rule temporal holdout is descriptive only: current research cache is survivorship-selected, template trials are multiple-tested, and no promotion gate is satisfied by this result.";
+  // Fixed expanding origins. No parameter fitting or best-fold selection.
+  // Each fold reserves the full holding horizon before its boundary in compileSpec.
+  result.walkForward=[];
+  const origins=[0.4,0.6,0.8].map(fraction=>Math.floor(sessions.length*fraction));
+  for(let index=0;index<origins.length;index++){
+    const first=origins[index],last=(origins[index+1] ?? sessions.length)-1;
+    if(first<=warmup || last-first<input.spec.horizonSessions+5)continue;
+    const trainingThrough=sessions[first-1];
+    result.walkForward.push({trainingThrough,from:sessions[first],through:sessions[last],
+      metrics:replay(input,sessions[first],sessions[last],sessions,trainingThrough,trainingThrough)});
+  }
+  result.limitation = "Fixed-rule holdout and fixed-origin walk-forward folds are descriptive only; folds overlap the holdout and are not independent tests. Current research cache is survivorship-selected, trials are multiple-tested, and no promotion gate is satisfied.";
   return result;
 }
 

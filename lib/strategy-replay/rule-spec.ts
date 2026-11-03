@@ -73,6 +73,7 @@ export type Predicate =
   | { op: "held_sessions"; cmp: ">=" | ">"; value: number };
 
 export type Indicator =
+  | { fn: "observed_score"; dimension: "fundamental" | "technical" | "sentiment" | "macro" | "insider" }
   | { fn: "close" }
   | { fn: "open" }
   | { fn: "sma"; period: number }
@@ -157,5 +158,6 @@ function indicatorUsesClose(i: Indicator): boolean {
   // sma/rsi/range are derived FROM closes, so a predicate using them on the
   // signal bar also consumes that bar's close.
   return i.fn === "close" || i.fn === "sma" || i.fn === "rsi" || i.fn === "rsi_wilder"
+    || i.fn === "observed_score"
     || i.fn === "range_pct" || i.fn === "pct_below_rolling_high" || i.fn === "is_narrowest_range";
 }

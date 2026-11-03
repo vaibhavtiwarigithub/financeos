@@ -1,5 +1,11 @@
 # Kairos — Database Schema
 
+## Strategy pre-screen registration contract (2026-11-03)
+
+Migration `20261103173459_strategy_prescreen_trial_contract` adds `register_strategy_template_trial(text,uuid[],text,text,jsonb,text,text,jsonb,date)`. It is invoker-security, has an empty pinned search path, and is executable only by service_role. It reuses `trial_family_ledger` and its advisory lock to register failed as well as eligible historical trials before inspection, with exactly the fingerprint the config constructor later uses. Its returned historical cutoff remains the first registered cutoff. No table, job or financial record is added or backfilled. The config constructor now resolves its actual pgcrypto schema explicitly; five strategy-ledger trigger functions have pinned empty search paths.
+
+Pre-screen historical results are supplied directly at the existing `historical_evidence.status/holdout` contract, with discovery provenance alongside them. Nesting that diagnostic inside another provenance object made the existing shadow-transition gate unreachable and is no longer used. Production verification must exercise registration, idempotent cutoff, no double counting, and the transition in a fully rolled-back metadata-only transaction.
+
 ## Strategy template measurement ledger (2026-10-30)
 
 The Strategy Portfolio Lab uses `strategy_template_shadow_configs` for frozen

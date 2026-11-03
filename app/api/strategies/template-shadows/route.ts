@@ -8,6 +8,8 @@ import { compileStrategyTemplate } from "@/lib/strategy-replay/template-compiler
 import { runTemplateBacktest } from "@/lib/strategy-replay/template-backtest";
 import { isMissingStrategyLabSchemaObject } from "@/lib/strategy-replay/schema-errors";
 import type { Bar } from "@/lib/strategy-replay/compile";
+import {attachObservedScores,needsObservedScores} from "@/lib/strategy-replay/observed-scores";
+import {TEMPLATE_SHADOW_PRICE_PROVENANCE} from "@/lib/strategy-replay/template-shadow-collector";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -19,6 +21,9 @@ export async function GET(req: NextRequest) {
   const gate = await requireOwner(); if (gate) return gate;
   const market = req.nextUrl.searchParams.get("market") === "india" ? "india" : "us";
   const svc = createServiceClient();
+  const discovery = await svc.from("agent_runs").select("started_at,completed_at,status,result_summary,workload_metrics")
+    .eq("market",market).eq("agent_type","strategy_discovery").order("started_at",{ascending:false}).limit(1).maybeSingle();
+  if (discovery.error) return NextResponse.json({error:"strategy_discovery_status_unavailable"},{status:503});
   const { data: configs, error } = await svc.from("strategy_template_shadow_configs")
     .select("*").eq("market", market).order("created_at", { ascending: false }).limit(20);
   if (error) {
@@ -47,7 +52,7 @@ export async function GET(req: NextRequest) {
       fetchAllRows((from, to) => svc.from("strategy_template_shadow_events").select("event,reason,evidence_snapshot,created_at")
         .eq("config_id", config.id).order("created_at", { ascending: false }).range(from, to), "strategy template events"),
       svc.from("strategy_template_shadow_decisions").select("id,would_enter,baseline_entry_eligible,signal_session", { count: "exact" })
-        .eq("config_id", config.id).order("signal_session", { ascending: false }).limit(1000),
+        .eq("config_id", config.id).eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE).order("signal_session", { ascending: false }).limit(1000),
       svc.from("strategy_template_paper_evaluations").select("status,selector_version,evidence,created_at")
         .eq("config_id", config.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
@@ -97,7 +102,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "strategy_shadow_evidence_read_failed" }, { status: 500 });
   }
   return NextResponse.json({ market, configs: enriched, templates: templateOptions, automation: automation ?? null,
-    paperSelection: paperSelection ?? null, status: "ready", limits: { maxActive: 3,
+    paperSelection: paperSelection ?? null, discovery: discovery.data ?? null, status: "ready", limits: { maxActive: 3,
       used: (configs ?? []).filter((row: any) => row.state !== "retired").length,
       maxUniverseSymbols: MAX_BACKTEST_SYMBOLS, maxBarsPerSymbol: MAX_BARS_PER_SYMBOL } });
 }
@@ -208,6 +213,9 @@ async function loadDiagnostic(svc: any, spec: import("@/lib/strategy-replay/rule
   }
   const provenance = (rows as any[]).map((row) => ({ provider: row.provider, priceBasis: row.price_basis, provenanceVersion: row.provenance_version }));
   for (const symbol of Object.keys(bySymbol)) bySymbol[symbol].sort((a,b) => a.session.localeCompare(b.session));
+  if(needsObservedScores(spec))for(const symbol of spec.universe){
+    if(bySymbol[symbol])bySymbol[symbol]=await attachObservedScores(svc,spec.market,symbol,bySymbol[symbol]);
+  }
   const bases = [...new Set(provenance.map((row) => row.priceBasis))];
   if (bases.length > 1) return {
     status: "insufficient_data", method: "fixed-rule-70-30-temporal-holdout-v1",
