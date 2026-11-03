@@ -34,4 +34,8 @@ Arbitrary new providers, active source/formula adoption and open-ended executabl
 
 Full application suite: 4,736 passed, eight skipped, 580 test files passed and one skipped. Final targeted replay/collector/continuation suites: 23 passed across five files, including the additional continuation regression. A clean nonincremental TypeScript check passed. The isolated production build succeeded, including all 77 static pages; its generated path changes to tracked TypeScript configuration were restored. GitGuardian found no secrets in staged changes; the oversized work-log file was checked separately using its actual patch. Diff checks passed. Both markets' existing automation remains enabled with one shadow slot; no policy values were changed.
 
-Exact deployment evidence is appended after release verification. Natural-cycle acceptance and profitable-strategy evidence remain distinct pending gates.
+## Release verification
+
+Commit `1033a98267361956f94c23a02c7ade61c7f3caa6` is the exact `origin/main` SHA and the source SHA for Vercel production deployment `dpl_5nchhR5oHscxnorFfmCSnVFscPFU` (READY; alias `financeos-phi.vercel.app`). GitHub acceptance run `41691942472` passed both `application-contracts` and `clean-database-replay`. Production `/login` returned HTTP 200; unauthenticated `/api/strategies/template-shadows?market=us` returned HTTP 401. No strategy/research/watchdog/trade route was manually invoked.
+
+Natural-cycle acceptance and profitable-strategy evidence remain pending. Production still has zero strategy configs/decisions/outcomes, so the next natural weekly Learner and daily Research cycles must prove that discovery attempts persist and forward observations collect. No profitability claim is supported yet.
