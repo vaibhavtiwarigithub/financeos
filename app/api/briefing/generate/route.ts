@@ -6,6 +6,8 @@ import { callLLM } from "@/lib/llm-router";
 import { fetchIndiaIndices } from "@/lib/india-data";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { isFreshSessionDate } from "@/lib/data/price-cache-freshness";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { escapeLedgerHtml, normalizeLiveLedger, normalizePaperLedger, paperLedgerLines, type PaperLedgerRow } from "@/lib/briefing/holdings-ledger";
 import {
   buildLiveRiskBriefing,
   latestCompleteRiskRuns,
@@ -42,12 +44,14 @@ interface BriefingData {
   dateStr: string; dayName: string; timestamp: string;
   editorNote: string;
   paper: { nav: number; cash: number; pnl: number; pnlPct: number; positionsCount: number };
-  live: { equity: number; buyingPower: number; positions: number } | null;
+  liveAccounts: number;
   healthScore: number; healthVerdict: string;
   market: { label: string; price: number | null; changePct: number | null }[];
   regime: { label: string; tone: string } | null;
   distribution: { strongBuy: number; buy: number; watch: number };
-  positions: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[];
+  positions: PaperLedgerRow[];
+  liveLedger: ReturnType<typeof normalizeLiveLedger>;
+  liveRiskState: LiveRiskBriefing["state"];
   signals: { symbol: string; direction: string; score: number; reasoning: string }[];
   candidates: { symbol: string; direction: string; score: number; reasoning: string }[];
   earnings: { symbol: string; date: string; isToday: boolean; eps: number | null }[];
@@ -81,12 +85,7 @@ function bandHeader(label: string): string {
 }
 
 function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return escapeLedgerHtml(value);
 }
 
 function researchHtml(
@@ -171,6 +170,70 @@ function buildLiveRiskHtml(risk: LiveRiskBriefing, baseUrl: string): string {
   }).join("") + `<div style="font-size:11px;color:${E.muted};margin-top:4px;line-height:1.5"><b>Research and risk answer different questions:</b> ResearchAgent scores the stock thesis; Holding Risk measures exposure. Concentration is REVIEW-only because Kairos does not have an account-specific concentration mandate or executable quantity plan. A high research score does not erase measured risk, and measured concentration does not create a sell instruction. Deterministic, advisory-only results; the briefing never recalculates or changes either verdict. <a href="${baseUrl}/dashboard/risk" style="color:${E.accent};text-decoration:none">Open full Risk Analytics »</a></div>`;
 }
 
+function amount(value: number | null, currency: string): string {
+  return value == null ? "Unavailable" : `${currency}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function signedAmount(value: number | null, currency: string): string {
+  return value == null ? "Unavailable" : `${value >= 0 ? "+" : "−"}${currency}${Math.abs(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function buildPaperLedgerHtml(rows: readonly PaperLedgerRow[], currency: string, market: "us" | "india"): string {
+  if (!rows.length) return `<div style="font-size:12px;color:${E.muted};padding:8px 0">No open paper positions recorded for ${market === "india" ? "India" : "the US"}.</div>`;
+  return `<div style="font-size:11px;color:${E.sub};margin-bottom:6px">${rows.length} open paper position${rows.length === 1 ? "" : "s"} · stored marks, not new quotes</div><table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed">
+    <tr>${["Symbol", "Position", "Mark / value", "P&amp;L", "Protection / dates"].map(label => `<th style="padding:6px 4px;text-align:left;border-bottom:1px solid ${E.border};font-size:10px;color:${E.muted}">${label}</th>`).join("")}</tr>
+    ${rows.map(row => {
+      const pnl = row.pnl == null ? "Unavailable" : `${signedAmount(row.pnl, currency)}${row.pnlPct == null ? "" : ` (${row.pnlPct >= 0 ? "+" : ""}${row.pnlPct.toFixed(1)}%)`}`;
+      return `<tr>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px;font-weight:700;overflow-wrap:anywhere">${escapeHtml(row.symbol)}</td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px">${row.qty == null ? "Unavailable" : row.qty}<div style="color:${E.muted};margin-top:2px">avg ${amount(row.avgCost, currency)}</div></td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px">${amount(row.mark, currency)}<div style="color:${E.muted};margin-top:2px">value ${amount(row.marketValue, currency)}</div></td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px;color:${row.pnl == null ? E.muted : row.pnl >= 0 ? E.green : E.red}">${pnl}</td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:10px;color:${E.sub}">Stop ${amount(row.stop, currency)} · target ${amount(row.target, currency)}<div style="color:${E.muted};margin-top:2px">opened ${escapeHtml(row.openedAt ?? "Unavailable")}</div><div style="color:${E.muted};margin-top:2px">mark row ${escapeHtml(row.markUpdatedAt ?? "time unavailable")}</div></td>
+      </tr>`;
+    }).join("")}
+  </table>`;
+}
+
+function buildLiveLedgerHtml(accounts: BriefingData["liveLedger"], market: "us" | "india", state: BriefingData["liveRiskState"]): string {
+  if (!accounts.length) {
+    const reason = state === "unavailable"
+      ? "Live holdings could not be read completely for this market. This email does not claim the accounts are flat."
+      : `No complete live holdings snapshot is available for ${market === "india" ? "India" : "the US"}. This does not confirm that the account is flat.`;
+    return `<div style="font-size:12px;color:${E.amber};padding:8px 0">${reason}</div>`;
+  }
+  return accounts.map(account => {
+    const currency = account.currency === "INR" ? "₹" : "$";
+    const last4 = account.accountId.slice(-4);
+    const accountLabel = account.label.includes(`••••${last4}`) ? account.label : `${account.label} ••••${last4}`;
+    const capturedMs = account.capturedAt ? Date.parse(account.capturedAt) : Number.NaN;
+    const capturedAt = Number.isFinite(capturedMs) ? new Date(capturedMs).toISOString() : "time unavailable";
+    const rows = account.holdings.map(holding => {
+      const pnl = holding.qty != null && holding.qty > 0 && holding.averageCost != null && holding.averageCost > 0 && holding.currentPrice != null
+        ? (holding.currentPrice - holding.averageCost) * holding.qty
+        : null;
+      const pnlPct = holding.averageCost != null && holding.averageCost > 0 && holding.currentPrice != null
+        ? ((holding.currentPrice - holding.averageCost) / holding.averageCost) * 100
+        : null;
+      const value = amount(holding.marketValue, currency);
+      const pnlText = pnl == null ? "Unavailable" : `${signedAmount(pnl, currency)}${pnlPct == null ? "" : ` (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`}`;
+      return `<tr>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px;font-weight:700;overflow-wrap:anywhere">${escapeHtml(holding.symbol)}</td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px">${holding.qty == null ? "Unavailable" : holding.qty}<div style="color:${E.muted};margin-top:2px">avg ${amount(holding.averageCost, currency)}</div></td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px">${amount(holding.currentPrice, currency)}<div style="color:${E.muted};margin-top:2px">value ${value}</div></td>
+        <td style="padding:7px 4px;border-bottom:1px solid ${E.border};font-size:11px">${pnlText}</td>
+      </tr>`;
+    }).join("");
+    const noHoldings = account.snapshotStatus === "complete"
+      ? `<div style="font-size:12px;color:${E.muted};padding-top:7px">No live holdings were present in this completed snapshot.</div>`
+      : `<div style="font-size:12px;color:${E.amber};padding-top:7px">This account's positions could not be verified from its latest run.</div>`;
+    return `<div style="border:1px solid ${E.border};border-radius:8px;padding:10px;margin:8px 0;background:${E.surface}">
+      <div style="font-size:12px;font-weight:700;color:${E.text}">${escapeHtml(accountLabel)} <span style="font-size:10px;color:${E.muted};font-weight:500">${escapeHtml(account.broker)} · ${account.currency} · ${account.snapshotStatus} · ${account.holdings.length} holdings · captured ${escapeHtml(capturedAt)}</span></div>
+      ${account.coverageNote ? `<div style="font-size:10.5px;color:${account.snapshotStatus === "complete" ? E.amber : E.red};margin-top:4px">${escapeHtml(account.coverageNote)}</div>` : ""}
+      ${account.holdings.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed"><tr>${["Symbol", "Position", "Mark / value", "P&amp;L"].map(label => `<th style="padding:6px 4px;text-align:left;border-bottom:1px solid ${E.border};font-size:10px;color:${E.muted}">${label}</th>`).join("")}</tr>${rows}</table>` : noHoldings}
+    </div>`;
+  }).join("");
+}
+
 function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string; html: string } {
   const icon = d.session === "morning" ? "📈" : "🌙";
   const label = `${d.market_scope === "india" ? "🇮🇳 India " : ""}${d.session === "morning" ? "Morning Briefing" : "Evening Summary"}`;
@@ -206,15 +269,8 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
     </div>`;
   }).join("") : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No agent signals yet — the ${d.market_scope === "india" ? "India research run fires 15min after NSE open (9:15 AM IST)" : "pre-market research scan runs at 9:00 AM ET"}.</div>`;
 
-  // Positions table
-  const positionsBlock = d.positions.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
-    ${d.positions.map(p => `<tr>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;color:${E.text}">${p.symbol}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.sub}">${p.qty} @ ${cur}${p.entry.toFixed(2)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;color:${E.text};text-align:right">${p.current != null ? cur + p.current.toFixed(2) : "—"}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid ${E.border};font-size:12px;font-weight:700;text-align:right;color:${pctColor(p.pnlPct)}">${p.pnlPct != null ? sign(p.pnlPct) + p.pnlPct.toFixed(1) + "%" : "—"}</td>
-    </tr>`).join("")}
-  </table>` : `<div style="font-size:13px;color:${E.muted};padding:8px 0">No open positions.</div>`;
+  const paperLedgerBlock = buildPaperLedgerHtml(d.positions, cur, d.market_scope);
+  const liveLedgerBlock = buildLiveLedgerHtml(d.liveLedger, d.market_scope, d.liveRiskState);
   const liveRiskBlock = buildLiveRiskHtml(d.liveRisk, baseUrl);
 
   const earningsBlock = d.earnings.length
@@ -268,7 +324,7 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
           <div style="font-size:11px;color:${E.muted}">Paper</div>
           <div style="font-size:15px;font-weight:700;color:${pctColor(d.paper.pnl)}">${sign(d.paper.pnl)}${cur}${Math.abs(d.paper.pnl).toFixed(0)} <span style="font-size:12px">(${sign(d.paper.pnlPct)}${d.paper.pnlPct.toFixed(1)}%)</span></div>
           <div style="font-size:11px;color:${E.muted};margin-top:2px">NAV ${cur}${d.paper.nav.toFixed(0)} · ${d.paper.positionsCount} pos · cash ${cur}${d.paper.cash.toFixed(0)}</div>
-          ${d.live ? `<div style="font-size:11px;color:${E.muted};margin-top:6px">Live ●●●●8641: $${d.live.equity.toFixed(0)} · ${d.live.positions} pos</div>` : ""}
+          <div style="font-size:11px;color:${E.muted};margin-top:6px">Live account records: ${d.liveAccounts}${d.liveAccounts === 0 ? " · holdings not verified" : " · check each account's capture status below"}</div>
         </td>
       </tr></table>
       <div style="font-size:11px;color:${E.muted};margin-top:8px;line-height:1.5">What this is: a 0–5 read of your book — it blends realized P&L momentum with how strong the agent's current signals are. Higher = a more constructive setup, not a guarantee. Verdict: Healthy ≥4, Watch ≥3, Exposed below.</div>
@@ -292,7 +348,10 @@ function buildBriefingHtml(d: BriefingData, baseUrl: string): { subject: string;
 
       <!-- Positions -->
       ${bandHeader("Your Positions")}
-      ${positionsBlock}
+      <div style="font-size:12px;font-weight:700;color:${E.text};margin:4px 0">Paper holdings — complete market-local book</div>
+      ${paperLedgerBlock}
+      ${bandHeader("Live Holdings by Account")}
+      ${liveLedgerBlock}
 
       <!-- Deterministic live holding risk, grouped by account/currency -->
       ${bandHeader("Live Holdings Risk")}
@@ -461,9 +520,8 @@ export async function POST(req: NextRequest) {
   const [
     { data: lastRun },
     { data: portfolio },
-    { data: rawPositions },
+    paperRowsResult,
     { data: signals },
-    { data: liveSnap },
     { data: tomorrowEarnings },
     { data: learningLog },
     { data: watchlist },
@@ -482,15 +540,12 @@ export async function POST(req: NextRequest) {
   ] = await Promise.all([
     svc.from("agent_runs").select("*").eq("agent_type", "research").eq("market", market).order("created_at", { ascending: false }).limit(1).single(),
     svc.from("paper_portfolio").select("*").eq("market", market).limit(1).maybeSingle(),
-    svc.from("paper_positions").select("*").eq("market", market).limit(10),
+    fetchAllRows((from, to) => svc.from("paper_positions")
+      .select("id,symbol,qty,avg_cost,current_price,opened_at,updated_at,price_target,stop_loss,exit_reason,market,currency")
+      .eq("market", market).order("id", { ascending: true }).range(from, to), "briefing paper holdings")
+      .then((data) => ({ data, error: null as null }))
+      .catch(() => ({ data: null, error: { message: "complete paper holdings read failed" } })),
     svc.from("agent_signals").select("symbol,direction,analyst_score,reasoning").eq("market", market).eq("status", "pending").gte("analyst_score", 50).order("analyst_score", { ascending: false }).limit(8),
-    // Live account snapshot is US-only (Robinhood) -- India has no live
-    // broker snapshot wired into this briefing yet (Kite live state lives on
-    // the India dashboard page). Skipping the query for India avoids
-    // fetching and then discarding a US-only account's data.
-    market === "us"
-      ? svc.from("live_account_snapshots").select("*").eq("account_id", "965848641").order("captured_at", { ascending: false }).limit(1).single()
-      : Promise.resolve({ data: null }),
     svc.from("earnings_calendar").select("symbol,report_date,estimate_eps,period").gte("report_date", dateStr).order("report_date").limit(5),
     // learning_log has no symbol/outcome columns (it's the learner's own
     // weight-mutation audit log) — recently closed trades actually live in
@@ -508,37 +563,38 @@ export async function POST(req: NextRequest) {
     svc.from("learner_runs").select("run_date, hypotheses").gte("run_date", dateStr.slice(0, 8) + "01").order("run_date", { ascending: false }).limit(4),
     svc.from("mentor_insights").select("grade, focus_areas, lesson, next_milestone").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     svc.from("paper_trades").select("symbol, side, pnl, closed_at").gte("executed_at", since7dISO).not("closed_at", "is", null).order("closed_at", { ascending: false }).limit(20),
-    svc.from("holding_risk_runs")
-      .select("id,market,currency,broker,account_id,account_label,status,captured_on,source_captured_at,completed_at,formula_version,data_confidence,missing_inputs")
-      .eq("market", market)
-      .eq("status", "complete")
-      .order("completed_at", { ascending: false })
-      .limit(200),
+    fetchAllRows((from, to) => svc.from("holding_risk_runs")
+      .select("id,market,currency,broker,account_id,account_label,status,captured_on,source_captured_at,completed_at,started_at,formula_version,data_confidence,missing_inputs")
+      .eq("market", market).order("id", { ascending: true }).range(from, to), "briefing holding-risk runs")
+      .then((data) => ({ data, error: null as null }))
+      .catch(() => ({ data: null, error: { message: "complete live account snapshot read failed" } })),
   ]);
+
+  if (paperRowsResult.error || !paperRowsResult.data || riskRunsResult.error || !riskRunsResult.data) {
+    return NextResponse.json({ error: "Complete holdings could not be verified; the briefing was not sent." }, { status: 503 });
+  }
 
   // Replay the latest immutable, COMPLETE risk run per live account. This path
   // makes no provider call, performs no risk calculation, and cannot change a
   // deterministic posture written by HoldingRisk.
   let liveRisk: LiveRiskBriefing;
-  if (riskRunsResult.error) {
-    liveRisk = buildLiveRiskBriefing({
-      market, now, runs: [], holdings: [], accounts: [], error: riskRunsResult.error.message,
-    });
+  const riskRuns = riskRunsResult.data as LiveRiskRunRow[];
+  const runIds = latestCompleteRiskRuns(riskRuns, market).map((row) => row.id);
+  if (runIds.length === 0) {
+    liveRisk = buildLiveRiskBriefing({ market, now, runs: riskRuns, holdings: [], accounts: [] });
   } else {
-    const riskRuns = (riskRunsResult.data ?? []) as LiveRiskRunRow[];
-    const runIds = latestCompleteRiskRuns(riskRuns, market).map((row) => row.id);
-    if (runIds.length === 0) {
-      liveRisk = buildLiveRiskBriefing({ market, now, runs: riskRuns, holdings: [], accounts: [] });
-    } else {
-      const [holdingRows, accountRows] = await Promise.all([
-        svc.from("holding_risk_snapshots")
-          .select("run_id,market,currency,account_id,symbol,current_price,market_value,weight_pct,unrealized_pnl_pct,holding_risk_score,risk_label,risk_posture,action_reason,data_confidence,missing_inputs")
-          .in("run_id", runIds),
+      const [holdingRowsResult, accountRows] = await Promise.all([
+        fetchAllRows((from, to) => svc.from("holding_risk_snapshots")
+          .select("id,run_id,market,currency,account_id,symbol,qty,average_cost,source_captured_at,current_price,market_value,weight_pct,unrealized_pnl_pct,holding_risk_score,risk_label,risk_posture,action_reason,data_confidence,missing_inputs")
+          .in("run_id", runIds).order("id", { ascending: true }).range(from, to), "briefing live holdings")
+          .then((data) => ({ data, error: null as null }))
+          .catch(() => ({ data: null, error: { message: "complete live holdings read failed" } })),
         svc.from("account_risk_snapshots")
           .select("run_id,market,currency,account_id,total_value,metrics,data_confidence,missing_inputs")
           .in("run_id", runIds),
       ]);
-      const riskSymbols = Array.from(new Set((holdingRows.data ?? [])
+      const holdingRows = holdingRowsResult.data ?? [];
+      const riskSymbols = Array.from(new Set(holdingRows
         .filter((row: any) => row.market === market && typeof row.symbol === "string")
         .map((row: any) => row.symbol)));
       const researchRows = riskSymbols.length > 0
@@ -554,14 +610,17 @@ export async function POST(req: NextRequest) {
         market,
         now,
         runs: riskRuns,
-        holdings: holdingRows.data ?? [],
+        holdings: holdingRows,
         accounts: accountRows.data ?? [],
-        error: holdingRows.error?.message ?? accountRows.error?.message ?? null,
+        error: holdingRowsResult.error?.message ?? accountRows.error?.message ?? null,
         researchRows: researchRows.data ?? [],
         researchError: researchRows.error?.message ?? null,
       });
-    }
   }
+  if (liveRisk.state === "unavailable") {
+    return NextResponse.json({ error: "Live holdings could not be verified completely; the briefing was not sent." }, { status: 503 });
+  }
+  const liveLedger = normalizeLiveLedger(liveRisk.accounts, market, riskRunsResult.data as LiveRiskRunRow[]);
 
   // 7-day agent-activity recap (used in context block + weekend prompt + email)
   const recapByAgent: Record<string, { runs: number; signals: number; today: number }> = {};
@@ -593,51 +652,12 @@ export async function POST(req: NextRequest) {
   // Enrich positions with current price. India has no price_cache coverage
   // (that table is populated from US-only feeds) -- Yahoo's live quote is
   // used instead, same source PaperTrader itself fills India orders from.
-  const positions = rawPositions ?? [];
-  const staleMarks: { symbol: string; asOf: string }[] = [];
-  const positionLines: string[] = [];
-  const positionsStruct: { symbol: string; direction: string; qty: number; entry: number; current: number | null; pnl: number | null; pnlPct: number | null }[] = [];
-  for (const p of positions) {
-    let currentPrice: number | null = p.current_price ? Number(p.current_price) : null;
-    if (currentPrice == null) {
-      if (market === "india") {
-        const { fetchIndiaQuote } = await import("@/lib/india-data");
-        const q = await fetchIndiaQuote(p.symbol).catch(() => null);
-        currentPrice = q?.price ?? null;
-      } else {
-        const { data: cache } = await svc
-          .from("price_cache")
-          .select("date, close")
-          .eq("symbol", p.symbol)
-          .order("date", { ascending: false })
-          .limit(1)
-          .single();
-        currentPrice = cache?.close ? Number(cache.close) : null;
-        // W9 — the briefing reports P&L "now". When price_cache freezes, that
-        // number is a fossil and the email said nothing. Label it rather than
-        // dropping it: a stale mark is still the best mark we have, but the
-        // owner (and the LLM reading this bundle) must know which it is.
-        if (currentPrice != null && cache?.date && !isFreshSessionDate(String(cache.date), "us")) {
-          staleMarks.push({ symbol: p.symbol, asOf: String(cache.date) });
-        }
-      }
-    }
-    // paper_positions columns: qty, avg_cost, current_price (no status/direction/
-    // entry_price/quantity — it's long-only, and open = present).
-    const entryPrice = Number(p.avg_cost);
-    const qty = Number(p.qty);
-    if (currentPrice && Number.isFinite(entryPrice) && entryPrice > 0) {
-      const pnlDollar = (currentPrice - entryPrice) * qty;
-      const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-      positionLines.push(
-        `  • ${p.symbol} LONG: ${qty} shares @ ${cur}${entryPrice.toFixed(2)} entry → ${cur}${currentPrice.toFixed(2)} now = ${pnlDollar >= 0 ? "+" : ""}${cur}${pnlDollar.toFixed(0)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%)`
-      );
-      positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: currentPrice, pnl: pnlDollar, pnlPct });
-    } else {
-      positionLines.push(`  • ${p.symbol} LONG: ${qty} shares @ ${cur}${Number.isFinite(entryPrice) ? entryPrice.toFixed(2) : "?"} entry (price unavailable)`);
-      positionsStruct.push({ symbol: p.symbol, direction: "long", qty, entry: entryPrice, current: null, pnl: null, pnlPct: null });
-    }
-  }
+  const positions = normalizePaperLedger(paperRowsResult.data, market);
+  const positionLines = paperLedgerLines(positions, cur);
+  const staleMarks = positions
+    .filter((position) => position.mark != null && (!position.markUpdatedAt
+      || !isFreshSessionDate(position.markUpdatedAt.slice(0, 10), market, now)))
+    .map((position) => ({ symbol: position.symbol, asOf: position.markUpdatedAt ?? "unknown" }));
 
   // Market context block. US indices are dollar-priced ETPs (fmt prefixes
   // "$"); India's are raw NIFTY/SENSEX index point levels (no currency unit).
@@ -682,11 +702,9 @@ export async function POST(req: NextRequest) {
     ? (learningLog ?? []).map((l: any) => `  • ${l.symbol} [${l.outcome}]: ${l.rationale ?? ""}`)
     : ["  • No closed trades yet (Phase 0 — learning starts after 10+ closed paper trades)"];
 
-  // Live account block — US only (Robinhood); India's live account state
-  // lives on the India dashboard page, not wired into this briefing yet.
-  const liveBlock = liveSnap
-    ? `Equity: $${Number(liveSnap.equity).toFixed(2)} | Buying power: $${Number(liveSnap.buying_power).toFixed(2)} | Positions: ${liveSnap.position_count} | Synced: ${new Date(liveSnap.captured_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
-    : market === "india" ? "N/A — India briefing (Robinhood is US-only)" : "Not synced";
+  const liveLines = liveLedger.flatMap((account) => account.holdings.length
+    ? account.holdings.map((holding) => `  • ${account.broker} account ••••${account.accountId.slice(-4)}: ${holding.symbol} qty ${holding.qty ?? "unavailable"}, avg ${holding.averageCost ?? "unavailable"}, mark ${holding.currentPrice ?? "unavailable"}, captured ${account.capturedAt ?? "unknown"}`)
+    : [`  • ${account.broker} account ••••${account.accountId.slice(-4)}: ${account.snapshotStatus === "complete" ? "verified complete snapshot has no holdings" : `${account.snapshotStatus} snapshot; holdings unavailable`} (${account.capturedAt ?? "capture time unavailable"})`]);
 
   // Research run block
   const researchBlock = lastRun
@@ -711,14 +729,14 @@ ${marketBlock}
 PAPER PORTFOLIO:
 ${portfolioBlock}
 
-OPEN PAPER POSITIONS:
+OPEN PAPER POSITIONS (${positions.length} total; full table follows in email):
 ${positionLines.length > 0 ? positionLines.join("\n") : "  • No open positions"}
 ${staleMarks.length > 0
   ? `  ⚠ STALE MARKS — the "now" price for ${staleMarks.map(m => `${m.symbol} (as-of ${m.asOf})`).join(", ")} came from a frozen price cache and is NOT current. The P&L shown for those positions is not today's P&L. Say so explicitly; do not draw conclusions from their moves.`
   : ""}
 
-LIVE ROBINHOOD ACCOUNT (••••8641, read-only):
-${liveBlock}
+LIVE HOLDINGS LEDGER (${liveLedger.length} complete account snapshots; full table follows in email):
+${liveLines.length ? liveLines.join("\n") : "  • No complete live holding snapshot available; this is not confirmation that accounts are flat."}
 
 LIVE HOLDINGS RISK (DETERMINISTIC, ADVISORY ONLY; CONCENTRATION IS REVIEW-ONLY; RESEARCH DOES NOT ALTER RISK):
 ${liveRiskContextLines(liveRisk).join("\n")}
@@ -863,11 +881,13 @@ If a category above has no data (e.g. no agent runs, no mentor grade), say so pl
     timestamp: localNow.toISOString().slice(11, 16) + (market === "india" ? " IST" : " ET"),
     editorNote,
     paper: { nav, cash, pnl, pnlPct, positionsCount: positions.length },
-    live: liveSnap ? { equity: Number(liveSnap.equity), buyingPower: Number(liveSnap.buying_power), positions: liveSnap.position_count ?? 0 } : null,
+    liveAccounts: liveLedger.length,
+    liveLedger,
+    liveRiskState: liveRisk.state,
     liveRisk,
     healthScore: Number(healthScore.toFixed(1)), healthVerdict,
     market: indexRows, regime, distribution,
-    positions: positionsStruct,
+    positions,
     signals: pendingSignals.slice(0, 5),
     candidates: pendingSignals.slice(0, 3),
     earnings: (tomorrowEarnings ?? []).map((e: any) => ({ symbol: e.symbol, date: e.report_date, isToday: e.report_date === dateStr, eps: e.estimate_eps != null ? Number(e.estimate_eps) : null })),

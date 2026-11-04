@@ -21,6 +21,7 @@ export interface LiveRiskRunRow {
   status: string;
   captured_on: string;
   source_captured_at: string | null;
+  started_at?: string | null;
   completed_at: string | null;
   formula_version: string;
   data_confidence: number | null;
@@ -33,6 +34,9 @@ export interface LiveRiskHoldingRow {
   currency: string;
   account_id: string;
   symbol: string;
+  qty?: number | string | null;
+  average_cost?: number | string | null;
+  source_captured_at?: string | null;
   current_price: number | null;
   market_value: number | null;
   weight_pct: number | null;
@@ -58,6 +62,9 @@ export interface LiveRiskAccountRow {
 
 export interface BriefingRiskHolding {
   symbol: string;
+  qty: number | null;
+  averageCost: number | null;
+  sourceCapturedAt: string | null;
   currentPrice: number | null;
   marketValue: number | null;
   weightPct: number | null;
@@ -89,6 +96,8 @@ export interface BriefingRiskAccount {
   accountRiskScore: number | null;
   accountRiskLabel: string | null;
   holdingsTotal: number;
+  /** Full immutable input cohort for the holdings ledger; attention UI remains capped separately. */
+  allHoldings: BriefingRiskHolding[];
   holdingsShown: BriefingRiskHolding[];
   holdingsOmitted: number;
 }
@@ -201,6 +210,9 @@ export function buildLiveRiskBriefing(input: {
         );
         return {
           symbol: row.symbol,
+          qty: finiteNumber(row.qty),
+          averageCost: finiteNumber(row.average_cost),
+          sourceCapturedAt: row.source_captured_at ?? run.source_captured_at,
           currentPrice: finiteNumber(row.current_price),
           marketValue: finiteNumber(row.market_value),
           weightPct: finiteNumber(row.weight_pct),
@@ -249,6 +261,7 @@ export function buildLiveRiskBriefing(input: {
       accountRiskScore: finiteNumber(metrics?.riskScore),
       accountRiskLabel: typeof metrics?.riskLabel === "string" ? metrics.riskLabel : null,
       holdingsTotal: allHoldings.length,
+      allHoldings,
       holdingsShown: shown,
       holdingsOmitted: Math.max(0, allHoldings.length - shown.length),
     };

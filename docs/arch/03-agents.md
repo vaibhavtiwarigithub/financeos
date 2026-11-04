@@ -1457,7 +1457,13 @@ Evening: trade recap. Sends via Resend (or configured EMAIL_PROVIDER). Includes 
 band when System Health alerts are present. Its Live Holdings Risk band replays immutable
 per-account results (actionable/review postures first), exposes freshness/confidence/missing
 inputs, and never recomputes risk or combines accounts/currencies. LLM prose cannot change a
-HoldingRisk score or posture.
+HoldingRisk score or posture. Separate deterministic full-book ledgers list every paper lot and
+every holding from each account's latest complete immutable Holding Risk snapshot, including
+ordinary holds omitted from the attention-oriented risk band. Paper and live account reads are
+paginated where completeness depends on the full result. Failed/incomplete reads block email
+delivery; stale or failed account attempts are shown as last-known/unavailable, never as flat.
+The email makes no broker or market-data calls for the ledger, and all account IDs remain
+masked. The LLM only receives the data context and cannot edit the HTML ledger.
 
 **Outputs:** `briefings` row, `newsletters` row (on successful Resend send)
 

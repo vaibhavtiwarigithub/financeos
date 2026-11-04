@@ -98,6 +98,7 @@ describe("live risk briefing", () => {
     expect(result.state).toBe("available");
     expect(result.accounts).toHaveLength(1);
     expect(result.accounts[0].holdingsShown.map((row) => row.symbol)).toEqual(["AVGO", "A", "B", "C"]);
+    expect(result.accounts[0].allHoldings.map((row) => row.symbol)).toEqual(["AVGO", "A", "B", "C", "D"]);
     expect(result.accounts[0].holdingsOmitted).toBe(1);
     expect(result.accounts[0].stale).toBe(false);
   });
