@@ -27,6 +27,8 @@ Owner approved the implementation on 2026-11-04 (“fix it”).
   `tests/event-vocabulary.test.ts` (event count cap and missing election-control
   magnitude unit). The focused briefing tests passed in the same run.
 - `npm run build`: passed; optimized production build generated all 77 routes.
-- Production deployment and natural scheduled-email verification: pending.
+- Production deployment: READY as `dpl_FKyQ4G6zf44FmDYX4jyxCncp26EY` on source commit `7d58bc3e`. GitHub's Vercel check passed for that commit.
+- Safe production checks: `/login` returned 200; `/dashboard/live-portfolio` redirected unauthenticated access to `/login` (307).
+- The next naturally scheduled morning/close email remains the end-to-end content check. No email, broker, or cron route was manually invoked.
 
 No scheduled email or broker route was manually invoked as a test.
