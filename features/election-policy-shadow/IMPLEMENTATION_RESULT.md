@@ -1,7 +1,7 @@
 # Election and Legislative Policy Shadow — Implementation Result
 
 Date: 2026-11-04
-Status: Code implementation and production schema complete; application release and natural outcome-maturity verification pending.
+Status: Production implementation deployed and verified; real outcome-maturity evidence pending sourced event entry and natural scheduled horizons.
 
 ## Built
 
@@ -15,8 +15,9 @@ Status: Code implementation and production schema complete; application release 
 ## Constraints and remaining verification
 
 - Production project `dionkikgdmlaotvtbnfr` has both additive migrations applied. Catalog verification confirmed the new context/exposure tables, RLS enabled, service-role select/insert only, mutation grants absent, parent/context/exposure/outcome immutability triggers present, and the subject-aware outcome unique key active. The prior truncated unique constraint was removed by the follow-up migration.
-- `npm run build` completed successfully, including Next.js type validation and static page generation. `git diff --check` passed. No test suite was run for this turn.
+- `npm run build` completed successfully, including Next.js type validation and static page generation. The focused secret-pattern scan found no matches, the new client bundles contain no `node:crypto`, and `git -c core.whitespace=cr-at-eol diff --cached --check` passed. No test suite was run for this turn.
+- Code commit `1988a3c9f05a5dc5d2934d18895fa77e43c9fec1` is on `main`; Vercel production deployment `dpl_2mavPLYw1vPyEcpXqcADeUQdZ881` is READY for that exact SHA. Deployed `/login` returned HTTP 200 and unauthenticated `/api/events?market=us` returned HTTP 401.
 
 - The ledger is manual and cited by the owner; it does not autonomously fetch certified election results or infer sector exposure. There is no new provider, paid service, schedule, model inference, or Supabase tier change.
 - Nothing is backfilled from memory. Returns remain pending until the existing pipeline has complete aligned stored sessions and enough matched windows.
-- The application code still needs to be committed, pushed through the authorized release path, and verified on a Ready production deployment. The next natural event-maturation run is required to verify production outcomes; no trade/research/watchdog route is manually invoked for this feature.
+- No cited election/policy event has been entered, so no return is being claimed. Owner entry of a source-verified event is needed before the existing daily event-maturation run can establish the first natural production outcome; no trade/research/watchdog route is manually invoked for this feature.
