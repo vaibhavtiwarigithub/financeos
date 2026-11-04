@@ -347,3 +347,7 @@ blocked gate from insufficient or unavailable evidence and keeps the existing
 audited reset as the only re-enable path. No trades, positions, thresholds, or
 live controls are changed. Implementation verification and release are recorded
 in `features/health-control-and-paper-pnl/IMPLEMENTATION_RESULT.md`.
+
+## 2026-11-04 — Election and legislative policy impact shadow
+
+Owner approved the US-only, measure-only implementation. The feature records cited chamber-control/policy lifecycle events and per-symbol exposure evidence, then uses the existing daily event-maturation producer to measure stored-return effects against SPY and fixed, regime-matched prior windows. Markets and Learning show the evidence; generic event base-rate counts exclude these correlated symbol rows. No provider, model call, schedule, score reader, trading behavior, paid service, or database tier change. Implementation record: `features/election-policy-shadow/IMPLEMENTATION_RESULT.md`.

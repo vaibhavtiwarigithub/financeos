@@ -84,6 +84,20 @@ export const EVENT_VOCABULARY: readonly EventTypeDefinition[] = [
     description: "A company raises its own forward guidance. Pairs with an earlier guidance_cut when the same name reverses course.",
     idiosyncratic: true,
   },
+  {
+    type: "election_control_change",
+    label: "US election control result or update",
+    magnitudeUnit: null,
+    description: "A sourced US House, Senate, or presidential control update. Projected, called, and certified stages are separate immutable events.",
+    idiosyncratic: false,
+  },
+  {
+    type: "federal_policy_action",
+    label: "US federal policy action",
+    magnitudeUnit: null,
+    description: "A cited US federal policy proposal or implementation stage. Proposed, passed, signed, effective, blocked, and reversed stages are separate events.",
+    idiosyncratic: false,
+  },
 ];
 
 const TYPE_INDEX: ReadonlyMap<string, EventTypeDefinition> = new Map(

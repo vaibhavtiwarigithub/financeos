@@ -9,6 +9,7 @@ import {
   isKnownEventType,
   requiresSymbol,
 } from "@/lib/events/vocabulary";
+import { buildPolicyContext, isPolicyEventType, policyEventInputError } from "@/lib/events/policy";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   const svc = createServiceClient();
 
   let q = svc.from("market_events")
-    .select("id, event_type, occurred_at, observed_at, market, direction, magnitude, source_url, source_name, notes")
+    .select("id,event_type,occurred_at,observed_at,market,direction,magnitude,source_url,source_name,notes,event_context_version,market_policy_event_context(policy_chain_id,family,stage_status,policy_domain,chamber,previous_control,resulting_control,event_title,source_evidence,source_snapshot_hash,observed_at,market_policy_event_exposures(symbol,exposure_stance,rationale,source_name,source_url,source_published_at,observed_at))")
     .order("occurred_at", { ascending: false })
     .limit(500);
   if (type) q = q.eq("event_type", type);
@@ -48,8 +49,23 @@ export async function GET(req: NextRequest) {
   const byType = new Map<string, number>();
   for (const row of data ?? []) byType.set(row.event_type, (byType.get(row.event_type) ?? 0) + 1);
 
+  const rows = data ?? [];
+  const contextOf = (row: any) => Array.isArray(row.market_policy_event_context) ? row.market_policy_event_context[0] : row.market_policy_event_context;
+  const policyIds = rows.filter((row: any) => contextOf(row)).slice(0, 25).map((row: any) => row.id);
+  const outcomeResult = policyIds.length ? await svc.from("market_event_outcomes")
+    .select("event_id,horizon_days,benchmark_symbol,subject_symbol,entry_date,exit_date,sessions_used,fwd_return,benchmark_return,benchmark_neutral_return,input_fingerprint,matched_control_mean,matched_control_n,matched_control_delta,forward_volatility,max_drawdown,matching_method")
+    .in("event_id", policyIds).order("horizon_days", { ascending: true }).limit(5000) : { data: [], error: null };
+  if (outcomeResult.error) return NextResponse.json({ error: outcomeResult.error.message }, { status: 500 });
+  const outcomes = new Map<number, any[]>();
+  for (const outcome of outcomeResult.data ?? []) {
+    const list = outcomes.get(Number((outcome as any).event_id)) ?? [];
+    list.push(outcome);
+    outcomes.set(Number((outcome as any).event_id), list);
+  }
+  const events = rows.map((row: any) => ({ ...row, policy_outcomes: outcomes.get(Number(row.id)) ?? [] }));
+
   return NextResponse.json({
-    events: data ?? [],
+    events,
     counts: Object.fromEntries(byType),
     vocabulary: EVENT_VOCABULARY,
     // Stated explicitly so a caller cannot mistake a ledger read for a result.
@@ -111,6 +127,47 @@ export async function POST(req: NextRequest) {
   if (!stamps.ok) return NextResponse.json({ error: stamps.reason }, { status: 400 });
 
   const svc = createServiceClient();
+  if (isPolicyEventType(event_type)) {
+    const context = body.context && typeof body.context === "object" && !Array.isArray(body.context)
+      ? body.context as Record<string, unknown>
+      : {};
+    const exposures = body.exposures;
+    const policyError = policyEventInputError({
+      event: { event_type, occurred_at, market, direction, source_url, source_name, notes, magnitude },
+      context,
+      exposures,
+    });
+    if (policyError) return NextResponse.json({ error: policyError }, { status: 400 });
+
+    const normalizedExposures = (exposures as Record<string, unknown>[]).map((item) => ({
+      ...item,
+      symbol: String(item.symbol).trim().toUpperCase(),
+      rationale: String(item.rationale).trim(),
+      source_name: String(item.source_name).trim(),
+      source_url: String(item.source_url).trim(),
+    }));
+    const policyContext = buildPolicyContext(context as any, event_type, {
+      occurred_at, source_url, source_name: String(source_name).trim(), direction: String(direction),
+      notes: String(notes).trim(), exposures: normalizedExposures as any,
+    });
+    const { data, error } = await svc.rpc("record_market_policy_event", {
+      p_event: {
+        event_type, occurred_at, market, direction,
+        magnitude: magnitude == null ? null : Number(magnitude),
+        source_url, source_name: String(source_name).trim(), notes: String(notes).trim(),
+      },
+      p_context: policyContext,
+      p_exposures: normalizedExposures,
+    });
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        return NextResponse.json({ error: "An event of this type, market and instant is already recorded." }, { status: 409 });
+      }
+      return NextResponse.json({ error: "Policy event could not be recorded atomically." }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, event_id: data, policy_chain_id: policyContext.policy_chain_id, note: "Cited event and exposure evidence recorded. No score or trade uses it." });
+  }
+
   const { data, error } = await svc.from("market_events").insert({
     event_type, occurred_at, observed_at: observedAt, market, direction,
     magnitude: magnitude == null ? null : Number(magnitude),

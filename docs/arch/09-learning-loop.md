@@ -1,5 +1,18 @@
 # Kairos — Learning Loop
 
+## Election and legislative policy event shadow (2026-11-04)
+
+The existing cited event ledger can record sourced US election-control stages
+and federal policy lifecycle stages, with point-in-time evidence for exposed
+symbols. The daily event-maturation job compares fixed 1/5/20/60-session symbol
+returns with matched stored SPY observations and up to 20 prior non-event windows
+matched on preceding SPY return/volatility; it does not request new prices for
+these events. Control windows can overlap, so their count is not an effective
+sample size. Symbols sharing an event are not independent event trials.
+Markets accepts owner-cited records; Learning shows the descriptive outcomes
+and pending windows. This shadow has no readers in scores, council prompts,
+selection, paper or live trading. Sparse coverage stays pending/insufficient.
+
 ## Reference experiments and dimension input integrity (2026-11-03)
 
 The v3 rule grammar also supports actual available/applicable fundamental, technical, sentiment, macro and insider scores recorded before each session close. Fixed 70-point seeds and two-condition confirmations share the existing worklist and trial family; unavailable historical scores are never reconstructed. `completed-candle-preclose-observation-v2` pairs rule decisions with the same preclose deterministic eligibility record, rather than the following day's research. The newest close is evaluated without requiring a future fill bar. Legacy timing contracts remain recorded and excluded from new comparisons. Paper preference reads the last completed session, while existing execution gates still govern every fill. See `features/strategy-portfolio-lab/DISCOVERY_EXPANSION_RESULT.md` for verified implementation versus rollout gates.

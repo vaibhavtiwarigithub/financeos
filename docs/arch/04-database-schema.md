@@ -1,5 +1,18 @@
 # Kairos — Database Schema
 
+## US election and federal-policy impact evidence (2026-11-04)
+
+Migrations `20261104161141_policy_impact_event_context.sql` and
+`20261104161211_policy_event_subject_uniqueness_fix.sql` add append-only
+structured event context with a short immutable source excerpt/hash and
+source-backed per-symbol exposure classifications to the existing
+`market_events` ledger. It widens outcome identity to include the exposed
+subject symbol, adds a calculation fingerprint, matched-control summary, and
+close-based volatility/drawdown, and keeps all writes service-only. The existing event-maturation producer reads only stored
+`symbol_daily_returns` for these new events; no new job or external price fetch
+is introduced. Production migrations are applied and catalog-verified. No
+scoring or trading reader is authorized.
+
 ## Strategy pre-screen registration contract (2026-11-03)
 
 Migration `20261103173459_strategy_prescreen_trial_contract` adds `register_strategy_template_trial(text,uuid[],text,text,jsonb,text,text,jsonb,date)`. It is invoker-security, has an empty pinned search path, and is executable only by service_role. It reuses `trial_family_ledger` and its advisory lock to register failed as well as eligible historical trials before inspection, with exactly the fingerprint the config constructor later uses. Its returned historical cutoff remains the first registered cutoff. No table, job or financial record is added or backfilled. The config constructor now resolves its actual pgcrypto schema explicitly; five strategy-ledger trigger functions have pinned empty search paths.

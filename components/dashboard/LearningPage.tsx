@@ -14,6 +14,7 @@ import IndexSleevePanel from "@/components/dashboard/IndexSleevePanel";
 import ScoreVariantsPanel from "@/components/dashboard/ScoreVariantsPanel";
 import ScoreFormulaMiningPanel from "@/components/dashboard/ScoreFormulaMiningPanel";
 import MacroContextPanel from "@/components/dashboard/MacroContextPanel";
+import PolicyImpactEvidence from "@/components/dashboard/PolicyImpactEvidence";
 import { fmtMoney, type Mkt } from "@/lib/format-money";
 import { navReturnPct, paperStartNav } from "@/lib/paper-nav";
 import {
@@ -202,6 +203,7 @@ export default function LearningPage({
       </LearningSection>
       <LearningSection id="market-evidence" title="Market context & event studies" description="Separate macro conditions, earnings-event evidence and index-sleeve comparisons from stock-score tests.">
         <MacroContextPanel market={market} /><EventIcPanel /><IndexSleevePanel />
+        {market === "us" && <PolicyImpactEvidence />}
       </LearningSection>
       <LearningSection id="learning-history" title="Portfolio outcomes & learning history" description="Selected-market paper outcomes and current weights, followed by the global LearnerAgent log. Win rate is not prediction IC.">
 

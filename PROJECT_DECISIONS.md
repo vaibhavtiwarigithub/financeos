@@ -1950,3 +1950,25 @@ Context: Vaibhav directed Kairos LLM agents to discover, test, and select strate
 Decision: Supersede the owner-promotion-only parts of Decisions 4 and 13 for **dimension-weight scoring challengers in the paper research/scoring pipeline only**. The deterministic selector may replace the paper scoring champion only after historical validation and a fixed 20-window matched, horizon-spaced forward evaluation shows positive candidate net return, positive paired difference, lower 95% confidence bound above zero, and t-stat >= 2.093. It must preserve incumbent on insufficient or failed evidence, serialize selection per market, and write immutable evaluations/events. Live scoring, broker decisions, execution, risk limits, and any rule-based entry/exit strategy remain outside this change.
 Reason: Automated evaluation removes per-candidate manual activation while requiring a reproducible test against matured outcomes rather than LLM confidence or historical fit alone.
 Rollback: Disable `auto_promote_enabled` by market; restore the prior paper champion through the audited champion path. Historical evidence remains immutable.
+### US election and legislative-policy impact shadow — 2026-11-04
+
+Date: 2026-11-04
+Status: Owner-approved; implementation limited to descriptive evidence
+Category: Market context / Learning
+
+Decision: Reuse the owner-cited market event ledger to record US House, Senate,
+and presidential control stages and sourced federal policy lifecycle events.
+Record point-in-time, evidence-backed symbol exposure labels and compare each
+exposed symbol's fixed 1/5/20/60-session returns with the same stored SPY
+sessions. Treat one election or policy event as one event replication; same-event
+symbols are correlated observations. Surface records in Markets and Learning.
+
+Constraints: This feature is US-only and measure-only. It cannot feed composite
+scores, LLM prompts, selection, paper/live trading, Guardian or execution. No
+new data provider, paid service, schedule, model call or Supabase tier increase.
+The existing daily event-maturation job reads already-persisted daily returns
+for these events and does not issue price requests on their behalf. Missing,
+late or incomplete provenance/outcome coverage remains missing or pending.
+
+Rollback: Remove the UI and stop adding new events; preserve the append-only
+evidence and migration. There is no score/trading setting to roll back.

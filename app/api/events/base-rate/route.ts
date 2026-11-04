@@ -7,6 +7,9 @@ import { cohortValue, MIN_INSTANCES, summarizeBaseRate, type BaseRateSummary } f
 
 export const dynamic = "force-dynamic";
 
+const POLICY_EVENT_TYPES = new Set(["election_control_change", "federal_policy_action"]);
+const BASE_RATE_EVENT_TYPE_COUNT = EVENT_TYPES.filter((eventType) => !POLICY_EVENT_TYPES.has(eventType)).length;
+
 // Event ledger step 3 — read-only base-rate report.
 //
 // MEASUREMENT ONLY. Read-only. Nothing here is consumed by a score, a gate, a
@@ -59,6 +62,9 @@ export async function GET(req: NextRequest) {
     const ev = row.market_events;
     if (!ev) continue;
     if (marketFilter && ev.market !== marketFilter) continue;
+    // Symbol exposures are correlated observations of one election/policy event.
+    // They belong in the dedicated event-level study, not the generic per-row n.
+    if (POLICY_EVENT_TYPES.has(ev.event_type)) continue;
     const value = cohortValue(row);
     if (value == null) {
       // A raw idiosyncratic return contains market beta. It must not enter a
@@ -93,9 +99,10 @@ export async function GET(req: NextRequest) {
     // The count of types tested is reported WITH the results, per R4: every
     // additional type is another trial, and there is no false-discovery
     // correction available yet (walk-forward-ic-folds Open Decision #3).
-    typesTested: EVENT_TYPES.length,
+    typesTested: BASE_RATE_EVENT_TYPE_COUNT,
+    policyEventsExcluded: true,
     note: sufficient === 0
       ? `No cohort has reached ${MIN_INSTANCES} matured instances, so no base rate is estimated. n is reported for each cohort. This is the designed outcome at this sample size, not a failure.`
-      : `${sufficient} of ${summaries.length} cohorts are above the floor of ${MIN_INSTANCES}. Any estimate is uncorrected for multiple testing across ${EVENT_TYPES.length} event types.`,
+      : `${sufficient} of ${summaries.length} cohorts are above the floor of ${MIN_INSTANCES}. Election and federal-policy symbol rows are excluded because they share event-level shocks. Any estimate is uncorrected for multiple testing across ${BASE_RATE_EVENT_TYPE_COUNT} event types.`,
   });
 }
