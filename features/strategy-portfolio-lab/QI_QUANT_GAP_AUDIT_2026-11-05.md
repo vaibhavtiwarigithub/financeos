@@ -16,6 +16,8 @@ Production evidence on November 5:
 | `strategy_discovery` runs, last 30 days | 0 rows | The post-expansion deterministic discovery child producer has not yet established a natural production cycle. |
 | Latest learner rows | US and India on Oct 30, before the Nov 3 discovery release; both summaries said 0 LLM hypotheses | These rows do not verify the new deterministic discovery path. |
 
+The bounded symbol-evidence UI slice has since shipped in commit `b50df20402312584148b389d859a44547c5118cc` and Vercel production deployment `dpl_2GSWEqD9JR3YYtt7ApiKocE4Jf8y` (READY). `/login` returned 200 and the unauthenticated symbol-shadow API returned 401. This deployment does not change the production counts above or verify a natural discovery cycle; the full QI Quant engine remains incomplete.
+
 The standard price cache is not sufficient to reproduce the illustrative SOXL study as specified. Current read-only counts:
 
 | Symbol | Bars | Earliest–latest | Basis/provenance |
