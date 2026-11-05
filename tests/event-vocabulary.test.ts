@@ -5,11 +5,14 @@ import {
 } from "@/lib/events/vocabulary";
 
 describe("event vocabulary", () => {
-  it("starts narrow — one family, because each type is another trial", () => {
-    // walk-forward-ic-folds Open Decision #3 (false-discovery procedure) is
-    // unresolved, so there is no correction available for testing many event
-    // types at once. Growth here must be an owner-reviewed decision.
-    expect(EVENT_TYPES.length).toBeLessThanOrEqual(4);
+  it("keeps only the explicitly approved event families", () => {
+    // The US election/policy shadow architecture was owner-approved on
+    // 2026-11-04. Keep the four prior tariff/guidance types and those two
+    // additions explicit so later event families still require review.
+    expect(EVENT_TYPES).toEqual([
+      "policy_tariff_announced", "policy_tariff_reversed", "guidance_cut",
+      "guidance_raised", "election_control_change", "federal_policy_action",
+    ]);
     expect(EVENT_TYPES).toContain("policy_tariff_announced");
     expect(EVENT_TYPES).toContain("policy_tariff_reversed");
   });
@@ -22,10 +25,14 @@ describe("event vocabulary", () => {
     }
   });
 
-  it("documents a magnitude unit per type so values stay comparable", () => {
+  it("documents numeric magnitude units where the event has one", () => {
     for (const def of EVENT_VOCABULARY) {
-      expect(def.magnitudeUnit, `${def.type} needs a documented unit`).toBeTruthy();
       expect(def.description.length).toBeGreaterThan(20);
+      if (["election_control_change", "federal_policy_action"].includes(def.type)) {
+        expect(def.magnitudeUnit).toBeNull(); // Governed by certified/control or lifecycle state, not a numeric magnitude.
+      } else {
+        expect(def.magnitudeUnit, `${def.type} needs a documented unit`).toBeTruthy();
+      }
     }
   });
 

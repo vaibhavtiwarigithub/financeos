@@ -5,6 +5,8 @@ const migration = readFileSync("supabase/migrations/20261030173804_strategy_temp
 const aclMigration = readFileSync("supabase/migrations/20261030173857_strategy_template_shadow_service_acl.sql", "utf8");
 const collector = readFileSync("lib/strategy-replay/template-shadow-collector.ts", "utf8");
 const route = readFileSync("app/api/strategies/template-shadows/route.ts", "utf8");
+const symbolPage = readFileSync("components/dashboard/SymbolDetailPage.tsx", "utf8");
+const symbolPanel = readFileSync("components/dashboard/SymbolStrategyEvidencePanel.tsx", "utf8");
 
 describe("bounded strategy discovery and shadow flow contract", () => {
   it("keeps candidate count bounded and registers every fixed variant in the trial ledger", () => {
@@ -43,5 +45,17 @@ describe("bounded strategy discovery and shadow flow contract", () => {
     expect(collector).toContain("onConflict: \"config_id,symbol,signal_session\"");
     expect(collector).toContain("entryIndex + config.rule_spec.horizonSessions");
     expect(route).not.toMatch(/paper_positions|submitOrder|live_proposal|broker/);
+  });
+
+  it("serves symbol-specific frozen shadow evidence without treating absent or immature evidence as a result", () => {
+    expect(route).toContain('searchParams.get("symbol")');
+    expect(route).toContain('query.eq("symbol", requestedSymbol)');
+    expect(route).toContain('String(item).trim().toUpperCase() === requestedSymbol');
+    expect(route).toContain('"forward_labels_pending"');
+    expect(route).toContain('"no_symbol_observations"');
+    expect(symbolPage).toContain("SymbolStrategyEvidencePanel");
+    expect(symbolPanel).toContain("SHADOW ONLY");
+    expect(symbolPanel).toContain("small per-symbol sample is descriptive");
+    expect(symbolPanel).toContain("It is not a zero score, a failed backtest");
   });
 });

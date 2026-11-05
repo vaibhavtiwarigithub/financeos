@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import TradingViewChart from "@/components/charts/TradingViewChart";
 import SymbolFundamentals from "@/components/dashboard/SymbolFundamentals";
 import SymbolPeers from "@/components/dashboard/SymbolPeers";
+import SymbolStrategyEvidencePanel from "@/components/dashboard/SymbolStrategyEvidencePanel";
 import DeepDivePanel from "@/components/dashboard/DeepDivePanel";
 import StockContextStrip from "@/components/dashboard/StockContextStrip";
 import { CURRENCY, type Market } from "@/lib/market-context";
@@ -15,7 +16,7 @@ const T = {
   greenBg: "#052E16", redBg: "#3B0000", amberBg: "#2D1B00",
 };
 
-type Tab = "chart" | "deepdive" | "signals" | "options" | "chat" | "peers";
+type Tab = "chart" | "deepdive" | "signals" | "strategies" | "options" | "chat" | "peers";
 
 function dirColor(dir: string) {
   const d = (dir ?? "").toLowerCase();
@@ -609,6 +610,7 @@ export default function SymbolDetailPage({
         <button style={tabStyle(tab === "signals")} onClick={() => setTab("signals")}>
           Signals {signals.length > 0 ? `(${signals.length})` : ""}
         </button>
+        {!isCrypto && <button style={tabStyle(tab === "strategies")} onClick={() => setTab("strategies")}>Strategy research</button>}
         {!isCrypto && <button style={tabStyle(tab === "options")} onClick={() => setTab("options")}>Options</button>}
         <button style={tabStyle(tab === "chat")} onClick={() => setTab("chat")}>AI Chat</button>
         <button style={tabStyle(tab === "peers")} onClick={() => setTab("peers")}>Peers</button>
@@ -633,6 +635,8 @@ export default function SymbolDetailPage({
           <SignalsTab symbol={symbol} signals={signals} trades={trades} market={market} />
         </div>
       )}
+
+      {tab === "strategies" && !isCrypto && <SymbolStrategyEvidencePanel symbol={symbol} market={market ?? "us"} />}
 
       {tab === "options" && (
         <div style={{ background: T.card, borderRadius: "14px", border: `1px solid ${T.border}`, padding: "20px clamp(14px,4vw,24px)" }}>

@@ -20,16 +20,25 @@ const INITIAL_CASH = 100_000;
 export async function GET(req: NextRequest) {
   const gate = await requireOwner(); if (gate) return gate;
   const market = req.nextUrl.searchParams.get("market") === "india" ? "india" : "us";
+  const requestedSymbol = req.nextUrl.searchParams.get("symbol")?.trim().toUpperCase() ?? null;
+  if (requestedSymbol && (!/^[A-Z0-9&._-]{1,16}$/.test(requestedSymbol)
+    || (market === "india") !== /\.(NS|BO)$/.test(requestedSymbol))) {
+    return NextResponse.json({ error: "invalid_symbol_for_market" }, { status: 400 });
+  }
   const svc = createServiceClient();
   const discovery = await svc.from("agent_runs").select("started_at,completed_at,status,result_summary,workload_metrics")
     .eq("market",market).eq("agent_type","strategy_discovery").order("started_at",{ascending:false}).limit(1).maybeSingle();
   if (discovery.error) return NextResponse.json({error:"strategy_discovery_status_unavailable"},{status:503});
-  const { data: configs, error } = await svc.from("strategy_template_shadow_configs")
+  const { data: allConfigs, error } = await svc.from("strategy_template_shadow_configs")
     .select("*").eq("market", market).order("created_at", { ascending: false }).limit(20);
   if (error) {
     if (isMissingStrategyLabSchemaObject(error)) return NextResponse.json({ market, configs: [], status: "not_deployed" }, { status: 503 });
     return NextResponse.json({ error: "strategy_shadow_read_failed" }, { status: 500 });
   }
+  const configs = requestedSymbol
+    ? (allConfigs ?? []).filter((config: any) => Array.isArray(config.rule_spec?.universe)
+      && config.rule_spec.universe.some((item: unknown) => String(item).trim().toUpperCase() === requestedSymbol))
+    : allConfigs;
   const { data: templates, error: templateError } = await svc.from("strategy_templates")
     .select("id,name,description,rules").order("name");
   if (templateError) return NextResponse.json({ error: "strategy_template_read_failed" }, { status: 500 });
@@ -51,8 +60,12 @@ export async function GET(req: NextRequest) {
     const [events, decisionsResult, latestPaperEvaluation] = await Promise.all([
       fetchAllRows((from, to) => svc.from("strategy_template_shadow_events").select("event,reason,evidence_snapshot,created_at")
         .eq("config_id", config.id).order("created_at", { ascending: false }).range(from, to), "strategy template events"),
-      svc.from("strategy_template_shadow_decisions").select("id,would_enter,baseline_entry_eligible,signal_session", { count: "exact" })
-        .eq("config_id", config.id).eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE).order("signal_session", { ascending: false }).limit(1000),
+      (() => {
+        let query = svc.from("strategy_template_shadow_decisions").select("id,symbol,would_enter,baseline_entry_eligible,signal_session,decision_close,decision_price_basis,data_source", { count: "exact" })
+          .eq("config_id", config.id).eq("decision_provenance",TEMPLATE_SHADOW_PRICE_PROVENANCE);
+        if (requestedSymbol) query = query.eq("symbol", requestedSymbol);
+        return query.order("signal_session", { ascending: false }).limit(1000);
+      })(),
       svc.from("strategy_template_paper_evaluations").select("status,selector_version,evidence,created_at")
         .eq("config_id", config.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
@@ -61,7 +74,7 @@ export async function GET(req: NextRequest) {
     const decisions: any[] = decisionsResult.data ?? [];
     const decisionIds = decisions.map((row: any) => Number(row.id));
     const outcomes = decisionIds.length ? await fetchAllRows((from, to) => svc.from("strategy_template_shadow_outcomes")
-      .select("decision_id,net_return_pct,matured_at").in("decision_id", decisionIds).range(from, to), "strategy template outcomes") : [];
+      .select("decision_id,net_return_pct,matured_at,entry_session,exit_session,price_source,price_basis").in("decision_id", decisionIds).range(from, to), "strategy template outcomes") : [];
     const outcomeByDecision = new Map(outcomes.map((row: any) => [Number(row.decision_id), Number(row.net_return_pct)]));
     const summarize = (filter: (row: any) => boolean) => {
       const rows = decisions.filter(filter).filter((row: any) => outcomeByDecision.has(Number(row.id)));
@@ -85,7 +98,7 @@ export async function GET(req: NextRequest) {
       ...config,
       latestPaperEvaluation: latestPaperEvaluation.data ?? null,
       evidence: {
-        state: outcomeByDecision.size ? "descriptive_only" : "insufficient_evidence",
+        state: outcomeByDecision.size ? "descriptive_only" : decisions.length ? "forward_labels_pending" : "no_symbol_observations",
         decisionCount: decisionsResult.count ?? decisions.length,
         displayedDecisionWindow: decisions.length,
         maturedCount: outcomeByDecision.size,
@@ -102,8 +115,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "strategy_shadow_evidence_read_failed" }, { status: 500 });
   }
   return NextResponse.json({ market, configs: enriched, templates: templateOptions, automation: automation ?? null,
-    paperSelection: paperSelection ?? null, discovery: discovery.data ?? null, status: "ready", limits: { maxActive: 3,
-      used: (configs ?? []).filter((row: any) => row.state !== "retired").length,
+    symbol: requestedSymbol, paperSelection: paperSelection ?? null, discovery: discovery.data ?? null, status: "ready", limits: { maxActive: 3,
+      used: (allConfigs ?? []).filter((row: any) => row.state !== "retired").length,
       maxUniverseSymbols: MAX_BACKTEST_SYMBOLS, maxBarsPerSymbol: MAX_BARS_PER_SYMBOL } });
 }
 
