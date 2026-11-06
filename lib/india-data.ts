@@ -50,14 +50,28 @@ function isYahooQuoteStale(retrievedAt: string, market: "us" | "india"): boolean
   return age > (market === "india" ? 4 * 86_400_000 : 36 * 60 * 60_000);
 }
 
+export interface YahooFetchOptions {
+  /**
+   * Bypass the Next.js data cache. The default 15-minute `revalidate` is stale-while-revalidate: once an entry is older than the window
+   * the OLD body is served while a refresh runs in the background, which a serverless function can abandon. Settlement-critical callers
+   * (post-close marks) must read the live response, not a previous session's cached one.
+   */
+  fresh?: boolean;
+}
+
 export async function fetchYahooQuote(
   symbol: string,
   market: "us" | "india",
+  options: YahooFetchOptions = {},
 ): Promise<IndiaQuote | null> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 900 }, signal: AbortSignal.timeout(8000) }
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        ...(options.fresh ? { cache: "no-store" as const } : { next: { revalidate: 900 } }),
+        signal: AbortSignal.timeout(8000),
+      }
     );
     if (!res.ok) return null;
     const m = (await res.json())?.chart?.result?.[0]?.meta;
@@ -97,6 +111,7 @@ export async function fetchYahooQuotes(
   market: "us" | "india",
   batchSize = 4,
   pauseMs = 250,
+  options: YahooFetchOptions = {},
 ): Promise<Record<string, IndiaQuote | null>> {
   const unique = [...new Set(symbols.map(s => s.toUpperCase()))];
   const out: Record<string, IndiaQuote | null> = {};
@@ -104,7 +119,7 @@ export async function fetchYahooQuotes(
   for (let i = 0; i < unique.length; i += size) {
     const batch = unique.slice(i, i + size);
     await Promise.all(batch.map(async symbol => {
-      out[symbol] = await fetchYahooQuote(symbol, market).catch(() => null);
+      out[symbol] = await fetchYahooQuote(symbol, market, options).catch(() => null);
     }));
     if (i + size < unique.length && pauseMs > 0) {
       await new Promise(resolve => setTimeout(resolve, pauseMs));

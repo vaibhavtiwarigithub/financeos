@@ -240,7 +240,8 @@ describe("disputed quotes are refused BEFORE exits are evaluated", () => {
     expect(monitor).toContain("liveSession: exchangeSessionDate(");
     // A mismatch must CONTINUE (stay priced), never delete from priceMap.
     const mismatchAt = monitor.indexOf('check.verdict === "session_mismatch"');
-    const deleteAt = monitor.indexOf("delete priceMap[sym];");
+    // The LAST delete is the dispute refusal; an earlier one is the stale-session guard (quoteIsFromSession), which runs before any cross-check.
+    const deleteAt = monitor.lastIndexOf("delete priceMap[sym];");
     expect(mismatchAt).toBeGreaterThan(-1);
     expect(mismatchAt).toBeLessThan(deleteAt); // handled and skipped first
   });

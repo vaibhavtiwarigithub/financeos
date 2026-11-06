@@ -84,6 +84,23 @@ export function exchangeSessionDate(iso: string | null | undefined, market: "us"
   }
 }
 
+/**
+ * Is a quote from the session being marked (or newer)?
+ *
+ * A mark written for session S must come from a quote the exchange stamped on S. 2026-11-03..06: Yahoo's chart meta was one session
+ * behind at 21:15 UTC and the monitor still wrote it as a "fresh" mark (observed_at 24.2h old, stale=false) because the US freshness
+ * window is 36h. Every US NAV from 11-03 to 11-06 was therefore one session stale, and 3 consecutive sessions were tainted by the
+ * next-morning settle check. Compare the quote's OWN exchange session with the session expected to exist by now.
+ */
+export function quoteIsFromSession(
+  observedAt: string | null | undefined,
+  market: "us" | "india",
+  expectedSession: string,
+): boolean {
+  const session = exchangeSessionDate(observedAt, market);
+  return session != null && session >= expectedSession;
+}
+
 export function classifyCrossCheck(input: CrossCheckInput): CrossCheckResult {
   const live = typeof input.live === "number" && Number.isFinite(input.live) && input.live > 0 ? input.live : null;
   const cross = typeof input.cross === "number" && Number.isFinite(input.cross) && input.cross > 0 ? input.cross : null;

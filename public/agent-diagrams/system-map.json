@@ -2203,6 +2203,20 @@
       "nodeId": "STRATLAB",
       "label": "Automatic reference seeds, confirmation trials, versioned dimension/source evidence and audited failure outcomes",
       "reason": "Reuse existing weekly learner, compiler, replay, trial ledger, research collector and paper selector. Fix evidence payload and server hash contract; no extra schedule or money-path authority."
+    },
+    {
+      "date": "2026-11-06",
+      "event": "change",
+      "nodeId": "POSITIONMONITOR",
+      "label": "Paper marks reject previous-session quotes; second post-close run",
+      "reason": "From 2026-11-03 the US monitor wrote the previous session's close as a fresh mark (36h Yahoo freshness window, stale-while-revalidate fetch cache). Marks now require a quote stamped on the session being marked, settlement fetches bypass the cache, and a 16:45 ET retry run re-reads after the vendor catches up. Settle-check judges the latest mark per position."
+    },
+    {
+      "date": "2026-11-06",
+      "event": "change",
+      "nodeId": "LEARNER",
+      "label": "Autonomous tournament RPC payload contract",
+      "reason": "The autonomous rule tournament sent camelCase identity keys while the stored function reads snake_case, so no evaluation could persist. The caller now sends both; evidence-gate fields are unchanged."
     }
   ]
 }

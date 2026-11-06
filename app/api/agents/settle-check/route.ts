@@ -53,12 +53,18 @@ export async function POST(req: NextRequest) {
 
     const { data: markRows, error: markErr } = await svc
       .from("paper_position_marks")
-      .select("symbol, qty, mark_price, provenance, source")
+      .select("position_id, symbol, qty, mark_price, provenance, source, recorded_at")
       .eq("market", "us")
-      .eq("session_date", session);
+      .eq("session_date", session)
+      .order("recorded_at", { ascending: true });
     if (markErr) throw new Error(`paper_position_marks read failed: ${markErr.message}`);
 
-    const marks: SettleMark[] = (markRows ?? []).map((m: any) => ({
+    // The mark ledger is append-only and a session can now be marked twice (the post-close retry run). Judge only the LATEST mark per
+    // position: an earlier run's mark that the retry superseded is not what the session's NAV finally used.
+    const latestPerPosition = new Map<string, any>();
+    for (const m of (markRows ?? []) as any[]) latestPerPosition.set(String(m.position_id ?? m.symbol), m);
+
+    const marks: SettleMark[] = [...latestPerPosition.values()].map((m: any) => ({
       symbol: String(m.symbol),
       qty: Number(m.qty ?? 0),
       markPrice: Number(m.mark_price ?? 0),

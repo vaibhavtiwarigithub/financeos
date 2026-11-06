@@ -7,6 +7,7 @@ import { MODELED_SLIP_FRACTION } from "@/lib/analytics/performance-metrics";
 
 import { avCachedFetch } from "@/lib/av-cache";
 import { expectedNewestSession } from "@/lib/data/completed-candles";
+import { quoteIsFromSession } from "@/lib/paper/quote-crosscheck";
 import { fetchYahooQuotes } from "@/lib/india-data";
 
 export type QuoteSource = "massive" | "alpha_vantage" | "price_cache" | "yahoo" | "twelvedata" | "robinhood_mcp" | "unavailable";
@@ -295,10 +296,12 @@ export async function getSettledDailyQuotes(
   // it here costs no quota.
   const yahooResults: Record<string, DeterministicQuote> = {};
   try {
-    const yq = await fetchYahooQuotes(missing, "us");
+    // fresh: skip the Next data cache (stale-while-revalidate would hand back yesterday's body). The session check below is the real
+    // guard: a quote the exchange stamped on an earlier session is not this session's settled price, however young it looks.
+    const yq = await fetchYahooQuotes(missing, "us", 4, 250, { fresh: true });
     for (const sym of missing) {
       const q = yq[sym.toUpperCase()];
-      if (q && !q.stale && q.price > 0) {
+      if (q && !q.stale && q.price > 0 && quoteIsFromSession(q.retrievedAt, "us", session)) {
         yahooResults[sym] = {
           symbol: sym,
           price: q.price,

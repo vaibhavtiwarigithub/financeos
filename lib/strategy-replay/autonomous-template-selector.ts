@@ -35,6 +35,18 @@ export interface RuleSelectionEvaluation {
   reason: string;
 }
 
+/**
+ * The JSON shape `public.apply_autonomous_rule_evaluations` reads.
+ *
+ * The SQL function reads `config_id` and `selector_version` (snake_case) for identity and the camelCase metric fields for the evidence
+ * gate. The evaluation objects built here are camelCase, so `(v_eval->>'config_id')::uuid` was NULL on every call and the function raised
+ * "evaluation candidate is not an active market-local shadow" - zero rows were ever persisted and the tournament alerted critical on every
+ * run since 2026-10-30. Both spellings are sent so the stored function (already deployed) and this caller agree without a migration.
+ */
+export function toRpcEvaluation(evaluation: RuleSelectionEvaluation): Record<string, unknown> {
+  return { ...evaluation, config_id: evaluation.configId ?? null, selector_version: evaluation.selectorVersion };
+}
+
 export async function evaluateAndPersistAutonomousRuleShadows(supabase: any, market: "us" | "india") {
   const policy = await supabase.from("strategy_validation_automation")
     .select("enabled,auto_shadow_enabled,auto_rule_paper_select_enabled").eq("market", market).maybeSingle();
@@ -94,7 +106,7 @@ export async function evaluateAndPersistAutonomousRuleShadows(supabase: any, mar
     || String(a.configId).localeCompare(String(b.configId)));
   const selectedConfigId = passing[0]?.configId ?? null;
   const applied = await supabase.rpc("apply_autonomous_rule_evaluations", {
-    p_market: market, p_evaluations: evaluations, p_selected_config_id: selectedConfigId,
+    p_market: market, p_evaluations: evaluations.map(toRpcEvaluation), p_selected_config_id: selectedConfigId,
   });
   if (applied.error) throw new Error(`autonomous rule evaluation persistence failed: ${applied.error.message}`);
   return { status: "evaluated", market, evaluated: evaluations.length,

@@ -5,7 +5,7 @@ import { withSupabaseRetry } from "@/lib/supabase/transient";
 import { fetchIndiaQuotes, fetchYahooQuotes } from "@/lib/india-data";
 import { fetchUpstoxBulkQuotes } from "@/lib/data/upstox-bulk";
 import {
-  classifyCrossCheck, exchangeSessionDate, disputeAgeDays, DISPUTE_ESCALATION_RUNS,
+  classifyCrossCheck, exchangeSessionDate, disputeAgeDays, quoteIsFromSession, DISPUTE_ESCALATION_RUNS,
 } from "@/lib/paper/quote-crosscheck";
 import { classifyOutcome } from "@/lib/trade-outcome";
 import { indexClosedTrade } from "@/lib/rag/trade-memory";
@@ -188,7 +188,7 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
   // multi-day close so exit decisions still fail closed.
   const unresolvedUs = usSymbols.filter(sym => priceMap[sym] == null);
   if (unresolvedUs.length > 0) {
-    const yahooQuotes = await fetchYahooQuotes(unresolvedUs, "us");
+    const yahooQuotes = await fetchYahooQuotes(unresolvedUs, "us", 4, 250, { fresh: true });
     for (const sym of unresolvedUs) {
       const q = yahooQuotes[sym.toUpperCase()];
       if (q && !q.stale && q.price > 0) {
@@ -196,6 +196,36 @@ async function runMonitor(marketScope: "us" | "india" | null | undefined, starte
         quoteMeta[sym] = { source: "yahoo_us", observedAt: q.retrievedAt ?? null };
       }
     }
+  }
+  // SESSION GUARD. A mark for session S must come from a quote the exchange stamped on S. The adapters' age windows (US 36h, India 4d)
+  // admit a quote one whole session behind, so on 2026-11-03..06 four consecutive US NAVs were built from the PREVIOUS close while
+  // the ledger said stale=false (observed_at 24.2h old). Drop such a quote here, before marks and before any stop/target/time-stop
+  // evaluation: the position then carries its last mark honestly labelled stale and is reported unpriced, and the second post-close
+  // run (kairos-position-monitor-retry) gets another chance once the vendor has caught up.
+  const staleSessionSymbols: string[] = [];
+  for (const sym of Object.keys(priceMap)) {
+    const symMarket: "us" | "india" = indiaSymbols.includes(sym) ? "india" : "us";
+    const expectedSession = expectedNewestSession(symMarket);
+    if (!quoteIsFromSession(quoteMeta[sym]?.observedAt ?? null, symMarket, expectedSession)) {
+      staleSessionSymbols.push(`${sym} (${quoteMeta[sym]?.source ?? "primary"} observed ${quoteMeta[sym]?.observedAt ?? "unknown"}, expected session ${expectedSession})`);
+      delete priceMap[sym];
+      delete quoteMeta[sym];
+    }
+  }
+  const staleSessionIssueKey = `position-monitor-stale-session-quote:${marketScope ?? "all"}`;
+  if (staleSessionSymbols.length > 0) {
+    await reportIssue({
+      issueKey: staleSessionIssueKey,
+      severity: "warn", category: "data",
+      title: `${staleSessionSymbols.length} quote(s) rejected - vendor still on the previous session`,
+      detail:
+        `These quotes were stamped by the exchange on an earlier session than the one being marked, so they were NOT used for marks or ` +
+        `exits (the positions carry their last mark as stale and are reported unpriced): ${staleSessionSymbols.join("; ")}. ` +
+        `The retry run re-reads them after the vendor updates; this clears on the next fully current run.`,
+      autoExpireAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    }, svc);
+  } else {
+    await resolveIssue(staleSessionIssueKey, svc);
   }
   // ── Independent second source for the marks ────────────────────────────────
   // A mark drives stop and target evaluation, so a price no second vendor will

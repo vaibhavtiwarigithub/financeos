@@ -23,7 +23,7 @@ describe("agent source pipeline remediation", () => {
     expect(route).toContain('getSettledDailyQuotes(usSymbols, svc, "us")');
     expect(route).not.toContain("getBatchQuotes(usSymbols, svc)");
     expect(route).toContain("fetchIndiaQuotes(indiaSymbols)");
-    expect(route).toContain('fetchYahooQuotes(unresolvedUs, "us")');
+    expect(route).toContain('fetchYahooQuotes(unresolvedUs, "us", 4, 250, { fresh: true })');
     expect(route).toContain("!q.stale");
     expect(route).toContain("position-monitor-price-unavailable:");
     expect(route).toContain("const unpricedPositionIds = new Set<string>()");
