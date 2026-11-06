@@ -52,4 +52,23 @@ Middleware fails closed (503, no data) on auth timeout; Vault PIN removal is Dec
 
 ## 5. Not reviewed
 
-Individual strategy-template compilation and combination code, the evolution supervisor internals, the leveraged live protective-order reconciliation logic (inert: no live orders), Webull/Alpaca adapters beyond auth, and the 70+ docs-only commits.
+Only the 70+ docs-only commits were not read (they cannot affect runtime). The leveraged protective-order and Webull/Alpaca adapters were not read line by line; they are inert, which section 6 verifies from the live switches rather than from the code.
+
+## 6. Second pass (same day): remaining areas
+
+| Area | Result |
+|---|---|
+| Evolution supervisor (`lib/agents/evolution-supervisor.ts`) | Read in full. Read-only: it only appends its own `agent_runs` snapshot. Queue logic and latest-run-wins handling are correct. Minor: every `data`-category warn is ranked P0, so chronic warns keep the state at "attention" |
+| Autonomous discovery (`autonomous-template-discovery.ts`) | Read in full. Rule grammar is a closed allowlist with preregistered values and contradiction checks, the LLM cannot supply code or a raw RuleSpec, trial registration happens before the screen, and the shadow is non-executing. `isEligibleResearchSymbol` still admits digit-bearing tickers (the admission-time shape check now stops them upstream) |
+| RSI (`compile.ts`) | My earlier Prediction Lab finding is resolved: Codex kept the legacy simple RSI labelled "not Wilder" and added `wilderRsi`; templates use `rsi_wilder`. The implementation is the standard seed-then-smooth form |
+| Observed-score join (`observed-scores.ts`) | Point-in-time safe: latest observation at or before the session close, no forward-fill, post-close observations excluded |
+| Template backtest (`template-backtest.ts`) | No look-ahead (regime terciles use training-period volatility only; trend uses the prior session), fixed expanding folds, equal-weight per-symbol sleeves. The 30-session / 1-trade holdout gate is loose but only starts a non-executing shadow; selection needs 60 paired sessions plus a trial-adjusted t-test |
+| New API routes (11) | All have an auth gate. Only one viewer route was added (`score-formula-lab`, persisted aggregates) |
+| Migrations since 10-15 | No `drop table`, RLS disable, or grant to `anon`/`public`; additions are append-only triggers, `revoke truncate`, and `security definer` functions with pinned `search_path` |
+| Empty `.catch()` and `.catch()` on query builders | 8 new empty catches, all on async health helpers (`reportIssue` / `resolveIssue`); no builder-`.catch` bug |
+| Integration with my tracker | Codex extended `live_recommendations` with frozen Guardian stop capture; the nightly job already skips ledger rows that trigger captured, so no duplicates |
+| Live-order switches | `live_auto_enabled`, `leveraged_live_auto_enabled`, `crypto_live_auto_enabled`, `protective_orders_enabled` and `webull_trade_orders_enabled` are all false; US paper trading is disabled by the accuracy breaker; zero broker orders in 25 days |
+| India paper trading | 0 fills in every run since 11-02, but the book is full (8 of 8 names), so entries were not blocked by the stale-quote gate; the 5-9 `quote_stale` skips per run are candidates that could not have filled anyway. The capacity decision is made inside the fill RPC after the quote gate, so reordering to remove the alert noise would touch rotation logic and was left alone |
+| Council member completion | The Claude and Codex members depend on the laptop worker: 0% done on 11-02 (210 jobs expired), 85% on 11-03, 100% on 11-04 and 11-05, partial on 11-06. Any head-to-head comparison between members must use the intersection of completed jobs |
+
+No new defects were found in this pass; the two criticals from section 2 remain the substantive findings.
