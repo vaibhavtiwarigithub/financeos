@@ -43,6 +43,7 @@ import { computeCatalystScout } from "@/lib/scoring/catalyst-scout";
 import { evaluateFeature } from "@/lib/validation/feature-compiler";
 import { avCachedFetch } from "@/lib/av-cache";
 import { fetchUsCandles } from "@/lib/data/candles";
+import { isPlausibleDiscoveredUsSymbol } from "@/lib/research/symbol-shape";
 import { isEtfSymbol as canonicalIsEtfSymbol } from "@/lib/asset-classification";
 import { applyStrategyTilt, loadTradingMandate, resolveHorizonDays } from "@/lib/trading-mandate";
 import { symbolsFromLatestLiveSnapshots, symbolsFromPaperPositions, unionHoldingSymbols, orderHoldingsByStaleness, partitionWatchlistByMarket } from "@/lib/research/holding-symbols";
@@ -506,6 +507,7 @@ async function screenBucket(
 export const US_DISCOVERY_ISSUE_KEY = "discovery-starved:us";
 const DISCOVERY_DRY_DAYS_CRITICAL = 3;
 const SCREENER_SOURCES = new Set(["screener_momentum", "screener_value"]);
+const SHAPE_CHECKED_SOURCES = new Set<string>(["screener_momentum", "screener_value", "edge_relative_strength"]);
 
 /**
  * Consecutive most-recent US research days that produced no screener-sourced
@@ -765,6 +767,12 @@ export async function gatherSymbols(
   const candidateMap = new Map<string, SymbolEntry>();
   const addCandidate = (sym: string, source: DiscoverySource) => {
     if (holdingSet.has(sym) || candidateMap.has(sym)) return;
+    // Screener-discovered US names must look like a US equity/ETF ticker (see lib/research/symbol-shape.ts). Not applied to
+    // holdings, the owner watchlist, crypto or India sources.
+    if (SHAPE_CHECKED_SOURCES.has(source) && !isPlausibleDiscoveredUsSymbol(sym)) {
+      console.warn(`[research] rejected discovered symbol with a non-equity shape: ${sym} (${source})`);
+      return;
+    }
     candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: isEtfSymbol(sym), assetClass: classifyResearchAssetClass(sym), discovery_source: source });
   };
 
@@ -827,6 +835,10 @@ export async function gatherSymbols(
   let screenerAdded = 0;
   for (const { symbol: sym, bucket } of screenerSymbols) {
     if (holdingSet.has(sym) || candidateMap.has(sym) || screenerAdded >= screenerMax) continue;
+    if (!isPlausibleDiscoveredUsSymbol(sym)) {
+      console.warn(`[research] rejected screener symbol with a non-equity shape: ${sym}`);
+      continue;
+    }
     candidateMap.set(sym, { symbol: sym, isHeld: false, isEtf: false, assetClass: classifyResearchAssetClass(sym), screenerBucket: bucket, discovery_source: bucket === "momentum" ? "screener_momentum" : "screener_value" });
     screenerAdded++;
   }
