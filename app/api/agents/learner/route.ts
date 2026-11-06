@@ -1099,6 +1099,9 @@ REASONING APPROACH:
     // strategy selector; insufficient or broken evidence never selects.
     try {
       ruleTournament = await evaluateAndPersistAutonomousRuleShadows(svc, LEARN_MARKET);
+      // Clear the critical once a run completes. It was only ever raised, so after the 2026-11-06 RPC contract fix it would have stayed
+      // open for its full 14-day expiry even though every later run succeeded.
+      await resolveIssue(`autonomous-rule-tournament:${LEARN_MARKET}`, svc).catch(() => {});
     } catch (error: any) {
       const detail = String(error?.message ?? error).slice(0, 500);
       console.error(`[learner] autonomous strategy tournament failed for ${LEARN_MARKET}:`, detail);

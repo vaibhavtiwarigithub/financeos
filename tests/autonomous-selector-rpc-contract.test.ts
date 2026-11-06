@@ -40,3 +40,10 @@ describe("autonomous selector RPC payload", () => {
     }
   });
 });
+
+describe("tournament alert lifecycle", () => {
+  it("resolves the critical after a successful tournament run (it was only ever raised)", () => {
+    const learner = readFileSync("app/api/agents/learner/route.ts", "utf8");
+    expect(learner).toContain("resolveIssue(`autonomous-rule-tournament:${LEARN_MARKET}`");
+  });
+});
