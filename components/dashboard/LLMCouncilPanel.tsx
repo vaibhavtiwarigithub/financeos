@@ -26,7 +26,7 @@ const MODELS = COUNCIL_MODELS;
 const PROVIDER: Record<string, string> = {
   "deepseek-flash": `${DEEPSEEK_FLASH_RELEASE.advertisedRelease} API`, "deepseek-v4-pro": "DeepSeek V4 Pro API", "llama-3.3-70b-versatile": "Groq", "llama-3.1-8b-instant": "Groq", "deepseek-r1-distill-llama-70b": "Groq",
   "claude-haiku-4-5": "Anthropic", "claude-sonnet-4-6": "Anthropic", "gemini-2.5-flash": "Google", "gemini-2.5-pro": "Google", "grok-4-fast": "xAI", "grok-4": "xAI",
-  "gpt-4o-mini": "OpenAI", "gpt-4o": "OpenAI", "gpt-4.1": "OpenAI", "gpt-5.6-luna": "OpenAI · reasoning: medium", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
+  "gpt-4o-mini": "OpenAI · deprecated; retires Jan 14, 2027", "gpt-4o": "OpenAI · deprecated; retires Jan 14, 2027", "gpt-4.1": "OpenAI · deprecated; retires Jan 14, 2027", "gpt-5.6-luna": "OpenAI · reasoning: medium", "gpt-6-luna": "OpenAI API · reasoning: medium", "glm-4.5-air": "Zhipu", "glm-4.6": "Zhipu",
 };
 const T = { card: "#1A1D27", border: "#252836", surface: "#13151C", text: "#ECEDEF", sub: "#9B9EA8", muted: "#6B7280", accent: "#818cf8", green: "#34D399", red: "#f87171", yellow: "#FBBF24" };
 

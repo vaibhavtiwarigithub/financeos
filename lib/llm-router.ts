@@ -108,7 +108,7 @@ export const REASONING_MIN_TOKENS = 16000
 export function isReasoningModel(model: string): boolean {
   // The tier label now resolves to Flash. Only an explicit V4 Pro choice in
   // Settings enables the expensive reasoning budget floor.
-  return model === "deepseek-v4-pro" || model === "deepseek-reasoner" || model === "gpt-5.6-luna"
+  return model === "deepseek-v4-pro" || model === "deepseek-reasoner" || model === "gpt-5.6-luna" || model === "gpt-6-luna"
 }
 
 /**
@@ -203,8 +203,10 @@ const MODEL_ROUTING: Record<LLMTask, string> = {
 // Cost per 1M tokens [input, output] in USD (Groq free tier = $0)
 const PRICING: Record<string, [number, number]> = {
   "claude-sonnet-4-6":         [3.00,  15.00],
-  "claude-haiku-4-5":          [0.25,   1.25],
-  "claude-haiku-4-5-20251001": [0.25,   1.25],
+  // First-party standard API rates, verified 2026-11-02:
+  // https://platform.claude.com/docs/en/about-claude/pricing
+  "claude-haiku-4-5":          [1.00,   5.00],
+  "claude-haiku-4-5-20251001": [1.00,   5.00],
   "claude-opus-4-8":           [5.00,  25.00],
   // Legacy keys stay for historical llm_call_log rows.
   "deepseek-chat":             [0.07,   0.28],
@@ -224,7 +226,9 @@ const PRICING: Record<string, [number, number]> = {
   "deepseek-v4-flash":         [0.15,   0.60],
   "deepseek-v4-pro":           [0.66,   1.98],
   "deepseek-v4-flash-vision-exp": [0.22, 0.66],
-  "gemini-2.5-flash":          [0.075,  0.30],
+  // Text-only standard API rates; output includes thinking tokens.
+  // https://ai.google.dev/gemini-api/docs/pricing (verified 2026-11-02)
+  "gemini-2.5-flash":          [0.30,   2.50],
   "gemini-2.5-pro":            [1.25,  10.00],
   // xAI Grok — verify against x.ai pricing page; estimates below.
   "grok-4":                    [3.00,  15.00],
@@ -235,6 +239,8 @@ const PRICING: Record<string, [number, number]> = {
   "gpt-4.1":                   [2.00,   8.00],
   // Official published GPT-5.6 Luna rates: $0.20 / $1.20 per 1M tokens.
   "gpt-5.6-luna":              [0.20,   1.20],
+  // https://developers.openai.com/api/docs/models/gpt-6-luna (standard API)
+  "gpt-6-luna":                [0.10,   0.50],
   "gpt-4.1-mini":              [0.40,   1.60],
   "glm-4.6":                   [0.60,   2.20],
   "glm-4.5-air":               [0.20,   1.10],
@@ -726,7 +732,7 @@ async function callGemini(
   return {
     text,
     tokensIn: data.usageMetadata?.promptTokenCount ?? 0,
-    tokensOut: data.usageMetadata?.candidatesTokenCount ?? 0,
+    tokensOut: (data.usageMetadata?.candidatesTokenCount ?? 0) + (data.usageMetadata?.thoughtsTokenCount ?? 0),
   }
 }
 
@@ -746,10 +752,10 @@ async function callOpenAI(
   messages.push({ role: "user", content: prompt })
 
   // Reasoning models (o1/o3/o4) use max_completion_tokens and reject temperature.
-  const isReasoner = /^o[134]/.test(model) || model === "gpt-5.6-luna"
+  const isReasoner = /^o[134]/.test(model) || model === "gpt-5.6-luna" || model === "gpt-6-luna"
   const body: Record<string, unknown> = { model, messages }
   body[isReasoner ? "max_completion_tokens" : "max_tokens"] = maxTokens
-  if (model === "gpt-5.6-luna") body.reasoning_effort = "medium"
+  if (model === "gpt-5.6-luna" || model === "gpt-6-luna") body.reasoning_effort = "medium"
 
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
