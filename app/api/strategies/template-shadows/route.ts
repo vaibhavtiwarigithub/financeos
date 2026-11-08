@@ -10,15 +10,65 @@ import { isMissingStrategyLabSchemaObject } from "@/lib/strategy-replay/schema-e
 import type { Bar } from "@/lib/strategy-replay/compile";
 import {attachObservedScores,needsObservedScores} from "@/lib/strategy-replay/observed-scores";
 import {TEMPLATE_SHADOW_PRICE_PROVENANCE} from "@/lib/strategy-replay/template-shadow-collector";
+import { replaySoxlPullback } from "@/lib/strategy-replay/soxl-event-replay";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 const MAX_BACKTEST_SYMBOLS = 10;
 const MAX_BARS_PER_SYMBOL = 750;
+const MAX_SOXL_REPLAY_BARS_PER_SYMBOL = 1500;
 const INITIAL_CASH = 100_000;
 
 export async function GET(req: NextRequest) {
   const gate = await requireOwner(); if (gate) return gate;
+  if (req.nextUrl.searchParams.get("action") === "soxl-reference") {
+    const svc = createServiceClient();
+    const symbols = ["SOXX", "SOXL", "VIX"] as const;
+    let loaded: Array<{ symbol: string; rows: Array<Record<string, unknown>> }>;
+    try {
+      loaded = await Promise.all(symbols.map(async (symbol) => {
+        const { data, error } = await svc.from("price_cache")
+          .select("symbol,date,open,high,low,close,provider,price_basis,provenance_version")
+          .eq("symbol", symbol).lte("date", new Date().toISOString().slice(0, 10))
+          .order("date", { ascending: false }).limit(MAX_SOXL_REPLAY_BARS_PER_SYMBOL);
+        if (error) throw new Error(symbol);
+        return { symbol, rows: (data ?? []) as Array<Record<string, unknown>> };
+      }));
+    } catch {
+      return NextResponse.json({ error: "soxl_reference_cache_unavailable", status: "insufficient_data" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
+    const bySymbol: Record<string, Bar[]> = {};
+    const provenance: Record<string, { provider: string | null; priceBasis: string | null; provenanceVersion: string | null }> = {};
+    const sourceProblems: string[] = [];
+    for (const { symbol, rows } of loaded) {
+      const validRows = rows.filter((row) => row.provenance_version !== "v0_unprovenanced")
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const metadata = new Set(validRows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
+      if (rows.length !== validRows.length) sourceProblems.push(`${symbol} contains legacy unprovenanced rows.`);
+      if (metadata.size > 1) sourceProblems.push(`${symbol} has mixed provider, price basis, or provenance versions.`);
+      const first = validRows[0];
+      provenance[symbol] = first ? { provider: typeof first.provider === "string" ? first.provider : null,
+        priceBasis: typeof first.price_basis === "string" ? first.price_basis : null,
+        provenanceVersion: typeof first.provenance_version === "string" ? first.provenance_version : null }
+        : { provider: null, priceBasis: null, provenanceVersion: null };
+      bySymbol[symbol] = validRows.map((row) => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) }));
+    }
+    const expected = ["SOXX", "SOXL", "VIX"] as const;
+    const meta = provenance as Record<typeof expected[number], { provider: string | null; priceBasis: string | null; provenanceVersion: string | null }>;
+    const replay = replaySoxlPullback({ signalBars: bySymbol.SOXX ?? [], executionBars: bySymbol.SOXL ?? [], vixBars: bySymbol.VIX ?? [], provenance: meta });
+    const extraLimitations = [...replay.limitations, ...sourceProblems];
+    const blocked = extraLimitations.length > 0;
+    return NextResponse.json({
+      status: blocked ? "insufficient_data" : replay.status,
+      replay: { ...replay, status: blocked ? "insufficient_data" : replay.status,
+        summary: blocked ? null : replay.summary, periods: blocked ? [] : replay.periods, trades: blocked ? [] : replay.trades,
+        stress: { ...replay.stress, summary: blocked ? null : replay.stress.summary },
+        factorScenarios: blocked ? replay.factorScenarios.map((row) => ({ ...row, trades: 0, summary: null })) : replay.factorScenarios,
+        limitations: [...new Set(extraLimitations)] },
+      source: "existing price_cache only; this diagnostic reads data and writes no records",
+      influence: "none: research display only; no composite score, paper selector, orders, or live path reads this result",
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
   const market = req.nextUrl.searchParams.get("market") === "india" ? "india" : "us";
   const requestedSymbol = req.nextUrl.searchParams.get("symbol")?.trim().toUpperCase() ?? null;
   if (requestedSymbol && (!/^[A-Z0-9&._-]{1,16}$/.test(requestedSymbol)

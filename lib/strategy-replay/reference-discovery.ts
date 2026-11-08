@@ -1,9 +1,62 @@
 import { autonomouslyStartTemplateShadow, type AutonomousAssetClass, type AutonomousTemplateResult } from "./autonomous-template-discovery";
 import { compileStrategyTemplate, type StrategyTemplateSource } from "./template-compiler";
 import {createHash} from "node:crypto";
+import { replaySoxlPullback, SOXL_REFERENCE_VERSION, SOXL_REFERENCE_FACTOR_FILTERS, type Provenance } from "./soxl-event-replay";
+import type { Bar } from "./compile";
 
 export const REFERENCE_DISCOVERY_VERSION = "reference-seeds-recorded-dimensions-v2";
 export type ReferenceAttempt = { parents: StrategyTemplateSource[]; assetClass: AutonomousAssetClass; rules?:Record<string,unknown> };
+
+const SOXL_TRIAL_FAMILY = "qi-soxl-soxx-vix-reference-v1";
+
+/** Natural US Learner-cycle diagnostic. Uses existing cache only; no external fetch, LLM call, score, or execution write. */
+export async function runSoxlReferenceDiagnostic(svc: any, asOf: string) {
+  const specs = SOXL_REFERENCE_FACTOR_FILTERS.map((filter) => ({ version: SOXL_REFERENCE_VERSION, filter,
+    signal: "SOXX close>SMA200 and Wilder RSI14<35", execution: "SOXL next-session open", stopPct: 6, targetPct: 25, maxHoldingSessions: 15,
+    costBpsPerSide: 25, stressCostBpsPerSide: 50 }));
+  const registrations: Array<{ trial_index: number; trials_considered: number; was_new: boolean }> = [];
+  try {
+    for (const spec of specs) {
+      const fingerprint = createHash("sha256").update(JSON.stringify(spec)).digest("hex");
+      const response = await svc.rpc("register_trial", { p_family: SOXL_TRIAL_FAMILY, p_spec_fingerprint: fingerprint,
+        p_kind: "parameter_variant", p_label: `SOXL pullback · ${spec.filter}`, p_spec: spec,
+        p_registered_by: "strategy-discovery-soxl-reference", p_code_version: process.env.VERCEL_GIT_COMMIT_SHA ?? null, p_adapted_from: null });
+      if (response.error) return { status: "trial_ledger_unavailable", version: SOXL_REFERENCE_VERSION, detail: "The immutable trial could not be registered; replay was not run." };
+      const row = Array.isArray(response.data) ? response.data[0] : response.data;
+      if (!Number.isInteger(row?.trial_index) || !Number.isInteger(row?.trials_considered)) return { status: "trial_ledger_unavailable", version: SOXL_REFERENCE_VERSION, detail: "Trial registration returned no verifiable ledger count; replay was not run." };
+      registrations.push(row);
+    }
+    const trialCount = Math.max(...registrations.map((row) => row.trials_considered));
+    const symbols = ["SOXX", "SOXL", "VIX"] as const;
+    const dataBySymbol: Record<string, any[]> = {};
+    const provenance: Record<string, Provenance> = {};
+    for (const symbol of symbols) {
+      const { data, error } = await svc.from("price_cache").select("symbol,date,open,high,low,close,provider,price_basis,provenance_version")
+        .eq("symbol", symbol).lte("date", asOf).order("date", { ascending: false }).limit(1500);
+      if (error) return { status: "data_unavailable", version: SOXL_REFERENCE_VERSION, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
+        familyTrialCount: trialCount, asOf, detail: `${symbol} cached history read failed; no result calculated.` };
+      const rows = ((data ?? []) as any[]).reverse();
+      dataBySymbol[symbol] = rows;
+      const sourceVersions = new Set(rows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
+      const first = rows[0];
+      provenance[symbol] = { provider: first?.provider ?? null, priceBasis: first?.price_basis ?? null, provenanceVersion: first?.provenance_version ?? null };
+      if (sourceVersions.size > 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced")) {
+        return { status: "insufficient_data", version: SOXL_REFERENCE_VERSION, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
+          familyTrialCount: trialCount, asOf, detail: `${symbol} cache has mixed or legacy provenance; replay refused.`, dataFrom: rows[0]?.date ?? null, dataThrough: rows.at(-1)?.date ?? null };
+      }
+    }
+    const toBars = (rows: any[]): Bar[] => rows.map((row) => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) }));
+    const replay = replaySoxlPullback({ signalBars: toBars(dataBySymbol.SOXX), executionBars: toBars(dataBySymbol.SOXL), vixBars: toBars(dataBySymbol.VIX),
+      provenance: provenance as Record<"SOXX" | "SOXL" | "VIX", Provenance> });
+    const inputHash = createHash("sha256").update(JSON.stringify(symbols.map((symbol) => [symbol, dataBySymbol[symbol].map((row) => [row.date,row.open,row.high,row.low,row.close,row.provider,row.price_basis,row.provenance_version])]))).digest("hex");
+    return { status: replay.status, version: replay.version, trialFamily: SOXL_TRIAL_FAMILY, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
+      familyTrialCount: trialCount, asOf, inputHash, data: replay.data, assumptions: replay.assumptions, caveats: replay.caveats, summary: replay.summary, periods: replay.periods,
+      stress: replay.stress, factorScenarios: replay.factorScenarios, limitations: replay.limitations,
+      note: "Descriptive discovery only. The example hypothesis is already selection-exposed; no untouched holdout or strategy adoption is claimed." };
+  } catch {
+    return { status: "error", version: SOXL_REFERENCE_VERSION, detail: "SOXL diagnostic failed safely; no performance claim was generated." };
+  }
+}
 
 /** Fixed catalog order, never sorted by historical returns. No unsupported rule is dropped. */
 export function referenceDiscoveryPlan(catalog: StrategyTemplateSource[], market: "us" | "india", horizon: number) {
@@ -58,6 +111,7 @@ export async function runReferenceStrategyDiscovery(svc: any, input: {
     const samePlan=prior?.planFingerprint===planFingerprint;
     const startIndex=samePlan && Number.isInteger(prior.nextAttempt) && prior.nextAttempt>=0 && prior.nextAttempt<attempts.length ? prior.nextAttempt : 0;
     const cache = new Map<string, any>();
+    const soxlReference = input.market === "us" ? await runSoxlReferenceDiagnostic(svc, new Date(started).toISOString().slice(0, 10)) : { status: "not_applicable", reason: "Market-specific US leveraged-ETF reference." };
     const eligibleIndexes:number[]=samePlan && Array.isArray(prior.pendingEligibleIndexes) ? prior.pendingEligibleIndexes.filter((n:unknown)=>Number.isInteger(n) && Number(n)>=0 && Number(n)<attempts.length) : [];
     let seedCount=0,pairCount=0;
     for (const [relativeIndex,attempt] of attempts.slice(startIndex).entries()) {
@@ -84,7 +138,7 @@ export async function runReferenceStrategyDiscovery(svc: any, input: {
     const result = { version: REFERENCE_DISCOVERY_VERSION, parentRunId: input.parentRunId,planFingerprint,
       status: outcomes.length && outcomes.every(row=>row.status==="automation_disabled") ? "automation_disabled" : nextIndex < attempts.length ? "budget_deferred" : attempts.length ? "evaluated" : "no_supported_seeds",
       nextAttempt:nextIndex<attempts.length ? nextIndex : 0,pendingEligibleIndexes:[...new Set(eligibleIndexes)].filter((_,index)=>index!==0 || !["started","already_registered"].includes(activation?.status ?? "")),
-      horizon, catalogCount: capabilities.length, supportedCount: capabilities.filter(row => row.supported).length,
+      horizon, catalogCount: capabilities.length, supportedCount: capabilities.filter(row => row.supported).length, soxlReference,
       capabilities: capabilities.map(row => ({ id: row.template.id, name: row.template.name, supported: row.supported, reasons: row.reasons })),
       attempted: outcomes, deferred: attempts.length-nextIndex, activation };
     const saved = await svc.from("agent_runs").update({ status: "done", completed_at: new Date(clock()).toISOString(),

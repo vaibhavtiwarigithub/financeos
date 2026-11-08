@@ -71,3 +71,9 @@ Define separately versioned dual-symbol signal/target contract, market sessions,
 - Any candidate entering a paper money path, and any live enablement, remain under separate existing gates. No strategy is auto-promoted by successful research.
 
 No new schedule, provider, paid service, schema, model call, account permission, trading behavior or live setting was changed during this audit.
+
+## 2026-11-08 follow-up — implementation status
+
+The SOXL-specific gap has a bounded implementation now. See `QI_QUANT_SOXL_IMPLEMENTATION.md`: the existing weekly US Learner cycle preregisters a fixed SOXX→SOXL reference strategy and seven VIX factor variants, then runs only when existing cache data passes strict provenance/alignment gates. The SOXL symbol research panel exposes the same deterministic cache-only replay and its assumptions. Stop/target gaps and daily-bar collision rules are explicit and tested.
+
+This closes the code gap for a reproducible, measurement-only reference replay. It does **not** close the external data sufficiency or independent validation gaps: no long-history app feed entitlement or durable verified 2022–2026 dataset was established in this code task, no result was computed from mixed cache rows, and the previously inspected calendar buckets are selection-exposed. Production automatic operation remains pending the next natural US Learner cycle and its persisted `soxlReference` result. No schedule was triggered manually. Broader per-symbol strategy coverage, untouched holdout, purged walk-forward validation, and any score/paper/live influence remain pending or separately gated.
