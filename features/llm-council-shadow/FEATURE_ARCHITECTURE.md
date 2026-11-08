@@ -364,6 +364,21 @@ subscription use is unverified until the Claude Code client is signed in and
 passes a synthetic test. No subscription/API blend is silently represented as
 one verified execution path.
 
+## Monthly catalog maintenance — November 2, 2026
+
+Owner-authorized maintenance adds optional `gpt-6-luna` via the existing text-only
+Chat Completions adapter, fixed `medium` reasoning and 16,000-token reasoning
+floor. Standard API prices are $0.10/$0.50 per million input/output tokens;
+GPT-5.6 Luna remains selectable. Mark GPT-4o/mini and GPT-4.1 deprecated with
+their January 14, 2027 shutdown date, retaining all legacy IDs and settings.
+Correct Haiku 4.5 to $1/$5 and Gemini 2.5 Flash to $0.30/$2.50; Gemini output
+accounting includes thought tokens. Council reservations include Claude's
+existing 3,584-token evaluate allowance and one repair attempt. No new effort
+control or subscription entitlement is inferred from API availability. Preview
+or unverified contracts are not added. Evidence, CLI version/cache mismatch,
+xAI bare-alias verification blocker, and deferred candidates are recorded in
+`docs/audits/2026-11-02-llm-catalog-review.md`. No saved configuration is changed.
+
 ## Delivery sequence
 
 1. Versioned settings and append-only run/forecast/turn/evaluation schema; test auth and database constraints.

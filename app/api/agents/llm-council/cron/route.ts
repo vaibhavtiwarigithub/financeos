@@ -31,7 +31,10 @@ function estimateCost(model: string, prompt: string, maxOutput = MAX_TURN_TOKENS
   const [inputRate, outputRate] = priceFor(model);
   // Deliberately pessimistic input estimate: one token per character, not the
   // usual ~3-4 characters/token. This is a reservation guard, not billing.
-  const effectiveOutputBudget = isReasoningModel(model) ? Math.max(maxOutput, 16_000) : maxOutput;
+  // Council calls use task=evaluate: callClaude enables 2,048 thinking tokens
+  // plus 1,536 answer tokens even when the caller requests only 900.
+  const effectiveOutputBudget = isReasoningModel(model) ? Math.max(maxOutput, 16_000)
+    : model.startsWith("claude") ? Math.max(maxOutput, 3_584) : maxOutput;
   return (prompt.length / 1_000_000 * inputRate) + (effectiveOutputBudget / 1_000_000 * outputRate);
 }
 
