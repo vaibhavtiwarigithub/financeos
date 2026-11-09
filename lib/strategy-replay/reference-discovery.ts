@@ -7,7 +7,7 @@ import type { Bar } from "./compile";
 export const REFERENCE_DISCOVERY_VERSION = "reference-seeds-recorded-dimensions-v2";
 export type ReferenceAttempt = { parents: StrategyTemplateSource[]; assetClass: AutonomousAssetClass; rules?:Record<string,unknown> };
 
-const SOXL_TRIAL_FAMILY = "qi-soxl-soxx-vix-reference-v1";
+const SOXL_TRIAL_FAMILY = "qi-soxl-soxx-vix-reference-v2";
 
 /** Natural US Learner-cycle diagnostic. Uses existing cache only; no external fetch, LLM call, score, or execution write. */
 export async function runSoxlReferenceDiagnostic(svc: any, asOf: string) {
@@ -40,9 +40,14 @@ export async function runSoxlReferenceDiagnostic(svc: any, asOf: string) {
       const sourceVersions = new Set(rows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
       const first = rows[0];
       provenance[symbol] = { provider: first?.provider ?? null, priceBasis: first?.price_basis ?? null, provenanceVersion: first?.provenance_version ?? null };
-      if (sourceVersions.size > 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced")) {
+      if (symbol !== "VIX" && (sourceVersions.size > 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced"))) {
         return { status: "insufficient_data", version: SOXL_REFERENCE_VERSION, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
           familyTrialCount: trialCount, asOf, detail: `${symbol} cache has mixed or legacy provenance; replay refused.`, dataFrom: rows[0]?.date ?? null, dataThrough: rows.at(-1)?.date ?? null };
+      }
+      if (symbol === "VIX" && (sourceVersions.size !== 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced")
+        || first?.price_basis !== "index")) {
+        dataBySymbol[symbol] = [];
+        provenance[symbol] = { provider: null, priceBasis: null, provenanceVersion: null };
       }
     }
     const toBars = (rows: any[]): Bar[] => rows.map((row) => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) }));

@@ -49,6 +49,25 @@ describe("SOXX to SOXL daily event replay", () => {
     expect(collision.trades[0].exitPrice).toBeLessThan(collision.trades[0].stopPrice);
   });
 
+  it("runs the SOXX/SOXL baseline without VIX and labels each VIX variant insufficient", () => {
+    const f = fixture();
+    const { VIX: _vix, ...equityProvenance } = f.provenance;
+    const result = replaySoxlPullback({ signalBars: f.soxx, executionBars: f.soxl, provenance: equityProvenance });
+    expect(result.status).toBe("diagnostic_only");
+    expect(result.trades.length).toBeGreaterThan(0);
+    expect(result.factorScenarios).toHaveLength(7);
+    expect(result.factorScenarios.every((row) => row.status === "insufficient_data" && row.summary === null)).toBe(true);
+    expect(result.assumptions.entry).toMatch(/VIX filters are unavailable/);
+  });
+
+  it("does not evaluate VIX filters when the VIX sessions do not align", () => {
+    const f = fixture();
+    const result = replaySoxlPullback({ signalBars: f.soxx, executionBars: f.soxl, vixBars: f.vix.slice(1), provenance: f.provenance });
+    expect(result.status).toBe("diagnostic_only");
+    expect(result.trades.length).toBeGreaterThan(0);
+    expect(result.factorScenarios.every((row) => row.status === "insufficient_data" && row.summary === null)).toBe(true);
+  });
+
   it("uses adverse stop-gap fills and does not credit favorable target gaps", () => {
     const f = fixture();
     const baseline = replaySoxlPullback({ signalBars: f.soxx, executionBars: f.soxl, vixBars: f.vix, provenance: f.provenance });

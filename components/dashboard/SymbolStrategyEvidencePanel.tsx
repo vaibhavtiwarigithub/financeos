@@ -23,7 +23,7 @@ type Config = {
   state: string;
   kind: string;
   template_ids: string[];
-  rule_spec: { label?: string; horizonSessions?: number; rules?: Record<string, unknown> };
+  rule_spec: { label?: string; horizonSessions?: number; universe?: string[]; execution?: string; entry?: unknown; exit?: unknown; rules?: Record<string, unknown> };
   rule_version: string;
   created_at: string;
   evidence: Evidence;
@@ -40,6 +40,14 @@ function pct(value: number | null | undefined) {
   return value == null || !Number.isFinite(value) ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function percentagePoints(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2)} pp`;
+}
+
+function drawdownPct(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? "—" : `${Math.abs(value).toFixed(2)}%`;
+}
+
 function date(value?: string | null) {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -51,6 +59,29 @@ function stateText(config: Config) {
   if (config.evidence.pendingCount > 0) return "Waiting for forward labels";
   if (config.evidence.decisionCount > 0) return "No matured forward labels yet";
   return `No shadow decision recorded for this symbol · shadow ${config.state}`;
+}
+
+function collectRuleTerms(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const rule = value as Record<string, any>;
+  if (rule.op === "cmp" || rule.op === "cmp2") {
+    const left = rule.left?.fn ? `${rule.left.fn}${rule.left.period ? `(${rule.left.period})` : ""}${rule.left.dimension ? ` · ${rule.left.dimension}` : ""}` : "?";
+    const right = typeof rule.right === "number" ? String(rule.right)
+      : rule.right?.fn ? `${rule.right.fn}${rule.right.period ? `(${rule.right.period})` : ""}` : "?";
+    return [`${left} ${rule.cmp} ${right}`];
+  }
+  if (rule.op === "held_sessions") return [`held sessions ${rule.cmp} ${rule.value}`];
+  if (rule.op === "not") return collectRuleTerms(rule.term).map((term) => `NOT (${term})`);
+  const children = Array.isArray(rule.terms) ? rule.terms : [];
+  return children.flatMap(collectRuleTerms);
+}
+
+function ruleDimensions(ruleSpec: any): string[] {
+  const observed = [...new Set([...collectRuleTerms(ruleSpec?.entry), ...collectRuleTerms(ruleSpec?.exit)]
+    .flatMap((term) => [...term.matchAll(/·\s*(fundamental|technical|sentiment|macro|insider)/g)].map((match) => match[1])))];
+  if (observed.length) return observed;
+  const terms = [...collectRuleTerms(ruleSpec?.entry), ...collectRuleTerms(ruleSpec?.exit)];
+  return terms.length ? ["technical / price action"] : ["not identified from the recorded rule"];
 }
 
 export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol: string; market: "us" | "india" }) {
@@ -89,7 +120,7 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
       <div>
         <h2 id="symbol-strategy-title" style={{ margin: 0, color: T.text, fontSize: 18 }}>Strategy research for {symbol}</h2>
         <p style={{ margin: "6px 0 0", color: T.sub, fontSize: 12, lineHeight: 1.6 }}>
-          Kairos-owned, point-in-time shadow evidence for candidates whose declared universe includes this symbol. This panel cannot place or recommend an order.
+          Kairos-owned evidence for candidates whose declared universe includes this symbol. It shows historical candidate tests and later ticker-level observations separately. The current system does not crown a ticker-specific best strategy from these descriptive samples; no result here recommends an order.
         </p>
       </div>
       <span style={{ color: T.accent, fontSize: 11, fontWeight: 700 }}>SHADOW ONLY</span>
@@ -114,11 +145,13 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
       {data.configs.map((config) => {
         const selected = data.selected?.config_id === config.id;
         const hasMatured = config.evidence.maturedCount > 0;
+        const backtest = config.evidence.latestBacktest;
+        const terms = [...collectRuleTerms(config.rule_spec?.entry), ...collectRuleTerms(config.rule_spec?.exit)];
         return <article key={config.id} style={{ border: `1px solid ${T.border}`, borderRadius: 9, padding: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div>
               <h3 style={{ color: T.text, fontSize: 14, margin: 0 }}>{config.rule_spec?.label ?? `${config.kind} strategy candidate`}</h3>
-              <div style={{ color: T.muted, fontSize: 11, marginTop: 5 }}>Version {config.rule_version} · {config.rule_spec?.horizonSessions ?? "?"} session horizon · registered {date(config.created_at)}{selected ? " · paper ranking preference" : ""}</div>
+              <div style={{ color: T.muted, fontSize: 11, marginTop: 5 }}>Version {config.rule_version} · {config.rule_spec?.horizonSessions ?? "?"} session horizon · registered {date(config.created_at)}{selected ? " · global paper-ranking preference (not a symbol-specific winner)" : ""}</div>
             </div>
             <span style={{ color: hasMatured ? T.amber : T.muted, fontSize: 11, fontWeight: 700 }}>{stateText(config)}</span>
           </div>
@@ -137,6 +170,37 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
           {config.evidence.latestBacktest && <p style={{ color: T.muted, fontSize: 11, margin: "8px 0 0" }}>
             Candidate-level historical screen: {config.evidence.latestBacktest.status ?? "recorded"} · {config.evidence.latestBacktest.method ?? "fixed replay"}. Historical fit is separate from this symbol's forward observations.
           </p>}
+          <div style={{ marginTop: 12, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+            <strong style={{ color: T.text, fontSize: 11 }}>What was tested</strong>
+            <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, marginTop: 5 }}>
+              Dimensions: {ruleDimensions(config.rule_spec).join(", ")} · execution: {config.rule_spec?.execution ?? "not recorded"} · declared universe: {config.rule_spec?.universe?.join(", ") ?? "not recorded"}
+            </div>
+            <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, marginTop: 3 }}>
+              Variables: {terms.length ? terms.join("; ") : "exact expression unavailable in this stored version"}
+            </div>
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ color: T.accent, cursor: "pointer", fontSize: 11 }}>Exact frozen entry and exit specification</summary>
+              <pre style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify({ entry: config.rule_spec?.entry ?? null, exit: config.rule_spec?.exit ?? null, parameters: config.rule_spec?.rules ?? null }, null, 2)}</pre>
+            </details>
+            <strong style={{ display: "block", color: T.text, fontSize: 11, marginTop: 9 }}>Historical backtest evidence</strong>
+            {!backtest ? <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>No persisted historical result is available for this candidate.</div> : <>
+              <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>
+                {backtest.status ?? "recorded"} · {backtest.method ?? "method not recorded"} · {backtest.dataFrom ?? "—"} to {backtest.dataThrough ?? "—"} · benchmark {backtest.benchmark ?? "—"} · {backtest.symbols ?? "?"} symbols / {backtest.bars ?? "?"} bars
+              </div>
+              <div style={{ color: T.muted, fontSize: 10, lineHeight: 1.6, marginTop: 3 }}>
+                Sources: {backtest.priceSources?.join(", ") || "not recorded"} · price bases: {backtest.priceBases?.join(", ") || "not recorded"} · provenance versions: {backtest.provenanceVersions?.join(", ") || "not recorded"}
+              </div>
+              {backtest.holdout && <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, marginTop: 5 }}>
+                Final-window diagnostic (not an untouched validation set): {backtest.holdout.sessions} sessions · {backtest.holdout.trades} trades · strategy {pct(backtest.holdout.returnPct)} · benchmark {pct(backtest.holdout.benchmarkReturnPct)} · excess {percentagePoints(backtest.holdout.excessReturnPp)} · max drawdown {drawdownPct(backtest.holdout.maxDrawdownPct)}
+              </div>}
+              {backtest.walkForward?.length > 0 && <div style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, marginTop: 4 }}>
+                Purged development folds: {backtest.walkForward.map((fold: any) => `${fold.from}–${fold.through}: ${fold.metrics?.trades ?? 0} trades, excess ${percentagePoints(fold.metrics?.excessReturnPp)}`).join(" · ")}
+              </div>}
+              <div style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, marginTop: 4 }}>
+                This stored historical result is for the candidate's full declared universe, not a symbol-only historical backtest for {symbol}. The matured per-symbol shadow figures above come from later natural observations and remain descriptive. {backtest.limitation ?? "Historical fit is not validation."}
+              </div>
+            </>}
+          </div>
         </article>;
       })}
     </div>}
@@ -156,14 +220,14 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
           <Metric label="50 bps/side stress sequence" value={result.stress?.summary?.compoundedReturnPct == null ? "—" : `${result.stress.summary.compoundedReturnPct >= 0 ? "+" : ""}${result.stress.summary.compoundedReturnPct.toFixed(2)}%`} />
         </dl>}
         {result.periods?.length > 0 && <p style={{ color: T.muted, fontSize: 10, margin: "7px 0" }}>{result.periods.map((period: any) => `${period.name}: ${period.summary?.trades ?? 0} trades / ${period.summary?.winRatePct == null ? "—" : `${period.summary.winRatePct.toFixed(1)}% win`} / ${period.summary?.compoundedReturnPct == null ? "—" : `${period.summary.compoundedReturnPct >= 0 ? "+" : ""}${period.summary.compoundedReturnPct.toFixed(2)}%`}`).join(" · ")} · both periods were previously inspected, not independent tests.</p>}
-        {result.factorScenarios?.length > 0 && <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, margin: "7px 0" }}>VIX factors: {result.factorScenarios.map((scenario: any) => `${scenario.name}: ${scenario.trades} trades, ${scenario.summary?.winRatePct == null ? "—" : `${scenario.summary.winRatePct.toFixed(1)}% wins`}, ${scenario.summary?.compoundedReturnPct == null ? "—" : `${scenario.summary.compoundedReturnPct >= 0 ? "+" : ""}${scenario.summary.compoundedReturnPct.toFixed(2)}%`}`).join(" · ")}</p>}
+        {result.factorScenarios?.length > 0 && <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, margin: "7px 0" }}>VIX factors: {result.factorScenarios.map((scenario: any) => scenario.status === "insufficient_data" ? `${scenario.name}: insufficient data` : `${scenario.name}: ${scenario.trades} trades, ${scenario.summary?.winRatePct == null ? "—" : `${scenario.summary.winRatePct.toFixed(1)}% wins`}, ${scenario.summary?.compoundedReturnPct == null ? "—" : `${scenario.summary.compoundedReturnPct >= 0 ? "+" : ""}${scenario.summary.compoundedReturnPct.toFixed(2)}%`}`).join(" · ")}</p>}
       </>; })()}
     </div>}
 
     {market === "us" && symbol === "SOXL" && <div style={{ marginTop: 16, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
       <h3 style={{ color: T.text, fontSize: 14, margin: 0 }}>QI Quant SOXX → SOXL reference replay</h3>
       <p style={{ color: T.sub, fontSize: 12, lineHeight: 1.6, margin: "6px 0 10px" }}>
-        Fixed research hypothesis: SOXX above its 200-day average with Wilder RSI(14) below 35; enter SOXL at the next open, with 6% stop, 25% target and a 15-session time exit. VIX is provenance-checked and available as a declared filter, but is not assumed to improve this strategy. This read-only diagnostic uses only aligned, consistently sourced cached bars. Historical selection makes it non-independent; it cannot affect research scores or trading.
+        Fixed research hypothesis: SOXX above its 200-day average with Wilder RSI(14) below 35; enter SOXL at the next open, with 6% stop, 25% target and a 15-session time exit. VIX is an optional, provenance-checked factor; missing or unsuitable VIX data leaves its variants untested without blocking the VIX-free baseline. This read-only diagnostic uses only aligned, consistently sourced cached bars. Historical selection makes it non-independent; it cannot affect research scores or trading.
       </p>
       <button type="button" onClick={runSoxlDiagnostic} disabled={soxlReplay.status === "loading"}
         style={{ background: T.accent, border: 0, borderRadius: 6, color: "#10121A", cursor: soxlReplay.status === "loading" ? "wait" : "pointer", fontWeight: 700, padding: "8px 12px" }}>
@@ -198,9 +262,9 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
           <div style={{ overflowX: "auto", marginTop: 6 }}><table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11, color: T.sub }}>
             <thead><tr>{["Filter", "Trades", "Win rate", "Net return"].map((label) => <th key={label} style={{ textAlign: "left", padding: 6, borderBottom: `1px solid ${T.border}`, color: T.muted }}>{label}</th>)}</tr></thead>
             <tbody>{soxlReplay.replay.factorScenarios.map((row: any) => <tr key={row.name}>
-              <td style={{ padding: 6 }}>{row.name}</td><td style={{ padding: 6 }}>{row.trades}</td>
-              <td style={{ padding: 6 }}>{row.summary.winRatePct == null ? "—" : `${row.summary.winRatePct.toFixed(1)}%`}</td>
-              <td style={{ padding: 6 }}>{row.summary.compoundedReturnPct == null ? "—" : `${row.summary.compoundedReturnPct >= 0 ? "+" : ""}${row.summary.compoundedReturnPct.toFixed(2)}%`}</td>
+              <td style={{ padding: 6 }}>{row.name}{row.status === "insufficient_data" ? " · insufficient data" : ""}</td><td style={{ padding: 6 }}>{row.status === "insufficient_data" ? "—" : row.trades}</td>
+              <td style={{ padding: 6 }}>{row.summary?.winRatePct == null ? "—" : `${row.summary.winRatePct.toFixed(1)}%`}</td>
+              <td style={{ padding: 6 }}>{row.summary?.compoundedReturnPct == null ? "—" : `${row.summary.compoundedReturnPct >= 0 ? "+" : ""}${row.summary.compoundedReturnPct.toFixed(2)}%`}</td>
             </tr>)}</tbody>
           </table></div>
         </div>}

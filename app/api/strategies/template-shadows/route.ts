@@ -44,9 +44,15 @@ export async function GET(req: NextRequest) {
       const validRows = rows.filter((row) => row.provenance_version !== "v0_unprovenanced")
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
       const metadata = new Set(validRows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
+      const first = validRows[0];
+      if (symbol === "VIX" && (rows.length !== validRows.length || metadata.size !== 1 || first?.price_basis !== "index")) {
+        // VIX is an optional factor: bad/missing VIX blocks only its variants.
+        provenance[symbol] = { provider: null, priceBasis: null, provenanceVersion: null };
+        bySymbol[symbol] = [];
+        continue;
+      }
       if (rows.length !== validRows.length) sourceProblems.push(`${symbol} contains legacy unprovenanced rows.`);
       if (metadata.size > 1) sourceProblems.push(`${symbol} has mixed provider, price basis, or provenance versions.`);
-      const first = validRows[0];
       provenance[symbol] = first ? { provider: typeof first.provider === "string" ? first.provider : null,
         priceBasis: typeof first.price_basis === "string" ? first.price_basis : null,
         provenanceVersion: typeof first.provenance_version === "string" ? first.provenance_version : null }
@@ -63,7 +69,8 @@ export async function GET(req: NextRequest) {
       replay: { ...replay, status: blocked ? "insufficient_data" : replay.status,
         summary: blocked ? null : replay.summary, periods: blocked ? [] : replay.periods, trades: blocked ? [] : replay.trades,
         stress: { ...replay.stress, summary: blocked ? null : replay.stress.summary },
-        factorScenarios: blocked ? replay.factorScenarios.map((row) => ({ ...row, trades: 0, summary: null })) : replay.factorScenarios,
+        factorScenarios: blocked ? replay.factorScenarios.map((row) => ({ ...row, status: "insufficient_data" as const,
+          reason: [...sourceProblems, ...replay.limitations].join(" ") || "Base SOXX/SOXL data did not pass validation; factor result was not evaluated.", trades: 0, summary: null })) : replay.factorScenarios,
         limitations: [...new Set(extraLimitations)] },
       source: "existing price_cache only; this diagnostic reads data and writes no records",
       influence: "none: research display only; no composite score, paper selector, orders, or live path reads this result",

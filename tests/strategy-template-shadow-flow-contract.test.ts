@@ -57,5 +57,17 @@ describe("bounded strategy discovery and shadow flow contract", () => {
     expect(symbolPanel).toContain("SHADOW ONLY");
     expect(symbolPanel).toContain("small per-symbol sample is descriptive");
     expect(symbolPanel).toContain("It is not a zero score, a failed backtest");
+    expect(symbolPanel).toContain("What was tested");
+    expect(symbolPanel).toContain("Exact frozen entry and exit specification");
+    expect(symbolPanel).toContain("Sources:");
+    expect(symbolPanel).toContain("full declared universe, not a symbol-only historical backtest");
+  });
+
+  it("keeps optional VIX data failures from blocking the SOXX/SOXL baseline", () => {
+    expect(route).toContain('symbol === "VIX" && (rows.length !== validRows.length || metadata.size !== 1 || first?.price_basis !== "index")');
+    expect(route).toContain("bySymbol[symbol] = []");
+    expect(route).toContain('status: "insufficient_data" as const');
+    expect(route).toContain('reason: [...sourceProblems, ...replay.limitations].join(" ")');
+    expect(symbolPanel).toContain('row.status === "insufficient_data" ? "—" : row.trades');
   });
 });

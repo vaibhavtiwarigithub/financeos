@@ -1,6 +1,6 @@
 import type { Bar } from "./compile";
 
-export const SOXL_REFERENCE_VERSION = "soxl-soxx-wilder-rsi-stop-target-v1";
+export const SOXL_REFERENCE_VERSION = "soxl-soxx-wilder-rsi-stop-target-v2-optional-vix";
 export const SOXL_REFERENCE_FACTOR_FILTERS = ["none", "vix_close_lte_20", "vix_close_lte_25", "vix_close_lte_30", "vix_change_lte_-5pct", "vix_change_lte_-10pct", "vix_change_gte_5pct", "vix_change_gte_10pct"] as const;
 
 export interface Provenance {
@@ -12,8 +12,8 @@ export interface Provenance {
 export interface SoxlReplayInput {
   signalBars: Bar[];
   executionBars: Bar[];
-  vixBars: Bar[];
-  provenance: Record<"SOXX" | "SOXL" | "VIX", Provenance>;
+  vixBars?: Bar[];
+  provenance: Record<"SOXX" | "SOXL", Provenance> & { VIX?: Provenance | null };
   stopPct?: number;
   targetPct?: number;
   maxHoldingSessions?: number;
@@ -40,13 +40,13 @@ export interface SoxlReplayResult {
   status: "insufficient_data" | "diagnostic_only";
   version: string;
   strategy: { signal: string; execution: string; stopPct: number; targetPct: number; maxHoldingSessions: number; rsiBelow: number; vixMax: number | null };
-  data: { sessions: number; from: string | null; through: string | null; provenance: Record<string, Provenance> };
+  data: { sessions: number; from: string | null; through: string | null; provenance: Record<string, Provenance | null> };
   assumptions: { entry: string; stopGap: string; sameBarCollision: string; targetGap: string; costBpsPerSide: number; stressCostBpsPerSide: number };
   trades: SoxlTrade[];
   summary: ReturnType<typeof summarize> | null;
   periods: Array<{ name: string; from: string; through: string; priorSelectionExposure: true; summary: ReturnType<typeof summarize> | null }>;
   stress: { costBpsPerSide: number; summary: ReturnType<typeof summarize> | null };
-  factorScenarios: Array<{ name: string; trades: number; summary: ReturnType<typeof summarize> | null }>;
+  factorScenarios: Array<{ name: string; status: "diagnostic_only" | "insufficient_data"; reason?: string; trades: number; summary: ReturnType<typeof summarize> | null }>;
   limitations: string[];
   caveats: string[];
 }
@@ -63,20 +63,29 @@ export function replaySoxlPullback(input: SoxlReplayInput): SoxlReplayResult {
   const cfg = { ...DEFAULTS, ...input };
   const vixMax = input.vixMax ?? null;
   const limitations: string[] = [];
-  const bars = [input.signalBars, input.executionBars, input.vixBars];
-  const provenanceValues = Object.values(input.provenance);
-  const provenanceGood = provenanceValues.length === 3 && provenanceValues.every((p) =>
+  const vixBars = input.vixBars ?? [];
+  const bars = [input.signalBars, input.executionBars];
+  const provenanceValues = [input.provenance.SOXX, input.provenance.SOXL];
+  const provenanceGood = provenanceValues.every((p) =>
     typeof p.provider === "string" && !!p.provider && (["adjusted", "raw", "index"].includes(String(p.priceBasis)))
     && typeof p.provenanceVersion === "string" && !!p.provenanceVersion && p.provenanceVersion !== "v0_unprovenanced");
-  if (!provenanceGood) limitations.push("Every input needs one verified provider, raw/adjusted basis, and non-legacy provenance version.");
+  if (!provenanceGood) limitations.push("SOXX and SOXL each need one verified provider, raw/adjusted basis, and non-legacy provenance version.");
   const validBars = bars.every((series) => isValidSeries(series));
   if (!validBars) limitations.push("Input bars must be unique, ascending sessions with valid positive OHLC values.");
   const sessions = input.signalBars.map((bar) => bar.session);
-  const sameSessions = sessions.length > 0 && [input.executionBars, input.vixBars].every((series) =>
+  const sameExecutionSessions = sessions.length > 0 && [input.executionBars].every((series) =>
     series.length === sessions.length && series.every((bar, index) => bar.session === sessions[index]));
-  if (!sameSessions) limitations.push("SOXX, SOXL, and VIX must have identical session coverage; missing sessions are not imputed.");
-  // Basis is validated within each source series by the loader. Comparing basis
-  // labels across different instruments is meaningless (VIX is an index).
+  if (!sameExecutionSessions) limitations.push("SOXX and SOXL must have identical session coverage; missing sessions are not imputed.");
+  const vixProvenance = input.provenance.VIX;
+  const vixProvenanceGood = !!vixProvenance && typeof vixProvenance.provider === "string" && !!vixProvenance.provider
+    && vixProvenance.priceBasis === "index" && typeof vixProvenance.provenanceVersion === "string"
+    && !!vixProvenance.provenanceVersion && vixProvenance.provenanceVersion !== "v0_unprovenanced";
+  const vixAligned = vixBars.length > 0 && isValidSeries(vixBars) && vixBars.length === sessions.length
+    && vixBars.every((bar, index) => bar.session === sessions[index]);
+  const vixUsable = vixProvenanceGood && vixAligned;
+  // VIX is an optional factor. It cannot block the independent SOXX/SOXL
+  // baseline, but no VIX-filtered result is emitted unless its own data passes.
+  if (vixMax != null && !vixUsable) limitations.push("A VIX-filtered baseline requires aligned, consistently provenanced VIX index bars.");
   if (!Number.isFinite(cfg.stopPct) || cfg.stopPct <= 0 || !Number.isFinite(cfg.targetPct) || cfg.targetPct <= 0
     || !Number.isInteger(cfg.maxHoldingSessions) || cfg.maxHoldingSessions < 1 || !Number.isFinite(cfg.rsiBelow)
     || (vixMax != null && (!Number.isFinite(vixMax) || vixMax <= 0))
@@ -91,11 +100,11 @@ export function replaySoxlPullback(input: SoxlReplayInput): SoxlReplayResult {
     version: SOXL_REFERENCE_VERSION,
     strategy: { signal: "SOXX close > SMA200 and Wilder RSI(14) < threshold", execution: "SOXL next-session open", stopPct: cfg.stopPct, targetPct: cfg.targetPct, maxHoldingSessions: cfg.maxHoldingSessions, rsiBelow: cfg.rsiBelow, vixMax },
     data: { sessions: sessions.length, from: sessions[0] ?? null, through: sessions.at(-1) ?? null, provenance: input.provenance },
-    assumptions: { entry: "Signal known at SOXX/VIX close; entry at next SOXL session open with adverse per-side costs.", stopGap: "If SOXL opens through stop, fill at open; otherwise fill at stop.", sameBarCollision: "Stop is assumed before target when both are touched on one daily bar.", targetGap: "Target fills at target price; favorable gap improvement is not credited.", costBpsPerSide: cfg.costBpsPerSide, stressCostBpsPerSide: cfg.stressCostBpsPerSide },
+    assumptions: { entry: vixUsable ? "Signal known at SOXX/VIX close; entry at next SOXL session open with adverse per-side costs." : "Signal known at SOXX close; entry at next SOXL session open with adverse per-side costs. VIX filters are unavailable.", stopGap: "If SOXL opens through stop, fill at open; otherwise fill at stop.", sameBarCollision: "Stop is assumed before target when both are touched on one daily bar.", targetGap: "Target fills at target price; favorable gap improvement is not credited.", costBpsPerSide: cfg.costBpsPerSide, stressCostBpsPerSide: cfg.stressCostBpsPerSide },
     trades: [] as SoxlTrade[], summary: null as ReturnType<typeof summarize> | null,
     periods: [] as Array<{ name: string; from: string; through: string; priorSelectionExposure: true; summary: ReturnType<typeof summarize> | null }>,
     stress: { costBpsPerSide: cfg.stressCostBpsPerSide, summary: null as ReturnType<typeof summarize> | null },
-    factorScenarios: [] as Array<{ name: string; trades: number; summary: ReturnType<typeof summarize> | null }>,
+    factorScenarios: [] as Array<{ name: string; status: "diagnostic_only" | "insufficient_data"; reason?: string; trades: number; summary: ReturnType<typeof summarize> | null }>,
     limitations,
     caveats: ["Matching input dates verifies cross-instrument alignment, not completeness against every historical exchange session.",
       "Corporate-action correctness depends on the cached provider's declared price basis and provenance; it is not independently audited by this replay.",
@@ -116,14 +125,16 @@ export function replaySoxlPullback(input: SoxlReplayInput): SoxlReplayResult {
     vix_change_gte_10pct: (_vix, change) => change >= 10,
   };
   const scenarioFilters = SOXL_REFERENCE_FACTOR_FILTERS.filter((filter) => filter !== "none");
+  const labels: Record<Exclude<(typeof SOXL_REFERENCE_FACTOR_FILTERS)[number], "none">, string> = {
+    vix_close_lte_20: "VIX close <= 20", vix_close_lte_25: "VIX close <= 25", vix_close_lte_30: "VIX close <= 30",
+    "vix_change_lte_-5pct": "VIX one-day change <= -5%", "vix_change_lte_-10pct": "VIX one-day change <= -10%",
+    vix_change_gte_5pct: "VIX one-day change >= +5%", vix_change_gte_10pct: "VIX one-day change >= +10%",
+  };
   const factorScenarios = scenarioFilters.map((filter) => {
-    const scenarioTrades = simulate(input, cfg, null, cfg.costBpsPerSide, predicates[filter]);
-    const labels: Record<typeof filter, string> = {
-      vix_close_lte_20: "VIX close <= 20", vix_close_lte_25: "VIX close <= 25", vix_close_lte_30: "VIX close <= 30",
-      "vix_change_lte_-5pct": "VIX one-day change <= -5%", "vix_change_lte_-10pct": "VIX one-day change <= -10%",
-      vix_change_gte_5pct: "VIX one-day change >= +5%", vix_change_gte_10pct: "VIX one-day change >= +10%",
-    };
-    return { name: labels[filter], trades: scenarioTrades.length, summary: summarize(scenarioTrades) };
+    if (!vixUsable) return { name: labels[filter], status: "insufficient_data" as const,
+      reason: "Aligned, consistently provenanced VIX index bars are unavailable; this factor variant was not evaluated.", trades: 0, summary: null };
+    const scenarioTrades = simulate({ ...input, vixBars }, cfg, null, cfg.costBpsPerSide, predicates[filter]);
+    return { name: labels[filter], status: "diagnostic_only" as const, trades: scenarioTrades.length, summary: summarize(scenarioTrades) };
   });
   const periods = [
     { name: "2022–2024", from: "2022-01-01", through: "2024-12-31" },
@@ -177,11 +188,11 @@ function simulate(input: SoxlReplayInput, cfg: ReplayConfig, vixMax: number | nu
     if (smaStart < 0) { index++; continue; }
     const sma = closes.slice(smaStart, index + 1).reduce((sum, value) => sum + value, 0) / 200;
     const rsi = wilderRsi(closes, index);
-    const vix = input.vixBars[index].close;
-    const previousVix = index > 0 ? input.vixBars[index - 1].close : null;
-    const vixChangePct = previousVix && previousVix > 0 ? (vix / previousVix - 1) * 100 : null;
-    if (signal.close <= sma || rsi == null || rsi >= cfg.rsiBelow || (vixMax != null && vix > vixMax)) { index++; continue; }
-    if (factorFilter && (vixChangePct == null || !factorFilter(vix, vixChangePct))) { index++; continue; }
+    const vix = input.vixBars?.[index]?.close ?? null;
+    const previousVix = index > 0 ? input.vixBars?.[index - 1]?.close ?? null : null;
+    const vixChangePct = vix != null && previousVix != null && previousVix > 0 ? (vix / previousVix - 1) * 100 : null;
+    if (signal.close <= sma || rsi == null || rsi >= cfg.rsiBelow || vix == null && vixMax != null || (vix != null && vixMax != null && vix > vixMax)) { index++; continue; }
+    if (factorFilter && (vix == null || vixChangePct == null || !factorFilter(vix, vixChangePct))) { index++; continue; }
     const entryIndex = index + 1;
     // Do not silently treat a truncated final observation as a completed
     // time-stop trade. It has no fully observed maximum-hold horizon.
