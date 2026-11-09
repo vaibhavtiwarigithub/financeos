@@ -305,7 +305,7 @@ async function loadDiagnostic(supabase: any, spec: RuleSpec, now: Date, cache?: 
   }
   const priceBases = [...new Set(provenance.map((row) => row.priceBasis))];
   if (priceBases.length > 1) return {
-    status: "insufficient_data", method: "fixed-rule-70-30-temporal-holdout-v1", market: spec.market,
+    status: "insufficient_data", method: "fixed-rule-70-30-purged-development-walk-forward-v2", market: spec.market,
     benchmark, dataFrom: null, dataThrough: null, symbols: Object.keys(bySymbol).length, bars: rows.length,
     priceSources: [...new Set(provenance.map((row) => row.provider))], priceBases,
     provenanceVersions: [...new Set(provenance.map((row) => row.provenanceVersion))], warmup: null,

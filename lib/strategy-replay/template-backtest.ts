@@ -7,7 +7,7 @@ import type { RuleSpec } from "./rule-spec";
 
 export interface TemplateBacktestResult {
   status: "insufficient_data" | "diagnostic_only";
-  method: "fixed-rule-70-30-temporal-holdout-v1";
+  method: "fixed-rule-70-30-purged-development-walk-forward-v2";
   market: "us" | "india";
   benchmark: string;
   dataFrom: string | null;
@@ -20,7 +20,7 @@ export interface TemplateBacktestResult {
   warmup: number;
   inSample: ReplayMetrics | null;
   holdout: ReplayMetrics | null;
-  walkForward?:Array<{trainingThrough:string;from:string;through:string;metrics:ReplayMetrics}>;
+  walkForward?:Array<{trainingThrough:string;from:string;through:string;trainingSessions:number;purgedSessions:number;metrics:ReplayMetrics}>;
   limitation: string;
 }
 
@@ -77,7 +77,7 @@ export function runTemplateBacktest(input: TemplateBacktestInput): TemplateBackt
 
   const result: TemplateBacktestResult = {
     status: "insufficient_data",
-    method: "fixed-rule-70-30-temporal-holdout-v1",
+    method: "fixed-rule-70-30-purged-development-walk-forward-v2",
     market: input.spec.market,
     benchmark: input.benchmark,
     dataFrom: sessions[0] ?? null,
@@ -105,18 +105,32 @@ export function runTemplateBacktest(input: TemplateBacktestInput): TemplateBackt
   result.inSample = train;
   result.holdout = test;
   result.status = "diagnostic_only";
-  // Fixed expanding origins. No parameter fitting or best-fold selection.
-  // Each fold reserves the full holding horizon before its boundary in compileSpec.
+  // Keep walk-forward windows wholly inside the development period. The old
+  // fixed origins extended through the final holdout, so the two reported
+  // views reused the same dates. Each fold now has a non-overlapping test
+  // window, an expanding training cutoff, and a purge at least as long as the
+  // maximum trade horizon. Rules remain fixed; this is stability diagnostics,
+  // not a fit, untouched final test, or promotion gate.
   result.walkForward=[];
-  const origins=[0.4,0.6,0.8].map(fraction=>Math.floor(sessions.length*fraction));
-  for(let index=0;index<origins.length;index++){
-    const first=origins[index],last=(origins[index+1] ?? sessions.length)-1;
-    if(first<=warmup || last-first<input.spec.horizonSessions+5)continue;
-    const trainingThrough=sessions[first-1];
-    result.walkForward.push({trainingThrough,from:sessions[first],through:sessions[last],
-      metrics:replay(input,sessions[first],sessions[last],sessions,trainingThrough,trainingThrough)});
+  const developmentEndIndex=splitAt-1;
+  const minimumTrainingSessions=Math.max(warmup,Math.min(60,Math.floor(splitAt*0.35)));
+  const firstTestIndex=minimumTrainingSessions+input.spec.horizonSessions+1;
+  const availableDevelopmentSessions=developmentEndIndex-firstTestIndex+1;
+  const foldWidth=Math.floor(availableDevelopmentSessions/3);
+  if(foldWidth>=Math.max(5,input.spec.horizonSessions+1)){
+    for(let index=0;index<3;index++){
+      const first=firstTestIndex+index*foldWidth;
+      const last=index===2?developmentEndIndex:first+foldWidth-1;
+      const trainingThroughIndex=first-input.spec.horizonSessions-1;
+      const trainingThrough=sessions[trainingThroughIndex];
+      const signalStart=sessions[first-1];
+      if(!trainingThrough || !signalStart || first<=warmup)continue;
+      result.walkForward.push({trainingThrough,from:sessions[first],through:sessions[last],
+        trainingSessions:trainingThroughIndex+1,purgedSessions:first-trainingThroughIndex-1,
+        metrics:replay(input,sessions[first],sessions[last],sessions,signalStart,trainingThrough)});
+    }
   }
-  result.limitation = "Fixed-rule holdout and fixed-origin walk-forward folds are descriptive only; folds overlap the holdout and are not independent tests. Current research cache is survivorship-selected, trials are multiple-tested, and no promotion gate is satisfied.";
+  result.limitation = "Fixed-rule final-period and non-overlapping, horizon-purged development windows are descriptive only; candidates and variants are repeatedly inspected, the current research cache is survivorship-selected, and no promotion gate is satisfied.";
   return result;
 }
 

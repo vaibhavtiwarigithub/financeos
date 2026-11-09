@@ -23,7 +23,7 @@ describe("fixed-rule temporal holdout backtest", () => {
     const bars = { AAA: series(0), BBB: series(10), VOO: series(0) };
     const result = runTemplateBacktest({ spec, bars, benchmark: "VOO", benchmarkBars: bars, provenance, initialCash: 100_000 });
     expect(result.status).toBe("diagnostic_only");
-    expect(result.method).toBe("fixed-rule-70-30-temporal-holdout-v1");
+    expect(result.method).toBe("fixed-rule-70-30-purged-development-walk-forward-v2");
     expect(result.holdout?.sessions).toBeGreaterThan(10);
     expect(result.holdout?.trades).toBeGreaterThan(0);
     expect(result.holdout?.rejections).toBe(0);
@@ -32,6 +32,13 @@ describe("fixed-rule temporal holdout backtest", () => {
     expect(result.holdout?.benchmarkMissingSessions).toBe(0);
     expect(result.holdout?.scenarios.some((row) => row.classifier === "benchmark_trend_50sma")).toBe(true);
     expect(result.holdout?.scenarios.some((row) => row.classifier === "benchmark_volatility_20d_training_tercile")).toBe(true);
+    expect(result.walkForward).toHaveLength(3);
+    const allSessions = series().map((bar) => bar.session);
+    const holdoutStart = allSessions[Math.floor(allSessions.length * 0.7)];
+    expect(result.walkForward!.every((fold) => fold.through < holdoutStart)).toBe(true);
+    expect(result.walkForward!.every((fold) => fold.purgedSessions >= spec.horizonSessions)).toBe(true);
+    expect(result.walkForward![0].through < result.walkForward![1].from).toBe(true);
+    expect(result.walkForward![1].through < result.walkForward![2].from).toBe(true);
   });
 
   it("keeps the evidence insufficient when there is not enough temporal history", () => {

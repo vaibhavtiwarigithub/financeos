@@ -281,7 +281,7 @@ async function loadDiagnostic(svc: any, spec: import("@/lib/strategy-replay/rule
   }
   const bases = [...new Set(provenance.map((row) => row.priceBasis))];
   if (bases.length > 1) return {
-    status: "insufficient_data", method: "fixed-rule-70-30-temporal-holdout-v1",
+    status: "insufficient_data", method: "fixed-rule-70-30-purged-development-walk-forward-v2",
     market: spec.market, benchmark, dataFrom: null, dataThrough: null, symbols: Object.keys(bySymbol).length,
     bars: rows.length, priceSources: [...new Set(provenance.map((row) => row.provider))], priceBases: bases,
     provenanceVersions: [...new Set(provenance.map((row) => row.provenanceVersion))], warmup: null,
