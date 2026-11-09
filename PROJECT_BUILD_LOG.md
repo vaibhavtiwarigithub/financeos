@@ -41,8 +41,11 @@ existing council windows. Production run history showed all six source rows were
 active and naturally firing; same-market commands had identical fingerprints.
 Expected effect: Six council schedule rows become two; total active schedule rows
 fall from 143 to 139, with no invocation-volume reduction claim.
-Remaining: Apply via a fail-closed migration, verify production catalog and then
-observe natural per-market drain/forecast freshness. Further consolidation waits
+Result: Fail-closed migration applied after the exact-SHA production deployment
+was READY. Read-only catalog check confirms 139 active jobs, the two exact merged
+windows/commands, and no active obsolete names. GitHub application-contracts and
+clean database replay passed. Natural post-migration runs still need observation
+before runtime equivalence is considered verified. Further consolidation waits
 for a complete dependency and deadline audit.
 
 ### Entry 14 - 2026-10-27 (Intraday screen scope and storage)

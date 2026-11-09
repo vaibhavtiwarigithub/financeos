@@ -1,6 +1,6 @@
 # Scheduler Rationalization — Architecture and Rollout
 
-Status: Owner approved 2026-11-09; implementation begins with the bounded council-row consolidation below.
+Status: First bounded phase deployed and catalog-verified 2026-11-09; natural post-migration run verification pending. Broader cadence reductions remain unaudited.
 
 ## User intention
 
@@ -28,7 +28,9 @@ No broad dispatcher, new queue/table/RPC, new schedule, retry-policy change, fre
 
 ## Verification and rollback
 
-Before production apply, pass clean migration replay and full application/type checks. After apply, query the exact two active schedules and unchanged commands; verify the original six windows are represented and four old names are absent. Then observe natural per-market runs and compare schedule-level run history and queue freshness. Roll back by restoring the four original exact windows to the same endpoint/market commands and returning the two retained jobs to their catch-up windows. Keep the four-row reduction only if both markets continue to drain within the existing freshness contract.
+Verified: full application/acceptance CI and clean database migration replay passed; the exact-SHA production Vercel deployment is READY; the production migration applied; a read-only catalog query confirms exactly two active schedules with unchanged per-market commands and the full original six-window union, and confirms all four obsolete names are absent. The active catalog count is 139 versus 143 before migration.
+
+Pending: observe natural post-migration runs for both markets and compare schedule-level run history and queue freshness. Until then, catalog equivalence is verified but runtime equivalence is not. Roll back by restoring the four original exact windows to the same endpoint/market commands and returning the two retained jobs to their catch-up windows. Keep the four-row reduction only if both markets continue to drain within the existing freshness contract.
 
 ## Later audit queue
 
