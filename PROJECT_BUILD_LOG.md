@@ -26,6 +26,25 @@ Claude should update this summary periodically with:
 
 *Log meaningful instructions below. Skip tiny wording changes and obvious bug fixes.*
 
+### Entry 16 - 2026-11-09 (Reduce schedule catalog complexity safely)
+
+Instruction: Reduce the number of scheduled tasks without losing their intended
+work. Owner approved the bounded first phase: merge equivalent LLM-council
+schedule rows per market while keeping every quarter-hour UTC firing window,
+command, admission guard, budget, and shadow-only boundary unchanged.
+Classification: Approved infrastructure simplification.
+Pressure test: Fewer schedule rows reduce operational clutter, but do not reduce
+runtime or provider use when the firing times remain identical. Independent
+safety deadlines and market-local/DST gates must remain separate absent proof.
+Implementation: One cron row per market represents the exact union of the three
+existing council windows. Production run history showed all six source rows were
+active and naturally firing; same-market commands had identical fingerprints.
+Expected effect: Six council schedule rows become two; total active schedule rows
+fall from 143 to 139, with no invocation-volume reduction claim.
+Remaining: Apply via a fail-closed migration, verify production catalog and then
+observe natural per-market drain/forecast freshness. Further consolidation waits
+for a complete dependency and deadline audit.
+
 ### Entry 14 - 2026-10-27 (Intraday screen scope and storage)
 
 Instruction: Reassess the proposed broad 15-minute US scan and whether transient

@@ -6,6 +6,17 @@ Records approved product, architecture, UX, technical, and business decisions.
 
 Only approved decisions belong here. Proposed decisions live in PROJECT_BUILD_LOG.md until approved.
 
+### 2026-11-09: Consolidate equivalent council schedule rows without changing cadence
+
+Owner approved the first bounded step of schedule rationalization. Replace the six
+same-market council cron rows with one per-market row whose hour field is the exact
+union of the prior disjoint windows. Keep all UTC firing instants, commands,
+quarter-hour admission, queue/budget limits, market boundaries, and shadow-only
+behavior unchanged. This reduces catalog rows only; it does not claim reduced
+invocations or provider use. Do not merge safety, broker, trade, or retry schedules
+without separate dependency and freshness evidence. No new dispatcher, table, route,
+provider, score, or trading behavior is approved.
+
 ### 2026-10-27: Record prospective paper stop/target changes atomically
 
 Owner explicitly approved the append-only history-table proposal. Add service-only paper_position_plan_events and an AFTER INSERT/UPDATE audit trigger covering US/India paper position identities and real level changes. Seed only current observations, preserve all prior history on close, refuse mutation, and expose bounded reads through the existing authenticated position-history endpoint. This does not change trading policy, orders or financial records; no historical changes are fabricated. Migration and isolated PostgreSQL proof accompany the feature architecture.

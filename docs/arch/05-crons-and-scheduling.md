@@ -3,18 +3,36 @@
 ## Free-tier workload profile
 
 Owner selected workload reduction instead of paid compute on October 23, 2026.
-The six existing council pg_cron windows run every fifteen minutes (migration
-20261024122903; applied and catalog-verified October 24). Application admission
-also only permits UTC quarter-hour sweeps before database
-access. Other calls explicitly return `free_tier_quarter_hour_sweep` and
-Retry-After, not a completed analysis run. This admits four rather than twelve
-database sweeps per scheduled hour. Collection uses two processing lanes and
-loads full frozen packets only for selected, unscored observations; the daily
-cap and cohort are unchanged. Expect up to 15 minutes pickup delay and monitor
-backlog honestly. The Vercel council evaluator is 23:30 UTC Monday–Friday.
-Safety, broker reconciliation, quote/position monitoring and trading schedules
-are unchanged. Original council hour/day windows, commands and active states
-are preserved. Physical council scheduler wakeups fall by two-thirds.
+The six existing council UTC windows are represented by two active `pg_cron`
+rows, one per market, after migration `20261109123000` (Nov 9, 2026). India
+retains `04-05`, `07-08`, and `11-12` UTC; US retains `13-16`, `18-20`, and
+`22-23` UTC, all at quarter-hour intervals on weekdays. This removes four
+schedule rows but preserves the exact firing times, endpoint commands, and call
+volume. Application admission also only permits UTC quarter-hour sweeps before
+database access. Other calls explicitly return
+`free_tier_quarter_hour_sweep` and Retry-After, not a completed analysis run.
+The 15-minute cadence admits four rather than twelve database sweeps per
+scheduled hour. Collection uses two processing lanes and loads full frozen
+packets only for selected, unscored observations; the daily cap and cohort are
+unchanged. Expect up to 15 minutes pickup delay and monitor backlog honestly.
+The Vercel council evaluator is 23:30 UTC Monday–Friday. Safety, broker
+reconciliation, quote/position monitoring and trading schedules are unchanged.
+The earlier reduction from five-minute to quarter-hour sweeps cut council
+invocations by two-thirds; this schedule-row consolidation does not further
+reduce invocation or provider-call volume.
+
+## Schedule rationalization (2026-11-09)
+
+Production inventory contained 143 active schedule rows. The first consolidation
+targets only the six council rows because their same-market commands were
+identical and their windows were disjoint. It reduces configuration rows from
+143 to 139, not execution load. Further changes require an audited mapping from
+each schedule to its input freshness, market clock, dependency, retry contract,
+and hard completion deadline. Keep independent exit/reconciliation/kill-switch
+and post-publication retry deadlines. Grouping may not hide per-producer failure
+or let a slow optional stage delay a safety stage. See
+`features/scheduler-rationalization/FEATURE_ARCHITECTURE.md` for rollout scope
+and remaining audit boundaries.
 
 ## India benchmark retry after EOD NAV
 
