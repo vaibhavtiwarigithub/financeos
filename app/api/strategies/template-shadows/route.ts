@@ -10,7 +10,7 @@ import { isMissingStrategyLabSchemaObject } from "@/lib/strategy-replay/schema-e
 import type { Bar } from "@/lib/strategy-replay/compile";
 import {attachObservedScores,needsObservedScores} from "@/lib/strategy-replay/observed-scores";
 import {TEMPLATE_SHADOW_PRICE_PROVENANCE} from "@/lib/strategy-replay/template-shadow-collector";
-import { replaySoxlPullback } from "@/lib/strategy-replay/soxl-event-replay";
+import { prepareSoxlReplayCohort, replaySoxlPullback, type CachedSoxlPriceRow } from "@/lib/strategy-replay/soxl-event-replay";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -37,40 +37,24 @@ export async function GET(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: "soxl_reference_cache_unavailable", status: "insufficient_data" }, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
-    const bySymbol: Record<string, Bar[]> = {};
-    const provenance: Record<string, { provider: string | null; priceBasis: string | null; provenanceVersion: string | null }> = {};
-    const sourceProblems: string[] = [];
-    for (const { symbol, rows } of loaded) {
-      const validRows = rows.filter((row) => row.provenance_version !== "v0_unprovenanced")
-        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-      const metadata = new Set(validRows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
-      const first = validRows[0];
-      if (symbol === "VIX" && (rows.length !== validRows.length || metadata.size !== 1 || first?.price_basis !== "index")) {
-        // VIX is an optional factor: bad/missing VIX blocks only its variants.
-        provenance[symbol] = { provider: null, priceBasis: null, provenanceVersion: null };
-        bySymbol[symbol] = [];
-        continue;
-      }
-      if (rows.length !== validRows.length) sourceProblems.push(`${symbol} contains legacy unprovenanced rows.`);
-      if (metadata.size > 1) sourceProblems.push(`${symbol} has mixed provider, price basis, or provenance versions.`);
-      provenance[symbol] = first ? { provider: typeof first.provider === "string" ? first.provider : null,
-        priceBasis: typeof first.price_basis === "string" ? first.price_basis : null,
-        provenanceVersion: typeof first.provenance_version === "string" ? first.provenance_version : null }
-        : { provider: null, priceBasis: null, provenanceVersion: null };
-      bySymbol[symbol] = validRows.map((row) => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) }));
-    }
-    const expected = ["SOXX", "SOXL", "VIX"] as const;
-    const meta = provenance as Record<typeof expected[number], { provider: string | null; priceBasis: string | null; provenanceVersion: string | null }>;
-    const replay = replaySoxlPullback({ signalBars: bySymbol.SOXX ?? [], executionBars: bySymbol.SOXL ?? [], vixBars: bySymbol.VIX ?? [], provenance: meta });
-    const extraLimitations = [...replay.limitations, ...sourceProblems];
+    const cachedRows = loaded.flatMap(({ symbol, rows }) => rows.map((row) => ({ ...row, symbol }))) as CachedSoxlPriceRow[];
+    const cohort = prepareSoxlReplayCohort(cachedRows);
+    const replay = replaySoxlPullback({ signalBars: cohort.bars.SOXX, executionBars: cohort.bars.SOXL,
+      vixBars: cohort.bars.VIX, provenance: cohort.provenance });
+    const extraLimitations = [...replay.limitations, ...cohort.blockers];
     const blocked = extraLimitations.length > 0;
     return NextResponse.json({
       status: blocked ? "insufficient_data" : replay.status,
       replay: { ...replay, status: blocked ? "insufficient_data" : replay.status,
+        inputCohort: { alignedSessions: cohort.alignedSessions, excludedRows: cohort.excluded,
+          vixAvailable: cohort.vixAvailable, notes: [
+            "Only rows with a single verified provider/basis/version per instrument are replayed.",
+            "Legacy rows and clean sessions outside the SOXX/SOXL date intersection are excluded and counted; no prices are imputed.",
+          ] },
         summary: blocked ? null : replay.summary, periods: blocked ? [] : replay.periods, trades: blocked ? [] : replay.trades,
         stress: { ...replay.stress, summary: blocked ? null : replay.stress.summary },
         factorScenarios: blocked ? replay.factorScenarios.map((row) => ({ ...row, status: "insufficient_data" as const,
-          reason: [...sourceProblems, ...replay.limitations].join(" ") || "Base SOXX/SOXL data did not pass validation; factor result was not evaluated.", trades: 0, summary: null })) : replay.factorScenarios,
+          reason: [...cohort.blockers, ...replay.limitations].join(" ") || "Base SOXX/SOXL data did not pass validation; factor result was not evaluated.", trades: 0, summary: null })) : replay.factorScenarios,
         limitations: [...new Set(extraLimitations)] },
       source: "existing price_cache only; this diagnostic reads data and writes no records",
       influence: "none: research display only; no composite score, paper selector, orders, or live path reads this result",

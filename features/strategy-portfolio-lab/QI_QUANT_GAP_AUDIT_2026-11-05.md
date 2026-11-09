@@ -18,15 +18,15 @@ Production evidence on November 5:
 
 The bounded symbol-evidence UI slice has since shipped in commit `b50df20402312584148b389d859a44547c5118cc` and Vercel production deployment `dpl_2GSWEqD9JR3YYtt7ApiKocE4Jf8y` (READY). `/login` returned 200 and the unauthenticated symbol-shadow API returned 401. This deployment does not change the production counts above or verify a natural discovery cycle; the full QI Quant engine remains incomplete.
 
-The standard price cache is not sufficient to reproduce the illustrative SOXL study as specified. Current read-only counts:
+The standard price cache is not sufficient to reproduce the illustrative 2022–2026 SOXL study as specified. Current read-only counts (2026-11-09):
 
 | Symbol | Bars | Earliest–latest | Basis/provenance |
 |---|---:|---|---|
-| SOXL | 327 | 2025-07-22–2026-11-05 | Mixed `adjusted`/`unknown`; mixed provenanced/unprovenanced rows |
-| SOXX | 284 | 2025-09-22–2026-11-05 | Adjusted, Yahoo, v1 provider-basis |
-| SPY | 327 | 2025-07-22–2026-11-05 | Mixed `adjusted`/`unknown`; mixed provenanced/unprovenanced rows |
+| SOXL | 328 total; 299 verified | 2025-07-22–2026-11-06 | 29 legacy rows excluded; remaining rows Yahoo adjusted v1 |
+| SOXX | 285 | 2025-09-22–2026-11-06 | Adjusted, Yahoo, v1 provider-basis |
+| SPY | not requeried | — | Earlier audit found mixed basis/provenance; no new claim |
 
-Those cached series do not cover 2022–2024, do not share an identical start date, and contain mixed/unprovenanced rows for SOXL and SPY. The existing strategy replay fails closed on mixed bases. No SOXL performance result is calculated from them.
+The clean SOXX/SOXL cache has 285 exact paired sessions, with 14 additional verified SOXL dates outside that intersection and no VIX series. It still does not cover 2022–2024. The replay now counts and excludes legacy rows and nonpaired dates, uses the exact clean intersection, and refuses conflicting verified provenance, duplicates, invalid OHLC, or insufficient paired history. This supports a bounded recent-period diagnostic only; it cannot reproduce the user's long sample or support an independent profitability claim. No production replay was manually invoked.
 
 ## Existing reusable capabilities
 
@@ -74,13 +74,13 @@ No new schedule, provider, paid service, schema, model call, account permission,
 
 ## 2026-11-08 follow-up — implementation status
 
-The SOXL-specific gap has a bounded implementation now. See `QI_QUANT_SOXL_IMPLEMENTATION.md`: the existing weekly US Learner cycle preregisters a fixed SOXX→SOXL reference strategy and seven VIX factor variants, then runs only when existing cache data passes strict provenance/alignment gates. The SOXL symbol research panel exposes the same deterministic cache-only replay and its assumptions. Stop/target gaps and daily-bar collision rules are explicit and tested. A follow-up repair (2026-11-09) corrected an over-strict gate: the base SOXX/SOXL replay now runs without VIX when the equity series pass validation, while the VIX variants individually remain insufficient unless aligned, consistently provenanced VIX index data exist. This is versioned SOXL replay v2 and does not alter adoption/scoring/trading.
+The SOXL-specific gap has a bounded implementation now. See `QI_QUANT_SOXL_IMPLEMENTATION.md`: the existing weekly US Learner cycle preregisters a fixed SOXX→SOXL reference strategy and seven VIX factor variants, then runs only when existing cache data passes provenance/alignment gates. The SOXL symbol research panel exposes the same deterministic cache-only replay and its assumptions. Stop/target gaps and daily-bar collision rules are explicit and tested. The base replay now uses only the exact clean SOXX/SOXL date intersection, counts excluded legacy and unpaired cache data, and still blocks conflicts/duplicate/invalid bars. VIX remains optional for the baseline; its variants individually remain insufficient unless aligned, consistently provenanced VIX index data exist. This is versioned replay v2 and does not alter adoption/scoring/trading.
 
 This closes the code gap for a reproducible, measurement-only reference replay. It does **not** close the external data sufficiency or independent validation gaps: no long-history app feed entitlement or durable verified 2022–2026 dataset was established in this code task, no result was computed from mixed cache rows, and the previously inspected calendar buckets are selection-exposed. Production automatic operation remains pending the next natural US Learner cycle and its persisted `soxlReference` result. No schedule was triggered manually. Broader per-symbol strategy coverage, untouched holdout, purged walk-forward validation, and any score/paper/live influence remain pending or separately gated.
 
 ## 2026-11-09 follow-up — current cycle and replay correction
 
-Read-only production evidence now includes natural `strategy_discovery` runs on Nov 6: US persisted `budget_deferred` after 6/20 fixed trials (next attempt 6); India persisted `budget_deferred` after 6/12 (next attempt 6). The India replays surfaced mixed raw/adjusted price bases and correctly refused historical calculation. These are real producer runs, not evidence that all candidates were rejected or that any strategy works. The Nov 6 US run predates the Nov 8 SOXL addendum; its row contains no SOXL reference result. The next natural weekly Learner run must verify the new SOXL diagnostic. Do not manually invoke it.
+Read-only production evidence includes a natural US `strategy_discovery` run on Nov 6, persisted `budget_deferred` after 6/20 fixed reference trials (next attempt 6); this row predates the Nov 8 SOXL addendum. India had persisted `budget_deferred` after 6/12, and its replays surfaced mixed raw/adjusted bases and correctly refused historical calculation. Current read-only cache evidence shows 285 verified adjusted sessions aligned between SOXX and SOXL, 29 SOXL legacy rows and 14 verified SOXL dates outside the SOXX intersection. There is no VIX cache row. The next natural weekly Learner run must verify persistence: the baseline can be measured over the recent 285-session intersection; VIX factors remain unavailable. Do not manually invoke it.
 
 The generic template replay previously reported fixed-origin walk-forward folds that overlapped the final 30% period. Version `fixed-rule-70-30-purged-development-walk-forward-v2` now reports three disjoint test windows strictly inside the 70% development period, with an expanding cutoff and a purge at least as long as the strategy's maximum holding horizon. This is a diagnostic stability view only: it does not make the repeatedly inspected final-period metrics an untouched holdout, nor authorize selection or promotion. Focused regression tests enforce non-overlap and purge size. Production verification awaits the normal authorized release and later natural cycle.
 

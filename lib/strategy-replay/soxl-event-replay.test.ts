@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { replaySoxlPullback } from "./soxl-event-replay";
+import { prepareSoxlReplayCohort, replaySoxlPullback, type CachedSoxlPriceRow } from "./soxl-event-replay";
 import type { Bar } from "./compile";
 
 function fixture(count = 290) {
@@ -21,6 +21,65 @@ function fixture(count = 290) {
 }
 
 describe("SOXX to SOXL daily event replay", () => {
+  it("replays only the exact verified date intersection and counts excluded legacy/unpaired cache rows", () => {
+    const f = fixture();
+    const rows: CachedSoxlPriceRow[] = [
+      ...f.soxx.map((bar) => ({ symbol: "SOXX" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      ...f.soxl.map((bar) => ({ symbol: "SOXL" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      { symbol: "SOXL", date: "2023-12-31", open: 99, high: 101, low: 98, close: 100,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" },
+      { symbol: "SOXL", date: "2023-12-30", open: 99, high: 101, low: 98, close: 100,
+        provider: null, price_basis: "unknown", provenance_version: "v0_unprovenanced" },
+    ];
+    const cohort = prepareSoxlReplayCohort(rows);
+    const replay = replaySoxlPullback({ signalBars: cohort.bars.SOXX, executionBars: cohort.bars.SOXL,
+      vixBars: cohort.bars.VIX, provenance: cohort.provenance });
+    expect(cohort.blockers).toEqual([]);
+    expect(cohort.alignedSessions).toBe(f.sessions.length);
+    expect(cohort.excluded.SOXL).toEqual({ legacyRows: 1, unpairedSessions: 1 });
+    expect(replay.status).toBe("diagnostic_only");
+    expect(replay.data.sessions).toBe(f.sessions.length);
+  });
+
+  it("still blocks verified mixed provenance and duplicate verified sessions", () => {
+    const f = fixture();
+    const rows: CachedSoxlPriceRow[] = [
+      ...f.soxx.map((bar) => ({ symbol: "SOXX" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      ...f.soxl.map((bar) => ({ symbol: "SOXL" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      { symbol: "SOXL", date: f.sessions[0], open: 99, high: 101, low: 98, close: 100,
+        provider: "other", price_basis: "raw", provenance_version: "test-v2" },
+    ];
+    const cohort = prepareSoxlReplayCohort(rows);
+    expect(cohort.blockers.join(" ")).toMatch(/mixed provider/);
+    const verifiedRows = rows.slice(0, f.soxx.length + f.soxl.length);
+    const duplicate = prepareSoxlReplayCohort([...verifiedRows, { ...verifiedRows[f.soxx.length] }]);
+    expect(duplicate.blockers.join(" ")).toMatch(/duplicate verified sessions/);
+    const differentBases = prepareSoxlReplayCohort(verifiedRows.map((row) => row.symbol === "SOXL" ? { ...row, price_basis: "raw" } : row));
+    expect(differentBases.blockers.join(" ")).toMatch(/price bases differ/);
+  });
+
+  it("does not call aligned non-index VIX bars a usable volatility input", () => {
+    const f = fixture();
+    const rows: CachedSoxlPriceRow[] = [
+      ...f.soxx.map((bar) => ({ symbol: "SOXX" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      ...f.soxl.map((bar) => ({ symbol: "SOXL" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+      ...f.vix.map((bar) => ({ symbol: "VIX" as const, date: bar.session, open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        provider: "fixture", price_basis: "adjusted", provenance_version: "test-v1" })),
+    ];
+    const cohort = prepareSoxlReplayCohort(rows);
+    const replay = replaySoxlPullback({ signalBars: cohort.bars.SOXX, executionBars: cohort.bars.SOXL,
+      vixBars: cohort.bars.VIX, provenance: cohort.provenance });
+    expect(cohort.vixAvailable).toBe(false);
+    expect(replay.status).toBe("diagnostic_only");
+    expect(replay.factorScenarios.every((scenario) => scenario.status === "insufficient_data" && scenario.summary === null)).toBe(true);
+  });
+
   it("fails closed on insufficient sessions or mismatched instruments", () => {
     const f = fixture(220);
     expect(replaySoxlPullback({ signalBars: f.soxx, executionBars: f.soxl, vixBars: f.vix, provenance: f.provenance }).status).toBe("insufficient_data");

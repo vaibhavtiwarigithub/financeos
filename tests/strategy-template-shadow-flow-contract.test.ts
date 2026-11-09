@@ -5,6 +5,8 @@ const migration = readFileSync("supabase/migrations/20261030173804_strategy_temp
 const aclMigration = readFileSync("supabase/migrations/20261030173857_strategy_template_shadow_service_acl.sql", "utf8");
 const collector = readFileSync("lib/strategy-replay/template-shadow-collector.ts", "utf8");
 const route = readFileSync("app/api/strategies/template-shadows/route.ts", "utf8");
+const referenceDiscovery = readFileSync("lib/strategy-replay/reference-discovery.ts", "utf8");
+const replay = readFileSync("lib/strategy-replay/soxl-event-replay.ts", "utf8");
 const symbolPage = readFileSync("components/dashboard/SymbolDetailPage.tsx", "utf8");
 const symbolPanel = readFileSync("components/dashboard/SymbolStrategyEvidencePanel.tsx", "utf8");
 
@@ -64,10 +66,13 @@ describe("bounded strategy discovery and shadow flow contract", () => {
   });
 
   it("keeps optional VIX data failures from blocking the SOXX/SOXL baseline", () => {
-    expect(route).toContain('symbol === "VIX" && (rows.length !== validRows.length || metadata.size !== 1 || first?.price_basis !== "index")');
-    expect(route).toContain("bySymbol[symbol] = []");
+    expect(route).toContain("prepareSoxlReplayCohort(cachedRows)");
+    expect(referenceDiscovery).toContain("prepareSoxlReplayCohort(cachedRows)");
+    expect(replay).toContain("excluded[symbol].legacyRows = legacy.length");
+    expect(replay).toContain("const alignedSessions = [...signalSessions].filter((session) => executionSessions.has(session)).sort()");
     expect(route).toContain('status: "insufficient_data" as const');
-    expect(route).toContain('reason: [...sourceProblems, ...replay.limitations].join(" ")');
+    expect(route).toContain("excludedRows: cohort.excluded");
+    expect(symbolPanel).toContain("excluded legacy rows");
     expect(symbolPanel).toContain('row.status === "insufficient_data" ? "—" : row.trades');
   });
 });

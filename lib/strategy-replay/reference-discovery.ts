@@ -1,8 +1,7 @@
 import { autonomouslyStartTemplateShadow, type AutonomousAssetClass, type AutonomousTemplateResult } from "./autonomous-template-discovery";
 import { compileStrategyTemplate, type StrategyTemplateSource } from "./template-compiler";
 import {createHash} from "node:crypto";
-import { replaySoxlPullback, SOXL_REFERENCE_VERSION, SOXL_REFERENCE_FACTOR_FILTERS, type Provenance } from "./soxl-event-replay";
-import type { Bar } from "./compile";
+import { prepareSoxlReplayCohort, replaySoxlPullback, SOXL_REFERENCE_VERSION, SOXL_REFERENCE_FACTOR_FILTERS, type CachedSoxlPriceRow } from "./soxl-event-replay";
 
 export const REFERENCE_DISCOVERY_VERSION = "reference-seeds-recorded-dimensions-v2";
 export type ReferenceAttempt = { parents: StrategyTemplateSource[]; assetClass: AutonomousAssetClass; rules?:Record<string,unknown> };
@@ -28,35 +27,28 @@ export async function runSoxlReferenceDiagnostic(svc: any, asOf: string) {
     }
     const trialCount = Math.max(...registrations.map((row) => row.trials_considered));
     const symbols = ["SOXX", "SOXL", "VIX"] as const;
-    const dataBySymbol: Record<string, any[]> = {};
-    const provenance: Record<string, Provenance> = {};
+    const cachedRows: CachedSoxlPriceRow[] = [];
     for (const symbol of symbols) {
       const { data, error } = await svc.from("price_cache").select("symbol,date,open,high,low,close,provider,price_basis,provenance_version")
         .eq("symbol", symbol).lte("date", asOf).order("date", { ascending: false }).limit(1500);
       if (error) return { status: "data_unavailable", version: SOXL_REFERENCE_VERSION, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
         familyTrialCount: trialCount, asOf, detail: `${symbol} cached history read failed; no result calculated.` };
-      const rows = ((data ?? []) as any[]).reverse();
-      dataBySymbol[symbol] = rows;
-      const sourceVersions = new Set(rows.map((row) => `${row.provider ?? ""}|${row.price_basis ?? ""}|${row.provenance_version ?? ""}`));
-      const first = rows[0];
-      provenance[symbol] = { provider: first?.provider ?? null, priceBasis: first?.price_basis ?? null, provenanceVersion: first?.provenance_version ?? null };
-      if (symbol !== "VIX" && (sourceVersions.size > 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced"))) {
-        return { status: "insufficient_data", version: SOXL_REFERENCE_VERSION, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
-          familyTrialCount: trialCount, asOf, detail: `${symbol} cache has mixed or legacy provenance; replay refused.`, dataFrom: rows[0]?.date ?? null, dataThrough: rows.at(-1)?.date ?? null };
-      }
-      if (symbol === "VIX" && (sourceVersions.size !== 1 || rows.some((row) => row.provenance_version === "v0_unprovenanced")
-        || first?.price_basis !== "index")) {
-        dataBySymbol[symbol] = [];
-        provenance[symbol] = { provider: null, priceBasis: null, provenanceVersion: null };
-      }
+      cachedRows.push(...((data ?? []) as any[]).map((row) => ({ ...row, symbol })));
     }
-    const toBars = (rows: any[]): Bar[] => rows.map((row) => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) }));
-    const replay = replaySoxlPullback({ signalBars: toBars(dataBySymbol.SOXX), executionBars: toBars(dataBySymbol.SOXL), vixBars: toBars(dataBySymbol.VIX),
-      provenance: provenance as Record<"SOXX" | "SOXL" | "VIX", Provenance> });
-    const inputHash = createHash("sha256").update(JSON.stringify(symbols.map((symbol) => [symbol, dataBySymbol[symbol].map((row) => [row.date,row.open,row.high,row.low,row.close,row.provider,row.price_basis,row.provenance_version])]))).digest("hex");
+    const cohort = prepareSoxlReplayCohort(cachedRows);
+    const replay = replaySoxlPullback({ signalBars: cohort.bars.SOXX, executionBars: cohort.bars.SOXL,
+      vixBars: cohort.bars.VIX, provenance: cohort.provenance });
+    const inputHash = createHash("sha256").update(JSON.stringify(symbols.map((symbol) => [symbol,
+      cohort.bars[symbol], cohort.provenance[symbol], cohort.excluded[symbol]]))).digest("hex");
+    const limitations = [...replay.limitations, ...cohort.blockers];
+    const blocked = limitations.length > 0;
     return { status: replay.status, version: replay.version, trialFamily: SOXL_TRIAL_FAMILY, declaredVariants: SOXL_REFERENCE_FACTOR_FILTERS.length,
-      familyTrialCount: trialCount, asOf, inputHash, data: replay.data, assumptions: replay.assumptions, caveats: replay.caveats, summary: replay.summary, periods: replay.periods,
-      stress: replay.stress, factorScenarios: replay.factorScenarios, limitations: replay.limitations,
+      familyTrialCount: trialCount, asOf, inputHash, inputCohort: { alignedSessions: cohort.alignedSessions, excludedRows: cohort.excluded,
+        vixAvailable: cohort.vixAvailable }, data: replay.data, assumptions: replay.assumptions, caveats: replay.caveats,
+      summary: blocked ? null : replay.summary, periods: blocked ? [] : replay.periods,
+      stress: { ...replay.stress, summary: blocked ? null : replay.stress.summary }, factorScenarios: blocked
+        ? replay.factorScenarios.map((row) => ({ ...row, status: "insufficient_data" as const, reason: limitations.join(" "), trades: 0, summary: null }))
+        : replay.factorScenarios, limitations,
       note: "Descriptive discovery only. The example hypothesis is already selection-exposed; no untouched holdout or strategy adoption is claimed." };
   } catch {
     return { status: "error", version: SOXL_REFERENCE_VERSION, detail: "SOXL diagnostic failed safely; no performance claim was generated." };

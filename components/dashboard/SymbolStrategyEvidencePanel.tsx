@@ -213,6 +213,9 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
           {result.detail ? ` ${result.detail}` : " Results are research diagnostics only; they do not flow into score, paper-selection, or live-trading paths."}
           {result.limitations?.length ? ` ${result.limitations.join(" ")}` : ""}
         </p>
+        {result.inputCohort && <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, margin: "6px 0 0" }}>
+          Replay input: {result.inputCohort.alignedSessions} exact SOXX/SOXL sessions; excluded legacy rows SOXX/SOXL/VIX {result.inputCohort.excludedRows?.SOXX?.legacyRows ?? 0}/{result.inputCohort.excludedRows?.SOXL?.legacyRows ?? 0}/{result.inputCohort.excludedRows?.VIX?.legacyRows ?? 0}; unpaired sessions {result.inputCohort.excludedRows?.SOXX?.unpairedSessions ?? 0}/{result.inputCohort.excludedRows?.SOXL?.unpairedSessions ?? 0}/{result.inputCohort.excludedRows?.VIX?.unpairedSessions ?? 0}. VIX factors {result.inputCohort.vixAvailable ? "available" : "not evaluated"}.
+        </p>}
         {result.summary && <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, margin: "10px 0" }}>
           <Metric label="Reference trades" value={String(result.summary.trades)} />
           <Metric label="Reference win rate" value={result.summary.winRatePct == null ? "—" : `${result.summary.winRatePct.toFixed(1)}%`} />
@@ -241,6 +244,9 @@ export default function SymbolStrategyEvidencePanel({ symbol, market }: { symbol
         <p style={{ color: T.sub, fontSize: 11, lineHeight: 1.6, margin: "7px 0" }}>
           {soxlReplay.replay.data?.sessions ?? 0} aligned sessions · {soxlReplay.replay.data?.from ?? "—"} to {soxlReplay.replay.data?.through ?? "—"} · sources: {Object.entries(soxlReplay.replay.data?.provenance ?? {}).map(([name, value]: [string, any]) => `${name}=${value.provider ?? "missing"}/${value.priceBasis ?? "unknown"}/${value.provenanceVersion ?? "unknown"}`).join("; ")}
         </p>
+        {soxlReplay.replay.inputCohort && <p style={{ color: T.muted, fontSize: 10, lineHeight: 1.5, margin: "5px 0" }}>
+          Replay cohort: {soxlReplay.replay.inputCohort.alignedSessions} exact SOXX/SOXL sessions; excluded legacy rows {soxlReplay.replay.inputCohort.excludedRows?.SOXX?.legacyRows ?? 0}/{soxlReplay.replay.inputCohort.excludedRows?.SOXL?.legacyRows ?? 0}/{soxlReplay.replay.inputCohort.excludedRows?.VIX?.legacyRows ?? 0}; unpaired sessions {soxlReplay.replay.inputCohort.excludedRows?.SOXX?.unpairedSessions ?? 0}/{soxlReplay.replay.inputCohort.excludedRows?.SOXL?.unpairedSessions ?? 0}/{soxlReplay.replay.inputCohort.excludedRows?.VIX?.unpairedSessions ?? 0}. VIX variants {soxlReplay.replay.inputCohort.vixAvailable ? "available" : "unavailable"}.
+        </p>}
         {soxlReplay.replay.summary && <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(125px,1fr))", gap: 8, margin: "10px 0" }}>
           <Metric label="Trades" value={String(soxlReplay.replay.summary.trades)} />
           <Metric label="Wins" value={soxlReplay.replay.summary.winRatePct == null ? "—" : `${soxlReplay.replay.summary.wins}/${soxlReplay.replay.summary.trades} · ${soxlReplay.replay.summary.winRatePct.toFixed(1)}%`} />

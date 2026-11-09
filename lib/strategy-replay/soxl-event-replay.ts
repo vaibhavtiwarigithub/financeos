@@ -9,6 +9,100 @@ export interface Provenance {
   provenanceVersion: string | null;
 }
 
+export type CachedSoxlPriceRow = {
+  symbol: "SOXX" | "SOXL" | "VIX";
+  date: string;
+  open: unknown;
+  high: unknown;
+  low: unknown;
+  close: unknown;
+  provider: unknown;
+  price_basis: unknown;
+  provenance_version: unknown;
+};
+
+/**
+ * Prepare only the clean, paired SOXX/SOXL date intersection. Older legacy
+ * rows are excluded before replay and counted; no missing prices are filled.
+ * Verified provenance conflicts, duplicate sessions, and an unusable VIX
+ * series remain fail-closed (VIX only affects its optional factor variants).
+ */
+export function prepareSoxlReplayCohort(rows: CachedSoxlPriceRow[]) {
+  const bySymbol = new Map<"SOXX" | "SOXL" | "VIX", CachedSoxlPriceRow[]>();
+  for (const symbol of ["SOXX", "SOXL", "VIX"] as const) bySymbol.set(symbol, rows.filter((row) => row.symbol === symbol));
+
+  const blockers: string[] = [];
+  const excluded = {
+    SOXX: { legacyRows: 0, unpairedSessions: 0 },
+    SOXL: { legacyRows: 0, unpairedSessions: 0 },
+    VIX: { legacyRows: 0, unpairedSessions: 0 },
+  };
+  const cleanRows = new Map<"SOXX" | "SOXL" | "VIX", CachedSoxlPriceRow[]>();
+  const provenance = {} as Record<"SOXX" | "SOXL" | "VIX", Provenance | null>;
+
+  for (const symbol of ["SOXX", "SOXL", "VIX"] as const) {
+    const sourceRows = bySymbol.get(symbol) ?? [];
+    const legacy = sourceRows.filter((row) => row.provenance_version == null || row.provenance_version === "v0_unprovenanced");
+    excluded[symbol].legacyRows = legacy.length;
+    const verified = sourceRows.filter((row) => row.provenance_version != null && row.provenance_version !== "v0_unprovenanced");
+    const malformed = verified.some((row) => typeof row.provider !== "string" || !row.provider
+      || typeof row.price_basis !== "string" || !["adjusted", "raw", "index"].includes(row.price_basis)
+      || typeof row.provenance_version !== "string" || !row.provenance_version);
+    if (malformed && symbol !== "VIX") blockers.push(`${symbol} has verified rows with incomplete or unsupported provenance.`);
+    const metadata = new Set(verified.filter((row) => typeof row.provider === "string" && !!row.provider
+      && typeof row.price_basis === "string" && ["adjusted", "raw", "index"].includes(row.price_basis)
+      && typeof row.provenance_version === "string" && !!row.provenance_version)
+      .map((row) => `${row.provider}|${row.price_basis}|${row.provenance_version}`));
+    const rowsForReplay = metadata.size === 1 && !malformed ? verified : [];
+    if (metadata.size > 1 && symbol !== "VIX") blockers.push(`${symbol} has mixed provider, price basis, or provenance versions.`);
+    if (rowsForReplay.length) {
+      const dates = rowsForReplay.map((row) => String(row.date).slice(0, 10));
+      if (new Set(dates).size !== dates.length) {
+        if (symbol !== "VIX") blockers.push(`${symbol} has duplicate verified sessions.`);
+        cleanRows.set(symbol, []);
+      } else cleanRows.set(symbol, rowsForReplay);
+      const first = rowsForReplay[0];
+      provenance[symbol] = { provider: String(first.provider), priceBasis: String(first.price_basis), provenanceVersion: String(first.provenance_version) };
+    } else {
+      cleanRows.set(symbol, []);
+      provenance[symbol] = null;
+    }
+  }
+
+  if (provenance.SOXX?.priceBasis && provenance.SOXL?.priceBasis && provenance.SOXX.priceBasis !== provenance.SOXL.priceBasis) {
+    blockers.push("SOXX and SOXL verified price bases differ; cross-instrument adjusted/raw inputs cannot be mixed.");
+  }
+
+  const signalRows = cleanRows.get("SOXX") ?? [];
+  const executionRows = cleanRows.get("SOXL") ?? [];
+  const signalSessions = new Set(signalRows.map((row) => String(row.date).slice(0, 10)));
+  const executionSessions = new Set(executionRows.map((row) => String(row.date).slice(0, 10)));
+  const alignedSessions = [...signalSessions].filter((session) => executionSessions.has(session)).sort();
+  excluded.SOXX.unpairedSessions = signalSessions.size - alignedSessions.length;
+  excluded.SOXL.unpairedSessions = executionSessions.size - alignedSessions.length;
+  const signalBySession = new Map(signalRows.map((row) => [String(row.date).slice(0, 10), row]));
+  const executionBySession = new Map(executionRows.map((row) => [String(row.date).slice(0, 10), row]));
+  const asBar = (row: CachedSoxlPriceRow): Bar => ({ session: String(row.date).slice(0, 10), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) });
+  const bars = {
+    SOXX: alignedSessions.map((session) => asBar(signalBySession.get(session)!)),
+    SOXL: alignedSessions.map((session) => asBar(executionBySession.get(session)!)),
+    VIX: (cleanRows.get("VIX") ?? []).map(asBar),
+  };
+
+  const vixRows = [...(cleanRows.get("VIX") ?? [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const vixSessions = new Set(vixRows.map((row) => String(row.date).slice(0, 10)));
+  excluded.VIX.unpairedSessions = vixSessions.size - [...vixSessions].filter((session) => alignedSessions.includes(session)).length;
+  if (vixRows.length && (vixRows.length !== alignedSessions.length || vixRows.some((row, index) => String(row.date).slice(0, 10) !== alignedSessions[index]))) {
+    bars.VIX = [];
+    provenance.VIX = null;
+  }
+
+  const emptyProvenance = { provider: null, priceBasis: null, provenanceVersion: null };
+  return { bars, provenance: { SOXX: provenance.SOXX ?? emptyProvenance, SOXL: provenance.SOXL ?? emptyProvenance, VIX: provenance.VIX }, blockers, excluded,
+    alignedSessions: alignedSessions.length, vixAvailable: provenance.VIX?.priceBasis === "index"
+      && bars.VIX.length === alignedSessions.length && alignedSessions.length > 0 };
+}
+
 export interface SoxlReplayInput {
   signalBars: Bar[];
   executionBars: Bar[];
