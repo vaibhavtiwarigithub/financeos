@@ -79,7 +79,7 @@ Defined in `vercel.json`. Fire against the Vercel deployment URL regardless of l
 | `/api/agents/autonomous-live/cron?market=us` | Weekdays 15:00 UTC (~10–11 AM ET, in US session) | Per-market run: 9-gate kernel + fresh kill-switch + session-window guard + per-market USD NAV + Kelly; submit live US orders via Robinhood REST; no-op when `AUTONOMOUS_LIVE_ENABLED=false`, market not autonomous, or session closed |
 | `/api/agents/autonomous-live/cron?market=india` | Weekdays 06:00 UTC (11:30 AM IST, in NSE session) | Same, India: INR NAV from Kite margins+holdings; Kite REST |
 | `/api/agents/live-exit-monitor/cron` | Hourly at :00, 03:00–20:00 UTC weekdays (pg_cron `kairos-live-exit-monitor`, `0 3-20 * * 1-5`) | Protective exits for LIVE positions: reconstructs positions from confirmed full/partial broker fills, then uses the shared `decideExitLadder` core plus paper's fresh-score/confirmed direction-flip policy. No time exit. Shadow and executable state are isolated, and a runner is protected only after a non-zero broker-confirmed partial fill. `app_paused` / `security_locked` are hard stops in both modes. |
-| `/api/agents/db-cleanup` | 1st of month 03:00 UTC | Prune 15 safe tables (llm_call_log >90d, agent_runs >60d, etc.); never touches ledgers |
+| `/api/agents/db-cleanup` | Daily 03:00 UTC (same existing Vercel job) | Vercel's authenticated GET performs cleanup; owner GET remains a dry run. Prune at most 2,000 raw candle response cache rows >7d and 2,000 other `av_cache` rows >30d per run, plus existing safe-table retention. The cap limits WAL growth on a pressured disk; backlog may require multiple natural runs. Never touches durable price/research/decision/trading ledgers. Reports failed steps as System Health `db-cleanup-failed`. |
 
 ---
 
@@ -235,7 +235,7 @@ Every 4h    — stale-check (cloud, Vercel)
 Sun 8 PM ET — theme-scout
 2:00 PM UTC  — autonomous-live (cloud, Vercel, weekdays; after research+signals at 1 PM UTC)
 Sun 2 AM UTC — p1-gate (cloud, Vercel)
-1st of month 3 AM UTC — db-cleanup (cloud, Vercel)
+Daily 3 AM UTC — db-cleanup (cloud, Vercel; same existing job, daily cadence)
 11:00 AM UTC — holding-risk India (pg_cron, weekdays; after 15:30 IST close)
 9:30 PM UTC  — holding-risk US (pg_cron, weekdays; after 16:00 ET close + nav-snapshot)
 Fri 9:45 PM UTC — validation-sweep (pg_cron; recovers never-validated challengers, after learner)

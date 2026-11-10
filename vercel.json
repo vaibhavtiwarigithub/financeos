@@ -16,7 +16,7 @@
   "crons": [
     {
       "path": "/api/agents/db-cleanup",
-      "schedule": "0 3 1 * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/agents/autonomous-live/cron?market=us",

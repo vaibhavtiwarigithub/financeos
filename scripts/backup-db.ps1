@@ -26,6 +26,10 @@ if (-not $DbUrl) {
   Write-Error "SUPABASE_DB_URL not set. Add it to .env.local (Supabase dashboard -> Settings -> Database -> Connection string) or set `$env:SUPABASE_DB_URL. Backup skipped."
   exit 1
 }
+if ($DbUrl.Contains('[HOST]') -or $DbUrl.Contains('[YOUR-PASSWORD]')) {
+  Write-Error 'SUPABASE_DB_URL is still a template. Configure the current Session Pooler host and database password privately. Backup skipped.'
+  exit 1
+}
 
 # Locate pg_dump — prefer PATH, else the known winget install location.
 $PgDump = (Get-Command pg_dump -ErrorAction SilentlyContinue).Source
@@ -47,10 +51,20 @@ try {
   # -Fc = custom format: compressed, restorable with pg_restore, handles large
   # objects/schema+data cleanly. --no-owner/--no-privileges so a restore into a
   # different Supabase project (different role names) doesn't fail on GRANT/OWNER.
-  & $PgDump $DbUrl -Fc --no-owner --no-privileges -f $outFile 2>&1 | Out-Null
+  # Keep libpq diagnostics private: connection strings and account details must
+  # never be echoed into task logs. Surface only a bounded failure category.
+  $dumpOutput = & $PgDump $DbUrl -Fc --no-owner --no-privileges -f $outFile 2>&1
   if ($LASTEXITCODE -ne 0) {
-    Add-Content -Path $logFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') FAILED (exit $LASTEXITCODE)"
-    Write-Error "pg_dump failed with exit code $LASTEXITCODE"
+    $diagnostic = ($dumpOutput | Out-String)
+    $category = if ($diagnostic -match 'password authentication failed|no password supplied') { 'authentication' }
+      elseif ($diagnostic -match 'could not translate host name|Name or service not known') { 'dns' }
+      elseif ($diagnostic -match 'Connection refused|timeout expired|could not connect to server') { 'connection' }
+      elseif ($diagnostic -match 'server version mismatch|server version:') { 'version' }
+      elseif ($diagnostic -match 'no pg_hba.conf entry|SSL|certificate') { 'tls_or_access' }
+      else { 'unknown' }
+    Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+    Add-Content -Path $logFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') FAILED ($category, exit $LASTEXITCODE)"
+    Write-Error "pg_dump failed: $category (exit $LASTEXITCODE)"
     exit 1
   }
   $sizeMB = [math]::Round((Get-Item $outFile).Length / 1MB, 2)
