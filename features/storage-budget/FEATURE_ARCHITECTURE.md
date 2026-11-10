@@ -1,6 +1,6 @@
 # Storage budget and recoverable cold archive — proposal
 
-Status: proposed, 2026-11-10. Owner approved the hybrid direction; exact durable-data retention and external archive access remain open. A controlled transaction removed 500 approved expired cache rows; no archive or durable-data deletion has been deployed.
+Status: cache-only R2 backup path approved by owner on 2026-11-10; durable-data retention and production pruning remain unapproved. A controlled transaction removed 500 approved expired cache rows; no external archive or durable-data deletion has been verified.
 
 ## 1. User intention
 
@@ -15,7 +15,7 @@ Supabase Postgres is the transactional source for auth, research, price, decisio
 1. Keep current transactional and recent queryable data in Supabase. Do not split an active transaction across databases.
 2. Use the existing cleanup job daily for explicitly disposable provider cache and already-approved safe retention windows. Report any failed step as degraded health.
 3. Measure database size, table/index size, daily growth and projected days to 400/500 MB on each natural daily health cycle. Warn at 350 MB; treat 400 MB as a budget breach requiring operator action. Do not label the system healthy merely because cleanup ran.
-4. Evaluate Cloudflare R2 Standard as a cold archive destination. A bounded archival process exports only selected closed, immutable historical cohorts, records a versioned manifest with market, table, time range, row count, byte count and SHA-256, then proves a sampled full restore into an isolated database. Keep an independently restorable full backup as well. Only after both proofs may the approved cohort be pruned from production.
+4. Use Cloudflare R2 Standard as a private cold archive destination for the existing, locally verified provider-cache archive. Upload the compressed archive, manifest, and PostgreSQL restore receipt under immutable checksum-addressed keys; download and verify the exact bytes and row digest before claiming remote backup. Keep an independently restorable full database backup as well. Broader historical cohorts require table-specific design and approval. Only after both proofs may an approved cohort be pruned from production.
 5. Preserve append-only financial ledgers, current positions/orders, score and decision provenance, labels needed for forward evaluators, and the point-in-time inputs required by active backtests. Archival eligibility must be specified table by table and respect their read paths and retention requirements.
 6. Reclaim Postgres space using the supported recovery procedure; verify actual `pg_database_size` and disk percentage after maintenance. Verify the Free-plan quota separately.
 
@@ -47,12 +47,16 @@ Reuse System Health and the existing cleanup route. No new public route is assum
 
 ## 8. Risks / decisions needed
 
-The owner must approve which historical tables and horizons can leave the online database, the restore time objective, and creation of the R2 bucket/access path. Free R2 usage is limited to 10 GB-month Standard storage and operation quotas; exceeding those requires a stop or separate approval, never automatic paid spend. The project needs a verified backup and direct production recovery path before deleting durable history. A hard promise to stay below 500 MB is impossible while essential data can grow without a bounded write budget.
+The owner approved the R2 backup direction on 2026-11-10. Cloudflare CLI authentication and a private bucket remain operational prerequisites; no token is copied into the repository. The owner must still approve which durable historical tables and horizons can leave the online database and the restore time objective. Free R2 usage is limited to 10 GB-month Standard storage and operation quotas; exceeding those requires a stop or separate approval, never automatic paid spend. The project needs a verified full database backup and direct production recovery path before deleting durable history. A hard promise to stay below 500 MB is impossible while essential data can grow without a bounded write budget.
 
 ## 9. Acceptance criteria
 
 Production is writable; a nonzero full backup restores into an isolated database; an archive cohort restores with exact row counts and checksums; active read paths and evaluators continue to work; actual database size falls below 400 MB; daily monitoring reports size and projected threshold crossings; natural cleanup runs succeed; no account, trading, score, or historical financial record is altered.
 
+## 9a. Cache-only R2 transfer implementation, November 10
+
+`scripts/r2-cache-archive.mjs` accepts the existing owner-protected provider-cache archive directory and a private R2 bucket. It re-verifies the manifest and local PostgreSQL restore receipt, requires a measured `KAIROS_R2_VERIFIED_FREE_HEADROOM_BYTES` greater than the complete upload size, uses Wrangler's explicit `--remote` setting, downloads every object, verifies hashes and row count, and writes a local receipt only after the round trip succeeds. It has no database write or R2 delete command. Its 13 focused archive tests pass. Production upload remains blocked until Wrangler is authenticated, the private bucket and its free headroom are verified, and the round trip succeeds. Chrome has a signed-in Cloudflare session, but the browser-control bridge times out and no Cloudflare connector is available; neither grants the local CLI authentication. This cache-only backup is not a full database backup and cannot authorize durable-data pruning.
+
 ## 10. Approval gate
 
-The hybrid direction is approved by the owner's “ok go” on 2026-11-10. The table-by-table durable retention policy and external storage access are not yet approved. Those specifics must be reviewed before implementation of archive deletion or a new security boundary.
+The hybrid direction and a private R2 backup test for the existing verified provider-cache archive are approved by the owner's “ok go” and “plan and fix ... and also cloudfare backup” on 2026-11-10. Durable table retention and production archive deletion are not approved. A new credential or public bucket access boundary remains disallowed without its separate owner action.

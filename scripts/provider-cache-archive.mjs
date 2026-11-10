@@ -17,7 +17,7 @@ export function assertSourceProject(base) {
   if (source.href !== `https://${PROJECT}.supabase.co/`) throw new Error("Wrong or insecure source project URL");
   return source.origin;
 }
-function assertPrivateDirectory(dir) {
+export function assertPrivateDirectory(dir) {
   const check = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
     '$a=Get-Acl -LiteralPath $env:KAIROS_ARCHIVE_DIRECTORY; $s=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if(-not $a.AreAccessRulesProtected){exit 1}; foreach($r in $a.Access){if($r.IsInherited -or $r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -ne $s){exit 1}}; if($a.Access.Count -lt 1){exit 1}; exit 0'],
   { env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/Modules"), KAIROS_ARCHIVE_DIRECTORY: dir }, windowsHide: true, stdio: "ignore", timeout: 10000 });
