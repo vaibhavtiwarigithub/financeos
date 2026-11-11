@@ -66,3 +66,13 @@ The existing `scripts/backup-db.ps1` passed a password-bearing URI to `pg_dump` 
 ## 10. Approval gate
 
 The hybrid direction and a private R2 backup test for the existing verified provider-cache archive are approved by the owner's “ok go” and “plan and fix ... and also cloudfare backup” on 2026-11-10. Durable table retention and production archive deletion are not approved. A new credential or public bucket access boundary remains disallowed without its separate owner action.
+
+## 11. Available-access follow-through, November 10
+
+The owner asked to continue without another database-password request. Supabase's current Free-plan documentation states that automatic and downloadable dashboard backups are not included; its manual CLI dump still requires the database password. The connected SQL tool is useful for diagnosis but is not a consistent, restorable full export. No browser credential, environment secret, or provider key was read to work around this.
+
+At the 2026-11-11 04:02 UTC read-only check, `pg_database_size` was 1,038,961,811 bytes, default read-only was off, and 40 new provider-cache rows had appeared through natural activity. Even removing all cache leaves roughly 1.04 GB online, so the requested sub-400 MB target needs at least about 639 MB more physical reduction. The largest remaining relations are durable price/provenance, daily-return, decision, and research evidence. `price_cache` has estimated dead tuples, but their count does not prove reclaimable bytes or justify disruptive maintenance without a full restore proof.
+
+The existing daily cleanup truthfully reports a failed `agent_signals` orphan step. Its code calls `delete_orphaned_agent_signals`, while a production `pg_proc` lookup and repository migration search found no such function. Other cleanup steps can still run; the alert must remain open. Adding a deletion RPC changes the schema and historical evidence retention, so it is outside this cache-only recovery and cannot serve as a shortcut to the quota target. The US price-cache freshness alert and missed Nov 10 producers also remain open for the next natural market-local runs. No manual research, trading, prewarm, or watchdog route was invoked.
+
+Primary sources: [Supabase Free-plan backup FAQ](https://supabase.com/kb/faqs/platform/free-plan-backups), [database backup guide](https://supabase.com/docs/guides/platform/backups), and [current Free-plan limits](https://supabase.com/pricing).
