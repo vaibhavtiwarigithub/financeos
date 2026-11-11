@@ -262,8 +262,10 @@ feeds scoring or orders, though its provider calls still obey the shared pacing 
 
 After the intraday-v3 release, the four `kairos-<symbol>-intraday-v3` pg_cron jobs
 replace their former open/entry/close jobs. Each checks every five minutes at
-offsets 0–3 within UTC hours 13–20; the application calendar admits regular US
-sessions only and handles DST/early closes. The existing leveraged-only research
+offsets 0–3 within UTC hours 13–20. The pg_cron commands dispatch HTTP only
+between 09:30 (inclusive) and 16:00 (exclusive) in New York local time. The
+application calendar still enforces holidays and early closes. Each full
+session weekday sends 312 requests from 384 ticks. The leveraged-only research
 job moves to 09:00 ET. Duplicate paper-door Vercel crons are removed. This is
 paper execution, not an LLM call on every check or a live-protection guarantee.
 The former staggered 11:00/11:20/11:40/noon instructions below are historical and
