@@ -1,6 +1,6 @@
 # Storage budget and recoverable cold archive — proposal
 
-Status: cache-only R2 backup path approved by owner on 2026-11-10; durable-data retention and production pruning remain unapproved. A controlled transaction removed 500 approved expired cache rows; no external archive or durable-data deletion has been verified.
+Status: cache-only R2 backup path approved by owner on 2026-11-10; durable-data retention and production pruning remain unapproved. The owner separately authorized clearing all disposable `av_cache` responses for disk recovery on November 10. No external archive or durable-data deletion has been verified.
 
 ## 1. User intention
 
@@ -56,6 +56,12 @@ Production is writable; a nonzero full backup restores into an isolated database
 ## 9a. Cache-only R2 transfer implementation, November 10
 
 `scripts/r2-cache-archive.mjs` accepts the existing owner-protected provider-cache archive directory and a private R2 bucket. It re-verifies the manifest and local PostgreSQL restore receipt, requires a measured `KAIROS_R2_VERIFIED_FREE_HEADROOM_BYTES` greater than the complete upload size, uses Wrangler's explicit `--remote` setting, downloads every object, verifies hashes and row count, and writes a local receipt only after the round trip succeeds. It has no database write or R2 delete command. Its 13 focused archive tests pass. Wrangler OAuth completed on November 10, but `r2 bucket list` returned Cloudflare code 10042 (`NotEntitled`): this account has no R2 subscription. Cloudflare requires an account checkout before R2 use, with billing beyond the included free monthly allowance. Under the owner's no-paid-services constraint, R2 enrollment and production upload remain blocked pending an owner account decision. The existing local archive remains intact. This cache-only backup is not a full database backup and cannot authorize durable-data pruning.
+
+## 9b. Emergency disposable-cache recovery, November 10
+
+After the owner explicitly authorized clearing fresh as well as expired raw provider responses, a single `BEGIN READ WRITE` transaction truncated only `public.av_cache` with a five-second lock timeout and no cascade. Immediately before the operation, the table had 58,994 rows, occupied 608,018,432 bytes, and had no inbound foreign keys or custom triggers. Verification afterward showed zero rows, a 24,576-byte table, and database size reduced from 1,646,013,587 to 1,038,019,731 bytes. At 2026-11-11 03:48 UTC a new session reported both `default_transaction_read_only` and `transaction_read_only` off, with database size 1,038,027,923 bytes. Natural scheduled write persistence and the billing-period quota still require separate verification. The existing local archive covers an older subset only; fresh cache will be refetched subject to provider budgets. No durable research, score, label, position, order, or trade table was changed. This does not achieve the 400 MB target or necessarily clear the billing-period average quota.
+
+The existing `scripts/backup-db.ps1` passed a password-bearing URI to `pg_dump` on the command line and wrote dumps under the OneDrive workspace. It now passes the password only through libpq's child environment, validates the FinanceOS target, stores dumps in an explicit current-user-only local directory, verifies archive structure, and avoids automatic deletion of earlier backups. Three focused tests, the 4,790-test app suite, TypeScript, and changed-file secret scan passed. The owner's claimed `SUPABASE_DB_URL` update is not yet visible in the exact ignored `.env.local` file: its one matching line still contains `[YOUR-PASSWORD]`, so no full dump or full restore proof exists. The backup script fails closed without printing the value. The active two-hour `kairos-watchdog` cron and `evolution_supervisor` snapshot both last ran at 2026-11-10 00:00 UTC, before read-only recovery; natural scheduler recovery remains unverified and no route was manually invoked.
 
 ## 10. Approval gate
 
