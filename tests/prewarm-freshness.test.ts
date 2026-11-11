@@ -6,6 +6,10 @@ const h = vi.hoisted(() => ({
   fetchYahooCandles: vi.fn(async (_symbol: string, _forceRefresh?: boolean) => []),
   fetchUpstoxCandles: vi.fn(async (_symbol: string, _days?: number, _opts?: { forceRefresh?: boolean }) => []),
   priceCacheUpsert: vi.fn(async (_rows: any[]) => ({ error: null })),
+  existingPriceRows: vi.fn(async (_symbol: string, _dates: string[]) => ({
+    data: [] as Array<{ date: string; price_basis: string }> | null,
+    error: null as { message: string } | null,
+  })),
 }));
 
 // Stub the provider edges so prewarmPriceCache can run without network.
@@ -18,7 +22,19 @@ vi.mock("@/lib/data/candles", () => ({
 }));
 vi.mock("@/lib/data/upstox", () => ({ fetchUpstoxCandles: h.fetchUpstoxCandles }));
 vi.mock("@/lib/supabase/service", () => ({
-  createServiceClient: () => ({ from: () => ({ upsert: h.priceCacheUpsert }) }),
+  createServiceClient: () => ({ from: () => ({
+    upsert: h.priceCacheUpsert,
+    select: () => {
+      let symbol = "";
+      const chain = {
+        eq: (_key: string, value: string) => { symbol = value; return chain; },
+        gte: () => chain,
+        order: async () => ({ data: [], error: null }),
+        in: (_key: string, dates: string[]) => h.existingPriceRows(symbol, dates),
+      };
+      return chain;
+    },
+  }) }),
 }));
 
 beforeEach(() => {
@@ -28,6 +44,7 @@ beforeEach(() => {
   h.fetchUpstoxCandles.mockReset().mockResolvedValue([]);
   h.priceCacheUpsert.mockReset();
   h.priceCacheUpsert.mockResolvedValue({ error: null });
+  h.existingPriceRows.mockReset().mockResolvedValue({ data: [], error: null });
 });
 
 // Pins the freshness rule the price-cache prewarm uses to decide which symbols
@@ -209,6 +226,97 @@ describe("the prewarm actually USES the session rule (wiring, not just the rule)
     expect(h.priceCacheUpsert.mock.calls[0][0][0]).toMatchObject({
       symbol: "TNPL.NS", provider: "yahoo", price_basis: "adjusted",
     });
+  });
+
+  it("does not rewrite old Upstox raw bars with Yahoo adjusted fallback history", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchYahooCandles.mockResolvedValue([
+      { date: "2026-01-02", open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+      { date: currentSession, open: 12, high: 13, low: 11, close: 12.5, volume: 200 },
+    ] as any);
+    h.existingPriceRows.mockResolvedValue({ data: [
+      { date: "2026-01-02", price_basis: "raw" },
+    ], error: null });
+    const supabase = { from: () => {
+      const chain: any = {};
+      chain.select = () => chain;
+      chain.in = () => chain;
+      chain.gte = () => chain;
+      chain.limit = async () => ({ data: [], error: null });
+      return chain;
+    } };
+
+    const result = await prewarmPriceCache(["BANKBARODA.NS"], supabase, { market: "india" });
+
+    expect(result).toMatchObject({ ok: 1, failed: 0 });
+    expect(h.priceCacheUpsert).toHaveBeenCalledOnce();
+    expect(h.priceCacheUpsert.mock.calls[0][0].map((row: any) => row.date)).toEqual([currentSession]);
+  });
+
+  it("fails the India prewarm when existing price basis cannot be read", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchYahooCandles.mockResolvedValue([
+      { date: currentSession, open: 12, high: 13, low: 11, close: 12.5, volume: 200 },
+    ] as any);
+    h.existingPriceRows.mockResolvedValue({ data: null, error: { message: "read unavailable" } });
+    const supabase = { from: () => {
+      const chain: any = {};
+      chain.select = () => chain;
+      chain.in = () => chain;
+      chain.gte = () => chain;
+      chain.limit = async () => ({ data: [], error: null });
+      return chain;
+    } };
+
+    const result = await prewarmPriceCache(["BANKBARODA.NS"], supabase, { market: "india" });
+
+    expect(result).toMatchObject({ ok: 0, failed: 1, failedSymbols: ["BANKBARODA.NS"] });
+    expect(h.priceCacheUpsert).not.toHaveBeenCalled();
+  });
+
+  it("still writes same-basis historical restatements and current-session basis changes", async () => {
+    const { prewarmPriceCache } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchYahooCandles.mockResolvedValue([
+      { date: "2026-01-02", open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+      { date: currentSession, open: 12, high: 13, low: 11, close: 12.5, volume: 200 },
+    ] as any);
+    h.existingPriceRows.mockResolvedValue({ data: [
+      { date: "2026-01-02", price_basis: "adjusted" },
+      { date: currentSession, price_basis: "raw" },
+    ], error: null });
+    const supabase = { from: () => {
+      const chain: any = {};
+      chain.select = () => chain;
+      chain.in = () => chain;
+      chain.gte = () => chain;
+      chain.limit = async () => ({ data: [], error: null });
+      return chain;
+    } };
+
+    const result = await prewarmPriceCache(["BANKBARODA.NS"], supabase, { market: "india" });
+
+    expect(result).toMatchObject({ ok: 1, failed: 0 });
+    expect(h.priceCacheUpsert.mock.calls[0][0].map((row: any) => row.date)).toEqual(["2026-01-02", currentSession]);
+  });
+
+  it("guards the chart-history India write path too", async () => {
+    const { fetchPriceHistory } = await import("@/lib/chart-data");
+    const currentSession = expectedNewestSession("india", new Date());
+    h.fetchUsCandles.mockResolvedValue({ source: "yahoo", candles: [
+      { date: "2026-01-02", open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+      { date: currentSession, open: 12, high: 13, low: 11, close: 12.5, volume: 200 },
+    ] } as any);
+    h.existingPriceRows.mockResolvedValue({ data: [
+      { date: "2026-01-02", price_basis: "raw" },
+    ], error: null });
+
+    await fetchPriceHistory("BANKBARODA.NS", 90);
+    await vi.waitFor(() => expect(h.priceCacheUpsert).toHaveBeenCalledOnce());
+
+    expect(h.priceCacheUpsert.mock.calls[0][0].map((row: any) => row.date)).toEqual([currentSession]);
   });
 
   it("reports a rejected canonical write as failed rather than claiming a fresh cache", async () => {

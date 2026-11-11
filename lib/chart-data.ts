@@ -92,7 +92,15 @@ export async function fetchPriceHistory(symbol: string, days = 90): Promise<Cand
 
     // Write to DB so next request is fast
     if (candles.length > 0) {
-      writePriceCacheRows(symbol, candles, source).catch(() => {});
+      // Chart reads can also refetch an NSE symbol after the research prewarm.
+      // Apply the same cross-basis guard to this write path so a chart request
+      // cannot undo the India prewarmer's historical provenance choice.
+      writePriceCacheRows(
+        symbol,
+        candles,
+        source,
+        symbol.toUpperCase().endsWith(".NS") ? expectedNewestSession("india", new Date()) : undefined,
+      ).catch(() => {});
     }
 
     memCache.set(key, { data: candles, ts: Date.now() });
@@ -159,6 +167,7 @@ async function writePriceCacheRows(
   symbol: string,
   candles: Candle[],
   provider = "unknown",
+  preserveHistoricalBasisBefore?: string,
 ): Promise<void> {
   const supabase = createServiceClient();
   const priceBasis = PROVIDER_PRICE_BASIS[provider] ?? "unknown";
@@ -176,9 +185,27 @@ async function writePriceCacheRows(
     provenance_version: PROVENANCE_VERSION,
   }));
   for (let i = 0; i < rows.length; i += 200) {
+    let batch = rows.slice(i, i + 200);
+    if (preserveHistoricalBasisBefore) {
+      // India's completed-session fallback can alternate Upstox raw and Yahoo
+      // adjusted histories within one day. Keep the new session available, but
+      // never rewrite existing earlier bars across incomparable price bases.
+      // A failed read is a failed prewarm, not permission to overwrite history.
+      const { data: existing, error: readError } = await supabase
+        .from("price_cache")
+        .select("date,price_basis")
+        .eq("symbol", symbol)
+        .in("date", batch.map(row => row.date));
+      if (readError) throw new Error(`price_cache provenance read failed for ${symbol}: ${readError.message}`);
+      const basisByDate = new Map((existing ?? []).map((row: { date: string; price_basis: string }) => [row.date, row.price_basis]));
+      batch = batch.filter(row => row.date >= preserveHistoricalBasisBefore
+        || !basisByDate.has(row.date)
+        || basisByDate.get(row.date) === row.price_basis);
+    }
+    if (batch.length === 0) continue;
     const { error } = await supabase
       .from("price_cache")
-      .upsert(rows.slice(i, i + 200), { onConflict: "symbol,date" });
+      .upsert(batch, { onConflict: "symbol,date" });
     // Supabase reports database failures in the result rather than rejecting.
     // Prewarm is a freshness producer: treating a rejected upsert as success
     // turns a real stale-price failure into a false green run.
@@ -314,7 +341,7 @@ export async function prewarmPriceCache(
           low: Number(c.low) || 0,
           close: Number(c.close) || 0,
           volume: Number(c.volume) || 0,
-        })), warmSource);
+        })), warmSource, opts.market === "india" ? freshCutoff : undefined);
         // Clear mem cache so next request picks up fresh DB rows
         for (const k of memCache.keys()) {
           if (k.startsWith(sym + ":")) memCache.delete(k);
