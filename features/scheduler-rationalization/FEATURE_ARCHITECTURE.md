@@ -35,3 +35,29 @@ Pending: observe natural post-migration runs for both markets and compare schedu
 ## Later audit queue
 
 Inventory other schedules by endpoint, market, due time, dependency, completion deadline, retry semantics, idempotency, natural run evidence, and safety impact. Consider grouping only schedules with equivalent command and windows or deterministic post-label evaluators whose readiness is already freshness-gated. Preserve independent safety checks, market-local time guards, DST pairs, post-close retries, and producer failure visibility. Any new schema or dispatcher architecture needs its own explicit architecture and approval before implementation.
+
+## November 11 free hosting and paper scheduler change
+
+Owner approved skipping out-of-session requests to the four leveraged intraday
+paper routes and validating a separate free Northflank Sandbox pilot.
+
+- Keep the four active pg_cron jobs, exact UTC schedules, existing IDs, and
+  staggered offsets. Add a predicate to each existing command so it invokes the
+  same HTTP helper only from 09:30 inclusive to 16:00 exclusive in
+  `America/New_York`. PostgreSQL applies the correct offset across daylight
+  saving transitions. The routes retain their exchange calendar checks and
+  still reject holidays and times after early closes.
+- The migration checks the exact original command and schedule before changing
+  a job. An unexpected or missing row aborts the transaction. On each full US
+  session weekday, 312 of the 384 ticks still dispatch, avoiding 72 requests.
+  This is an invocation count. CPU savings require post-change measurement.
+- Verify all four IDs, schedules, active states and commands after application.
+  Compare natural post-change cron history and Vercel requests after the next
+  out-of-session window. For rollback, confirm the live catalog still has the
+  guarded commands and original schedules, then use `cron.alter_job` on the
+  same job IDs to restore the exact commands from
+  `20261023041214_leveraged_intraday_v3_schedules.sql`. Preserve the UTC schedules.
+- The hosting pilot uses a separate Sandbox service with synthetic or dedicated
+  staging configuration. It accepts no production cron traffic. Verify build
+  and unauthenticated routes first. A production move is a separate decision
+  that requires checking host-specific runtime protections and scheduler targets.
