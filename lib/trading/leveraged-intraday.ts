@@ -29,8 +29,11 @@ export function leveragedPaperRunSummary(body: Record<string, unknown>): string 
     summary_truncated: true,
   });
 }
+const newYorkTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
 function localMinutes(now: Date) {
-  const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const p = newYorkTime.formatToParts(now);
   return Number(p.find(x => x.type === "hour")?.value) * 60 + Number(p.find(x => x.type === "minute")?.value);
 }
 export function leveragedPaperSessionOpen(now: Date): boolean {

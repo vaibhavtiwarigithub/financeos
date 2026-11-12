@@ -198,7 +198,7 @@ export default function LoginPage() {
                 <label style={{ fontSize: "13px", color: T.textSub, display: "block", marginBottom: "6px" }}>Password</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inp} required minLength={6} />
               </div>
-              {mode === "signin" && (
+              {mode === "signin" && process.env.NEXT_PUBLIC_KAIROS_RECOVERY_MODE !== "1" && (
                 <div style={{ textAlign: "right", marginBottom: "16px" }}>
                   <button
                     type="button"

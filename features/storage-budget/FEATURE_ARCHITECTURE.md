@@ -76,3 +76,20 @@ At the 2026-11-11 04:02 UTC read-only check, `pg_database_size` was 1,038,961,81
 The existing daily cleanup truthfully reports a failed `agent_signals` orphan step. Its code calls `delete_orphaned_agent_signals`, while a production `pg_proc` lookup and repository migration search found no such function. Other cleanup steps can still run; the alert must remain open. Adding a deletion RPC changes the schema and historical evidence retention, so it is outside this cache-only recovery and cannot serve as a shortcut to the quota target. The US price-cache freshness alert and missed Nov 10 producers also remain open for the next natural market-local runs. No manual research, trading, prewarm, or watchdog route was invoked.
 
 Primary sources: [Supabase Free-plan backup FAQ](https://supabase.com/kb/faqs/platform/free-plan-backups), [database backup guide](https://supabase.com/docs/guides/platform/backups), and [current Free-plan limits](https://supabase.com/pricing).
+
+
+## November 12 prospective growth fix
+
+Migration `20261112165022` keeps the stored close when an adjusted Yahoo bar
+older than 60 UTC days differs only by less than one part per million. The
+trigger compares against the stored close on each write and keeps the original
+discovery timestamp. Changes at or above the threshold, recent bars, other
+providers, changes in volume or other prices, and provenance changes retain
+their previous behavior. Existing audit rows are preserved.
+
+A read-only production sample found 9,427 matching close-only events among
+11,328 same-basis Yahoo events after November 11 06:00 UTC. This is a count of
+historical matches. It does not measure future space savings. Production
+database size was 1,098,787,987 bytes after application. The full backup
+connection remains a template and the durable archive and restore remain
+pending. The 400 MB target and November 15 billing grace deadline still apply.

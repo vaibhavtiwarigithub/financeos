@@ -35,3 +35,39 @@ Pending: observe natural post-migration runs for both markets and compare schedu
 ## Later audit queue
 
 Inventory other schedules by endpoint, market, due time, dependency, completion deadline, retry semantics, idempotency, natural run evidence, and safety impact. Consider grouping only schedules with equivalent command and windows or deterministic post-label evaluators whose readiness is already freshness-gated. Preserve independent safety checks, market-local time guards, DST pairs, post-close retries, and producer failure visibility. Any new schema or dispatcher architecture needs its own explicit architecture and approval before implementation.
+
+
+## November 12 free-tier beta
+
+Reuse the existing New York intraday time formatter and the two exchange date
+formatters. Each formatter retains its original locale, timezone and options.
+Keep existing inputs, stale-data handling, time gates, schedules and outputs.
+Compare a fixed full-session replay before and after. The production success
+criterion is a projected 30-day Active CPU total below three hours across five
+market sessions. A local benchmark measures only the evaluator.
+
+Bound price-cache write amplification at the existing restatement trigger,
+where concurrent writers compare against the locked previous row. Retain the
+stored close only for Yahoo adjusted bars over 60 UTC days old when the close
+alone changes by less than one part per million and the provenance matches.
+Retain all existing restatement rows. Recent bars, other price fields,
+provenance changes and material corrections use the existing trigger path.
+Verify the trigger with an isolated PostgreSQL replay before applying. To
+roll back, restore the original trigger function body and pinned search path.
+
+The storage target still requires a full restorable backup and reviewed
+retention cohorts. The precision guard limits new growth and does not reclaim
+existing bytes.
+
+## Render recovery during the Vercel pause
+
+The Render service sets NEXT_PUBLIC_KAIROS_RECOVERY_MODE=1 and uses only the public
+Supabase endpoint and publishable key. Existing password sign-in establishes
+the owner session. The dashboard uses that session to read recent research
+under RLS, with no admin credential. Middleware limits the recovery host to
+the sign-in and dashboard paths and rejects API and other application routes.
+The recovery view independently requires the verified owner. Vercel retains
+its existing application flow when this setting is absent. Check the deployed
+login page, anonymous dashboard redirect and rejected API, then have the owner
+sign in to verify actual data access. Keep deployment on the tested branch
+until the shared production branch contains the recovery and CPU fixes.

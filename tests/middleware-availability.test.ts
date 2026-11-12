@@ -25,7 +25,7 @@ describe("middleware availability without weakening authorization", () => {
     mock.grant.mockResolvedValue({ data: { revoked_at: null }, error: null });
     mock.signOut.mockResolvedValue({ error: null });
   });
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
   it("keeps cookie-free login/cron fast and anonymous private pages blocked", async () => {
     expect((await middleware(request("/login", false))).headers.get("x-middleware-next")).toBe("1");
@@ -34,6 +34,19 @@ describe("middleware availability without weakening authorization", () => {
     expect(mock.create).not.toHaveBeenCalled();
   });
 
+  it("exposes only owner dashboard and public sign-in on the recovery host", async () => {
+    vi.stubEnv("NEXT_PUBLIC_KAIROS_RECOVERY_MODE", "1");
+    expect((await middleware(request("/login", false))).headers.get("x-middleware-next")).toBe("1");
+    expect((await middleware(request("/dashboard", false))).headers.get("location")).toBe("https://example.test/login");
+    expect((await middleware(request("/api/agents/research"))).status).toBe(404);
+    expect((await middleware(request("/dashboard/trading"))).status).toBe(404);
+    const post = new NextRequest("https://example.test/dashboard", { method: "POST" });
+    expect((await middleware(post)).status).toBe(404);
+    expect((await middleware(request())).headers.get("x-middleware-next")).toBe("1");
+    mock.user.mockResolvedValue({ data: { user: guest }, error: null });
+    expect((await middleware(request())).status).toBe(403);
+    expect(mock.grant).not.toHaveBeenCalled();
+  });
   it("admits a verified owner and retains refreshed session cookies", async () => {
     mock.user.mockImplementation(async () => {
       mock.options.cookies.setAll([{ name: "sb-test-auth-token", value: "refreshed", options: { httpOnly: true } }]);

@@ -7,6 +7,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const supabase = await createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect("/login");
+  if (process.env.NEXT_PUBLIC_KAIROS_RECOVERY_MODE === "1") return children;
 
   const svc = (await import("@/lib/supabase/service")).createServiceClient();
   const { data: profile } = await svc
