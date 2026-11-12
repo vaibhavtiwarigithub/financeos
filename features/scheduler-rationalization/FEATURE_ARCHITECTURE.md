@@ -58,3 +58,16 @@ roll back, restore the original trigger function body and pinned search path.
 The storage target still requires a full restorable backup and reviewed
 retention cohorts. The precision guard limits new growth and does not reclaim
 existing bytes.
+
+## Render recovery during the Vercel pause
+
+The Render service sets NEXT_PUBLIC_KAIROS_RECOVERY_MODE=1 and uses only the public
+Supabase endpoint and publishable key. Existing password sign-in establishes
+the owner session. The dashboard uses that session to read recent research
+under RLS, with no admin credential. Middleware limits the recovery host to
+the sign-in and dashboard paths and rejects API and other application routes.
+The recovery view independently requires the verified owner. Vercel retains
+its existing application flow when this setting is absent. Check the deployed
+login page, anonymous dashboard redirect and rejected API, then have the owner
+sign in to verify actual data access. Keep deployment on the tested branch
+until the shared production branch contains the recovery and CPU fixes.
