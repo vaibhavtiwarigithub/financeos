@@ -89,11 +89,18 @@ export function isMarketHoliday(market: string, localYmd: string): boolean {
   return MARKET_HOLIDAYS[marketKey(market)][year]?.has(localYmd) ?? false;
 }
 
+function exchangeDateFormatter(timeZone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
+  });
+}
+const exchangeDateFormatters = {
+  us: exchangeDateFormatter("America/New_York"),
+  india: exchangeDateFormatter("Asia/Kolkata"),
+};
+
 function marketDateParts(market: string, now: Date): { ymd: string; weekday: string } {
-  const tz = market === "india" ? "Asia/Kolkata" : "America/New_York";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(now);
+  const parts = exchangeDateFormatters[marketKey(market)].formatToParts(now);
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return { ymd: `${get("year")}-${get("month")}-${get("day")}`, weekday: get("weekday") };
 }
