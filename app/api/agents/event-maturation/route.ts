@@ -8,6 +8,7 @@ import { computeEventOutcome, EVENT_HORIZONS, type OhlcBar } from "@/lib/events/
 import { computeStoredEventOutcome, type StoredDailyReturn } from "@/lib/events/policy-returns";
 import { requiresSymbol } from "@/lib/events/vocabulary";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -108,11 +109,16 @@ async function run() {
     try {
       for (let i = 0; i < symbols.length; i += 100) {
         const batch = [...new Set([...symbols.slice(i, i + 100), policyBenchmark])];
-        const batchRows = await fetchAllRows((from, to) => svc.from("symbol_daily_returns")
+        const since = lower.toISOString().slice(0, 10);
+        const until = upper.toISOString().slice(0, 10);
+        const batchRows = await readSymbolDailyReturnsOr<Record<string, unknown>>({
+          market: "us", symbols: batch, since, until, sort: "available_at_asc",
+        }, () => fetchAllRows((from, to) => svc.from("symbol_daily_returns")
           .select("symbol,session_date,previous_session_date,simple_return,price_basis,source,available_at")
           .eq("market", "us").in("symbol", batch)
-          .gte("session_date", lower.toISOString().slice(0, 10)).lte("session_date", upper.toISOString().slice(0, 10))
-          .order("available_at", { ascending: true }).range(from, to), "stored returns for policy event");
+          .gte("session_date", since).lte("session_date", until)
+          .order("available_at", { ascending: true }).order("id", { ascending: true })
+          .range(from, to), "stored returns for policy event"), { maxRows: 100_000 });
         rowsForEvent.push(...batchRows as StoredDailyReturn[]);
       }
     } catch (cause) {

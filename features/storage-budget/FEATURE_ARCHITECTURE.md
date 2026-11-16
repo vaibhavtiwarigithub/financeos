@@ -1,6 +1,8 @@
-# Storage budget and recoverable cold archive — proposal
+# Storage budget and recoverable cold archive — implementation record
 
-Status: cache-only R2 backup path approved by owner on 2026-11-10; durable-data retention and production pruning remain unapproved. The owner separately authorized clearing all disposable `av_cache` responses for disk recovery on November 10. No external archive or durable-data deletion has been verified.
+Current design: [COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md](COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md). The owner approved the broader goal of privately archiving relevant historical data and reducing Supabase below 400 MB. Codex is Architect and Builder. This document contains earlier November 10 discovery/proposal history; use the linked detailed design and current-state files for active requirements.
+
+**Current state (2026-11-16 09:36 UTC):** the full Supabase PostgreSQL 17 dump and verified table/cohort archives are stored in private R2. Three no-reader/reader-window-bounded histories were pruned after exact restore and membership checks; stale cache rows were removed under their documented expiry rules. A further `symbol_daily_returns` archive (261,678 rows) was independently restored from R2 but not pruned because five TypeScript readers and one RPC use it. Supabase pg_cron's official seven-day run-log retention was applied: 41,152 archived rows were removed, a daily retention job was scheduled, and `VACUUM FULL` reduced `cron.job_run_details` from 12,328,960 to 1,335,296 bytes. All 139 scheduled jobs are active, including the new retention job. Content-preserving compaction and prior cleanup leave the live DB at **847,129,747 bytes**, still writable and above the 400 MB target and 500 MB Free quota. R2 has 19 private objects totaling 172,911,071 bytes. Cold records can be restored into Postgres; no online R2 query adapter exists. Active-history reader support, broader safe reclamation, and a live production size monitor remain incomplete.
 
 ## 1. User intention
 
@@ -36,6 +38,12 @@ Reuse System Health and the existing cleanup route. No new public route is assum
 ## 6. States and edge cases
 
 - Archive unavailable, quota exceeded, export incomplete, hash mismatch, count mismatch, restore failure, or missing manifest: keep source rows and show degraded status.
+
+## 7. November 16 implementation addendum
+
+**Recurring India snapshot archive status (2026-11-16 15:45 UTC):** the guarded future-cohort path is integrated into the existing daily cleanup job. Production has `get_india_news_snapshots_archive_candidate(timestamptz)` and `get_database_storage_report()`; only `service_role` can execute either. The live Worker `kairos-history-reader` is deployed on `workers.dev` with D1 and private R2 bindings and a bearer secret; an unauthenticated archive read returned HTTP 401. D1's per-day mirror-budget columns and first lookup index are live; their actual metering was 99,001 row writes for the index operation. A read-only verification found 99,000/261,678 imported rows and zero writes, with D1 at 21,794,816 bytes. Stop D1 writes for this UTC day; remaining work requires the second index on a later quota day, source import, full parity, live mirror and consumer tests. Vercel rejected creating runtime variables with HTTP 402 (`resource_creation_blocked`, team fair-use limit); the Vercel CLI fallback requires a new interactive login. Thus no authenticated Worker status check or scheduled production archive cycle is verified yet. Supabase measured 828,607,635 bytes at 15:45 UTC and remained writable; under-400 MB remains incomplete.
+
+The owner approved the broader archive and storage-reduction work on November 16. The detailed, current status and exact D1 quota-day sequence are maintained in [COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md](COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md); that document supersedes this proposal's earlier statement that D1 was excluded. Current state: Supabase remains the only enabled app data source at 847,203,475 measured bytes; D1 contains 99,000 of 261,678 source rows and is not marked verified; private R2 currently holds 80 objects / 182,848,115 payload bytes. All six daily-return read paths have tested opt-in adapters but remain disabled. No app runtime is configured to read from D1, and no further daily-return source rows were pruned. The target remains below 400,000,000 bytes, so recovery is not complete.
 - Backup unavailable or zero bytes: block durable-data deletion.
 - A cohort still used by live evaluators, active backtests, or financial reconciliation: keep queryable source rows.
 - Cache cleanup succeeds but database remains over 400/500 MB: report the measured breach, never infer compliance from deleted-row counts.
@@ -47,7 +55,7 @@ Reuse System Health and the existing cleanup route. No new public route is assum
 
 ## 8. Risks / decisions needed
 
-The owner approved the R2 backup direction on 2026-11-10. Cloudflare CLI authentication and a private bucket remain operational prerequisites; no token is copied into the repository. The owner must still approve which durable historical tables and horizons can leave the online database and the restore time objective. Free R2 usage is limited to 10 GB-month Standard storage and operation quotas; exceeding those requires a stop or separate approval, never automatic paid spend. The project needs a verified full database backup and direct production recovery path before deleting durable history. A hard promise to stay below 500 MB is impossible while essential data can grow without a bounded write budget.
+The owner approved the durable archive direction. Wrangler OAuth is available and the private bucket is operational. The full database backup and first table-level archive/reclamation are recorded in [ARCHIVE_INVENTORY.md](ARCHIVE_INVENTORY.md). The detailed production table/readers audit is in [HISTORICAL_READER_AUDIT_2026-11-16.md](HISTORICAL_READER_AUDIT_2026-11-16.md). R2 Free usage is limited to 10 GB-month Standard storage and operation quotas; exceeding those requires a stop, never automatic paid spend. Remaining gates are a tested application read/restore path for active historical tables, bounded recurring archiving, a live monitor, and further measured physical reclamation. A hard promise to stay below 500 MB is impossible while essential data can grow without a bounded write budget.
 
 ## 9. Acceptance criteria
 
@@ -65,7 +73,7 @@ The existing `scripts/backup-db.ps1` passed a password-bearing URI to `pg_dump` 
 
 ## 10. Approval gate
 
-The hybrid direction and a private R2 backup test for the existing verified provider-cache archive are approved by the owner's “ok go” and “plan and fix ... and also cloudfare backup” on 2026-11-10. Durable table retention and production archive deletion are not approved. A new credential or public bucket access boundary remains disallowed without its separate owner action.
+The cache archive direction was approved November 10. On November 16 the owner explicitly approved the expanded historical-data archive and sub-400 MB objective and directed Codex to complete it without repeated approval prompts. That authorization does not permit public R2 access, use of existing secrets, paid services, or changes to trading/score/position/broker state. Each data cohort still must pass the documented archive, exact-membership, restore, and reader checks before it is removed.
 
 ## 11. Available-access follow-through, November 10
 
@@ -93,3 +101,24 @@ historical matches. It does not measure future space savings. Production
 database size was 1,098,787,987 bytes after application. The full backup
 connection remains a template and the durable archive and restore remain
 pending. The 400 MB target and November 15 billing grace deadline still apply.
+
+
+## Durable cold-archive proposal (November 16, 2026)
+
+Detailed design and review gate: [COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md](COLD_ARCHIVE_MIGRATION_ARCHITECTURE.md). The owner later approved the broader archive/reduction objective; current archive and prune receipts are listed in [ARCHIVE_INVENTORY.md](ARCHIVE_INVENTORY.md), and active readers/cohort boundaries are tracked in [HISTORICAL_READER_AUDIT_2026-11-16.md](HISTORICAL_READER_AUDIT_2026-11-16.md).
+
+## 2026-11-16 implementation status
+
+The owner approved the detailed database-first design with “go”. The full backup and three pruned data archives are verified as described above. Two no-reader histories and one reader-window-bounded diagnostics cohort were safely reclaimed, with append-only protections retained. A 1,205-row expired evidence-cache cohort was removed and verified; content-preserving compaction brought production to 858,123,411 bytes at 09:20 UTC, still writable. A further `symbol_daily_returns` archive is restore-verified in R2, with no source pruning due to active readers. The branch contains a review-only service-role storage-report RPC and daily cleanup-route integration; migration and app code are not deployed, so production monitoring and recurring cache cleanup are not active. An R2 capacity guard refuses transfers above its 7.5 GB projected-use threshold. The broader goal remains active.
+
+### Restore and external backup verification — 2026-11-16 follow-up
+
+The local full dump is restored and integrity-checked in an isolated Supabase PostgreSQL 17.6 container. Its `pg_restore` catalog and decompression checks pass; required extensions are present; `pg_amcheck` passed 2,057 relations / 117,158 pages. Per-table row-count digests match all 274 public and 316 stable application-schema tables at the backup snapshot (changing `cron`/`net` logs excluded). A byte-identical reconstructed copy was downloaded from R2 and passed the same archive-read checks. R2 contains a manifest and two private dump parts (139,185,553 payload bytes total); public R2 domains are disabled. A separate table-level archive and prune receipt are stored in the same private bucket.
+
+The dump is a full recovery backup, not a queryable cold archive. The cohort archives have tested cold restore into PostgreSQL, but R2 still has no Kairos runtime archive reader. Supabase remains writable at 847,129,747 bytes, above its 500 MB Free database quota; the 400 MB target still needs 447,129,747 bytes of actual reclamation. Any additional active history must pass a table-specific reader/parity gate before removal.
+
+### Evidence-record archive milestone — 2026-11-16 08:44 UTC
+
+The owner-only full backup restored locally and contained the exact live `public.evidence_records` snapshot: 77,167 rows, IDs 1–77,181, retrieved-at bounds 2026-07-02 14:02:27.42 UTC through 2026-11-12 14:01:50.793 UTC, and ordered JSON row-content digest `11914f224f4bb296a132bfaa0ea483e0`. A 2,627,533-byte gzip-compressed PostgreSQL COPY data archive was created, restored into a clean local database, and independently restored again from a downloaded R2 copy; all counts, bounds, and content digest matched. Archive, manifest, restore receipt, and immutable prune receipt each passed R2 round-trip SHA-256 checks. The R2 object uses 2.63 MB and remains private.
+
+The source audit found no app/lib/component reads, SQL view/function reads, or FK dependencies. The only table trigger is the enabled append-only update/delete guard. Under ACCESS EXCLUSIVE lock, a database-side assertion rechecked exact count, ID bounds, and full row-content digest before `TRUNCATE TABLE ONLY`. Independent SQL then showed zero rows, 40,960 relation bytes, a 45,441,024-byte database reduction, and total DB size **934,849,683 bytes**. The guard remains enabled. The table remains cold-only: Kairos SQL queries will require restoring the archived rows to Postgres. The target and working application-read path are not yet complete.

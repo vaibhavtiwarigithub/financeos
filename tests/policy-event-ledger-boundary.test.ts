@@ -22,8 +22,14 @@ describe("policy-event ledger boundary", () => {
   it("requires frozen return evidence rather than a quote-provider call", () => {
     const route = read("app/api/agents/policy-events/route.ts");
     expect(route).toContain('from("symbol_daily_returns")');
+    expect(route).toMatch(/\.order\("available_at", \{ ascending: false \}\)\s+\.order\("id", \{ ascending: false \}\)/);
     expect(route).not.toContain("fetchUsCandles");
     expect(route).not.toContain("fetchYahooCandles");
     expect(route).not.toContain("MASSIVE_API_KEY");
+  });
+
+  it("uses stable tie ordering for both archived policy-event return scans", () => {
+    const route = read("app/api/agents/event-maturation/route.ts");
+    expect(route).toContain('.order("available_at", { ascending: true }).order("id", { ascending: true })');
   });
 });

@@ -3,6 +3,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
 import {
   EXPOSURE_FACTORS, FACTOR_SERIES, computeExposure,
   type FactorLevels, type SessionReturn,
@@ -48,15 +49,18 @@ export async function GET(req: NextRequest) {
   for (let i = 0; i < symbols.length; i += CHUNK) {
     if (Date.now() - startedAt > 45_000) break; // time budget; the weekly run resumes next week, rows are idempotent per window_end
     const batch = symbols.slice(i, i + CHUNK);
-    const rows = await fetchAllRows((from, to) => svc.from("symbol_daily_returns")
+    const rows = await readSymbolDailyReturnsOr<{ symbol: string; session_date: string; previous_session_date: string; simple_return: number }>({
+      market: "india", symbols: batch, since: sinceReturns, until: new Date().toISOString().slice(0, 10), sort: "id_asc",
+    }, () => fetchAllRows((from, to) => svc.from("symbol_daily_returns")
       .select("id,symbol,session_date,previous_session_date,simple_return")
       .eq("market", "india").in("symbol", batch).gte("session_date", sinceReturns)
-      .order("id", { ascending: true }).range(from, to), "india exposure returns") as any[];
+      .order("id", { ascending: true }).range(from, to), "india exposure returns"), { maxRows: 100_000 });
     const bySymbol = new Map<string, SessionReturn[]>();
     for (const r of rows) {
-      const list = bySymbol.get(r.symbol) ?? [];
+      const symbol = String(r.symbol);
+      const list = bySymbol.get(symbol) ?? [];
       list.push({ session_date: String(r.session_date), previous_session_date: String(r.previous_session_date), simple_return: Number(r.simple_return) });
-      bySymbol.set(r.symbol, list);
+      bySymbol.set(symbol, list);
     }
     for (const symbol of batch) {
       const returns = bySymbol.get(symbol) ?? [];

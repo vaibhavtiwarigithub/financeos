@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { verifyCronSecret } from "@/lib/auth/cron";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { reportIssue, resolveIssue } from "@/lib/system-health";
+import { measureCloudflareD1Storage, measureSupabaseStorage } from "@/lib/storage-budget/monitor";
+import { archiveExpiredIndiaNewsSnapshots } from "@/lib/storage-budget/india-news-snapshot-archive";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -57,6 +59,23 @@ const STEPS: CleanupStep[] = [
         .lt("fetched_at", cutoff)
         .order("cache_key")
         .order("cache_date")
+        .limit(2000);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  },
+  {
+    label: "evidence_cache_v2 (expired beyond stale + status windows)",
+    // The evidence resolver can use a row through stale_until. India shadow
+    // status also inspects fetched_at over its last 45 days, so keep that full
+    // window even when a short-TTL cache row has already expired.
+    run: async (svc) => {
+      const { count, error } = await svc
+        .from("evidence_cache_v2")
+        .delete({ count: "exact" })
+        .lt("stale_until", new Date().toISOString())
+        .lt("fetched_at", daysAgo(45))
+        .order("fetched_at")
         .limit(2000);
       if (error) throw error;
       return count ?? 0;
@@ -267,11 +286,60 @@ async function runCleanup() {
     }
   }
 
+  const indiaNewsArchiveLabel = "india_news_snapshots (verified expired cohort to private R2)";
+  try {
+    const archived = await archiveExpiredIndiaNewsSnapshots(svc);
+    results[indiaNewsArchiveLabel] = archived;
+    totalDeleted += archived;
+    await resolveIssue("india-news-snapshot-archive-failed");
+    console.log(`[db-cleanup] ${indiaNewsArchiveLabel}: archived and pruned ${archived} rows`);
+  } catch (err: any) {
+    console.error("[db-cleanup] India news snapshot archive failed:", err?.message ?? err);
+    results[indiaNewsArchiveLabel] = -1;
+    await reportIssue({
+      issueKey: "india-news-snapshot-archive-failed", severity: "critical", category: "data",
+      title: "India news snapshot archive did not complete",
+      detail: "Expired snapshot rows were retained because the private archive upload, read-back verification, manifest check, or final exact-source digest check failed.",
+    });
+  }
+
   return { totalDeleted, results, ok: Object.values(results).every(value => value >= 0) };
 }
 
 async function cleanupResponse() {
   const { totalDeleted, results, ok } = await runCleanup();
+  let storage: Awaited<ReturnType<typeof measureSupabaseStorage>> | null = null;
+  let archiveStorage: Awaited<ReturnType<typeof measureCloudflareD1Storage>> | null = null;
+  let storageOk = true;
+  try {
+    storage = await measureSupabaseStorage(createServiceClient());
+    await resolveIssue("supabase-storage-measurement-failed");
+  } catch (error: any) {
+    storageOk = false;
+    console.error("[db-cleanup] storage measurement failed:", error?.message ?? error);
+    await reportIssue({
+      issueKey: "supabase-storage-measurement-failed", severity: "critical", category: "data",
+      title: "Supabase database size could not be measured",
+      detail: "The daily storage monitor failed. Database budget status is unknown; verify the storage report and RPC migration.",
+    });
+  }
+
+  let archiveStorageOk = true;
+  try {
+    const { count, error } = await createServiceClient().from("symbol_daily_returns").select("id", { count: "exact", head: true });
+    if (error || count === null) throw new Error(error?.message ?? "Supabase daily-return row count is unavailable");
+    archiveStorage = await measureCloudflareD1Storage(count);
+    await resolveIssue("cloudflare-d1-storage-measurement-failed");
+  } catch (error: any) {
+    archiveStorageOk = false;
+    console.error("[db-cleanup] Cloudflare D1 storage measurement failed:", error?.message ?? error);
+    await reportIssue({
+      issueKey: "cloudflare-d1-storage-measurement-failed", severity: "critical", category: "data",
+      title: "Cloudflare D1 archive size could not be measured",
+      detail: "The daily archive storage monitor failed. D1 capacity and mirror verification status are unknown; verify the authenticated archive status endpoint and its configuration.",
+    });
+  }
+
   if (ok) {
     await resolveIssue("db-cleanup-failed");
   } else {
@@ -283,11 +351,15 @@ async function cleanupResponse() {
   }
 
   return NextResponse.json({
-    ok,
+    ok: ok && storageOk && archiveStorageOk,
+    cleanupOk: ok,
+    storageOk: storageOk && archiveStorageOk,
+    storage,
+    archiveStorage,
     totalDeleted,
     results,
     ranAt: new Date().toISOString(),
-  }, { status: ok ? 200 : 503 });
+  }, { status: ok && storageOk && archiveStorageOk ? 200 : 503 });
 }
 
 export async function POST(req: NextRequest) {
@@ -305,12 +377,19 @@ export async function GET(req: NextRequest) {
   if (authError) return authError;
 
   const svc = createServiceClient();
+  let storage: Awaited<ReturnType<typeof measureSupabaseStorage>>;
+  try {
+    storage = await measureSupabaseStorage(svc);
+  } catch {
+    return NextResponse.json({ ok: false, dryRun: true, error: "Database size measurement unavailable" }, { status: 503 });
+  }
 
   const preview: Record<string, number> = {};
 
-  const checks: Array<{ label: string; table: string; col: string; keyCol: string; days: number; filter?: string }> = [
+  const checks: Array<{ label: string; table: string; col: string; keyCol: string; days: number; filter?: string; staleCol?: string }> = [
     { label: "av_cache price candles (>7d since provider fetch)", table: "av_cache", col: "fetched_at", keyCol: "cache_key", days: 7, filter: "cache_key.like.YAHOO_CANDLES:%,cache_key.like.MASSIVE_CANDLES:%,cache_key.like.EODHD_CANDLES:%,cache_key.like.TD_CANDLES:%,cache_key.like.UPSTOX_CANDLES:%,cache_key.like.ALPACA_IEX_5MIN:%" },
     { label: "av_cache (>30d since provider fetch)", table: "av_cache", col: "fetched_at", keyCol: "cache_key", days: 30 },
+    { label: "evidence_cache_v2 (expired beyond stale + status windows)", table: "evidence_cache_v2", col: "fetched_at", keyCol: "symbol", days: 45, staleCol: "stale_until" },
     { label: "llm_call_log (>90d)",          table: "llm_call_log",           col: "created_at",  keyCol: "id", days: 90  },
     { label: "agent_runs (>60d)",             table: "agent_runs",             col: "started_at",  keyCol: "id", days: 60  },
     { label: "briefings (>90d)",              table: "briefings",              col: "created_at",  keyCol: "id", days: 90  },
@@ -329,6 +408,7 @@ export async function GET(req: NextRequest) {
   for (const c of checks) {
     try {
       let q = svc.from(c.table).select(c.keyCol, { count: "exact", head: true }).lt(c.col, daysAgo(c.days));
+      if (c.staleCol) q = (q as any).lt(c.staleCol, new Date().toISOString());
       if (c.table === "agent_alerts") q = (q as any).eq("resolved", true);
       if (c.filter) q = (q as any).or(c.filter);
       const { count, error } = await q;
@@ -341,5 +421,5 @@ export async function GET(req: NextRequest) {
 
   const totalPreview = Object.values(preview).filter(v => v > 0).reduce((a, b) => a + b, 0);
   const ok = Object.values(preview).every(value => value >= 0);
-  return NextResponse.json({ ok, dryRun: true, totalPreview, preview }, { status: ok ? 200 : 503 });
+  return NextResponse.json({ ok, dryRun: true, totalPreview, preview, storage }, { status: ok ? 200 : 503 });
 }

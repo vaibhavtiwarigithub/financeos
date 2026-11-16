@@ -10,6 +10,7 @@ import {
   type RotationP1ReadinessInput,
   type RotationReturnRow,
 } from "@/lib/trading/rotation-readiness";
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { CURRENT_LABEL_CONTRACT_VERSION } from "@/lib/learning/label-contract";
 import { replacementCapacity } from "./rotation-capacity";
@@ -314,11 +315,19 @@ async function loadRotationScoreEdgeEvidence(supabase: any, args: {
 export async function loadRotationReturnCohort(
   supabase: any, market: "us" | "india", symbols: string[], since: string,
 ): Promise<RotationReturnRow[]> {
-  return fetchAllRows<RotationReturnRow>((from, to) => supabase
+  const rows = await readSymbolDailyReturnsOr<RotationReturnRow>({
+    market, symbols, since, until: new Date().toISOString().slice(0, 10), mode: "rotation",
+  }, () => fetchAllRows<RotationReturnRow>((from, to) => supabase
     .rpc("get_rotation_return_cohort", { p_market: market, p_symbols: symbols, p_since: since })
     .order("symbol", { ascending: true })
     .order("session_date", { ascending: true })
-    .range(from, to), "rotation return cohort");
+    .range(from, to), "rotation return cohort"), { maxRows: 100_000 });
+  return rows.map((row) => ({
+    symbol: String(row.symbol),
+    session_date: String(row.session_date),
+    simple_return: Number(row.simple_return),
+    available_at: String(row.available_at),
+  }));
 }
 
 export interface RotationShadowRecord {

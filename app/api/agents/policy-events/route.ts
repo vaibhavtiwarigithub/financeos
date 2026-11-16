@@ -4,6 +4,7 @@ import { requireOwner } from "@/lib/auth/require-owner";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { FRED_SERIES, fredSeriesDated } from "@/lib/data/fred-macro";
 import { createServiceClient } from "@/lib/supabase/service";
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
 import {
   completePostEventWindow,
   compoundReturn,
@@ -162,14 +163,25 @@ export async function POST(req: NextRequest) {
   const earliest = decided.map((event) => event.actual_effective_date).sort()[0];
   if (!earliest) return NextResponse.json({ scheduled: FOMC_SCHEDULE.length, decisionsRecorded, impactsRecorded: 0, expectationSource: "unconfigured" });
 
-  const { data: returnRows, error: returnsError } = await svc
-    .from("symbol_daily_returns")
-    .select("symbol,session_date,simple_return,price_basis,source,available_at")
-    .eq("market", "us")
-    .gte("session_date", earliest)
-    .order("available_at", { ascending: false })
-    .limit(50000);
-  if (returnsError) return NextResponse.json({ error: returnsError.message }, { status: 500 });
+  let returnRows: ReturnRow[];
+  try {
+    returnRows = await readSymbolDailyReturnsOr<ReturnRow>({ market: "us", since: earliest,
+      until: new Date().toISOString().slice(0, 10), sort: "available_at_desc", marketWide: true, resultLimit: 50_000 },
+    async () => {
+      const { data, error } = await svc
+        .from("symbol_daily_returns")
+        .select("symbol,session_date,simple_return,price_basis,source,available_at")
+        .eq("market", "us")
+        .gte("session_date", earliest)
+        .order("available_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(50000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as ReturnRow[];
+    }, { maxRows: 50_000 });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "stored policy return read failed" }, { status: 500 });
+  }
 
   const returnsBySymbol = frozenReturnsBySymbol((returnRows ?? []) as ReturnRow[]);
   const benchmarkSymbol = benchmarkSymbolFor("us", "research");
