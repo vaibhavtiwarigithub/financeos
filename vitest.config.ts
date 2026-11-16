@@ -18,6 +18,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // Next.js provides this marker at build time. Keep Vitest able to import
+      // server modules without adding a production dependency just for tests.
+      "server-only": path.resolve(__dirname, "tests/fixtures/server-only.ts"),
     },
   },
 });
