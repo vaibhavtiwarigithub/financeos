@@ -6,9 +6,11 @@
 // record that authorizes them.
 
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveRole, isViewerApiRoute, type AppRole } from "@/lib/auth/roles";
+import { cloudflareAccessIdentityFromHeaders, hasCloudflareAccessAssertion } from "@/lib/auth/cloudflare-access";
 
 export type SessionRole = {
   role: AppRole | null;
@@ -17,6 +19,16 @@ export type SessionRole = {
 };
 
 export async function getSessionRole(): Promise<SessionRole> {
+  const requestHeaders = await headers();
+  if (hasCloudflareAccessAssertion(requestHeaders)) {
+    try {
+      const identity = await cloudflareAccessIdentityFromHeaders(requestHeaders);
+      if (identity) return { role: "owner", userId: identity.userId, email: identity.email };
+    } catch {
+      return { role: null, userId: null, email: null };
+    }
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { role: null, userId: null, email: null };

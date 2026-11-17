@@ -316,7 +316,15 @@ describe("build + capture", () => {
     const daily: Record<string, unknown>[] = [];
     const fake = { from: (table: string) => ({
       insert: async (row: Record<string, unknown>) => { inserted.push(row); return {}; },
-      upsert: async (rows: Record<string, unknown>[]) => { daily.push(...rows); return {}; },
+      upsert: (rows: Record<string, unknown>[]) => {
+        daily.push(...rows);
+        return {
+          select: async () => ({
+            data: rows.map((saved, index) => ({ ...saved, id: index + 1, created_at: NOW.toISOString() })),
+            error: null,
+          }),
+        };
+      },
     }) };
     const row = await captureReturnObservation(fake, {
       symbol: "X", market: "us", candles: candlesFrom([10, 11, 12]), source: "massive", now: NOW,

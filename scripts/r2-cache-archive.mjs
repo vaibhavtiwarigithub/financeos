@@ -6,17 +6,9 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { PROJECT, assertPrivateDirectory, verify } from "./provider-cache-archive.mjs";
+import { checkR2Capacity } from "./r2-capacity-guard.mjs";
 
 const FILES = ["cache.ndjson.gz", "manifest.json", "restore-verification.json"];
-const MAX_ARCHIVE_BYTES = 9 * 1024 ** 3; // Stay below R2 Standard's 10 GB-month free allowance.
-
-export function assertNoSpendBudget(bytes, confirmedFreeHeadroom) {
-  if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > MAX_ARCHIVE_BYTES
-    || !Number.isSafeInteger(confirmedFreeHeadroom) || confirmedFreeHeadroom < bytes
-    || confirmedFreeHeadroom > 10 * 1024 ** 3) {
-    throw new Error("Verified R2 free-tier headroom is required before upload");
-  }
-}
 
 function sha256(file) {
   const hash = createHash("sha256");
@@ -53,6 +45,22 @@ export function assertRestoreReceipt(manifest, receipt) {
   }
 }
 
+function acquireLocalUploadLock(source) {
+  const lockPath = path.join(path.dirname(source), ".kairos-r2-upload.lock");
+  let fd;
+  try { fd = fs.openSync(lockPath, "wx", 0o600); }
+  catch (error) {
+    if (error.code === "EEXIST") throw new Error("Another Kairos R2 upload may be active (or a stale lock needs review); refusing upload");
+    throw new Error("Could not acquire the local Kairos R2 upload lock; refusing upload");
+  }
+  fs.writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  fs.fsyncSync(fd);
+  return () => {
+    fs.closeSync(fd);
+    fs.unlinkSync(lockPath);
+  };
+}
+
 function wrangler(args) {
   return new Promise((resolve, reject) => {
     // Wrangler is an ephemeral CLI dependency; no API key enters argv or logs.
@@ -67,12 +75,21 @@ function wrangler(args) {
 export async function syncArchive(dir, bucket, run = wrangler) {
   const source = assertArchivePath(dir);
   assertPrivateDirectory(source);
+  const releaseLock = acquireLocalUploadLock(source);
+  try { return await syncArchiveLocked(source, bucket, run); }
+  finally { releaseLock(); }
+}
+
+async function syncArchiveLocked(source, bucket, run) {
   const manifest = await verify(source);
   const receipt = JSON.parse(fs.readFileSync(path.join(source, "restore-verification.json"), "utf8"));
   assertRestoreReceipt(manifest, receipt);
   const prefix = objectPrefix(bucket, manifest);
-  const bytes = FILES.reduce((sum, name) => sum + fs.statSync(path.join(source, name)).size, 0);
-  assertNoSpendBudget(bytes, Number(process.env.KAIROS_R2_VERIFIED_FREE_HEADROOM_BYTES));
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const capacity = await checkR2Capacity({ accountId, incomingObjects: FILES.map(name => ({
+    bucket, key: `${prefix}/${name}`, size: fs.statSync(path.join(source, name)).size,
+  })) });
+  if (capacity.warning) console.warn("R2 archive budget warning: conservative projected use is at least 6 GB; no upload if above the 7.5 GB ceiling.");
   const expected = Object.fromEntries(FILES.map(name => [name, sha256(path.join(source, name))]));
   const retrieved = fs.mkdtempSync(path.join(source, "r2-download-"));
   try {

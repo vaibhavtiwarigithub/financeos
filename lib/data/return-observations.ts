@@ -36,6 +36,7 @@
 import type { Candle } from "@/lib/data/technicals";
 import type { BenchmarkBar } from "@/lib/data/benchmark-series";
 import { benchmarkFor } from "@/lib/data/benchmark-series";
+import { mirrorSymbolDailyReturns } from "@/lib/storage-budget/symbol-daily-returns-archive";
 
 export type Market = "us" | "india";
 
@@ -362,7 +363,7 @@ export interface ObsDbClient {
     upsert?: (
       rows: Record<string, unknown>[],
       options: { onConflict: string; ignoreDuplicates: boolean },
-    ) => Promise<{ error?: unknown }>;
+    ) => any;
   };
 }
 
@@ -383,19 +384,39 @@ export async function captureReturnObservation(
     if (!row) return null;
     const dailyRows = buildDailyReturnRows(input);
     const dailyTable = supabase.from(DAILY_RETURNS_TABLE);
-    const dailyWrite: Promise<{ error?: unknown }> = dailyRows.length === 0
-      ? Promise.resolve({})
+    const dailyWrite = dailyRows.length === 0
+      ? Promise.resolve({ data: [] as Record<string, unknown>[], error: null })
       : dailyTable.upsert
         ? dailyTable.upsert(
             dailyRows as unknown as Record<string, unknown>[],
             { onConflict: "symbol,market,session_date,source,price_basis,input_fingerprint", ignoreDuplicates: true },
-          )
-        : Promise.resolve({ error: new Error("daily-return upsert unavailable") });
+          ).select("id,symbol,market,session_date,previous_session_date,available_at,source,price_basis,input_fingerprint,created_at")
+        : Promise.resolve({ data: [] as Record<string, unknown>[], error: new Error("daily-return upsert unavailable") });
     const [summaryRes, dailyRes] = await Promise.all([
       supabase.from(TABLE).insert(row as unknown as Record<string, unknown>),
       dailyWrite,
     ]);
     if (summaryRes?.error || dailyRes?.error) return null;
+    if (Array.isArray(dailyRes?.data) && dailyRes.data.length > 0) {
+      try {
+        const insertedRows = dailyRes.data.map((saved: Record<string, unknown>) => {
+          const sourceRow = dailyRows.find(candidate => candidate.input_fingerprint === saved.input_fingerprint
+            && candidate.symbol === saved.symbol && candidate.market === saved.market
+            && candidate.session_date === saved.session_date && candidate.source === saved.source
+            && candidate.price_basis === saved.price_basis);
+          if (!sourceRow || !saved.id || typeof saved.created_at !== "string") throw new Error("Saved daily-return identity is incomplete");
+          return { ...sourceRow, id: saved.id, created_at: saved.created_at };
+        });
+        const mirror = await mirrorSymbolDailyReturns(insertedRows);
+        if (mirror.configured && mirror.accepted !== dailyRes.data.length) {
+          console.error("[return-observations] Daily-return archive accepted fewer rows than Supabase returned.");
+        }
+      } catch {
+        // Supabase remains authoritative. Archive trouble is surfaced by the
+        // daily D1 parity/health monitor and must not break research capture.
+        console.error("[return-observations] Daily-return archive mirror failed; source rows remain in Supabase.");
+      }
+    }
     return row;
   } catch {
     return null; // fail-open: research must survive any capture error

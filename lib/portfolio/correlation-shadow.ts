@@ -1,3 +1,5 @@
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
+
 // Correlation-aware construction — SHADOW ONLY.
 //
 // WHAT THIS ANSWERS. `lib/portfolio/constructor.ts` carries a
@@ -380,20 +382,26 @@ export async function loadPointInTimeReturnPanel(
   if (requested.length === 0) return empty();
   try {
     const since = new Date(decisionAt.getTime() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
-    const { data, error } = await svc
-      .from("symbol_daily_returns")
-      .select("id,symbol,session_date,simple_return,available_at,price_basis,input_fingerprint")
-      .eq("market", market)
-      .in("symbol", requested)
-      .gte("session_date", since)
-      .lte("available_at", decisionAt.toISOString())
-      .not("simple_return", "is", null)
-      .order("available_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(20000);
-    if (error) return empty();
+    const data = await readSymbolDailyReturnsOr<Record<string, unknown>>({
+      market, symbols: requested, since, until: decisionAt.toISOString().slice(0, 10),
+      availableAtOrBefore: decisionAt.toISOString(), sort: "available_at_desc",
+    }, async () => {
+      const { data, error } = await svc
+        .from("symbol_daily_returns")
+        .select("id,symbol,session_date,simple_return,available_at,price_basis,input_fingerprint")
+        .eq("market", market)
+        .in("symbol", requested)
+        .gte("session_date", since)
+        .lte("available_at", decisionAt.toISOString())
+        .not("simple_return", "is", null)
+        .order("available_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(20000);
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    }, { maxRows: 20_000 });
     const byBasis = new Map<string, Map<string, Map<string, any>>>();
-    for (const row of (data ?? []) as any[]) {
+    for (const row of data as any[]) {
       const sym = String(row.symbol).trim().toUpperCase();
       const date = String(row.session_date).slice(0, 10);
       const basis = String(row.price_basis);

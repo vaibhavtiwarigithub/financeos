@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
+vi.mock("server-only", () => ({}));
 import {
   computeCorrelationShadow, computeCovarianceSizingShadow, covarianceSizingShadowEventReason, covarianceShrinkage, loadPointInTimeReturnPanel, pearson,
   MAX_SINGLE_PAIR_CORR, MAX_AVG_CORR_TO_BOOK, MIN_SHARED_SESSIONS, MIN_COVARIANCE_SESSIONS,

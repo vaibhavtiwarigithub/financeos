@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kairos-app-proxy",
+  "main": "index.js",
+  "compatibility_date": "2026-11-17",
+  "workers_dev": true,
+  "vars": {
+    "APP_ORIGIN": "https://kairos-free-beta.onrender.com",
+    "ACCESS_AUD": "c539b461ae5e882b0c0463228e25f01279a4836612f78bb6ee6c211759beeac8"
+  }
+}

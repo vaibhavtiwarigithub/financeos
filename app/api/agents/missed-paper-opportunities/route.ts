@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOwner } from "@/lib/auth/require-owner";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readSymbolDailyReturnsOr } from "@/lib/storage-budget/symbol-daily-returns-archive";
 import { benchmarkSymbolFor } from "@/lib/data/benchmark-registry";
 import { buildMissedOpportunityMarks, type MissedEntrySnapshot, type MissedCloseRow } from "@/lib/trading/missed-opportunity-marks";
 
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
     if (error) throw new Error(`missed opportunity query failed: ${error.message}`);
     const events = rows ?? [];
     if (!events.length) return NextResponse.json({ market, benchmark: benchmarkSymbolFor(market, "portfolio"), episodes: [], summary: { count: 0, markedPnl: 0, matureCount: 0 } });
-    const eventSymbols = [...new Set(events.map((event: any) => String(event.symbol).toUpperCase()))];
+    const eventSymbols: string[] = [...new Set<string>(events.map((event: any) => String(event.symbol).toUpperCase()))];
     const symbols = [...eventSymbols, benchmarkSymbolFor(market, "portfolio")];
     const since = events.reduce((min: string, event: any) => String(event.decision_at).slice(0, 10) < min ? String(event.decision_at).slice(0, 10) : min, String(events[0].decision_at).slice(0, 10));
     const benchmarkSinceDate = new Date(`${since}T00:00:00Z`);
@@ -27,11 +28,13 @@ export async function GET(request: NextRequest) {
     const benchmarkSince = benchmarkSinceDate.toISOString().slice(0, 10);
     const [fills, closes, benchmarkConfig] = await Promise.all([
       fetchAllRows((from, to) => svc.from("paper_trades").select("symbol,executed_at,id").eq("market", market).eq("order_side", "buy").in("symbol", eventSymbols).gte("executed_at", `${since}T00:00:00Z`).order("id", { ascending: true }).range(from, to), "missed-opportunity paper-buy reconciliation"),
-      fetchAllRows((from, to) => svc.from("symbol_daily_returns").select("symbol,market,session_date,available_at,price_basis,close,source,id").eq("market", market).in("symbol", eventSymbols).gte("session_date", since).order("id", { ascending: true }).range(from, to), "missed-opportunity symbol closes"),
+      readSymbolDailyReturnsOr<MissedCloseRow>({ market, symbols: eventSymbols, since,
+        until: new Date().toISOString().slice(0, 10), sort: "id_asc" },
+      () => fetchAllRows((from, to) => svc.from("symbol_daily_returns").select("symbol,market,session_date,available_at,price_basis,close,source,id").eq("market", market).in("symbol", eventSymbols).gte("session_date", since).order("id", { ascending: true }).range(from, to), "missed-opportunity symbol closes"), { maxRows: 100_000 }),
       svc.from("benchmarks").select("id,symbol,provider_symbol").eq("market", market).eq("is_primary", true).eq("enabled", true).maybeSingle(),
     ]);
     if (benchmarkConfig.error || !benchmarkConfig.data) throw new Error(`registered benchmark unavailable: ${benchmarkConfig.error?.message ?? "primary benchmark missing"}`);
-    const symbolCloseRows = closes as MissedCloseRow[];
+    const symbolCloseRows = closes;
     const benchmark = benchmarkSymbolFor(market, "portfolio");
     const configuredBenchmark = String(benchmarkConfig.data.provider_symbol ?? benchmarkConfig.data.symbol);
     if (configuredBenchmark !== benchmark) throw new Error(`benchmark registry mismatch: expected ${benchmark}, found ${configuredBenchmark}`);

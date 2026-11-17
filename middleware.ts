@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isOwnerIdentity, isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
+import { cloudflareAccessIdentityFromHeaders, hasCloudflareAccessAssertion } from "@/lib/auth/cloudflare-access";
 
 const AUTH_BUDGET_MS = 3_000;
 
@@ -24,6 +25,29 @@ function isProtectedPage(pathname: string): boolean {
 }
 
 export async function middleware(request: NextRequest) {
+  if (process.env.NEXT_PUBLIC_KAIROS_RECOVERY_MODE === "1") {
+    const { pathname } = request.nextUrl;
+    if ((request.method !== "GET" && request.method !== "HEAD")
+      || !["/", "/login", "/dashboard", "/manifest.json"].includes(pathname)) {
+      return new NextResponse(null, { status: 404, headers: { "Cache-Control": "no-store" } });
+    }
+  }
+
+  // Cloudflare Access is an independent owner identity path. The assertion is
+  // always signature, issuer, audience, expiry, and owner-email checked here;
+  // a caller supplied header alone never grants access.
+  if (hasCloudflareAccessAssertion(request.headers)) {
+    try {
+      await cloudflareAccessIdentityFromHeaders(request.headers);
+      if (request.nextUrl.pathname === "/login") {
+        return NextResponse.redirect(new URL("/dashboard", request.url), { headers: { "Cache-Control": "private, no-store" } });
+      }
+      return NextResponse.next({ request, headers: { "Cache-Control": "private, no-store" } });
+    } catch {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+    }
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   // FAST PATH — no session cookie means no session.
@@ -103,6 +127,9 @@ export async function middleware(request: NextRequest) {
   // Match requireOwner(): an unverified account that happens to claim the
   // owner's email cannot inherit the owner's page access at the edge.
   const isOwner = isOwnerIdentity(user?.email, user?.email_confirmed_at);
+  if (process.env.NEXT_PUBLIC_KAIROS_RECOVERY_MODE === "1" && user && !isOwner) {
+    return new NextResponse("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
+  }
   let isViewer = false;
   if (user && !isOwner) {
     const { data: grant, error: grantError } = await supabase

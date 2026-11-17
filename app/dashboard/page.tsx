@@ -1,3 +1,4 @@
+import RecoveryDashboard from "@/components/dashboard/RecoveryDashboard";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import DashboardHome from "@/components/dashboard/DashboardHome";
@@ -17,6 +18,8 @@ export default async function DashboardPage() {
   const authClient = await createClient();
   const { data: { session } } = await authClient.auth.getSession();
   if (!session) redirect("/login");
+
+  if (process.env.NEXT_PUBLIC_KAIROS_RECOVERY_MODE === "1") return <RecoveryDashboard />;
 
   const supabase = createServiceClient();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();

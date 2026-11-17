@@ -1,12 +1,25 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { OWNER_EMAIL } from "@/lib/auth/owner";
+import { cloudflareAccessIdentityFromHeaders, hasCloudflareAccessAssertion } from "@/lib/auth/cloudflare-access";
 
 // Owner-only gate for API routes. middleware.ts gates /dashboard and /admin
 // pages, but NOT /api/* — every /api route that returns or mutates personal
 // data must call this itself. Returns null when the caller is the owner, or a
 // NextResponse (401/403) to return immediately otherwise.
 export async function requireOwner(): Promise<NextResponse | null> {
+  const requestHeaders = await headers();
+  if (hasCloudflareAccessAssertion(requestHeaders)) {
+    try {
+      const identity = await cloudflareAccessIdentityFromHeaders(requestHeaders);
+      if (identity?.email === OWNER_EMAIL) return null;
+    } catch {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+    }
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
