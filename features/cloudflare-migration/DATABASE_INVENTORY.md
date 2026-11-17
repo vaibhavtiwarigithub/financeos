@@ -6,7 +6,7 @@
 
 | Measure | Value | Notes |
 |---|---:|---|
-| Postgres database size | 829,271,187 bytes (790.7 MiB) | `pg_database_size(current_database())` |
+| Postgres database size | 829,328,531 bytes (790.8 MiB) | `pg_database_size(current_database())`; read-only live query at 2026-11-17 21:17 UTC |
 | Public relation sizes summed | 800,972,800 bytes (763.8 MiB) | `pg_total_relation_size` across user tables |
 | Public tables | 274 | `pg_stat_user_tables` |
 | Estimated live rows | 433,273 | Planner estimates; exact per-table counts still required for the final export manifest |
@@ -19,7 +19,7 @@
 | Repository `.from(...)` calls | 1,877 | `app/`, `components/`, and `lib/` text scan |
 | Distinct statically named tables queried | 246 | Some dynamic query construction may be missed; generated SQL/RPC callers need a separate scan |
 
-The relation-size sum is lower than the database-size result because database-wide catalogs, schemas, and other allocations are not represented by the summed public relations. Neither measure is the compressed dump size.
+The relation-size sum is lower than the database-size result because database-wide catalogs, schemas, and other allocations are not represented by the summed public relations. Neither measure is the compressed dump size. The 433,273 row figure above is a planner estimate and is materially stale; exact counts on the largest relations alone exceed 650,000. Use per-table exact counts from the live source for migration manifests, not this aggregate estimate.
 
 The 84 static RPC call sites span 55 files. Security parity requires translating the 204 policies, not merely copying the fact that all 274 tables have RLS enabled.
 
@@ -80,16 +80,32 @@ The four tables not restored are `agent_memory`, `doc_chunks`, `trade_decision_e
 
 The restored snapshot's largest relations are `price_cache_restatements` (110,870,528 bytes), `decision_observations` (76,537,856), `symbol_daily_returns` (74,784,768), `research_packets` (59,998,208), `observation_labels` (45,932,544), and `price_cache` (45,490,176). The numbers differ slightly from the live inventory because this is a Nov 16 dump and a local PostgreSQL restore.
 
+The local loopback cluster is now queryable using its local bootstrap role; its `pg_hba.conf` allows trust only for loopback, and the server listens only on `127.0.0.1:55441`. The role adjustment was made in that isolated restore only. A fresh exact scan of its 270 public tables still totals 1,583,520 rows; public relation sizes sum to 948,715,520 bytes and the database is 971,683,507 bytes. The full 270-table exact-count/size inventory stays under the owner-local `Kairos\migration-restore\2026-11-17\public-table-inventory.csv`, not in the repository.
+
+## Read-only production reconciliation — 2026-11-17 21:17 UTC
+
+Supabase MCP direct SQL is currently available for read-only metadata queries even though the app's Supabase REST path was previously returning quota errors. Current database size is 829,328,531 bytes, with 274 public tables and 800,972,800 public relation bytes. Exact counts for the largest relations show the Nov 16 dump is still representative for most live hot tables, but four cohorts changed after the dump and must use their independent verified R2 archive receipts rather than be re-imported from stale local rows:
+
+| Table | Local Nov 16 rows | Current source rows | Current source bytes | Handling |
+|---|---:|---:|---:|---|
+| `price_cache_restatements` | 365,750 | 0 | 32,768 | Already archived and pruned; use the checksummed R2 archive/read path |
+| `evidence_records` | 77,167 | 0 | 40,960 | Already archived and pruned; use the checksummed R2 archive/read path |
+| `dimension_diagnostic_findings` | 22,938 | 1,571 | 2,662,400 | Latest 36 runs retained; 21,367 cold rows already archived |
+| `india_news_snapshots` | 8,982 | 650 | 1,425,408 | Seven-day hot window retained; 8,332 old rows already archived |
+
+Other queried high-size tables match the local restore counts, including `symbol_daily_returns` (261,678), `decision_observations` (18,515), `research_packets` (18,754), `observation_labels` (45,424), `price_cache` (190,358), `signal_score_history` (18,559), and `agent_signals` (19,005). This is scoped parity evidence for the listed tables, not a fresh full-database export or a complete current backup. No source rows were changed by these read-only probes.
+
 ## Current Cloudflare storage checkpoint — 2026-11-17
 
 - Cloudflare R2 account metrics report 83 Standard objects, 189,155,223 payload bytes, and 3,044 metadata bytes: 189,158,267 conservative observed bytes, well below the app's 8,000,000,000-byte hard stop. This is a read-only metrics snapshot; the guard still needs to run before each upload path.
+- The already-open Cloudflare D1 dashboard is authenticated to the same account and currently labels the D1 Free quotas directly: 2/10 databases, 496.74k/5M daily rows read, 99.02k/100k daily rows written, 25.35 MB/5 GB storage. The D1 GraphQL analytics API independently returned 496,715 rows read and 99,001 rows written for `kairos-history-archive` on Nov 17, and 28/18 for `kairos-app-staging`. This confirms essentially no write headroom remains today; do not import another chunk before 00:00 UTC and a fresh usage check. Analytics also reports 198,014 rows written to the archive database on Nov 16, which is above the published Free daily allowance and requires reconciliation against Cloudflare's UI/plan accounting before relying on bulk import as a repeatable always-free operation. No further remote D1 writes were made during this review.
 - D1 API metadata reports `kairos-app-staging` at 40,960 bytes and `kairos-history-archive` at 25,313,280 bytes. The app staging D1 contains only the watchlist schema/migration ledger and no imported user rows; do not treat it as the app database.
-- Read-only D1 SQL API check on `kairos-history-archive` returned `symbol_daily_returns_v1`: 99,000 verified rows of 261,678 expected, `loading`, daily mirror counter 0; database size remained 25,313,280 bytes. No rows were written by the status query.
+- Read-only D1 SQL API check on `kairos-history-archive` returned dataset `symbol_daily_returns_v1` in `archive_dataset_status`: 99,000 verified rows of 261,678 expected, `loading`, daily mirror counter 0. The physical destination table is named `symbol_daily_returns` and also has exactly 99,000 rows; its schema has 14 columns and two secondary indexes (`symbol_daily_returns_market_date_idx`, `symbol_daily_returns_lookup_idx`). Database size remained 25,313,280 bytes. Status/count/schema/index queries wrote zero rows. The previous check queried the dataset key as a table name and therefore did not actually inspect the archive; this corrected check validates the intended destination table.
 - Rebuilt the remaining 162,678-row archive import plan with two indexed columns and a 20,000-row/day cap: nine chunks, first eight at an estimated 60,000 D1 writes/day, final chunk 8,034, leaving at least 40,000 daily write headroom. This is a local plan only; start a chunk only after checking that UTC day's actual account-wide quota. The previous 72,678-row single-day queue is not quota-safe under indexed-write accounting.
 
 ## Required next inventory work
 
-1. Reconcile the partial restore's 4 missing tables and six policy/70 trigger/6 function differences against the verified live inventory; identify which are genuinely empty/extension-only and export exact counts and ordered digests where needed.
+1. Reconcile the partial restore's 4 missing tables and six policy/70 trigger/6 function differences against the verified live inventory; identify which are genuinely empty/extension-only and export exact counts and ordered digests where needed. Reconcile all four already-archived cohorts using their independent manifests and do not import their stale pre-prune copies.
 2. Export primary/foreign keys, indexes, RLS policies, triggers, functions/RPCs, extensions, and scheduled jobs from the restored snapshot and compare with live metadata.
 3. Generate a dependency graph from SQL migrations and all static/dynamic query call sites, then define bounded D1 application domains based on measured SQLite sizes. D1 Free requires staying below 400 MB/database as the project warning threshold, below 5 GB/account, and within the 100,000 daily row-write quota; cold R2 data must have tested app readers and cannot replace relational query capability by itself.
 4. For each proposed archive or D1 cohort, implement a typed online reader and verify row counts, ordered digests, cold reads, and restore before disabling any source reader or deleting source rows.
