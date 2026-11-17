@@ -84,6 +84,8 @@ The restored snapshot's largest relations are `price_cache_restatements` (110,87
 
 - Cloudflare R2 account metrics report 83 Standard objects, 189,155,223 payload bytes, and 3,044 metadata bytes: 189,158,267 conservative observed bytes, well below the app's 8,000,000,000-byte hard stop. This is a read-only metrics snapshot; the guard still needs to run before each upload path.
 - D1 API metadata reports `kairos-app-staging` at 40,960 bytes and `kairos-history-archive` at 25,313,280 bytes. The app staging D1 contains only the watchlist schema/migration ledger and no imported user rows; do not treat it as the app database.
+- Read-only D1 SQL API check on `kairos-history-archive` returned `symbol_daily_returns_v1`: 99,000 verified rows of 261,678 expected, `loading`, daily mirror counter 0; database size remained 25,313,280 bytes. No rows were written by the status query.
+- Rebuilt the remaining 162,678-row archive import plan with two indexed columns and a 20,000-row/day cap: nine chunks, first eight at an estimated 60,000 D1 writes/day, final chunk 8,034, leaving at least 40,000 daily write headroom. This is a local plan only; start a chunk only after checking that UTC day's actual account-wide quota. The previous 72,678-row single-day queue is not quota-safe under indexed-write accounting.
 
 ## Required next inventory work
 

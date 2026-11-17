@@ -30,10 +30,10 @@ test("rejects unexpected SQL, unsafe daily budgets, and index assumptions", () =
 });
 
 test("defaults to the two-index free-tier import ceiling with write headroom", () => {
-  assert.equal(DEFAULT_ROWS_PER_DAY, 30_000);
+  assert.equal(DEFAULT_ROWS_PER_DAY, 20_000);
   assert.equal(DEFAULT_INDEX_COUNT, 2);
-  const plan = buildDailyChunks([{ sql: insertRows(30_000) }]);
-  assert.equal(plan[0].rowCount, 30_000);
-  assert.equal(plan[0].estimatedRowsWritten, 90_000);
-  assert.equal(plan[0].estimatedWriteHeadroom, 10_000);
+  const plan = buildDailyChunks([{ sql: insertRows(20_000) }]);
+  assert.equal(plan[0].rowCount, 20_000);
+  assert.equal(plan[0].estimatedRowsWritten, 60_000);
+  assert.equal(plan[0].estimatedWriteHeadroom, 40_000);
 });

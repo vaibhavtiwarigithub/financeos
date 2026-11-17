@@ -3,7 +3,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-export const DEFAULT_ROWS_PER_DAY = 30_000;
+// Reserve at least 40% of the Free daily write allowance for application
+// traffic and DDL/index/accounting overhead across every D1 database.
+export const DEFAULT_ROWS_PER_DAY = 20_000;
 export const DEFAULT_INDEX_COUNT = 2;
 
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
