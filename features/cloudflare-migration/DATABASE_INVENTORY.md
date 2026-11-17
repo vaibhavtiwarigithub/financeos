@@ -60,13 +60,36 @@ The top 20 relations occupy about 634.4 MiB (664,961,024 bytes); their storage a
 
 ## Backup evidence and outstanding source of truth
 
-The local `kairos_2026-11-16_005523.dump` is 139,184,485 bytes. `pg_restore --list` successfully identified a PostgreSQL 17.6 custom-format archive with 3,174 TOC entries. It has not been restored, reconciled against the live source, or proven complete. The local PostgreSQL 17 Windows service is running, but connecting as the current OS user fails because no local database password is supplied. Do not read credential stores or treat the 132.7 MiB archive as restored database size.
+The local `kairos_2026-11-16_005523.dump` is 139,184,485 bytes. `pg_restore --list` identified a PostgreSQL 17.6 custom-format archive with 3,174 TOC entries. It has been restored into an isolated loopback PostgreSQL 17 cluster, but the restore is only partially compatible and is not yet reconciled to live source schema/policies/triggers. Do not read credential stores or treat the 132.7 MiB archive as restored database size.
+
+## Isolated local restore checkpoint — 2026-11-17
+
+The dump was restored into a separate PostgreSQL 17 cluster listening only on loopback, with Supabase roles created locally. Restore summary:
+
+| Measure | Local restore | Live source snapshot | Interpretation |
+|---|---:|---:|---|
+| Public tables restored | 270 / 274 | 274 | The four missing tables use `extensions.vector` |
+| Exact rows across restored tables | 1,583,520 | 433,273 earlier planner estimate | The prior estimate is not an exact row count and materially understates this backup |
+| Database size | 973,076,147 bytes | 829,271,187 bytes | The restore is a local accounting snapshot, not the source metric or D1 sizing result |
+| Public tables with RLS | 270 / 270 | 274 / 274 | RLS flags restored for all 270 tables that could be created |
+| Policies | 198 | 204 | Six policy definitions were not restored because of unavailable Supabase extensions/objects |
+| Non-internal public triggers | 166 | 236 | Trigger parity is not established; missing extension functions account for restore failures |
+| Public functions | 149 | 155 | Function parity is not established |
+
+The four tables not restored are `agent_memory`, `doc_chunks`, `trade_decision_embeddings`, and `trade_memories`. A same-day read-only live query returned zero rows for each, but those source counts do not replace a complete restore receipt. The local restore reported 96 SQL errors, including unavailable `pg_cron`, `pg_net`, `supabase_vault`, and `vector` extensions; do not treat it as the final migration input until remaining data/schema omissions are explicitly reconciled.
+
+The restored snapshot's largest relations are `price_cache_restatements` (110,870,528 bytes), `decision_observations` (76,537,856), `symbol_daily_returns` (74,784,768), `research_packets` (59,998,208), `observation_labels` (45,932,544), and `price_cache` (45,490,176). The numbers differ slightly from the live inventory because this is a Nov 16 dump and a local PostgreSQL restore.
+
+## Current Cloudflare storage checkpoint — 2026-11-17
+
+- Cloudflare R2 account metrics report 83 Standard objects, 189,155,223 payload bytes, and 3,044 metadata bytes: 189,158,267 conservative observed bytes, well below the app's 8,000,000,000-byte hard stop. This is a read-only metrics snapshot; the guard still needs to run before each upload path.
+- D1 API metadata reports `kairos-app-staging` at 40,960 bytes and `kairos-history-archive` at 25,313,280 bytes. The app staging D1 contains only the watchlist schema/migration ledger and no imported user rows; do not treat it as the app database.
 
 ## Required next inventory work
 
-1. Restore the custom dump into a newly named isolated PostgreSQL database using an owner-provided local credential or a verified local authentication route; never restore over a production database.
-2. Export exact counts, primary/foreign keys, indexes, RLS policies, triggers, functions/RPCs, extensions, and scheduled jobs from that restored snapshot.
-3. Generate a dependency graph from SQL migrations and all static/dynamic query call sites, then select the first non-trading vertical slice with a useful authenticated write path.
-4. For every proposed archive cohort, implement a typed online reader and verify row counts, ordered digests, cold reads, and restore before disabling any source reader or deleting source rows.
+1. Reconcile the partial restore's 4 missing tables and six policy/70 trigger/6 function differences against the verified live inventory; identify which are genuinely empty/extension-only and export exact counts and ordered digests where needed.
+2. Export primary/foreign keys, indexes, RLS policies, triggers, functions/RPCs, extensions, and scheduled jobs from the restored snapshot and compare with live metadata.
+3. Generate a dependency graph from SQL migrations and all static/dynamic query call sites, then define bounded D1 application domains based on measured SQLite sizes. D1 Free requires staying below 400 MB/database as the project warning threshold, below 5 GB/account, and within the 100,000 daily row-write quota; cold R2 data must have tested app readers and cannot replace relational query capability by itself.
+4. For each proposed archive or D1 cohort, implement a typed online reader and verify row counts, ordered digests, cold reads, and restore before disabling any source reader or deleting source rows.
 
 No Supabase rows were changed or deleted by this inventory.
