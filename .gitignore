@@ -64,3 +64,9 @@ __pycache__/
 /.codex-vitest*.json
 /tmp-review-sep25-tests.json
 /tsconfig.*.tsbuildinfo
+/dist/
+.vinext/
+.cloudflare/
+/.wrangler/
+**/.wrangler/
+**/.dev.vars

@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isOwnerIdentity, isViewerPage, isViewerApiRoute, VIEWER_HOME } from "@/lib/auth/roles";
+import { cloudflareAccessIdentityFromHeaders, hasCloudflareAccessAssertion } from "@/lib/auth/cloudflare-access";
 
 const AUTH_BUDGET_MS = 3_000;
 
@@ -29,6 +30,21 @@ export async function middleware(request: NextRequest) {
     if ((request.method !== "GET" && request.method !== "HEAD")
       || !["/", "/login", "/dashboard", "/manifest.json"].includes(pathname)) {
       return new NextResponse(null, { status: 404, headers: { "Cache-Control": "no-store" } });
+    }
+  }
+
+  // Cloudflare Access is an independent owner identity path. The assertion is
+  // always signature, issuer, audience, expiry, and owner-email checked here;
+  // a caller supplied header alone never grants access.
+  if (hasCloudflareAccessAssertion(request.headers)) {
+    try {
+      await cloudflareAccessIdentityFromHeaders(request.headers);
+      if (request.nextUrl.pathname === "/login") {
+        return NextResponse.redirect(new URL("/dashboard", request.url), { headers: { "Cache-Control": "private, no-store" } });
+      }
+      return NextResponse.next({ request, headers: { "Cache-Control": "private, no-store" } });
+    } catch {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
     }
   }
 

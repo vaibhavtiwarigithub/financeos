@@ -1,0 +1,21 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/schema.json",
+  "name": "kairos-db-gateway",
+  "main": "index.js",
+  "compatibility_date": "2026-11-17",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": false }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kairos-app-staging",
+      "database_id": "fda0639a-161a-4242-862f-b6b805897697",
+      "migrations_dir": "../../d1/app-migrations"
+    }
+  ]
+}
